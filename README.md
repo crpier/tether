@@ -8,25 +8,25 @@ This is a rewrite of the original vibe-coded experiment. See [`TETHER_REWRITE_BR
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev:web
 ```
 
 Useful scripts:
 
 ```bash
-pnpm dev:server
 pnpm dev:web
-pnpm typecheck
+pnpm typecheck:web
 ```
 
-- Server: http://localhost:3000
+- Server: planned Python ASGI app in `apps/server`
 - Web: http://localhost:5173
 
 ## Current Stack
 
-- TypeScript
-- Effect + Effect HTTP backend
-- SolidJS frontend
+- Python backend planned in `apps/server`, managed with `uv`
+- Starlette ASGI + Pydantic API DTOs planned
+- SolidJS/TypeScript frontend
+- OpenAPI-generated frontend API types planned
 - SQLite + Markdown persistence planned for v0 Memory capture
 - pi assistant integration planned after the first REST/UI slice
 

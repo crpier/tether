@@ -49,9 +49,9 @@ This slice should prioritize boring usefulness over generalized artifact archite
 31. As the Tether user, I want the first implementation to be local-only, so that private personal context is not sent elsewhere.
 32. As a future pi assistant integration, I want Memory operations to have clean application service boundaries, so that tools can call the same behavior as the REST API later.
 33. As a future semantic search implementation, I want Recall Search behind an internal port, so that lexical v0 can evolve without changing product language.
-34. As a developer learning Effect, I want the feature built with Effect services and layers, so that the first slice teaches the intended backend style.
+34. As a developer building Tether in modern Python, I want the first slice to establish lightweight, explicit backend structure, so that the app remains pleasant to evolve without framework-heavy architecture.
 35. As a developer maintaining Tether, I want persistence behavior isolated behind deep modules, so that SQLite and Markdown details are testable without coupling them to HTTP handlers.
-36. As a developer maintaining Tether, I want shared schemas for API-facing Memory shapes, so that server and web agree on data contracts.
+36. As a developer maintaining Tether, I want Python-owned API schemas to generate TypeScript API types, so that server and web agree on data contracts without a hand-maintained shared schema package.
 37. As a developer maintaining Tether, I want the Solid UI to call normal REST endpoints, so that the browser interface stays simple before assistant tools are added.
 38. As a developer maintaining Tether, I want validation on create and update inputs, so that invalid Memory records are rejected before persistence.
 39. As a developer maintaining Tether, I want startup to initialize required local directories and database schema, so that first run is smooth.
@@ -59,10 +59,15 @@ This slice should prioritize boring usefulness over generalized artifact archite
 
 ## Implementation Decisions
 
-- Build this as the first end-to-end feature slice in the existing pnpm monorepo.
-- Use the current stack direction: TypeScript, Effect, Effect HTTP, SolidJS, SQLite, and Markdown.
+- Build this as the first end-to-end feature slice in the existing monorepo.
+- Use the revised stack direction: Python backend, Starlette ASGI, Pydantic API DTOs, a small internal typed route/OpenAPI layer, SolidJS/TypeScript frontend, SQLite, and Markdown.
+- `apps/server` is a Python project managed with `uv`; `apps/web` remains the SolidJS/TypeScript frontend.
+- Use root `just` commands as the project quality gate: `just check` for formatting/lint/type/API/frontend checks and `just test-cov` for backend tests with coverage.
+- Generate frontend API types from the Python backend OpenAPI contract into `apps/web/src/api/generated.ts`; do not hand-maintain shared server/web DTOs.
 - Keep domain and application logic in the server app for now. Extract shared libraries only when boundaries prove themselves.
 - Use REST endpoints first for the Solid UI. Tool-envelope and pi custom tool endpoints are deferred but should be easy to wrap around the same application services later.
+- Keep the Starlette/Pydantic route layer intentionally small for v0: JSON body validation, query/path parameter handling needed by Memory endpoints, response serialization, stable operation IDs, and OpenAPI 3.1 generation suitable for `openapi-typescript`.
+- Use Pydantic at API boundaries. Internal domain models may use Pydantic, dataclasses, or other typed structures as the design demands.
 - Treat a Memory as durable, inspectable personal context suitable for future recall.
 - Use split persistence authority:
   - Markdown owns authored Memory content.
@@ -82,8 +87,8 @@ This slice should prioritize boring usefulness over generalized artifact archite
 - List and search behavior should exclude Deleted Memories.
 - The UI should be capture-first: create form first, then search/recent results.
 - The UI should support creating, listing, searching, viewing, editing, and deleting Memories.
-- Startup should initialize the SQLite schema and local vault directories.
-- Errors should be represented explicitly enough that HTTP handlers can return meaningful responses without leaking implementation details.
+- Startup should initialize the SQLite schema and local vault directories through Starlette lifespan/application setup.
+- Errors should be represented explicitly enough that HTTP handlers can return meaningful responses without leaking implementation details. Backend services should raise named domain exceptions rather than framework HTTP exceptions.
 
 ## Testing Decisions
 
@@ -97,6 +102,7 @@ This slice should prioritize boring usefulness over generalized artifact archite
 - Prefer temporary directories/databases in tests so they can exercise real filesystem and SQLite behavior safely.
 - Add HTTP-level tests once the application service behavior is stable.
 - UI tests are optional for v0; manual browser testing is acceptable until the interaction design settles.
+- `just check` and `just test-cov` should pass for completed implementation issues. Coverage should target 100% for backend application code with explicit exclusions for generated code, framework startup glue, `if __name__ == "__main__"`, and justified unreachable defensive branches.
 
 ## Out of Scope
 
@@ -118,3 +124,4 @@ This slice should prioritize boring usefulness over generalized artifact archite
 This feature should remain intentionally small but real. The goal is to create something useful enough to play with while establishing Tether's core feel: Capture personal context now, keep it inspectable, and make it available for future Recall Search.
 
 The north-star scope remains in `TETHER_REWRITE_BRIEF.md`; this PRD covers only the first v0 Memory slice.
+

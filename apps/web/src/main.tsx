@@ -1,7 +1,10 @@
 import { createResource, createSignal, For, Show } from "solid-js"
 import { render } from "solid-js/web"
-import type { MemoryListResponse } from "@tether/shared"
 import "./styles.css"
+
+type MemoryListResponse = {
+  memories: Array<{ id: string; title: string }>
+}
 
 const fetchMemories = async (): Promise<MemoryListResponse> => {
   const response = await fetch("/api/memories")
@@ -19,7 +22,7 @@ function App() {
         <p class="eyebrow">Tether v0</p>
         <h1>Capture and recall personal context.</h1>
         <p>
-          First slice scaffold: Effect HTTP backend, Solid frontend, and shared Memory schemas.
+          First slice scaffold: Python backend direction, Solid frontend, and generated API types.
         </p>
       </section>
 
@@ -27,7 +30,7 @@ function App() {
         <h2>Create Memory</h2>
         <label>
           Title
-          <input placeholder="Effect HTTP for Tether" />
+          <input placeholder="Python API for Tether" />
         </label>
         <label>
           Body

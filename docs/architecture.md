@@ -4,13 +4,12 @@ These notes describe the current implementation direction. They are intentionall
 
 ## Repo Shape
 
-Tether is a pnpm monorepo:
+Tether is a monorepo with separate backend and frontend projects:
 
-- `apps/server` — Effect backend and HTTP API.
-- `apps/web` — SolidJS frontend.
-- `packages/shared` — shared schemas and API-facing types.
+- `apps/server` — Python backend and HTTP API, managed with `uv`.
+- `apps/web` — SolidJS/TypeScript frontend, managed with `pnpm`.
 
-Domain logic should start in `apps/server` while the model is still young. Extract packages only when repetition proves the boundary.
+Domain logic should start in `apps/server` while the model is still young. Extract packages only when repetition proves the boundary. API-facing TypeScript types should be generated from the Python backend's OpenAPI contract rather than hand-maintained in a shared package.
 
 ## v0 Feature Slice
 
