@@ -1,0 +1,18 @@
+[project]
+name = "tether"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "snekql",
+]
+
+[dependency-groups]
+dev = [
+    "snektest",
+]
+
+[tool.uv.sources]
+snektest = { path = "../../../snektest", editable = true }
+snekql = { path = "../../../snekql", editable = true }
