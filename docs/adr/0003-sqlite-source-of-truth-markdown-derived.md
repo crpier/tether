@@ -1,0 +1,7 @@
+# SQLite is the single source of truth; markdown is a derived read-only projection
+
+All of Tether's knowledge — loose and tethered Memories, Bucket items, Scheduled triggers, caches, provenance, and the retrieval index — lives in **SQLite**, which is the single source of truth. Markdown files (the human-facing, Obsidian-compatible knowledge base) are **generated from SQLite** on demand or on a schedule. They are **read-only**: the app/agent is the sole writer, and editing a markdown file outside Tether does **not** flow back into SQLite.
+
+We chose this because a single source of truth removes the "two stores to index and reconcile" problem and gives reversible writes via transactions almost for free. The tempting alternative — letting external markdown edits sync back via a file watcher and hashes — was rejected: it cannot escape lossy markdown→schema round-tripping or concurrent-writer data loss, so half-supporting it is worse than not supporting it. Crucially, the substrate decision turned out to be a scope decision, not a deferrable technical one: the *direction* of markdown (read-only vs. editable) had to be settled now because it determines whether the architecture is clean or fighting itself.
+
+Most of the desired markdown workflows — browsing, copy-paste, walking files in an editor, exposing a webpage — are read-only and fully satisfied by this. True external editing is deferred to a later, separate project (a mediated write-gateway plus a real import/parse pipeline), not retrofitted as a sync afterthought.

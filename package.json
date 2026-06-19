@@ -1,0 +1,8 @@
+{
+  "name": "tether",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm -C apps/web dev",
+    "build": "pnpm -C apps/web build"
+  }
+}

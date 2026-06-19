@@ -1,0 +1,14 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+# node
+node_modules/
+apps/web/dist/
+apps/agent/dist/
+# state (single shared volume in prod; local dev db)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+data/
