@@ -13,7 +13,15 @@ Tether is a monorepo:
 - `apps/web` — SolidJS/TypeScript frontend project, managed by the root `pnpm` workspace.
 - repo root — orchestration/config and workspace-level commands.
 
-The current implementation direction lives in `docs/architecture.md`.
+## Documentation
+
+Here's how to find docs:
+
+- `CONTEXT.md` — canonical project language/domain terms. Use these names in code and docs.
+- `docs/product/overview.md` — what Tether is and who it's for.
+- `docs/architecture.md` — current backend implementation direction.
+- `docs/adr/` — settled decisions and their rationale (one file per decision).
+- `README.md` — Repo entry point for human readers.
 
 ## Editor guidance
 
@@ -30,3 +38,13 @@ Open the editor at the repo root, but configure language tooling per app:
 - When starting a new unit of work, stash any uncommitted changes, run `git fetch`, then create a new branch from the latest `origin/main`.
 - All work should be done in a branch, and when a unit of work is complete, open a PR against `main`. Only merge the PR if explicitly told to do so.
 - When doing feature/bug-fixing/refactoring or any code-related work, use TDD.
+- When opening a PR, ensure the following checklist is met:
+  - All documentation reflects the code.
+
+## Testing and validation
+
+### Python backend
+
+- Use `snektest` for tests.
+  - For `snektest` usage documentation, read its installed distribution metadata with this Python code: `importlib.metadata.distribution("snektest").read_text("METADATA")`; the `METADATA` file embeds `snektest`'s README.
+- Use `pyright` for static typing validation.
