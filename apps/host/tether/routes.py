@@ -22,10 +22,10 @@ from __future__ import annotations
 import functools
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import cast
+from typing import Annotated, cast
 from uuid import UUID
 
-from pydantic import UUID7, BaseModel, PositiveInt
+from pydantic import UUID7, BaseModel, PositiveInt, StringConstraints
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -40,25 +40,30 @@ from tether.memories import (
 )
 from tether.openapi import EndpointRoute, endpoint
 
+type MemoryContent = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
+
 
 class CaptureRequest(BaseModel):
     """Body for capturing a loose Memory.
 
-    >>> CaptureRequest(text="I prefer aisle seats").text
+    >>> CaptureRequest(content="I prefer aisle seats").content
     'I prefer aisle seats'
     """
 
-    text: str
+    content: MemoryContent
 
 
 class EditRequest(BaseModel):
-    """Body for editing a Memory's text at an observed `version`.
+    """Body for editing a Memory's content at an observed `version`.
 
-    >>> EditRequest(text="I prefer window seats", version=1).version
+    >>> EditRequest(content="I prefer window seats", version=1).version
     1
     """
 
-    text: str
+    content: MemoryContent
     version: PositiveInt
 
 
@@ -210,7 +215,7 @@ def _translate_domain_errors(
 @endpoint(request_body=CaptureRequest, response=MemoryRead, status=201)
 async def capture_memory(request: Request, body: CaptureRequest) -> Response:
     """Capture a loose Memory."""
-    memory = await request.app.state.memory_service.capture(body.text)
+    memory = await request.app.state.memory_service.capture(body.content)
     return _read_response(memory, status_code=201)
 
 
@@ -234,10 +239,10 @@ async def search_memories(request: Request, query: SearchQuery) -> Response:
 @endpoint(request_body=EditRequest, response=MemoryRead)
 @_translate_domain_errors
 async def edit_memory(request: Request, body: EditRequest) -> Response:
-    """Edit a Memory's `text`; a human edit keeps trust."""
+    """Edit a Memory's `content`; a human edit keeps trust."""
     memory = await request.app.state.memory_service.edit_content(
         _memory_reference(_path_memory_id(request), body.version),
-        body.text,
+        body.content,
     )
     return _read_response(memory)
 

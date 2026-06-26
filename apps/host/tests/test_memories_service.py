@@ -7,9 +7,9 @@ capability and assert on observable behavior, never on internal structure.
 The service under test is `tether.memories.MemoryService`, constructed over a
 snekql `Database`. Each method owns its own transaction:
 
-    capture(text)                    -> Memory
+    capture(content)                 -> Memory
     tether(memory)                   -> Memory
-    edit_content(memory, text)       -> Memory
+    edit_content(memory, content)    -> Memory
     delete(memory)                   -> Memory
     search(query)                    -> list[Memory]
 
@@ -38,6 +38,7 @@ from snektest import (
 )
 
 from tether.memories import (
+    EmptyMemoryContentError,
     EmptySearchQueryError,
     KnowledgeBaseService,
     Memory,
@@ -91,6 +92,22 @@ async def memory_service() -> AsyncFixture[MemoryService]:
     await db.close()
 
 
+class FailingOnceKnowledgeBaseService(KnowledgeBaseService):
+    """A KB adapter that drops the first projection write."""
+
+    def __init__(self, kb_root: Path) -> None:
+        super().__init__(kb_root=kb_root)
+        self.failures_remaining: int = 1
+
+    async def set_projection(self, memory: Memory[Fetched]) -> None:
+        """Fail the first write, then behave like the real KB service."""
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            message = "projection target unavailable"
+            raise OSError(message)
+        await super().set_projection(memory)
+
+
 @test()
 async def capture_lands_loose() -> None:
     """Capture always lands loose — never directly tethered."""
@@ -109,6 +126,25 @@ async def capture_records_manual_provenance() -> None:
     memory = await service.capture("I prefer aisle seats on flights")
 
     assert_eq(memory.provenance, {"kind": "manual"})
+
+
+@test()
+async def capture_trims_content() -> None:
+    """Capture stores the Memory content without surrounding whitespace."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture("  I prefer aisle seats on flights  ")
+
+    assert_eq(memory.content, "I prefer aisle seats on flights")
+
+
+@test()
+async def capture_rejects_blank_content() -> None:
+    """Capture requires content after whitespace is trimmed."""
+    service = await load_fixture(memory_service())
+
+    with assert_raises(EmptyMemoryContentError):
+        _ = await service.capture("   ")
 
 
 @test()
@@ -524,13 +560,34 @@ async def editing_a_deleted_memory_with_current_version_preserves_content() -> N
 
 @test()
 async def editing_a_loose_memory_changes_content() -> None:
-    """a human edit of loose Memory changes its text."""
+    """a human edit of loose Memory changes its content."""
     service = await load_fixture(memory_service())
     memory = await service.capture("I think I am allergic to penicillin")
 
     edited = await service.edit_content(memory, "I am allergic to penicillin")
 
     assert_eq(edited.content, "I am allergic to penicillin")
+
+
+@test()
+async def editing_a_memory_trims_content() -> None:
+    """A human edit stores content without surrounding whitespace."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("I live in Berlin")
+
+    edited = await service.edit_content(memory, "  I live in Munich  ")
+
+    assert_eq(edited.content, "I live in Munich")
+
+
+@test()
+async def editing_a_memory_rejects_blank_content() -> None:
+    """A human edit requires content after whitespace is trimmed."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("I live in Berlin")
+
+    with assert_raises(EmptyMemoryContentError):
+        _ = await service.edit_content(memory, "   ")
 
 
 @test()
@@ -762,6 +819,45 @@ async def the_kb_directory_mirrors_the_tethered_set() -> None:
 
     files = {p.name for p in service.kb_service.kb_root.iterdir()}
     assert_eq(files, {f"{first.id}.md", f"{second.id}.md"})
+
+
+@test()
+async def projection_failure_does_not_roll_back_tether() -> None:
+    """A post-commit projection failure leaves SQLite as the source of truth."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
+    async with TemporaryDirectory() as kb_root:
+        service = MemoryService(
+            database=db,
+            kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+        )
+        memory = await service.capture("I prefer aisle seats")
+
+        tethered = await service.tether(memory)
+
+        found = [hit.id for hit in await service.search("aisle")]
+        assert_in(tethered.id, found)
+        assert_true(not projection_path(service, tethered).exists())
+    await db.close()
+
+
+@test()
+async def regenerating_the_kb_recovers_a_missed_projection() -> None:
+    """The next explicit regeneration projects tethered Memories from SQLite."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
+    async with TemporaryDirectory() as kb_root:
+        service = MemoryService(
+            database=db,
+            kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+        )
+        memory = await service.capture("I prefer aisle seats")
+        tethered = await service.tether(memory)
+
+        await service.regenerate_knowledge_base()
+
+        assert_true(projection_path(service, tethered).exists())
+    await db.close()
 
 
 # --- Filter-only Search: the loose review queue and tethered browse ---

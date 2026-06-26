@@ -13,6 +13,7 @@ Searches only tethered, non-deleted Memories.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import uuid7
@@ -34,6 +35,8 @@ from snekql.sqlite import (
     update,
 )
 from yaml import safe_dump, safe_load
+
+logger = logging.getLogger(__name__)
 
 type MemoryState = Literal["loose", "tethered"]
 """A Memory's trust state. `deleted` is an orthogonal soft-delete marker, not a state."""
@@ -63,8 +66,25 @@ class EmptySearchQueryError(Exception):
     """Raised when a keyword Search is asked to run on a blank query."""
 
 
+class EmptyMemoryContentError(Exception):
+    """Raised when Memory content is blank after trimming whitespace."""
+
+
 class ProjectionStructureError(Exception):
     """Raised when a projection file is not structured as expected."""
+
+
+def _normalise_content(content: str) -> str:
+    """Trim captured or edited content while preserving required content.
+
+    Memory content is the amorphous fact itself, so surrounding whitespace is
+    capture noise. An empty fact after trimming is not a Memory.
+    """
+    normalised_content = content.strip()
+    if not normalised_content:
+        msg = "Memory content must not be blank"
+        raise EmptyMemoryContentError(msg)
+    return normalised_content
 
 
 class Memory[S = Pending](Model[S, "Memory[Fetched]"]):
@@ -143,7 +163,7 @@ class KnowledgeBaseService:
         return Path(self.kb_root / f"{memory_id}.md")
 
     async def set_projection(self, memory: Memory[Fetched]) -> None:
-        """Write a Memory's text to its projection file.
+        """Write a Memory's content to its projection file.
         Can both create and edit a Memory's projection file."""
         projection_path = self.projection_path(memory.id)
         async with NamedTemporaryFile(
@@ -174,11 +194,13 @@ class MemoryService:
         self.database: Database = database
         self.kb_service: KnowledgeBaseService = kb_service
 
-    async def capture(self, text: str) -> Memory[Fetched]:
-        """Capture a loose Memory from text.
+    async def capture(self, content: str) -> Memory[Fetched]:
+        """Capture a loose Memory from content.
         Always lands `loose` — there is no direct-to-tethered path."""
         async with self.database.transaction() as tx:
-            return await tx.execute(insert(Memory(content=text)).returning())
+            return await tx.execute(
+                insert(Memory(content=_normalise_content(content))).returning()
+            )
 
     async def search(
         self, query: str, limit: PositiveInt = 50
@@ -249,7 +271,7 @@ class MemoryService:
                 if fresh_memory.version != memory.version:
                     msg = f"Tried to update memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                     raise MemoryConflictError(msg)
-        await self.kb_service.set_projection(fresh_memory)
+        await self._try_set_projection(fresh_memory)
         return fresh_memory
 
     async def edit_content(
@@ -261,10 +283,11 @@ class MemoryService:
         tethered Memory stays tethered (its projection refreshes) and a loose one
         stays loose. Editing an absent or deleted Memory raises.
         """
+        normalised_content = _normalise_content(content)
         async with self.database.transaction() as tx:
             matched_rows = await tx.execute(
                 update(Memory)
-                .set(Memory.content.to(content))
+                .set(Memory.content.to(normalised_content))
                 .set(Memory.updated_at.to(CurrentTimestamp))
                 .set(Memory.version.to(memory.version + 1))
                 .where(Memory.id.eq(memory.id))
@@ -280,7 +303,7 @@ class MemoryService:
 
         # An invariant is that loose memories don't have projections
         if fresh_memory.tethered_at is not None:
-            await self.kb_service.set_projection(fresh_memory)
+            await self._try_set_projection(fresh_memory)
         return fresh_memory
 
     async def delete(self, memory: Memory[Fetched]) -> Memory[Fetched]:
@@ -310,8 +333,48 @@ class MemoryService:
                 msg = f"Memory {memory.id} is already deleted"
                 raise MemoryConflictError(msg)
 
-        await self.kb_service.remove_projection(memory.id)
+        await self._try_remove_projection(memory.id)
         return deleted_memory
+
+    async def regenerate_knowledge_base(self) -> None:
+        """Rebuild the Knowledge base projection from live SQLite state.
+
+        This is the recovery path for any post-commit projection write that
+        failed during a mutation: SQLite remains the source of truth, and the
+        markdown projection can be derived again.
+        """
+        async with self.database.transaction() as tx:
+            tethered_memories = await tx.fetch_all(
+                select(Memory).where(
+                    Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
+                )
+            )
+        expected_filenames = {f"{memory.id}.md" for memory in tethered_memories}
+        async for path in Path(self.kb_service.kb_root).iterdir():
+            if path.suffix == ".md" and path.name not in expected_filenames:
+                await path.unlink()
+        for memory in tethered_memories:
+            await self.kb_service.set_projection(memory)
+
+    async def _try_set_projection(self, memory: Memory[Fetched]) -> None:
+        """Log post-commit projection failures without hiding the DB write."""
+        try:
+            await self.kb_service.set_projection(memory)
+        except Exception:
+            logger.exception(
+                "failed to project memory",
+                extra={"memory_id": str(memory.id)},
+            )
+
+    async def _try_remove_projection(self, memory_id: UUID7) -> None:
+        """Log post-commit projection removal failures after soft-delete."""
+        try:
+            await self.kb_service.remove_projection(memory_id)
+        except Exception:
+            logger.exception(
+                "failed to remove memory projection",
+                extra={"memory_id": str(memory_id)},
+            )
 
     async def _fetch_active(self, tx: Transaction, memory_id: UUID7) -> Memory[Fetched]:
         """Fetch a non-deleted Memory by id or raise; the guard every mutation shares.
