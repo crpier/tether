@@ -16,6 +16,10 @@ install:
     uv sync
     pnpm -C apps/web install
 
+# start host, exercise a few requests, then print captured stdout logs
+validate-host-logs:
+    ./scripts/validate-host-logs.sh
+
 # host tests
 test:
     uv run snektest
