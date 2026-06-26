@@ -12,6 +12,7 @@ from snektest import assert_eq, assert_in, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
 from tether.server import create_app
+from tether.telemetry import TelemetrySettings
 
 
 def make_client(root: Path) -> TestClient:
@@ -20,6 +21,7 @@ def make_client(root: Path) -> TestClient:
         create_app(
             database_path=root / "tether.sqlite3",
             kb_root=root / ".tether",
+            telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
     )
 
@@ -115,11 +117,19 @@ def configured_database_path_persists_between_app_instances() -> None:
         database_path = root / "host.sqlite3"
         kb_root = root / ".tether"
         with TestClient(
-            create_app(database_path=database_path, kb_root=kb_root)
+            create_app(
+                database_path=database_path,
+                kb_root=kb_root,
+                telemetry_settings=TelemetrySettings(install_global_provider=False),
+            )
         ) as client:
             memory = capture(client, "I prefer aisle seats")
         with TestClient(
-            create_app(database_path=database_path, kb_root=kb_root)
+            create_app(
+                database_path=database_path,
+                kb_root=kb_root,
+                telemetry_settings=TelemetrySettings(install_global_provider=False),
+            )
         ) as client:
             response = client.get("/memories", params={"state": "loose"})
 

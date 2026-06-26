@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -119,6 +120,7 @@ def request_logs_include_trace_context() -> None:
                 kb_root=f"{directory}/kb",
                 telemetry_settings=TelemetrySettings(
                     exporter=TelemetryExporter.NONE,
+                    install_global_provider=False,
                 ),
             )
         ) as client:
@@ -133,6 +135,41 @@ def request_logs_include_trace_context() -> None:
     assert_eq(response.status_code, 200)
     assert_in("trace_id", logged)
     assert_in("span_id", logged)
+
+
+@test()
+def environment_app_factory_installs_global_tracer_provider() -> None:
+    """Environment startup installs OpenTelemetry for global API users."""
+    with TemporaryDirectory() as directory:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+from opentelemetry import trace
+from starlette.testclient import TestClient
+
+from tether.server import create_app_from_environment
+
+with TestClient(create_app_from_environment()):
+    with trace.get_tracer("probe").start_as_current_span("probe") as span:
+        if not span.get_span_context().is_valid:
+            raise SystemExit("global tracer provider did not create recording spans")
+""",
+            ],
+            capture_output=True,
+            check=False,
+            cwd=Path(__file__).parents[1],
+            env={
+                **os.environ,
+                "TETHER_DATABASE_PATH": f"{directory}/host.sqlite3",
+                "TETHER_KB_ROOT": f"{directory}/kb",
+            },
+            text=True,
+        )
+
+    assert_eq(completed.returncode, 0)
+    assert_eq(completed.stderr, "")
 
 
 @test()

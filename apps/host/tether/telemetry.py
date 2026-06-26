@@ -16,9 +16,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
+from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.trace import SpanKind, Status, StatusCode, Tracer
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -44,6 +45,7 @@ class TelemetrySettings:
 
     environment: str = "development"
     exporter: TelemetryExporter = TelemetryExporter.NONE
+    install_global_provider: bool = True
     service_name: str = "tether-host"
     service_version: str = "0.1.0"
 
@@ -64,7 +66,8 @@ def configure_telemetry(settings: TelemetrySettings) -> Telemetry:
     """Configure OpenTelemetry tracing without vendor-specific exporters.
 
     Tracing is always on; `TelemetryExporter.NONE` only skips wiring an exporter,
-    so spans are still created but go nowhere.
+    so spans are still created but go nowhere. Host startup installs the provider
+    globally so library code that uses OpenTelemetry directly joins the trace.
     """
     tracer_provider = TracerProvider(
         resource=Resource.create(
@@ -76,9 +79,9 @@ def configure_telemetry(settings: TelemetrySettings) -> Telemetry:
         )
     )
     if settings.exporter is TelemetryExporter.CONSOLE:
-        tracer_provider.add_span_processor(
-            SimpleSpanProcessor(ConsoleSpanExporter())
-        )
+        tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    if settings.install_global_provider:
+        trace.set_tracer_provider(tracer_provider)
     return Telemetry(
         tracer=tracer_provider.get_tracer("tether"),
         tracer_provider=tracer_provider,
