@@ -2,7 +2,6 @@
 
 import inspect
 import json
-import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +22,8 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
+from tether.logging import get_bound_request_logger
+
 RouteMethod = Literal["DELETE", "GET", "PATCH", "POST", "PUT"]
 SecurityScheme = Literal["human_session", "tool_secret"] | None
 ParamSource = Literal["body", "path", "query"]
@@ -38,8 +39,6 @@ _AUTO_ERROR_STATUSES = frozenset(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
     }
 )
-LOGGER = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True, slots=True)
 class _ParamMarker:
@@ -480,6 +479,13 @@ def _context_error_response(
     )
 
 
+def _log_unexpected_route_error(event: str, *, operation_id: str) -> None:
+    """Log route-contract failures through request-bound structured context."""
+    logger = get_bound_request_logger()
+    if logger is not None:
+        logger.exception(event, operation_id=operation_id)
+
+
 def _starlette_endpoint(
     compiled_route: _CompiledRoute,
 ) -> Callable[[Request], Awaitable[Response]]:
@@ -501,9 +507,9 @@ def _starlette_endpoint(
         except ApiError as e:
             return _context_error_response(e, compiled_route)
         except Exception:
-            LOGGER.exception(
+            _log_unexpected_route_error(
                 "Unexpected context factory failure.",
-                extra={"operation_id": compiled_route.operation_id},
+                operation_id=compiled_route.operation_id,
             )
             return _error_response(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -516,9 +522,9 @@ def _starlette_endpoint(
         except ApiError as e:
             return _handler_error_response(e, compiled_route)
         except Exception:
-            LOGGER.exception(
+            _log_unexpected_route_error(
                 "Unexpected route handler failure.",
-                extra={"operation_id": compiled_route.operation_id},
+                operation_id=compiled_route.operation_id,
             )
             return _error_response(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,

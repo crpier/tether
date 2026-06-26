@@ -5,15 +5,14 @@ is soft-deleted on reject. The load-bearing invariant is that the assistant
 Searches only tethered, non-deleted Memories.
 
 >>> service = MemoryService(database=database, kb_root=kb_root)
->>> memory = await service.capture("I prefer aisle seats")
->>> tethered = await service.tether(memory)
->>> [hit.content for hit in await service.search("aisle")]
+>>> memory = await service.capture("I prefer aisle seats", logger=logger)
+>>> tethered = await service.tether(memory, logger=logger)
+>>> [hit.content for hit in await service.search("aisle", logger=logger)]
 ['I prefer aisle seats']
 """
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import uuid7
@@ -36,7 +35,7 @@ from snekql.sqlite import (
 )
 from yaml import safe_dump, safe_load
 
-logger = logging.getLogger(__name__)
+from tether.logging import Logger
 
 type MemoryState = Literal["loose", "tethered"]
 """A Memory's trust state. `deleted` is an orthogonal soft-delete marker, not a state."""
@@ -72,6 +71,21 @@ class EmptyMemoryContentError(Exception):
 
 class ProjectionStructureError(Exception):
     """Raised when a projection file is not structured as expected."""
+
+
+def _debug(logger: Logger, event: str, **context: object) -> None:
+    """Emit a debug event using caller-supplied logging context."""
+    logger.debug(event, **context)
+
+
+def _info(logger: Logger, event: str, **context: object) -> None:
+    """Emit an info event using caller-supplied logging context."""
+    logger.info(event, **context)
+
+
+def _exception(logger: Logger, event: str, **context: object) -> None:
+    """Emit an exception event using caller-supplied logging context."""
+    logger.exception(event, **context)
 
 
 def _normalise_content(content: str) -> str:
@@ -194,16 +208,34 @@ class MemoryService:
         self.database: Database = database
         self.kb_service: KnowledgeBaseService = kb_service
 
-    async def capture(self, content: str) -> Memory[Fetched]:
+    async def capture(
+        self,
+        content: str,
+        *,
+        logger: Logger,
+    ) -> Memory[Fetched]:
         """Capture a loose Memory from content.
         Always lands `loose` — there is no direct-to-tethered path."""
+        normalised_content = _normalise_content(content)
+        _debug(logger, "Capturing Memory", content_length=len(normalised_content))
         async with self.database.transaction() as tx:
-            return await tx.execute(
-                insert(Memory(content=_normalise_content(content))).returning()
+            memory = await tx.execute(
+                insert(Memory(content=normalised_content)).returning()
             )
+        _info(
+            logger,
+            "Memory captured",
+            memory_id=str(memory.id),
+            version=memory.version,
+        )
+        return memory
 
     async def search(
-        self, query: str, limit: PositiveInt = 50
+        self,
+        query: str,
+        limit: PositiveInt = 50,
+        *,
+        logger: Logger,
     ) -> list[Memory[Fetched]]:
         """Keyword Search the assistant uses to pull context.
 
@@ -215,17 +247,31 @@ class MemoryService:
         if not terms:
             msg = "keyword Search requires a non-empty query"
             raise EmptySearchQueryError(msg)
+        _debug(logger, "Searching Memories", terms_count=len(terms), limit=limit)
         tethered_matches = select(Memory).where(
             Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
         )
         for term in terms:
             tethered_matches = tethered_matches.where(Memory.content.like(f"%{term}%"))
         async with self.database.transaction() as tx:
-            return await tx.fetch_all(
+            memories = await tx.fetch_all(
                 tethered_matches.order_by(Memory.created_at.desc()).limit(limit)
             )
+        _debug(
+            logger,
+            "Memory Search completed",
+            terms_count=len(terms),
+            limit=limit,
+            result_count=len(memories),
+        )
+        return memories
 
-    async def browse_by_state(self, state: MemoryState) -> list[Memory[Fetched]]:
+    async def browse_by_state(
+        self,
+        state: MemoryState,
+        *,
+        logger: Logger,
+    ) -> list[Memory[Fetched]]:
         """Filter-only Search backing the human review UI (`GET /memories?state=`).
 
         Human-facing, not assistant-facing: unlike keyword `search` it is not
@@ -233,6 +279,7 @@ class MemoryService:
         review queue. Soft-deleted Memories are always excluded. `loose` is
         newest-first (fresh captures reviewed while context is warm); `tethered`
         is ordered by `tethered_at` desc (most recently trusted first)."""
+        _debug(logger, "Browsing Memories by state", state=state)
         live = select(Memory).where(Memory.deleted_at.is_null())
         match state:
             case "loose":
@@ -244,15 +291,33 @@ class MemoryService:
                     Memory.tethered_at.desc()
                 )
         async with self.database.transaction() as tx:
-            return await tx.fetch_all(browse)
+            memories = await tx.fetch_all(browse)
+        _debug(
+            logger,
+            "Memory browse completed",
+            state=state,
+            result_count=len(memories),
+        )
+        return memories
 
     # TODO: re-evaluate whether passing primitives instead of objects around
     # was the right call
-    async def tether(self, memory: Memory[Fetched]) -> Memory[Fetched]:
+    async def tether(
+        self,
+        memory: Memory[Fetched],
+        *,
+        logger: Logger,
+    ) -> Memory[Fetched]:
         """Promote a loose Memory to tethered, making it Searchable.
 
         Tethering an already-tethered Memory conflicts. Tethering an absent or
         deleted Memory raises."""
+        _debug(
+            logger,
+            "Tethering Memory",
+            memory_id=str(memory.id),
+            observed_version=memory.version,
+        )
         async with self.database.transaction() as tx:
             matched_rows = await tx.execute(
                 update(Memory)
@@ -266,16 +331,43 @@ class MemoryService:
             fresh_memory = await self._fetch_active(tx, memory.id)
             if matched_rows == 0:
                 if fresh_memory.tethered_at is not None:
+                    _debug(
+                        logger,
+                        "Memory tether conflict",
+                        memory_id=str(memory.id),
+                        reason="already_tethered",
+                        observed_version=memory.version,
+                        current_version=fresh_memory.version,
+                    )
                     msg = f"Memory {memory.id} is already tethered"
                     raise MemoryConflictError(msg)
                 if fresh_memory.version != memory.version:
+                    _debug(
+                        logger,
+                        "Memory tether conflict",
+                        memory_id=str(memory.id),
+                        reason="stale_version",
+                        observed_version=memory.version,
+                        current_version=fresh_memory.version,
+                    )
                     msg = f"Tried to update memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                     raise MemoryConflictError(msg)
-        await self._try_set_projection(fresh_memory)
+        await self._try_set_projection(fresh_memory, logger=logger)
+        _info(
+            logger,
+            "Memory tethered",
+            memory_id=str(fresh_memory.id),
+            previous_version=memory.version,
+            version=fresh_memory.version,
+        )
         return fresh_memory
 
     async def edit_content(
-        self, memory: Memory[Fetched], content: str
+        self,
+        memory: Memory[Fetched],
+        content: str,
+        *,
+        logger: Logger,
     ) -> Memory[Fetched]:
         """Edit a Memory's content and bump `updated_at`.
 
@@ -284,6 +376,13 @@ class MemoryService:
         stays loose. Editing an absent or deleted Memory raises.
         """
         normalised_content = _normalise_content(content)
+        _debug(
+            logger,
+            "Editing Memory content",
+            memory_id=str(memory.id),
+            observed_version=memory.version,
+            content_length=len(normalised_content),
+        )
         async with self.database.transaction() as tx:
             matched_rows = await tx.execute(
                 update(Memory)
@@ -298,21 +397,48 @@ class MemoryService:
             if matched_rows == 0:
                 # Earlier, we fetched an active Memory. If we're here, it's
                 # because the version was stale.
+                _debug(
+                    logger,
+                    "Memory edit conflict",
+                    memory_id=str(memory.id),
+                    reason="stale_version",
+                    observed_version=memory.version,
+                    current_version=fresh_memory.version,
+                )
                 msg = f"Tried to edit memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                 raise MemoryConflictError(msg)
 
         # An invariant is that loose memories don't have projections
         if fresh_memory.tethered_at is not None:
-            await self._try_set_projection(fresh_memory)
+            await self._try_set_projection(fresh_memory, logger=logger)
+        _info(
+            logger,
+            "Memory content edited",
+            memory_id=str(fresh_memory.id),
+            previous_version=memory.version,
+            version=fresh_memory.version,
+            tethered=fresh_memory.tethered_at is not None,
+        )
         return fresh_memory
 
-    async def delete(self, memory: Memory[Fetched]) -> Memory[Fetched]:
+    async def delete(
+        self,
+        memory: Memory[Fetched],
+        *,
+        logger: Logger,
+    ) -> Memory[Fetched]:
         """Reject a Memory by soft-deleting it: stamp `deleted_at`, retain the row.
 
         All deletions are soft regardless of state, so a rejected Memory stays
         recoverable in the DB while dropping out of every queue, the assistant's
         Search, and the KB. Deleting an absent or already-deleted Memory raises.
         """
+        _debug(
+            logger,
+            "Deleting Memory",
+            memory_id=str(memory.id),
+            observed_version=memory.version,
+        )
         async with self.database.transaction() as tx:
             # TODO: reduce number of queries by using the return value of the `execute` method
             rows_matched = await tx.execute(
@@ -330,19 +456,40 @@ class MemoryService:
                 raise MemoryNotFoundError(memory.id)
 
             if rows_matched == 0:
+                _debug(
+                    logger,
+                    "Memory delete conflict",
+                    memory_id=str(memory.id),
+                    reason="already_deleted_or_stale_version",
+                    observed_version=memory.version,
+                    current_version=deleted_memory.version,
+                )
                 msg = f"Memory {memory.id} is already deleted"
                 raise MemoryConflictError(msg)
 
-        await self._try_remove_projection(memory.id)
+        await self._try_remove_projection(memory.id, logger=logger)
+        _info(
+            logger,
+            "Memory deleted",
+            memory_id=str(deleted_memory.id),
+            previous_version=memory.version,
+            version=deleted_memory.version,
+            was_tethered=deleted_memory.tethered_at is not None,
+        )
         return deleted_memory
 
-    async def regenerate_knowledge_base(self) -> None:
+    async def regenerate_knowledge_base(
+        self,
+        *,
+        logger: Logger,
+    ) -> None:
         """Rebuild the Knowledge base projection from live SQLite state.
 
         This is the recovery path for any post-commit projection write that
         failed during a mutation: SQLite remains the source of truth, and the
         markdown projection can be derived again.
         """
+        _debug(logger, "Regenerating Knowledge base")
         async with self.database.transaction() as tx:
             tethered_memories = await tx.fetch_all(
                 select(Memory).where(
@@ -350,30 +497,50 @@ class MemoryService:
                 )
             )
         expected_filenames = {f"{memory.id}.md" for memory in tethered_memories}
+        removed_count = 0
         async for path in Path(self.kb_service.kb_root).iterdir():
             if path.suffix == ".md" and path.name not in expected_filenames:
+                _debug(logger, "Removing stale projection", projection_path=str(path))
                 await path.unlink()
+                removed_count += 1
         for memory in tethered_memories:
+            _debug(logger, "Writing Knowledge base projection", memory_id=str(memory.id))
             await self.kb_service.set_projection(memory)
+        _info(
+            logger,
+            "Knowledge base regenerated",
+            projected_count=len(tethered_memories),
+            removed_count=removed_count,
+        )
 
-    async def _try_set_projection(self, memory: Memory[Fetched]) -> None:
+    async def _try_set_projection(
+        self,
+        memory: Memory[Fetched],
+        *,
+        logger: Logger,
+    ) -> None:
         """Log post-commit projection failures without hiding the DB write."""
+        _debug(logger, "Writing Memory projection", memory_id=str(memory.id))
         try:
             await self.kb_service.set_projection(memory)
         except Exception:
-            logger.exception(
-                "failed to project memory",
-                extra={"memory_id": str(memory.id)},
-            )
+            _exception(logger, "Failed to project Memory", memory_id=str(memory.id))
 
-    async def _try_remove_projection(self, memory_id: UUID7) -> None:
+    async def _try_remove_projection(
+        self,
+        memory_id: UUID7,
+        *,
+        logger: Logger,
+    ) -> None:
         """Log post-commit projection removal failures after soft-delete."""
+        _debug(logger, "Removing Memory projection", memory_id=str(memory_id))
         try:
             await self.kb_service.remove_projection(memory_id)
         except Exception:
-            logger.exception(
-                "failed to remove memory projection",
-                extra={"memory_id": str(memory_id)},
+            _exception(
+                logger,
+                "Failed to remove Memory projection",
+                memory_id=str(memory_id),
             )
 
     async def _fetch_active(self, tx: Transaction, memory_id: UUID7) -> Memory[Fetched]:

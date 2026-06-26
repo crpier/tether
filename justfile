@@ -5,7 +5,7 @@ default:
 
 # Python host (Starlette, auto-reload)
 host:
-    uv run uvicorn tether.server:app --reload
+    TETHER_RELOAD=true uv run python -m tether
 
 # SolidJS web (Vite dev server)
 web:
@@ -15,6 +15,10 @@ web:
 install:
     uv sync
     pnpm -C apps/web install
+
+# start host, exercise a few requests, then print captured stdout logs
+validate-host-logs:
+    ./scripts/validate-host-logs.sh
 
 # host tests
 test:
