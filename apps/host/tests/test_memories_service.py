@@ -36,6 +36,7 @@ from snektest import (
     load_fixture,
     test,
 )
+from structlog.testing import capture_logs
 
 from tether.memories import (
     EmptyMemoryContentError,
@@ -106,6 +107,47 @@ class FailingOnceKnowledgeBaseService(KnowledgeBaseService):
             message = "projection target unavailable"
             raise OSError(message)
         await super().set_projection(memory)
+
+
+@test()
+async def capture_logs_the_captured_memory_id_without_content() -> None:
+    """Capture emits a domain event without leaking Memory content."""
+    service = await load_fixture(memory_service())
+
+    with capture_logs() as logs:
+        memory = await service.capture("I prefer aisle seats on flights")
+
+    assert_in(
+        {
+            "event": "Memory captured",
+            "log_level": "info",
+            "memory_id": str(memory.id),
+            "version": 1,
+        },
+        logs,
+    )
+    assert_true(all(log.get("content") is None for log in logs))
+
+
+@test()
+async def search_logs_the_result_count() -> None:
+    """Keyword Search emits debug context about match count."""
+    service = await load_fixture(memory_service())
+    _ = await capture_tethered_memory(service, "needle matching memory")
+
+    with capture_logs() as logs:
+        _ = await service.search("needle")
+
+    assert_in(
+        {
+            "event": "Memory Search completed",
+            "log_level": "debug",
+            "limit": 50,
+            "result_count": 1,
+            "terms_count": 1,
+        },
+        logs,
+    )
 
 
 @test()
