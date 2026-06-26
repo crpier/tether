@@ -92,7 +92,6 @@ def host_settings_read_tether_environment_variables() -> None:
         TETHER_LOGGING_LEVEL="DEBUG",
         TETHER_PORT="9001",
         TETHER_RELOAD="true",
-        TETHER_TELEMETRY_ENABLED="true",
         TETHER_TELEMETRY_ENVIRONMENT="test",
         TETHER_TELEMETRY_EXPORTER="none",
         TETHER_TELEMETRY_SERVICE_NAME="tether-test",
@@ -105,14 +104,13 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.logging_level, "DEBUG")
     assert_eq(settings.port, 9001)
     assert_true(settings.reload)
-    assert_true(settings.telemetry.enabled)
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
 
 
 @test()
-def request_logs_include_trace_context_when_telemetry_is_enabled() -> None:
+def request_logs_include_trace_context() -> None:
     """Request logs include OpenTelemetry trace correlation fields."""
     with TemporaryDirectory() as directory, captured_logging() as stream:
         with TestClient(
@@ -120,7 +118,6 @@ def request_logs_include_trace_context_when_telemetry_is_enabled() -> None:
                 database_path=":memory:",
                 kb_root=f"{directory}/kb",
                 telemetry_settings=TelemetrySettings(
-                    enabled=True,
                     exporter=TelemetryExporter.NONE,
                 ),
             )

@@ -1,7 +1,11 @@
 """OpenTelemetry setup for the host process.
 
+Tracing is always configured: spans are emitted unconditionally. Whether they
+leave the process is the only knob — `TelemetryExporter.NONE` drops them, so an
+environment that does not want to capture traces simply exports nowhere.
+
 ```python
-settings = TelemetrySettings(enabled=True)
+settings = TelemetrySettings()
 telemetry = configure_telemetry(settings)
 ```
 """
@@ -12,7 +16,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
-from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
@@ -34,14 +37,13 @@ class TelemetrySettings:
     """Vendor-neutral OpenTelemetry settings.
 
     ```python
-    settings = TelemetrySettings(enabled=True, exporter=TelemetryExporter.NONE)
-    assert settings.enabled
+    settings = TelemetrySettings(exporter=TelemetryExporter.NONE)
+    assert settings.exporter is TelemetryExporter.NONE
     ```
     """
 
-    enabled: bool = False
     environment: str = "development"
-    exporter: TelemetryExporter = TelemetryExporter.CONSOLE
+    exporter: TelemetryExporter = TelemetryExporter.NONE
     service_name: str = "tether-host"
     service_version: str = "0.1.0"
 
@@ -51,19 +53,19 @@ class Telemetry:
     """Configured tracing resources for application wiring."""
 
     tracer: Tracer
-    tracer_provider: TracerProvider | None = None
+    tracer_provider: TracerProvider
 
     def shutdown(self) -> None:
         """Flush and close telemetry resources."""
-        if self.tracer_provider is not None:
-            self.tracer_provider.shutdown()
+        self.tracer_provider.shutdown()
 
 
 def configure_telemetry(settings: TelemetrySettings) -> Telemetry:
-    """Configure OpenTelemetry tracing without vendor-specific exporters."""
-    if not settings.enabled:
-        return Telemetry(tracer=trace.NoOpTracerProvider().get_tracer("tether"))
+    """Configure OpenTelemetry tracing without vendor-specific exporters.
 
+    Tracing is always on; `TelemetryExporter.NONE` only skips wiring an exporter,
+    so spans are still created but go nowhere.
+    """
     tracer_provider = TracerProvider(
         resource=Resource.create(
             {

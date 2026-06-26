@@ -18,7 +18,6 @@ from typing import Literal, TypedDict
 from uuid import uuid7
 
 from anyio import NamedTemporaryFile, Path
-from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel, DirectoryPath, Json, PositiveInt
 from snekql.sqlite import (
@@ -210,13 +209,11 @@ class MemoryService:
         self,
         database: Database,
         kb_service: KnowledgeBaseService,
-        tracer: Tracer | None = None,
+        tracer: Tracer,
     ) -> None:
         self.database: Database = database
         self.kb_service: KnowledgeBaseService = kb_service
-        self.tracer: Tracer = tracer or trace.NoOpTracerProvider().get_tracer(
-            "tether.memories"
-        )
+        self.tracer: Tracer = tracer
 
     async def capture(
         self,

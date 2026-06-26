@@ -47,16 +47,14 @@ class HostSettings(BaseSettings):
     logging_level: str = "INFO"
     port: int = 8000
     reload: bool = False
-    telemetry_enabled: bool = False
     telemetry_environment: str = "development"
-    telemetry_exporter: TelemetryExporter = TelemetryExporter.CONSOLE
+    telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
 
     @property
     def telemetry(self) -> TelemetrySettings:
         """OpenTelemetry settings derived from `TETHER_TELEMETRY_` variables."""
         return TelemetrySettings(
-            enabled=self.telemetry_enabled,
             environment=self.telemetry_environment,
             exporter=self.telemetry_exporter,
             service_name=self.telemetry_service_name,
@@ -138,8 +136,7 @@ def create_app(
     )
     if request_logging:
         app.add_middleware(ContextLoggerMiddleware)
-    if configured_telemetry.enabled:
-        app.add_middleware(TelemetryMiddleware)
+    app.add_middleware(TelemetryMiddleware)
     return app
 
 
