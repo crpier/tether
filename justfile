@@ -18,4 +18,8 @@ install:
 
 # host tests
 test:
-    uv run pytest
+    uv run snektest
+
+# host type check
+typecheck:
+    uv run pyright

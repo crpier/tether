@@ -15,6 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pyright>=1.1.410",
     "ruff>=0.15.18",
     "snekql",
@@ -24,6 +25,12 @@ dev = [
 [tool.uv.sources]
 snekql = { path = "../../../snekql", editable = true }
 snektest = { path = "../../../snektest", editable = true }
+
+[tool.pyright]
+# Keeps the context-type guard in tests/typing honest: if ApiRouter stops
+# enforcing the handler context type, the deliberate `pyright: ignore` there
+# becomes unnecessary and this rule fails the type check.
+reportUnnecessaryTypeIgnoreComment = "error"
 
 [build-system]
 requires = ["hatchling"]
