@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
@@ -30,7 +30,7 @@ class CapturedStdout(StringIO):
 
 
 @contextmanager
-def configured_environment(**updates: str) -> Iterator[None]:
+def configured_environment(**updates: str) -> Generator[None]:
     """Temporarily set environment variables for settings loading."""
     previous = {name: os.environ.get(name) for name in updates}
     os.environ.update(updates)
@@ -45,7 +45,7 @@ def configured_environment(**updates: str) -> Iterator[None]:
 
 
 @contextmanager
-def captured_logging() -> Iterator[CapturedStdout]:
+def captured_logging() -> Generator[CapturedStdout]:
     """Capture stdout and restore process-global logging state."""
     original_stdout = sys.stdout
     root_logger = logging.getLogger()
@@ -86,16 +86,19 @@ def captured_logging() -> Iterator[CapturedStdout]:
 @test()
 def host_settings_read_tether_environment_variables() -> None:
     """`TETHER_` variables configure the host process."""
-    with TemporaryDirectory() as directory, configured_environment(
-        TETHER_DATABASE_PATH=f"{directory}/host.sqlite3",
-        TETHER_HOST="127.0.0.2",
-        TETHER_KB_ROOT=f"{directory}/kb",
-        TETHER_LOGGING_LEVEL="DEBUG",
-        TETHER_PORT="9001",
-        TETHER_RELOAD="true",
-        TETHER_TELEMETRY_ENVIRONMENT="test",
-        TETHER_TELEMETRY_EXPORTER="none",
-        TETHER_TELEMETRY_SERVICE_NAME="tether-test",
+    with (
+        TemporaryDirectory() as directory,
+        configured_environment(
+            TETHER_DATABASE_PATH=f"{directory}/host.sqlite3",
+            TETHER_HOST="127.0.0.2",
+            TETHER_KB_ROOT=f"{directory}/kb",
+            TETHER_LOGGING_LEVEL="DEBUG",
+            TETHER_PORT="9001",
+            TETHER_RELOAD="true",
+            TETHER_TELEMETRY_ENVIRONMENT="test",
+            TETHER_TELEMETRY_EXPORTER="none",
+            TETHER_TELEMETRY_SERVICE_NAME="tether-test",
+        ),
     ):
         settings = HostSettings()
 
@@ -207,10 +210,14 @@ def serve_runs_uvicorn_against_the_environment_app_factory() -> None:
 @test()
 def environment_app_factory_wires_settings_and_request_logging() -> None:
     """The app factory reads env config and installs request logging."""
-    with TemporaryDirectory() as directory, captured_logging() as stream, configured_environment(
-        TETHER_DATABASE_PATH=f"{directory}/configured.sqlite3",
-        TETHER_KB_ROOT=f"{directory}/kb",
-        TETHER_LOGGING_LEVEL="INFO",
+    with (
+        TemporaryDirectory() as directory,
+        captured_logging() as stream,
+        configured_environment(
+            TETHER_DATABASE_PATH=f"{directory}/configured.sqlite3",
+            TETHER_KB_ROOT=f"{directory}/kb",
+            TETHER_LOGGING_LEVEL="INFO",
+        ),
     ):
         with TestClient(create_app_from_environment()) as client:
             response = client.get("/memories", params={"state": "loose"})

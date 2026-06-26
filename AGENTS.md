@@ -15,6 +15,16 @@
 - Use `pyright` for static typing validation.
 - Use `ruff` for linting and formatting checks.
 
+### Validation gate (keep `main` clean)
+
+- `main` must always pass every check. Never commit, push, open, or merge a PR until all of the checks below pass clean from the relevant package dir (e.g. `apps/host`):
+  - `uv run pyright` — 0 errors.
+  - `uv run ruff check .` — all checks passed.
+  - `uv run ruff format --check .` — no files would be reformatted.
+  - `uv run python -m snektest tests/` — all tests pass.
+- Run the gate against the full changed surface, not just files you touched — formatting/typing issues often surface in neighbours. If any check fails, fix it before proceeding rather than committing and following up.
+- Do not silence findings by relaxing the strict `pyright`/`ruff` config for production code. Fix the code. Config relaxations are only acceptable for genuine test-only false positives, scoped to `tests/` (ruff `per-file-ignores`, pyright `executionEnvironments`), and must be commented with the reason.
+
 ## Interacting with databases
 
 - Use `snekql` for interacting with the database.

@@ -11,6 +11,7 @@ from typing import (
     Concatenate,
     Literal,
     TypeGuard,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -39,6 +40,7 @@ _AUTO_ERROR_STATUSES = frozenset(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
     }
 )
+
 
 @dataclass(frozen=True, slots=True)
 class _ParamMarker:
@@ -224,8 +226,6 @@ def _sanitize_pydantic_errors(
     errors: list[dict[str, object]] = []
     for pydantic_error in validation_error.errors(include_input=False):
         loc = pydantic_error.get("loc", ())
-        if not isinstance(loc, tuple):
-            loc = (loc,)
         errors.append(
             {
                 "loc": [source, *([name] if name is not None else []), *loc],
@@ -262,6 +262,30 @@ def _error_response(
     )
 
 
+def _compile_request_parameter(
+    parameter: inspect.Parameter,
+    type_hints: Mapping[str, object],
+) -> tuple[ParamSource, _ValidatedParameter]:
+    if parameter.kind is not inspect.Parameter.KEYWORD_ONLY:
+        msg = "route request parameters must be keyword-only"
+        raise ApiContractError(msg)
+    source, inner_type = _extract_marker(type_hints[parameter.name])
+    if source == "body":
+        _validate_api_model_types(inner_type)
+    if source in ("path", "body") and parameter.default is not inspect.Parameter.empty:
+        msg = f"{source} params may not have defaults"
+        raise ApiContractError(msg)
+    validated_parameter = _ValidatedParameter(
+        adapter=TypeAdapter(inner_type),
+        annotation=inner_type,
+        default=parameter.default,
+        name=parameter.name,
+        required=parameter.default is inspect.Parameter.empty,
+        source=source,
+    )
+    return source, validated_parameter
+
+
 def _compile_route(handler: Handler, group: _RouteGroup) -> _CompiledRoute:
     contract = route_contract(handler)
     signature = inspect.signature(handler)
@@ -277,33 +301,14 @@ def _compile_route(handler: Handler, group: _RouteGroup) -> _CompiledRoute:
     path_parameters: list[_ValidatedParameter] = []
     query_parameters: list[_ValidatedParameter] = []
     body_parameters: list[_ValidatedParameter] = []
+    parameters_by_source = {
+        "path": path_parameters,
+        "query": query_parameters,
+        "body": body_parameters,
+    }
     for parameter in parameters[1:]:
-        if parameter.kind is not inspect.Parameter.KEYWORD_ONLY:
-            msg = "route request parameters must be keyword-only"
-            raise ApiContractError(msg)
-        source, inner_type = _extract_marker(type_hints[parameter.name])
-        if source == "body":
-            _validate_api_model_types(inner_type)
-        if source == "path" and parameter.default is not inspect.Parameter.empty:
-            msg = "path params may not have defaults"
-            raise ApiContractError(msg)
-        if source == "body" and parameter.default is not inspect.Parameter.empty:
-            msg = "body params may not have defaults"
-            raise ApiContractError(msg)
-        validated_parameter = _ValidatedParameter(
-            adapter=TypeAdapter(inner_type),
-            annotation=inner_type,
-            default=parameter.default,
-            name=parameter.name,
-            required=parameter.default is inspect.Parameter.empty,
-            source=source,
-        )
-        if source == "path":
-            path_parameters.append(validated_parameter)
-        elif source == "query":
-            query_parameters.append(validated_parameter)
-        else:
-            body_parameters.append(validated_parameter)
+        source, validated_parameter = _compile_request_parameter(parameter, type_hints)
+        parameters_by_source[source].append(validated_parameter)
 
     if len(body_parameters) > 1:
         msg = "routes may declare at most one body parameter"
@@ -360,15 +365,15 @@ def _validate_path_and_query(
     expected_query_names = {
         parameter.name for parameter in compiled_route.query_parameters
     }
-    for query_name in request.query_params:
-        if query_name not in expected_query_names:
-            errors.append(
-                {
-                    "loc": ["query", query_name],
-                    "msg": "Unknown query parameter.",
-                    "type": "unknown_query_parameter",
-                }
-            )
+    errors.extend(
+        {
+            "loc": ["query", query_name],
+            "msg": "Unknown query parameter.",
+            "type": "unknown_query_parameter",
+        }
+        for query_name in request.query_params
+        if query_name not in expected_query_names
+    )
 
     for parameter in compiled_route.query_parameters:
         query_values = request.query_params.getlist(parameter.name)
@@ -486,6 +491,62 @@ def _log_unexpected_route_error(event: str, *, operation_id: str) -> None:
         logger.exception(event, operation_id=operation_id)
 
 
+async def _apply_request_body(
+    request: Request,
+    compiled_route: _CompiledRoute,
+    validated_params: dict[str, object],
+) -> Response | None:
+    body_value, body_errors = await _validate_body(request, compiled_route)
+    if isinstance(body_errors, JSONResponse):
+        return body_errors
+    if body_errors:
+        return _validation_response(body_errors)
+    if compiled_route.body_parameter is not None:
+        validated_params[compiled_route.body_parameter.name] = body_value
+    return None
+
+
+async def _resolve_request_context(
+    request: Request,
+    compiled_route: _CompiledRoute,
+) -> tuple[object, Response | None]:
+    try:
+        return await _call_context_factory(request, compiled_route), None
+    except ApiError as e:
+        return None, _context_error_response(e, compiled_route)
+    except Exception:
+        _log_unexpected_route_error(
+            "Unexpected context factory failure.",
+            operation_id=compiled_route.operation_id,
+        )
+        return None, _error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="internal_error",
+            message="Internal server error.",
+        )
+
+
+async def _invoke_route_handler(
+    context: object,
+    validated_params: dict[str, object],
+    compiled_route: _CompiledRoute,
+) -> tuple[object, Response | None]:
+    try:
+        return await compiled_route.handler(context, **validated_params), None
+    except ApiError as e:
+        return None, _handler_error_response(e, compiled_route)
+    except Exception:
+        _log_unexpected_route_error(
+            "Unexpected route handler failure.",
+            operation_id=compiled_route.operation_id,
+        )
+        return None, _error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="internal_error",
+            message="Internal server error.",
+        )
+
+
 def _starlette_endpoint(
     compiled_route: _CompiledRoute,
 ) -> Callable[[Request], Awaitable[Response]]:
@@ -494,43 +555,21 @@ def _starlette_endpoint(
         if errors:
             return _validation_response(errors)
 
-        body_value, body_errors = await _validate_body(request, compiled_route)
-        if isinstance(body_errors, JSONResponse):
-            return body_errors
-        if body_errors:
-            return _validation_response(body_errors)
-        if compiled_route.body_parameter is not None:
-            validated_params[compiled_route.body_parameter.name] = body_value
+        body_error = await _apply_request_body(
+            request, compiled_route, validated_params
+        )
+        if body_error is not None:
+            return body_error
 
-        try:
-            context = await _call_context_factory(request, compiled_route)
-        except ApiError as e:
-            return _context_error_response(e, compiled_route)
-        except Exception:
-            _log_unexpected_route_error(
-                "Unexpected context factory failure.",
-                operation_id=compiled_route.operation_id,
-            )
-            return _error_response(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                code="internal_error",
-                message="Internal server error.",
-            )
+        context, context_error = await _resolve_request_context(request, compiled_route)
+        if context_error is not None:
+            return context_error
 
-        try:
-            handler_result = await compiled_route.handler(context, **validated_params)
-        except ApiError as e:
-            return _handler_error_response(e, compiled_route)
-        except Exception:
-            _log_unexpected_route_error(
-                "Unexpected route handler failure.",
-                operation_id=compiled_route.operation_id,
-            )
-            return _error_response(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                code="internal_error",
-                message="Internal server error.",
-            )
+        handler_result, handler_error = await _invoke_route_handler(
+            context, validated_params, compiled_route
+        )
+        if handler_error is not None:
+            return handler_error
 
         if compiled_route.response_adapter is None:
             return Response(status_code=compiled_route.contract.status_code)
@@ -565,8 +604,9 @@ def _swagger_html() -> str:
 
 def _rewrite_schema_refs(schema: object, component_names: Mapping[str, str]) -> object:
     if isinstance(schema, dict):
+        schema_dict = cast("dict[str, object]", schema)
         rewritten: dict[str, object] = {}
-        for key, item in schema.items():
+        for key, item in schema_dict.items():
             if key == "$ref" and isinstance(item, str):
                 rewritten[key] = item
                 for original_name, component_name in component_names.items():
@@ -577,7 +617,8 @@ def _rewrite_schema_refs(schema: object, component_names: Mapping[str, str]) -> 
                 rewritten[key] = _rewrite_schema_refs(item, component_names)
         return rewritten
     if isinstance(schema, list):
-        return [_rewrite_schema_refs(item, component_names) for item in schema]
+        schema_list = cast("list[object]", schema)
+        return [_rewrite_schema_refs(item, component_names) for item in schema_list]
     return schema
 
 
@@ -617,10 +658,11 @@ def _openapi_schema_for_annotation(
         mode=mode,
         ref_template="#/components/schemas/{model}",
     )
-    defs = schema.pop("$defs", {})
-    if not isinstance(defs, dict):
+    defs_raw = schema.pop("$defs", {})
+    if not isinstance(defs_raw, dict):
         msg = "Pydantic $defs must be an object"
         raise ApiContractError(msg)
+    defs = cast("dict[str, object]", defs_raw)
     component_names = {
         name: _schema_component_name(name, suffix, enum_names) for name in defs
     }
@@ -641,7 +683,7 @@ def _openapi_schema_for_annotation(
     if not isinstance(rewritten_schema, dict):
         msg = "OpenAPI schema must be an object"
         raise ApiContractError(msg)
-    return rewritten_schema
+    return cast("dict[str, object]", rewritten_schema)
 
 
 def _response_schema(
@@ -672,25 +714,24 @@ def _openapi_parameters(
     compiled_route: _CompiledRoute,
     components: dict[str, object],
 ) -> list[dict[str, object]]:
-    parameters: list[dict[str, object]] = []
-    for path_parameter in compiled_route.path_parameters:
-        parameters.append(
-            {
-                "in": "path",
-                "name": path_parameter.name,
-                "required": True,
-                "schema": _request_schema(path_parameter.annotation, components),
-            }
-        )
-    for query_parameter in compiled_route.query_parameters:
-        parameters.append(
-            {
-                "in": "query",
-                "name": query_parameter.name,
-                "required": query_parameter.required,
-                "schema": _request_schema(query_parameter.annotation, components),
-            }
-        )
+    parameters: list[dict[str, object]] = [
+        {
+            "in": "path",
+            "name": path_parameter.name,
+            "required": True,
+            "schema": _request_schema(path_parameter.annotation, components),
+        }
+        for path_parameter in compiled_route.path_parameters
+    ]
+    parameters.extend(
+        {
+            "in": "query",
+            "name": query_parameter.name,
+            "required": query_parameter.required,
+            "schema": _request_schema(query_parameter.annotation, components),
+        }
+        for query_parameter in compiled_route.query_parameters
+    )
     return parameters
 
 
@@ -716,7 +757,7 @@ def _openapi_responses(
             "description": "Expected error.",
         }
     for error_status in compiled_route.group.auth_errors:
-        responses.setdefault(
+        _ = responses.setdefault(
             str(error_status),
             {
                 "content": {"application/json": {"schema": error_schema}},
@@ -949,17 +990,14 @@ class ApiMount:
     ```
     """
 
-    def __init__(self, *, routes: Mapping[str, Sequence[ApiRouter]]) -> None:
+    def __init__(self, *, routes: Mapping[str, Sequence[ApiRouter[Any]]]) -> None:
         for surface_prefix in routes:
-            _validate_path_shape(
-                surface_prefix, label="mount prefix", allow_root=False
-            )
+            _validate_path_shape(surface_prefix, label="mount prefix", allow_root=False)
             if _extract_path_names(surface_prefix):
                 msg = "mount prefixes must not contain path params"
                 raise ApiContractError(msg)
-        self._routes: dict[str, tuple[ApiRouter, ...]] = {
-            surface_prefix: tuple(routers)
-            for surface_prefix, routers in routes.items()
+        self._routes: dict[str, tuple[ApiRouter[Any], ...]] = {
+            surface_prefix: tuple(routers) for surface_prefix, routers in routes.items()
         }
 
     def _compile(

@@ -111,8 +111,8 @@ def _lifespan(
 
 def create_app(
     *,
-    database_path: str | Path = Path(".tether/tether.sqlite3"),
-    kb_root: str | Path = Path(".tether"),
+    database_path: str | Path = ".tether/tether.sqlite3",
+    kb_root: str | Path = ".tether",
     logging_level: str = "INFO",
     request_logging: bool = True,
     telemetry_settings: TelemetrySettings | None = None,
