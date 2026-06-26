@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 
 import uvicorn
 from anyio import Path as AsyncPath
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
@@ -29,6 +31,7 @@ from tether.telemetry import (
     TelemetrySettings,
     configure_telemetry,
 )
+from tether.tools import SessionRegistry, internal_tool_routes
 
 
 class HostSettings(BaseSettings):
@@ -50,6 +53,7 @@ class HostSettings(BaseSettings):
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
+    tool_secret: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
 
     @property
     def telemetry(self) -> TelemetrySettings:
@@ -114,8 +118,8 @@ def create_app(
     database_path: str | Path = ".tether/tether.sqlite3",
     kb_root: str | Path = ".tether",
     logging_level: str = "INFO",
-    request_logging: bool = True,
     telemetry_settings: TelemetrySettings | None = None,
+    tool_secret: str | None = None,
 ) -> Starlette:
     """Construct the Starlette application with Memory routes and lifespan wiring.
 
@@ -126,7 +130,7 @@ def create_app(
     docs = openapi_routes(routes, title="Tether", version="0.1.0")
     configured_telemetry = telemetry_settings or TelemetrySettings()
     app = Starlette(
-        routes=[*routes, *docs],
+        routes=[*routes, *internal_tool_routes(), *docs],
         lifespan=_lifespan(
             database_path=database_path,
             kb_root=kb_root,
@@ -134,8 +138,11 @@ def create_app(
             telemetry_settings=configured_telemetry,
         ),
     )
-    if request_logging:
-        app.add_middleware(ContextLoggerMiddleware)
+    app.state.session_registry = SessionRegistry()
+    app.state.tool_secret = (
+        tool_secret if tool_secret is not None else secrets.token_urlsafe(32)
+    )
+    app.add_middleware(ContextLoggerMiddleware)
     app.add_middleware(TelemetryMiddleware)
     return app
 
@@ -152,8 +159,8 @@ def create_app_from_environment() -> Starlette:
         database_path=settings.database_path,
         kb_root=settings.kb_root,
         logging_level=settings.logging_level,
-        request_logging=True,
         telemetry_settings=settings.telemetry,
+        tool_secret=settings.tool_secret,
     )
 
 
