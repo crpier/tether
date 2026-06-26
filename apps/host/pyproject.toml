@@ -5,7 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "aiosqlite>=0.22.1",
+    "anyio>=4.14.0",
+    "httpx2>=2.5.0",
     "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
     "starlette>=1.3.1",
     "uvicorn>=0.49.0",
 ]
@@ -23,12 +27,164 @@ dev = [
 snekql = { path = "../../../snekql", editable = true }
 snektest = { path = "../../../snektest", editable = true }
 
-[tool.pyright]
-# Keeps the context-type guard in tests/typing honest: if ApiRouter stops
-# enforcing the handler context type, the deliberate `pyright: ignore` there
-# becomes unnecessary and this rule fails the type check.
-reportUnnecessaryTypeIgnoreComment = "error"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff.lint.pyflakes]
+allowed-unused-imports = [
+  "snekql.sqlite.Fetched",
+]
+
+[tool.ruff.lint]
+preview = false
+select = [ "A", "ANN", "ARG", "ASYNC", "B", "BLE", "C4", "C90", "COM", "DTZ", "E", "EM", "ERA", "EXE", "F", "FAST", "FBT", "FURB", "G", "I", "INP", "ISC", "LOG", "N", "PERF", "PGH", "PIE", "PL", "PLE", "PLR", "PLW", "PTH", "PYI", "Q", "RET", "RSE", "RUF", "S", "SIM", "SLF", "SLOT", "T10", "T20", "TC", "TID", "TRY", "UP", "W" ]
+extend-select = [
+  "DOC", # For docstrings. Requires "preview" to be enabled.
+  # Select only some of the `TD` rules.
+  "TD004",   # Check for colon after "TODO" keyword.
+  "TD005",   # Check for description.
+  "TD006",   # Check for proper capitalization.
+  "TD007",   # Check for missing space after colon.
+]
+ignore = [
+  "ANN401",  # Allow the use of `typing.Any`.
+  "BLE001",  # Allow using blind except (e.g. `except Exception`).
+  "COM812",  # Don't require trailing commas. Ignored because it may interfere with formatting.
+  "DOC201",  # Don't make me document return values.
+  "E501",    # Allow long lines. Useful mostly for writing log and error messages: having them in a single line makes it easier to search for the message. Note that the formatter will still try to shorten line length whenever possible.
+  "PLC1901", # Allow comparing with empty strings. This is needed when the variable could be another falsy value, like `None`.
+  "PLW3201", # Let me create dunder methods
+  "PTH110",  # Allow using `os.path.exists`. Removed because Path.exists is 4 times slower.
+  "S311",    # Allow pseudo-random generators.
+  "T201",    # Allow `print` statements. Useful mostly for debugging.
+  "TC001",   # Don't suggest putting imports in `TYPE_CHECKING` blocks. Mostly makes sense for Python>=3.11.
+  "TC002",   # Don't suggest putting third party imports in `TYPE_CHECKING` blocks. Mostly makes sense for Python>=3.11.
+  "TC003",   # Don't suggest putting stdlib imports in `TYPE_CHECKING` blocks. Mostly makes sense for Python>=3.11.
+  "S101",    # Allow use of `assert`.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "FBT003",  # Allow boolean positional values in function calls. This is useful for assert_* function.
+  "N802",    # Don't force function names to be snake_case. Useful e.g. when writing tests for classes.
+  "N999",    # Don't force module names to be snake_case. Useful e.g. when writing tests for classes.
+  "PLR2004", # Allow magic numbers.
+  "RUF029",  # Allow async functions without async features.
+  "S101",    # Allow use of assert.
+  "S105",    # Allow hardcoded password strings.
+  "S106",    # Allow hardcoded password strings.
+  "S107",    # Allow hardcoded password strings.
+  "S404",    # Allow subprocess in tests.
+  "S603",    # Allow subprocess in tests.
+  "S607",    # Allow subprocess in tests.
+  "S608",    # Allow string building with SQL.
+  "SLF001",  # Allow private member access.
+  "T100",    # Allow breakpoints in tests (we have some tests that really check breakopints).
+]
+
+[tool.pyright]
+# We manually manage all settings, because we want most of them enabled/"error", which
+# would usually be done by setting `typeCheckingMode = "strict"`, but if we do that,
+# then we can't disable some of the errors.
+# https://github.com/microsoft/pyright/blob/main/docs/configuration.md#diagnostic-settings-defaults
+
+## This paragraph contains settings that are enabled/set to "error".
+analyzeUnannotatedFunctions = true
+disableBytesTypePromotions = true
+strictParameterNoneValue = true
+enableTypeIgnoreComments = true
+enableReachabilityAnalysis = true
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+deprecateTypingAliases = true
+enableExperimentalFeatures = true
+reportMissingTypeStubs = "error"
+reportMissingModuleSource = "error"
+reportInvalidTypeForm = "error"
+reportMissingImports = "error"
+reportUndefinedVariable = "error"
+reportAssertAlwaysTrue = "error"
+reportInvalidStringEscapeSequence = "error"
+reportInvalidTypeVarUse = "error"
+reportSelfClsParameterName = "error"
+reportUnsupportedDunderAll = "error"
+reportUnusedExpression = "error"
+reportWildcardImportFromLibrary = "error"
+reportAbstractUsage = "error"
+reportArgumentType = "error"
+reportAssertTypeFailure = "error"
+reportAssignmentType = "error"
+reportAttributeAccessIssue = "error"
+reportCallIssue = "error"
+reportGeneralTypeIssues = "error"
+reportInconsistentOverload = "error"
+reportIndexIssue = "error"
+reportInvalidTypeArguments = "error"
+reportNoOverloadImplementation = "error"
+reportOperatorIssue = "error"
+reportOptionalSubscript = "error"
+reportOptionalMemberAccess = "error"
+reportOptionalCall = "error"
+reportOptionalIterable = "error"
+reportOptionalContextManager = "error"
+reportOptionalOperand = "error"
+reportRedeclaration = "error"
+reportReturnType = "error"
+reportTypedDictNotRequiredAccess = "error"
+reportPrivateImportUsage = "error"
+reportUnboundVariable = "error"
+reportUnhashable = "error"
+reportUnusedCoroutine = "error"
+reportUnusedExcept = "error"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+reportConstantRedefinition = "error"
+reportDeprecated = "error"
+reportDuplicateImport = "error"
+reportIncompleteStub = "error"
+reportInconsistentConstructor = "error"
+reportInvalidStubStatement = "error"
+reportMatchNotExhaustive = "error"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+reportPrivateUsage = "error"
+reportTypeCommentUsage = "error"
+reportUnknownArgumentType = "error"
+reportUnknownLambdaType = "error"
+reportUnknownMemberType = "error"
+reportUnknownParameterType = "error"
+reportUnknownVariableType = "error"
+reportUnnecessaryCast = "error"
+reportUnnecessaryComparison = "error"
+reportUnnecessaryContains = "error"
+reportUnnecessaryIsInstance = "error"
+reportUnusedClass = "error"
+reportUnusedImport = "error"
+reportUnusedFunction = "error"
+reportUnusedVariable = "error"
+reportUntypedBaseClass = "error"
+reportUntypedClassDecorator = "error"
+reportUntypedFunctionDecorator = "error"
+reportUntypedNamedTuple = "error"
+reportCallInDefaultInitializer = "error"
+reportImplicitStringConcatenation = "error"
+reportImportCycles = "error"
+reportPropertyTypeMismatch = "error"
+reportUninitializedInstanceVariable = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedCallResult = "error"
+
+## This paragraph contains settings that are disabled/set to "off".
+# We almost always want subclasses to override parents with "incompatible" methods.
+# E.g. when subclassing stlib classes like `Thread`.
+reportIncompatibleVariableOverride = false
+# Most of the time, we don't want to call the parent's method, we want to 
+# change its behavior instead.
+reportMissingSuperCall = false
+# This is a bit too noisy, since it complains when overriding something like
+# ___str__ on a base class, which is not a problem in practice.
+reportImplicitOverride = false

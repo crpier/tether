@@ -13,11 +13,11 @@ The state of a Memory that has been captured but not yet tethered (by either pat
 _Avoid_: unreviewed, pending, draft
 
 **Tethered**:
-The state of a Memory that is trusted and part of the corpus the assistant retrieves from and reasons over; a loose one is not. A Memory reaches this state by one of two paths: **Review** (a human asserted it is true) or **Recall** (the human proved they learned it). ("Connection" between memories is not stored structure — it emerges from retrieval at the moment the assistant needs context.)
+The state of a Memory that is trusted and part of the corpus the assistant searches and reasons over; a loose one is not. A Memory reaches this state by one of two paths: **Review** (a human asserted it is true) or **Recall** (the human proved they learned it). ("Connection" between memories is not stored structure — it emerges from Search at the moment the assistant needs context.)
 _Avoid_: reviewed, confirmed, sediment
 
 **Review**:
-The human act of promoting a loose Memory to tethered — vetting it so it becomes trusted and retrievable. The provisional-to-trusted gate every Memory passes through.
+The human act of promoting a loose Memory to tethered — vetting it so it becomes trusted and searchable. The provisional-to-trusted gate every Memory passes through.
 _Avoid_: triage, approve, accept
 
 **Recall**:
@@ -33,8 +33,16 @@ A loose Memory currently progressing through Recall — distilled from a source 
 _Avoid_: flashcard deck, course, lesson
 
 **Knowledge base**:
-The body of tethered Memories, exposed as derived read-only markdown files (Obsidian-compatible). The trusted corpus the assistant retrieves from and reasons over. Its source of truth is SQLite; the markdown is a projection.
+The body of tethered Memories, exposed as derived read-only markdown files (Obsidian-compatible). The trusted corpus the assistant searches and reasons over. Its source of truth is SQLite; the markdown is a projection.
 _Avoid_: vault, notes, sediment, wiki
+
+**projection** (common noun, not a coined term):
+The single read-only markdown file a tethered Memory is rendered into. A loose Memory has none; rejecting a Memory removes its projection. The *set* of all projections **is** the Knowledge base — projection is the part, Knowledge base the whole. Its filename is the Memory's opaque id (`<id>.md`), never a content slug (ADR 0007).
+_Avoid_: note, page, file, entry
+
+**Search**:
+Reading Memories by query, by filters, or both, with relevance ranking. State-agnostic as a mechanism — the same operation lists the loose review queue and pulls tethered context — so the trust boundary is not in the word: when the *assistant* searches for context it searches only tethered Memories (ADR 0001), and a Search is recomputed every time, never cached (ADR 0006). The sole means by which Memories connect — there is no stored graph; relevance emerges at the moment context is needed.
+_Avoid_: retrieval, lookup, recall, fetch
 
 **Scheduled trigger**:
 A time-triggered action the human sets up: it fires once or on a recurrence (daily/weekly), and its action is either to deliver a fixed message or to run a prompt through the agent and deliver the result. The push half of the capture → resurface loop (a plain reminder is the fixed-message case).

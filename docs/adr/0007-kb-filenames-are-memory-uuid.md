@@ -1,0 +1,9 @@
+# Knowledge-base filenames are the Memory's UUIDv7, not a title slug
+
+Each tethered Memory projects to a markdown file whose **basename is the Memory's id** (a UUIDv7): `<id>.md`. The filename is an **opaque, stable identifier** — it is not derived from the Memory's content, and a human-readable title lives *inside* the file (frontmatter / H1), never in the filename.
+
+The tempting alternative is a content-derived slug (`aisle-seats.md`), which reads better in Obsidian and yields stable-looking wiki-links. It was rejected because Memory content is **editable** (`edit_content`) and **non-unique**: a slug would force a file rename on every content edit (churning the filesystem and breaking any link that pointed at the old name) and would collide whenever two Memories share text. The Memory id changes never and is unique by construction, so the projection has a fixed target for the life of the Memory — which is also what makes regeneration's temp-file-then-rename atomic and idempotent (architecture.md, "Markdown KB"). UUIDv7 additionally sorts time-ordered, so a raw directory listing is roughly capture-ordered for free.
+
+This is recorded because it is **hard to reverse and constrains every KB consumer**. Anything that walks the knowledge base — Obsidian, the REST "KB browse" surface, future export/import — must treat the basename as an opaque id and read the display title from the file's contents, *never* parse meaning out of the filename. Renaming the scheme later would invalidate every external link and bookmark, so the constraint is load-bearing from the first projection.
+
+It reinforces, rather than competes with, the surrounding decisions: ADR 0003 (markdown is a read-only projection of SQLite) means no one is hand-naming these files, and ADR 0001's soft-delete (a rejected Memory leaves the corpus) means the file is removed by id with no slug to reconcile.
