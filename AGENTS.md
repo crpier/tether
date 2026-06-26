@@ -22,6 +22,11 @@
   - `uv run ruff check .` — all checks passed.
   - `uv run ruff format --check .` — no files would be reformatted.
   - `uv run python -m snektest tests/` — all tests pass.
+  - `just codegen-check` — generated tool shims have no drift.
+  - `pnpm -C apps/agent typecheck` — 0 errors.
+  - `pnpm -C apps/agent lint` — all checks passed.
+  - `pnpm -C apps/agent format:check` — no files would be reformatted.
+  - `pnpm -C apps/agent test` — all tests pass.
 - Run the gate against the full changed surface, not just files you touched — formatting/typing issues often surface in neighbours. If any check fails, fix it before proceeding rather than committing and following up.
 - Do not silence findings by relaxing the strict `pyright`/`ruff` config for production code. Fix the code. Config relaxations are only acceptable for genuine test-only false positives, scoped to `tests/` (ruff `per-file-ignores`, pyright `executionEnvironments`), and must be commented with the reason.
 
