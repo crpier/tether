@@ -300,9 +300,9 @@ def context_logger_middleware_logs_completed_requests() -> None:
         return JSONResponse({"ok": True})
 
     with captured_logging(is_tty=False) as stream:
-        base_logger = configure_logging(force_tty=False)
         app = Starlette(routes=[Route("/ok", read)])
-        app.add_middleware(ContextLoggerMiddleware, base_logger=base_logger)
+        app.state.logger = configure_logging(force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get(
                 "/ok",
@@ -329,9 +329,9 @@ def context_logger_middleware_logs_and_reraises_failures() -> None:
         raise RuntimeError(error_message)
 
     with captured_logging(is_tty=False) as stream:
-        base_logger = configure_logging(force_tty=False)
         app = Starlette(routes=[Route("/fail", fail)])
-        app.add_middleware(ContextLoggerMiddleware, base_logger=base_logger)
+        app.state.logger = configure_logging(force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client, assert_raises(RuntimeError):
             client.get("/fail")
 
@@ -352,9 +352,9 @@ def bound_request_logger_is_cleared_after_request() -> None:
         return JSONResponse({"ok": True})
 
     with captured_logging(is_tty=False):
-        base_logger = configure_logging(force_tty=False)
         app = Starlette(routes=[Route("/ok", read)])
-        app.add_middleware(ContextLoggerMiddleware, base_logger=base_logger)
+        app.state.logger = configure_logging(force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/ok")
 

@@ -30,7 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.logging import Logger, get_bound_request_logger
+from tether.logging import Logger, get_request_logger
 from tether.memories import (
     EmptySearchQueryError,
     Fetched,
@@ -189,9 +189,9 @@ def _list_response(memories: list[Memory[Fetched]]) -> JSONResponse:
     )
 
 
-def _request_logger(request: Request) -> Logger | None:
-    """Return request logging context when middleware installed it."""
-    return cast("Logger | None", getattr(request.state, "logger", None)) or get_bound_request_logger()
+def _request_logger(request: Request) -> Logger:
+    """Return the request logging context installed by middleware."""
+    return get_request_logger(request)
 
 
 def _translate_domain_errors(

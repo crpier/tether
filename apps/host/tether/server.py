@@ -47,18 +47,15 @@ def _lifespan(
     *,
     database_path: str | Path,
     kb_root: str | Path,
-    logging_level: str | None,
+    logging_level: str,
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None, bool | None]]:
     """Create lifespan wiring for a configured SQLite DB and KB root."""
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncGenerator[None]:
         """Build the Memory service for the app lifetime and close it after."""
-        app_logger = (
-            configure_logging(logging_level) if logging_level is not None else None
-        )
-        if app_logger is not None:
-            app.state.logger = app_logger
+        app_logger = configure_logging(logging_level)
+        app.state.logger = app_logger
         configured_kb_root = Path(kb_root)
         await AsyncPath(configured_kb_root).mkdir(parents=True, exist_ok=True)
         database_name = str(database_path)
@@ -87,8 +84,8 @@ def create_app(
     *,
     database_path: str | Path = Path(".tether/tether.sqlite3"),
     kb_root: str | Path = Path(".tether"),
-    logging_level: str | None = None,
-    request_logging: bool = False,
+    logging_level: str = "INFO",
+    request_logging: bool = True,
 ) -> Starlette:
     """Construct the Starlette application with Memory routes and lifespan wiring.
 

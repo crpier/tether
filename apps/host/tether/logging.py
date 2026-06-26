@@ -7,7 +7,8 @@ from tether.logging import ContextLoggerMiddleware, configure_logging
 
 logger = configure_logging()
 app = Starlette()
-app.add_middleware(ContextLoggerMiddleware, base_logger=logger)
+app.state.logger = logger
+app.add_middleware(ContextLoggerMiddleware)
 ```
 """
 
@@ -237,26 +238,20 @@ class ContextLoggerMiddleware(BaseHTTPMiddleware):
     """Bind request metadata to logs for each Starlette request.
 
     ```python
-    app.add_middleware(ContextLoggerMiddleware, base_logger=configure_logging())
+    app.state.logger = configure_logging()
+    app.add_middleware(ContextLoggerMiddleware)
     ```
     """
 
-    def __init__(self, app: Any, *, base_logger: Logger | None = None) -> None:
+    def __init__(self, app: Any) -> None:
         super().__init__(app)
-        self.base_logger: Logger | None = base_logger
 
     async def dispatch(
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        base_logger = self.base_logger or cast(
-            "Logger | None",
-            getattr(request.app.state, "logger", None),
-        )
-        if base_logger is None:
-            error_message = "Application logger is not configured."
-            raise RuntimeError(error_message)
+        base_logger = cast("Logger", request.app.state.logger)
         request_logger = base_logger.bind(
             request_id=str(uuid4()),
             method=request.method,

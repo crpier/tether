@@ -23,6 +23,7 @@ from pathlib import Path
 
 import structlog
 from anyio import TemporaryDirectory
+from pydantic import PositiveInt
 from snekql.sqlite import Config, Database, Fetched, delete, select
 from snektest import (
     AsyncFixture,
@@ -39,6 +40,7 @@ from snektest import (
 )
 from structlog.testing import capture_logs
 
+from tether.logging import Logger
 from tether.memories import (
     EmptyMemoryContentError,
     EmptySearchQueryError,
@@ -47,12 +49,67 @@ from tether.memories import (
     MemoryConflictError,
     MemoryNotFoundError,
     MemoryService,
+    MemoryState,
     create_memory_schema,
 )
 
 
+class LoggedMemoryService:
+    """Test adapter that supplies the mandatory service logger."""
+
+    def __init__(self, service: MemoryService, *, logger: Logger) -> None:
+        self.service: MemoryService = service
+        self.logger: Logger = logger
+
+    @property
+    def database(self) -> Database:
+        """Expose the wrapped database for DB-observable assertions."""
+        return self.service.database
+
+    @property
+    def kb_service(self) -> KnowledgeBaseService:
+        """Expose the wrapped KB service for projection assertions."""
+        return self.service.kb_service
+
+    async def capture(self, content: str) -> Memory[Fetched]:
+        """Capture through the wrapped service with logging context."""
+        return await self.service.capture(content, logger=self.logger)
+
+    async def search(
+        self,
+        query: str,
+        limit: PositiveInt = 50,
+    ) -> list[Memory[Fetched]]:
+        """Search through the wrapped service with logging context."""
+        return await self.service.search(query, limit=limit, logger=self.logger)
+
+    async def browse_by_state(self, state: MemoryState) -> list[Memory[Fetched]]:
+        """Browse through the wrapped service with logging context."""
+        return await self.service.browse_by_state(state, logger=self.logger)
+
+    async def tether(self, memory: Memory[Fetched]) -> Memory[Fetched]:
+        """Tether through the wrapped service with logging context."""
+        return await self.service.tether(memory, logger=self.logger)
+
+    async def edit_content(
+        self,
+        memory: Memory[Fetched],
+        content: str,
+    ) -> Memory[Fetched]:
+        """Edit through the wrapped service with logging context."""
+        return await self.service.edit_content(memory, content, logger=self.logger)
+
+    async def delete(self, memory: Memory[Fetched]) -> Memory[Fetched]:
+        """Delete through the wrapped service with logging context."""
+        return await self.service.delete(memory, logger=self.logger)
+
+    async def regenerate_knowledge_base(self) -> None:
+        """Regenerate projections with logging context."""
+        await self.service.regenerate_knowledge_base(logger=self.logger)
+
+
 async def capture_tethered_memory(
-    service: MemoryService, content: str
+    service: LoggedMemoryService, content: str
 ) -> Memory[Fetched]:
     """Create a tethered Memory as test setup."""
     memory = await service.capture(content)
@@ -60,7 +117,7 @@ async def capture_tethered_memory(
 
 
 async def fetch_memory_row(
-    service: MemoryService, memory: Memory[Fetched]
+    service: LoggedMemoryService, memory: Memory[Fetched]
 ) -> Memory[Fetched] | None:
     """Fetch a Memory row directly for DB-observable assertions."""
     async with service.database.transaction() as tx:
@@ -68,19 +125,19 @@ async def fetch_memory_row(
 
 
 async def hard_delete_memory_row(
-    service: MemoryService, memory: Memory[Fetched]
+    service: LoggedMemoryService, memory: Memory[Fetched]
 ) -> None:
     """Physically remove a row to simulate a missing observed Memory."""
     async with service.database.transaction() as tx:
         _ = await tx.execute(delete(Memory).where(Memory.id.eq(memory.id)))
 
 
-def projection_path(service: MemoryService, memory: Memory[Fetched]) -> Path:
+def projection_path(service: LoggedMemoryService, memory: Memory[Fetched]) -> Path:
     """Return the derived KB projection path for a Memory."""
     return service.kb_service.kb_root / f"{memory.id}.md"
 
 
-async def memory_service() -> AsyncFixture[MemoryService]:
+async def memory_service() -> AsyncFixture[LoggedMemoryService]:
     """A fresh, isolated Tether database + an empty markdown KB directory.
 
     The KB lives in a throwaway temp dir so projection assertions observe real
@@ -90,7 +147,10 @@ async def memory_service() -> AsyncFixture[MemoryService]:
     await create_memory_schema(db)
     async with TemporaryDirectory() as kb_root:
         kb_service = KnowledgeBaseService(kb_root=Path(kb_root))
-        yield MemoryService(database=db, kb_service=kb_service)
+        yield LoggedMemoryService(
+            MemoryService(database=db, kb_service=kb_service),
+            logger=structlog.stdlib.get_logger("test.memory_service"),
+        )
     await db.close()
 
 
@@ -116,10 +176,7 @@ async def capture_logs_the_captured_memory_id_without_content() -> None:
     service = await load_fixture(memory_service())
 
     with capture_logs() as logs:
-        memory = await service.capture(
-            "I prefer aisle seats on flights",
-            logger=structlog.stdlib.get_logger("test"),
-        )
+        memory = await service.capture("I prefer aisle seats on flights")
 
     assert_in(
         {
@@ -140,10 +197,7 @@ async def search_logs_the_result_count() -> None:
     _ = await capture_tethered_memory(service, "needle matching memory")
 
     with capture_logs() as logs:
-        _ = await service.search(
-            "needle",
-            logger=structlog.stdlib.get_logger("test"),
-        )
+        _ = await service.search("needle")
 
     assert_in(
         {
@@ -876,9 +930,12 @@ async def projection_failure_does_not_roll_back_tether() -> None:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
     async with TemporaryDirectory() as kb_root:
-        service = MemoryService(
-            database=db,
-            kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+        service = LoggedMemoryService(
+            MemoryService(
+                database=db,
+                kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+            ),
+            logger=structlog.stdlib.get_logger("test.memory_service"),
         )
         memory = await service.capture("I prefer aisle seats")
 
@@ -896,9 +953,12 @@ async def regenerating_the_kb_recovers_a_missed_projection() -> None:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
     async with TemporaryDirectory() as kb_root:
-        service = MemoryService(
-            database=db,
-            kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+        service = LoggedMemoryService(
+            MemoryService(
+                database=db,
+                kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+            ),
+            logger=structlog.stdlib.get_logger("test.memory_service"),
         )
         memory = await service.capture("I prefer aisle seats")
         tethered = await service.tether(memory)

@@ -5,9 +5,9 @@ is soft-deleted on reject. The load-bearing invariant is that the assistant
 Searches only tethered, non-deleted Memories.
 
 >>> service = MemoryService(database=database, kb_root=kb_root)
->>> memory = await service.capture("I prefer aisle seats")
->>> tethered = await service.tether(memory)
->>> [hit.content for hit in await service.search("aisle")]
+>>> memory = await service.capture("I prefer aisle seats", logger=logger)
+>>> tethered = await service.tether(memory, logger=logger)
+>>> [hit.content for hit in await service.search("aisle", logger=logger)]
 ['I prefer aisle seats']
 """
 
@@ -73,22 +73,19 @@ class ProjectionStructureError(Exception):
     """Raised when a projection file is not structured as expected."""
 
 
-def _debug(logger: Logger | None, event: str, **context: object) -> None:
-    """Emit a debug event only when the caller supplied logging context."""
-    if logger is not None:
-        logger.debug(event, **context)
+def _debug(logger: Logger, event: str, **context: object) -> None:
+    """Emit a debug event using caller-supplied logging context."""
+    logger.debug(event, **context)
 
 
-def _info(logger: Logger | None, event: str, **context: object) -> None:
-    """Emit an info event only when the caller supplied logging context."""
-    if logger is not None:
-        logger.info(event, **context)
+def _info(logger: Logger, event: str, **context: object) -> None:
+    """Emit an info event using caller-supplied logging context."""
+    logger.info(event, **context)
 
 
-def _exception(logger: Logger | None, event: str, **context: object) -> None:
-    """Emit an exception event only when the caller supplied logging context."""
-    if logger is not None:
-        logger.exception(event, **context)
+def _exception(logger: Logger, event: str, **context: object) -> None:
+    """Emit an exception event using caller-supplied logging context."""
+    logger.exception(event, **context)
 
 
 def _normalise_content(content: str) -> str:
@@ -215,7 +212,7 @@ class MemoryService:
         self,
         content: str,
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> Memory[Fetched]:
         """Capture a loose Memory from content.
         Always lands `loose` — there is no direct-to-tethered path."""
@@ -238,7 +235,7 @@ class MemoryService:
         query: str,
         limit: PositiveInt = 50,
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> list[Memory[Fetched]]:
         """Keyword Search the assistant uses to pull context.
 
@@ -273,7 +270,7 @@ class MemoryService:
         self,
         state: MemoryState,
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> list[Memory[Fetched]]:
         """Filter-only Search backing the human review UI (`GET /memories?state=`).
 
@@ -309,7 +306,7 @@ class MemoryService:
         self,
         memory: Memory[Fetched],
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> Memory[Fetched]:
         """Promote a loose Memory to tethered, making it Searchable.
 
@@ -370,7 +367,7 @@ class MemoryService:
         memory: Memory[Fetched],
         content: str,
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> Memory[Fetched]:
         """Edit a Memory's content and bump `updated_at`.
 
@@ -428,7 +425,7 @@ class MemoryService:
         self,
         memory: Memory[Fetched],
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> Memory[Fetched]:
         """Reject a Memory by soft-deleting it: stamp `deleted_at`, retain the row.
 
@@ -484,7 +481,7 @@ class MemoryService:
     async def regenerate_knowledge_base(
         self,
         *,
-        logger: Logger | None = None,
+        logger: Logger,
     ) -> None:
         """Rebuild the Knowledge base projection from live SQLite state.
 
@@ -520,7 +517,7 @@ class MemoryService:
         self,
         memory: Memory[Fetched],
         *,
-        logger: Logger | None,
+        logger: Logger,
     ) -> None:
         """Log post-commit projection failures without hiding the DB write."""
         _debug(logger, "Writing Memory projection", memory_id=str(memory.id))
@@ -533,7 +530,7 @@ class MemoryService:
         self,
         memory_id: UUID7,
         *,
-        logger: Logger | None,
+        logger: Logger,
     ) -> None:
         """Log post-commit projection removal failures after soft-delete."""
         _debug(logger, "Removing Memory projection", memory_id=str(memory_id))
