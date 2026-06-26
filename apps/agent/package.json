@@ -1,0 +1,30 @@
+{
+  "name": "@tether/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "tsx scripts/generate-tool-shims.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "format:generated": "prettier --write generated/tool-schemas.json src/generated",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.2",
+    "@earendil-works/pi-coding-agent": "0.80.2",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.12.4",
+    "eslint": "^9.39.1",
+    "prettier": "^3.7.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.49.0",
+    "vitest": "^4.1.0"
+  }
+}

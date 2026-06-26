@@ -1,0 +1,149 @@
+{
+  "tools": [
+    {
+      "endpoint": "/internal/tools/capture",
+      "name": "capture",
+      "params_model": "CaptureParams",
+      "schema": {
+        "$defs": {
+          "MemoryContent": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "description": "Params for capturing a loose Memory.",
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/MemoryContent"
+          }
+        },
+        "required": ["content"],
+        "title": "CaptureParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/browse",
+      "name": "browse",
+      "params_model": "BrowseParams",
+      "schema": {
+        "$defs": {
+          "MemoryState": {
+            "enum": ["loose", "tethered"],
+            "type": "string"
+          }
+        },
+        "description": "Params for the review queue (`loose`) / corpus browse (`tethered`).",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/MemoryState"
+          }
+        },
+        "required": ["state"],
+        "title": "BrowseParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/search",
+      "name": "search",
+      "params_model": "SearchParams",
+      "schema": {
+        "description": "Params for the assistant's keyword Search over tethered Memories.",
+        "properties": {
+          "q": {
+            "title": "Q",
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": ["q"],
+        "title": "SearchParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/tether",
+      "name": "tether",
+      "params_model": "TetherParams",
+      "schema": {
+        "description": "Params for promoting a loose Memory to tethered.",
+        "properties": {
+          "memory_id": {
+            "format": "uuid7",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["memory_id", "version"],
+        "title": "TetherParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/edit",
+      "name": "edit",
+      "params_model": "EditParams",
+      "schema": {
+        "$defs": {
+          "MemoryContent": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "description": "Params for editing a Memory's content at an observed version.",
+        "properties": {
+          "memory_id": {
+            "format": "uuid7",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/$defs/MemoryContent"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["memory_id", "content", "version"],
+        "title": "EditParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/reject",
+      "name": "reject",
+      "params_model": "RejectParams",
+      "schema": {
+        "description": "Params for soft-deleting (rejecting) a Memory at an observed version.",
+        "properties": {
+          "memory_id": {
+            "format": "uuid7",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["memory_id", "version"],
+        "title": "RejectParams",
+        "type": "object"
+      }
+    }
+  ]
+}
