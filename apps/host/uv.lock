@@ -376,6 +376,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anyio" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "starlette" },
@@ -395,6 +396,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "anyio", specifier = ">=4.14.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "starlette", specifier = ">=1.3.1" },

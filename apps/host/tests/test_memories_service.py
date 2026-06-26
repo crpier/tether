@@ -4,8 +4,8 @@ These drive the *service* seam directly against a real (in-memory) SQLite
 database — no HTTP, no agent — which is the primary testing seam: call a
 capability and assert on observable behavior, never on internal structure.
 
-The service under test is ``tether.memories.MemoryService``, constructed over a
-snekql ``Database``. Each method owns its own transaction:
+The service under test is `tether.memories.MemoryService`, constructed over a
+snekql `Database`. Each method owns its own transaction:
 
     capture(text)                    -> Memory
     tether(memory)                   -> Memory
@@ -13,8 +13,8 @@ snekql ``Database``. Each method owns its own transaction:
     delete(memory)                   -> Memory
     search(query)                    -> list[Memory]
 
-A ``Memory`` exposes ``.id``, ``.content``, ``.version``, and the
-``.tethered_at`` / ``.deleted_at`` timestamps that derive its state.
+A `Memory` exposes `.id`, `.content`, `.version`, and the
+`.tethered_at` / `.deleted_at` timestamps that derive its state.
 """
 
 import asyncio
@@ -44,6 +44,7 @@ from tether.memories import (
     MemoryConflictError,
     MemoryNotFoundError,
     MemoryService,
+    create_memory_schema,
 )
 
 
@@ -82,7 +83,8 @@ async def memory_service() -> AsyncFixture[MemoryService]:
     The KB lives in a throwaway temp dir so projection assertions observe real
     files on disk; both DB and dir are torn down after each test.
     """
-    db = await Database.initialize(backend=Config(database=":memory:"), models=[Memory])
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
     async with TemporaryDirectory() as kb_root:
         kb_service = KnowledgeBaseService(kb_root=Path(kb_root))
         yield MemoryService(database=db, kb_service=kb_service)
@@ -567,7 +569,7 @@ async def editing_a_loose_memory_does_not_project_markdown() -> None:
 
 @test()
 async def editing_a_memory_bumps_updated_at() -> None:
-    """every edit advances ``updated_at``."""
+    """every edit advances `updated_at`."""
     service = await load_fixture(memory_service())
     memory = await service.capture("I live in Berlin")
 
@@ -579,7 +581,7 @@ async def editing_a_memory_bumps_updated_at() -> None:
 
 @test()
 async def deleting_a_memory_stamps_deleted_at() -> None:
-    """reject stamps ``deleted_at``."""
+    """reject stamps `deleted_at`."""
     service = await load_fixture(memory_service())
     memory = await service.capture("got a penicillin prescription back in 2019")
 
@@ -665,7 +667,7 @@ async def deleting_an_already_deleted_memory_raises() -> None:
 
 @test()
 async def tethering_projects_markdown() -> None:
-    """tether projects ``kb/<id>.md`` synchronously."""
+    """tether projects `kb/<id>.md` synchronously."""
     service = await load_fixture(memory_service())
     memory = await service.capture("I prefer aisle seats")
 

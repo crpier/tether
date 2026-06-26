@@ -5,7 +5,7 @@ default:
 
 # Python host (Starlette, auto-reload)
 host:
-    uv run uvicorn tether.api.app:app --reload
+    uv run uvicorn tether.server:app --reload
 
 # SolidJS web (Vite dev server)
 web:
