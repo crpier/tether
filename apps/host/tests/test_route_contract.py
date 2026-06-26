@@ -8,9 +8,9 @@ from uuid import UUID, uuid4
 
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
+from snektest import assert_eq, assert_in, assert_raises, test
 from starlette import status
 from starlette.applications import Starlette
-from snektest import assert_eq, assert_in, assert_raises, test
 
 from tether.api import (
     ApiContractError,

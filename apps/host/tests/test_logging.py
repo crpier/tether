@@ -3,9 +3,10 @@
 import json
 import logging
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from io import StringIO
+from typing import TextIO, cast
 
 import structlog
 from snektest import (
@@ -52,7 +53,7 @@ class CapturedStdout(StringIO):
 
 
 @contextmanager
-def captured_logging(*, is_tty: bool) -> Iterator[CapturedStdout]:
+def captured_logging(*, is_tty: bool) -> Generator[CapturedStdout]:
     """Isolate global logging state while exercising configuration."""
     original_stdout = sys.stdout
     root_logger = logging.getLogger()
@@ -229,7 +230,8 @@ def configure_logging_replaces_root_handlers_with_stdout_handler() -> None:
         handler = root_logger.handlers[0]
         assert_isinstance(handler, logging.StreamHandler)
         assert isinstance(handler, logging.StreamHandler)
-        assert_is(handler.stream, sys.stdout)
+        stream_handler = cast("logging.StreamHandler[TextIO]", handler)
+        assert_is(stream_handler.stream, sys.stdout)
 
 
 @test()

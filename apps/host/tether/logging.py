@@ -80,7 +80,7 @@ def _process_positional_args(
     message_args: list[Any] = []
     for positional_arg in positional_args:
         if isinstance(positional_arg, dict):
-            event_dict.update(positional_arg)
+            event_dict.update(cast("dict[str, Any]", positional_arg))
         else:
             message_args.append(positional_arg)
 
@@ -96,7 +96,9 @@ def _process_positional_args(
     elif event is None:
         event_dict["event"] = " ".join(str(arg) for arg in message_args)
     else:
-        event_dict["event"] = " ".join([str(event), *[str(arg) for arg in message_args]])
+        event_dict["event"] = " ".join(
+            [str(event), *[str(arg) for arg in message_args]]
+        )
     return event_dict
 
 
@@ -175,7 +177,9 @@ def _configure_quiet_loggers() -> None:
         logger.disabled = True
 
 
-def configure_logging(log_level: str = "INFO", *, force_tty: bool | None = None) -> Logger:
+def configure_logging(
+    log_level: str = "INFO", *, force_tty: bool | None = None
+) -> Logger:
     """Configure structlog and stdlib logging for a Starlette process.
 
     ```python

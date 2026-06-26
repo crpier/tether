@@ -129,7 +129,7 @@ memory_router = ApiRouter(
 
 @memory_router("GET", "/", status=status.HTTP_200_OK)
 async def list_memories(
-    context: PublicRequestCtx,
+    _context: PublicRequestCtx,
     *,
     state: QueryParam[MemoryState | None] = None,
 ) -> list[MemoryOut]:
@@ -142,7 +142,7 @@ async def list_memories(
 
 @memory_router("POST", "/", status=status.HTTP_201_CREATED)
 async def create_memory(
-    context: PublicRequestCtx,
+    _context: PublicRequestCtx,
     *,
     body: BodyParam[CreateMemoryBody],
 ) -> MemoryOut:
@@ -165,7 +165,7 @@ async def create_memory(
     errors=[status.HTTP_404_NOT_FOUND],
 )
 async def fetch_memory(
-    context: PublicRequestCtx,
+    _context: PublicRequestCtx,
     *,
     memory_id: PathParam[UUID],
 ) -> MemoryOut:
@@ -188,7 +188,7 @@ async def fetch_memory(
     errors=[status.HTTP_404_NOT_FOUND],
 )
 async def patch_memory(
-    context: PublicRequestCtx,
+    _context: PublicRequestCtx,
     *,
     memory_id: PathParam[UUID],
     body: BodyParam[PatchMemoryBody],
@@ -214,7 +214,7 @@ async def patch_memory(
     errors=[status.HTTP_404_NOT_FOUND],
 )
 async def delete_memory(
-    context: PublicRequestCtx,
+    _context: PublicRequestCtx,
     *,
     memory_id: PathParam[UUID],
 ) -> None:

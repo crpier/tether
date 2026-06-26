@@ -537,7 +537,9 @@ class MemoryService:
                 await path.unlink()
                 removed_count += 1
         for memory in tethered_memories:
-            _debug(logger, "Writing Knowledge base projection", memory_id=str(memory.id))
+            _debug(
+                logger, "Writing Knowledge base projection", memory_id=str(memory.id)
+            )
             await self.kb_service.set_projection(memory)
         _info(
             logger,
