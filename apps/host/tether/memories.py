@@ -18,6 +18,7 @@ from typing import Literal, TypedDict
 from uuid import uuid7
 
 from anyio import NamedTemporaryFile, Path
+from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel, DirectoryPath, Json, PositiveInt
 from snekql.sqlite import (
     CurrentTimestamp,
@@ -204,9 +205,15 @@ class MemoryService:
     Each method owns its own transaction (one mutation, one commit). Mutations
     return the resulting Memory so the REST layer can echo it."""
 
-    def __init__(self, database: Database, kb_service: KnowledgeBaseService) -> None:
+    def __init__(
+        self,
+        database: Database,
+        kb_service: KnowledgeBaseService,
+        tracer: Tracer,
+    ) -> None:
         self.database: Database = database
         self.kb_service: KnowledgeBaseService = kb_service
+        self.tracer: Tracer = tracer
 
     async def capture(
         self,
@@ -217,18 +224,24 @@ class MemoryService:
         """Capture a loose Memory from content.
         Always lands `loose` — there is no direct-to-tethered path."""
         normalised_content = _normalise_content(content)
-        _debug(logger, "Capturing Memory", content_length=len(normalised_content))
-        async with self.database.transaction() as tx:
-            memory = await tx.execute(
-                insert(Memory(content=normalised_content)).returning()
+        with self.tracer.start_as_current_span(
+            "MemoryService.capture",
+            attributes={"memory.content_length": len(normalised_content)},
+        ) as span:
+            _debug(logger, "Capturing Memory", content_length=len(normalised_content))
+            async with self.database.transaction() as tx:
+                memory = await tx.execute(
+                    insert(Memory(content=normalised_content)).returning()
+                )
+            span.set_attribute("memory.id", str(memory.id))
+            span.set_attribute("memory.version", memory.version)
+            _info(
+                logger,
+                "Memory captured",
+                memory_id=str(memory.id),
+                version=memory.version,
             )
-        _info(
-            logger,
-            "Memory captured",
-            memory_id=str(memory.id),
-            version=memory.version,
-        )
-        return memory
+            return memory
 
     async def search(
         self,
@@ -247,24 +260,34 @@ class MemoryService:
         if not terms:
             msg = "keyword Search requires a non-empty query"
             raise EmptySearchQueryError(msg)
-        _debug(logger, "Searching Memories", terms_count=len(terms), limit=limit)
-        tethered_matches = select(Memory).where(
-            Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
-        )
-        for term in terms:
-            tethered_matches = tethered_matches.where(Memory.content.like(f"%{term}%"))
-        async with self.database.transaction() as tx:
-            memories = await tx.fetch_all(
-                tethered_matches.order_by(Memory.created_at.desc()).limit(limit)
+        with self.tracer.start_as_current_span(
+            "MemoryService.search",
+            attributes={
+                "memory.search.limit": limit,
+                "memory.search.terms_count": len(terms),
+            },
+        ) as span:
+            _debug(logger, "Searching Memories", terms_count=len(terms), limit=limit)
+            tethered_matches = select(Memory).where(
+                Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
             )
-        _debug(
-            logger,
-            "Memory Search completed",
-            terms_count=len(terms),
-            limit=limit,
-            result_count=len(memories),
-        )
-        return memories
+            for term in terms:
+                tethered_matches = tethered_matches.where(
+                    Memory.content.like(f"%{term}%")
+                )
+            async with self.database.transaction() as tx:
+                memories = await tx.fetch_all(
+                    tethered_matches.order_by(Memory.created_at.desc()).limit(limit)
+                )
+            span.set_attribute("memory.search.result_count", len(memories))
+            _debug(
+                logger,
+                "Memory Search completed",
+                terms_count=len(terms),
+                limit=limit,
+                result_count=len(memories),
+            )
+            return memories
 
     async def browse_by_state(
         self,
@@ -312,55 +335,65 @@ class MemoryService:
 
         Tethering an already-tethered Memory conflicts. Tethering an absent or
         deleted Memory raises."""
-        _debug(
-            logger,
-            "Tethering Memory",
-            memory_id=str(memory.id),
-            observed_version=memory.version,
-        )
-        async with self.database.transaction() as tx:
-            matched_rows = await tx.execute(
-                update(Memory)
-                .set(Memory.tethered_at.to(CurrentTimestamp))
-                .set(Memory.version.to(memory.version + 1))
-                .where(Memory.id.eq(memory.id))
-                .where(Memory.deleted_at.is_null())
-                .where(Memory.tethered_at.is_null())
-                .where(Memory.version.eq(memory.version))
+        with self.tracer.start_as_current_span(
+            "MemoryService.tether",
+            attributes={
+                "memory.id": str(memory.id),
+                "memory.observed_version": memory.version,
+            },
+        ) as span:
+            _debug(
+                logger,
+                "Tethering Memory",
+                memory_id=str(memory.id),
+                observed_version=memory.version,
             )
-            fresh_memory = await self._fetch_active(tx, memory.id)
-            if matched_rows == 0:
-                if fresh_memory.tethered_at is not None:
-                    _debug(
-                        logger,
-                        "Memory tether conflict",
-                        memory_id=str(memory.id),
-                        reason="already_tethered",
-                        observed_version=memory.version,
-                        current_version=fresh_memory.version,
-                    )
-                    msg = f"Memory {memory.id} is already tethered"
-                    raise MemoryConflictError(msg)
-                if fresh_memory.version != memory.version:
-                    _debug(
-                        logger,
-                        "Memory tether conflict",
-                        memory_id=str(memory.id),
-                        reason="stale_version",
-                        observed_version=memory.version,
-                        current_version=fresh_memory.version,
-                    )
-                    msg = f"Tried to update memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
-                    raise MemoryConflictError(msg)
-        await self._try_set_projection(fresh_memory, logger=logger)
-        _info(
-            logger,
-            "Memory tethered",
-            memory_id=str(fresh_memory.id),
-            previous_version=memory.version,
-            version=fresh_memory.version,
-        )
-        return fresh_memory
+            async with self.database.transaction() as tx:
+                matched_rows = await tx.execute(
+                    update(Memory)
+                    .set(Memory.tethered_at.to(CurrentTimestamp))
+                    .set(Memory.version.to(memory.version + 1))
+                    .where(Memory.id.eq(memory.id))
+                    .where(Memory.deleted_at.is_null())
+                    .where(Memory.tethered_at.is_null())
+                    .where(Memory.version.eq(memory.version))
+                )
+                fresh_memory = await self._fetch_active(tx, memory.id)
+                if matched_rows == 0:
+                    if fresh_memory.tethered_at is not None:
+                        span.set_attribute("memory.conflict_reason", "already_tethered")
+                        _debug(
+                            logger,
+                            "Memory tether conflict",
+                            memory_id=str(memory.id),
+                            reason="already_tethered",
+                            observed_version=memory.version,
+                            current_version=fresh_memory.version,
+                        )
+                        msg = f"Memory {memory.id} is already tethered"
+                        raise MemoryConflictError(msg)
+                    if fresh_memory.version != memory.version:
+                        span.set_attribute("memory.conflict_reason", "stale_version")
+                        _debug(
+                            logger,
+                            "Memory tether conflict",
+                            memory_id=str(memory.id),
+                            reason="stale_version",
+                            observed_version=memory.version,
+                            current_version=fresh_memory.version,
+                        )
+                        msg = f"Tried to update memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
+                        raise MemoryConflictError(msg)
+            await self._try_set_projection(fresh_memory, logger=logger)
+            span.set_attribute("memory.version", fresh_memory.version)
+            _info(
+                logger,
+                "Memory tethered",
+                memory_id=str(fresh_memory.id),
+                previous_version=memory.version,
+                version=fresh_memory.version,
+            )
+            return fresh_memory
 
     async def edit_content(
         self,
