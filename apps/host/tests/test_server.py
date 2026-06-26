@@ -98,6 +98,7 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
+            TETHER_TOOL_SECRET="configured-tool-secret",
         ),
     ):
         settings = HostSettings()
@@ -111,6 +112,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
+    assert_eq(settings.tool_secret, "configured-tool-secret")
 
 
 @test()
