@@ -28,6 +28,7 @@ from starlette.testclient import TestClient
 
 from tether.logging import (
     QUIET_LOGGERS,
+    SILENCED_LOGGERS,
     ContextLoggerMiddleware,
     _capture_bound_context,
     _process_positional_args,
@@ -64,7 +65,7 @@ def captured_logging(*, is_tty: bool) -> Iterator[CapturedStdout]:
             logging.getLogger(name).disabled,
             list(logging.getLogger(name).handlers),
         )
-        for name in (*QUIET_LOGGERS, "uvicorn.access")
+        for name in (*QUIET_LOGGERS, *SILENCED_LOGGERS)
     }
     stream = CapturedStdout(is_tty=is_tty)
     sys.stdout = stream
@@ -233,9 +234,8 @@ def configure_logging_replaces_root_handlers_with_stdout_handler() -> None:
 
 @test()
 def configure_logging_quiets_noisy_loggers() -> None:
-    """Noisy server loggers stop owning handlers and access logs are silent."""
-    logging.getLogger("uvicorn").addHandler(logging.StreamHandler(StringIO()))
-    logging.getLogger("uvicorn.access").addHandler(logging.StreamHandler(StringIO()))
+    """Noisy non-uvicorn server loggers share root formatting at warnings only."""
+    logging.getLogger("watchfiles.main").addHandler(logging.StreamHandler(StringIO()))
 
     with captured_logging(is_tty=False):
         configure_logging(force_tty=False)
@@ -244,12 +244,30 @@ def configure_logging_quiets_noisy_loggers() -> None:
             logger = logging.getLogger(name)
             assert_eq(logger.level, logging.WARNING)
             assert_true(logger.propagate)
+            assert_false(logger.disabled)
             assert_eq(logger.handlers, [])
 
-        access_logger = logging.getLogger("uvicorn.access")
-        assert_eq(access_logger.handlers, [])
-        assert_false(access_logger.propagate)
-        assert_true(access_logger.disabled)
+
+@test()
+def configure_logging_silences_uvicorn_loggers() -> None:
+    """Uvicorn must not emit its own lifecycle or access logs."""
+    logging.getLogger("uvicorn").addHandler(logging.StreamHandler(StringIO()))
+    logging.getLogger("uvicorn.error").addHandler(logging.StreamHandler(StringIO()))
+    logging.getLogger("uvicorn.access").addHandler(logging.StreamHandler(StringIO()))
+
+    with captured_logging(is_tty=False) as stream:
+        configure_logging(force_tty=False)
+
+        for name in SILENCED_LOGGERS:
+            logger = logging.getLogger(name)
+            assert_eq(logger.handlers, [])
+            assert_false(logger.propagate)
+            assert_true(logger.disabled)
+
+        logging.getLogger("uvicorn.error").warning("Started server process")
+        logging.getLogger("uvicorn.access").info("GET / HTTP/1.1")
+
+    assert_eq(stream.getvalue(), "")
 
 
 @test()

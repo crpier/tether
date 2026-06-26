@@ -15,7 +15,7 @@ from snektest import assert_eq, assert_in, assert_true, test
 from starlette.testclient import TestClient
 
 from tether import server
-from tether.logging import QUIET_LOGGERS
+from tether.logging import QUIET_LOGGERS, SILENCED_LOGGERS
 from tether.server import HostSettings, create_app_from_environment, serve
 
 
@@ -56,7 +56,7 @@ def captured_logging() -> Iterator[CapturedStdout]:
             logging.getLogger(name).disabled,
             list(logging.getLogger(name).handlers),
         )
-        for name in (*QUIET_LOGGERS, "uvicorn.access")
+        for name in (*QUIET_LOGGERS, *SILENCED_LOGGERS)
     }
     stream = CapturedStdout()
     sys.stdout = stream

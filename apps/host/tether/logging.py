@@ -29,10 +29,11 @@ from structlog.typing import EventDict, WrappedLogger
 type Logger = structlog.stdlib.BoundLogger
 
 
-QUIET_LOGGERS = ("uvicorn", "uvicorn.error", "watchfiles.main")
+QUIET_LOGGERS = ("watchfiles.main",)
 """Server loggers that should share the root handler but emit warnings only."""
 
-_ACCESS_LOGGER = "uvicorn.access"
+SILENCED_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+"""Uvicorn loggers that are fully disabled because uvicorn owns its formatting."""
 _REQUEST_LOGGER: ContextVar[Logger | None] = ContextVar(
     "tether_request_logger",
     default=None,
@@ -143,7 +144,7 @@ def _shared_processors(*, is_tty: bool) -> list[structlog.types.Processor]:
 
 
 def _configure_quiet_loggers() -> None:
-    """Let root formatting own server logs while suppressing access noise."""
+    """Route non-uvicorn logs through root and disable uvicorn output."""
     for logger_name in QUIET_LOGGERS:
         logger = logging.getLogger(logger_name)
         _clear_handlers(logger)
@@ -151,10 +152,11 @@ def _configure_quiet_loggers() -> None:
         logger.propagate = True
         logger.disabled = False
 
-    access_logger = logging.getLogger(_ACCESS_LOGGER)
-    _clear_handlers(access_logger)
-    access_logger.propagate = False
-    access_logger.disabled = True
+    for logger_name in SILENCED_LOGGERS:
+        logger = logging.getLogger(logger_name)
+        _clear_handlers(logger)
+        logger.propagate = False
+        logger.disabled = True
 
 
 def configure_logging(log_level: str = "INFO", *, force_tty: bool | None = None) -> Logger:
@@ -279,6 +281,7 @@ class ContextLoggerMiddleware(BaseHTTPMiddleware):
 
 __all__ = [
     "QUIET_LOGGERS",
+    "SILENCED_LOGGERS",
     "ContextLoggerMiddleware",
     "Logger",
     "configure_logging",
