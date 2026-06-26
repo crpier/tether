@@ -22,6 +22,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import structlog
+from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
@@ -99,6 +100,19 @@ def _process_positional_args(
     return event_dict
 
 
+def _add_trace_context(
+    _logger: WrappedLogger,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    """Attach active span ids so logs can be correlated with traces."""
+    span_context = trace.get_current_span().get_span_context()
+    if span_context.is_valid:
+        event_dict["trace_id"] = f"{span_context.trace_id:032x}"
+        event_dict["span_id"] = f"{span_context.span_id:016x}"
+    return event_dict
+
+
 def _reorder_fields(
     _logger: WrappedLogger,
     _method_name: str,
@@ -138,6 +152,7 @@ def _shared_processors(*, is_tty: bool) -> list[structlog.types.Processor]:
         [
             structlog.processors.UnicodeDecoder(),
             _process_positional_args,
+            _add_trace_context,
             _reorder_fields,
         ],
     )

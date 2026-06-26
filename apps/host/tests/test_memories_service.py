@@ -23,6 +23,9 @@ from pathlib import Path
 
 import structlog
 from anyio import TemporaryDirectory
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import PositiveInt
 from snekql.sqlite import Config, Database, Fetched, delete, select
 from snektest import (
@@ -168,6 +171,32 @@ class FailingOnceKnowledgeBaseService(KnowledgeBaseService):
             message = "projection target unavailable"
             raise OSError(message)
         await super().set_projection(memory)
+
+
+@test()
+async def capture_emits_a_trace_span() -> None:
+    """Capture creates a domain span without putting Memory content on it."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
+    span_exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
+    async with TemporaryDirectory() as kb_root:
+        service = LoggedMemoryService(
+            MemoryService(
+                database=db,
+                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
+                tracer=tracer_provider.get_tracer("test.memory_service"),
+            ),
+            logger=structlog.stdlib.get_logger("test.memory_service"),
+        )
+
+        _ = await service.capture("I prefer aisle seats")
+
+    await db.close()
+    spans = span_exporter.get_finished_spans()
+    assert_in("MemoryService.capture", [span.name for span in spans])
+    assert_true(all("content" not in (span.attributes or {}) for span in spans))
 
 
 @test()
