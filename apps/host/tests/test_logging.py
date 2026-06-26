@@ -271,6 +271,25 @@ def configure_logging_silences_uvicorn_loggers() -> None:
 
 
 @test()
+def context_logger_middleware_uses_application_logger_from_lifespan() -> None:
+    """Middleware can bind requests from `app.state.logger`."""
+
+    async def read(_request: Request) -> Response:
+        return JSONResponse({"ok": True})
+
+    with captured_logging(is_tty=False) as stream:
+        app = Starlette(routes=[Route("/ok", read)])
+        app.state.logger = configure_logging(force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
+        with TestClient(app) as client:
+            response = client.get("/ok")
+
+    logged = first_json_log(stream)
+    assert_eq(response.status_code, 200)
+    assert_eq(logged["event"], "Request completed")
+
+
+@test()
 def context_logger_middleware_logs_completed_requests() -> None:
     """Successful requests get a request logger and completion log."""
 

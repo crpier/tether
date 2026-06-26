@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from tether.logging import Logger, get_bound_request_logger
 from tether.memories import (
     EmptySearchQueryError,
     Fetched,
@@ -188,6 +189,11 @@ def _list_response(memories: list[Memory[Fetched]]) -> JSONResponse:
     )
 
 
+def _request_logger(request: Request) -> Logger | None:
+    """Return request logging context when middleware installed it."""
+    return cast("Logger | None", getattr(request.state, "logger", None)) or get_bound_request_logger()
+
+
 def _translate_domain_errors(
     handler: Callable[..., Awaitable[Response]],
 ) -> Callable[..., Awaitable[Response]]:
@@ -215,14 +221,20 @@ def _translate_domain_errors(
 @endpoint(request_body=CaptureRequest, response=MemoryRead, status=201)
 async def capture_memory(request: Request, body: CaptureRequest) -> Response:
     """Capture a loose Memory."""
-    memory = await request.app.state.memory_service.capture(body.content)
+    memory = await request.app.state.memory_service.capture(
+        body.content,
+        logger=_request_logger(request),
+    )
     return _read_response(memory, status_code=201)
 
 
 @endpoint(query=BrowseQuery, response=MemoryRead, response_is_list=True)
 async def browse_memories(request: Request, query: BrowseQuery) -> Response:
     """Filter the review queue (`loose`) or browse the corpus (`tethered`)."""
-    memories = await request.app.state.memory_service.browse_by_state(query.state)
+    memories = await request.app.state.memory_service.browse_by_state(
+        query.state,
+        logger=_request_logger(request),
+    )
     return _list_response(memories)
 
 
@@ -231,7 +243,9 @@ async def browse_memories(request: Request, query: BrowseQuery) -> Response:
 async def search_memories(request: Request, query: SearchQuery) -> Response:
     """Keyword Search over tethered Memories."""
     memories = await request.app.state.memory_service.search(
-        query.q, limit=query.limit
+        query.q,
+        limit=query.limit,
+        logger=_request_logger(request),
     )
     return _list_response(memories)
 
@@ -243,6 +257,7 @@ async def edit_memory(request: Request, body: EditRequest) -> Response:
     memory = await request.app.state.memory_service.edit_content(
         _memory_reference(_path_memory_id(request), body.version),
         body.content,
+        logger=_request_logger(request),
     )
     return _read_response(memory)
 
@@ -253,6 +268,7 @@ async def tether_memory(request: Request, body: TetherRequest) -> Response:
     """Promote a loose Memory to tethered."""
     memory = await request.app.state.memory_service.tether(
         _memory_reference(_path_memory_id(request), body.version),
+        logger=_request_logger(request),
     )
     return _read_response(memory)
 
@@ -263,6 +279,7 @@ async def reject_memory(request: Request, query: RejectQuery) -> Response:
     """Soft-delete (reject) a Memory."""
     memory = await request.app.state.memory_service.delete(
         _memory_reference(_path_memory_id(request), query.version),
+        logger=_request_logger(request),
     )
     return _read_response(memory)
 

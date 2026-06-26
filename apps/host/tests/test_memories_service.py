@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 from pathlib import Path
 
+import structlog
 from anyio import TemporaryDirectory
 from snekql.sqlite import Config, Database, Fetched, delete, select
 from snektest import (
@@ -115,7 +116,10 @@ async def capture_logs_the_captured_memory_id_without_content() -> None:
     service = await load_fixture(memory_service())
 
     with capture_logs() as logs:
-        memory = await service.capture("I prefer aisle seats on flights")
+        memory = await service.capture(
+            "I prefer aisle seats on flights",
+            logger=structlog.stdlib.get_logger("test"),
+        )
 
     assert_in(
         {
@@ -136,7 +140,10 @@ async def search_logs_the_result_count() -> None:
     _ = await capture_tethered_memory(service, "needle matching memory")
 
     with capture_logs() as logs:
-        _ = await service.search("needle")
+        _ = await service.search(
+            "needle",
+            logger=structlog.stdlib.get_logger("test"),
+        )
 
     assert_in(
         {

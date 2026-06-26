@@ -1,7 +1,6 @@
 """Starlette server for the Tether host: wires the Memory service over HTTP.
 
->>> app = create_app()
->>> # uvicorn tether.server:app
+>>> # Run the host with `python -m tether`.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
 
-from tether.logging import ContextLoggerMiddleware, Logger, configure_logging
+from tether.logging import ContextLoggerMiddleware, configure_logging
 from tether.memories import (
     KnowledgeBaseService,
     MemoryService,
@@ -45,13 +44,21 @@ class HostSettings(BaseSettings):
 
 
 def _lifespan(
-    *, database_path: str | Path, kb_root: str | Path
+    *,
+    database_path: str | Path,
+    kb_root: str | Path,
+    logging_level: str | None,
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None, bool | None]]:
     """Create lifespan wiring for a configured SQLite DB and KB root."""
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncGenerator[None]:
         """Build the Memory service for the app lifetime and close it after."""
+        app_logger = (
+            configure_logging(logging_level) if logging_level is not None else None
+        )
+        if app_logger is not None:
+            app.state.logger = app_logger
         configured_kb_root = Path(kb_root)
         await AsyncPath(configured_kb_root).mkdir(parents=True, exist_ok=True)
         database_name = str(database_path)
@@ -69,7 +76,7 @@ def _lifespan(
             await create_memory_schema(db)
             kb_service = KnowledgeBaseService(kb_root=configured_kb_root)
             memory_service = MemoryService(database=db, kb_service=kb_service)
-            await memory_service.regenerate_knowledge_base()
+            await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
             yield
 
@@ -80,7 +87,8 @@ def create_app(
     *,
     database_path: str | Path = Path(".tether/tether.sqlite3"),
     kb_root: str | Path = Path(".tether"),
-    base_logger: Logger | None = None,
+    logging_level: str | None = None,
+    request_logging: bool = False,
 ) -> Starlette:
     """Construct the Starlette application with Memory routes and lifespan wiring.
 
@@ -91,10 +99,14 @@ def create_app(
     docs = openapi_routes(routes, title="Tether", version="0.1.0")
     app = Starlette(
         routes=[*routes, *docs],
-        lifespan=_lifespan(database_path=database_path, kb_root=kb_root),
+        lifespan=_lifespan(
+            database_path=database_path,
+            kb_root=kb_root,
+            logging_level=logging_level,
+        ),
     )
-    if base_logger is not None:
-        app.add_middleware(ContextLoggerMiddleware, base_logger=base_logger)
+    if request_logging:
+        app.add_middleware(ContextLoggerMiddleware)
     return app
 
 
@@ -109,7 +121,8 @@ def create_app_from_environment() -> Starlette:
     return create_app(
         database_path=settings.database_path,
         kb_root=settings.kb_root,
-        base_logger=configure_logging(settings.logging_level),
+        logging_level=settings.logging_level,
+        request_logging=True,
     )
 
 
@@ -136,7 +149,3 @@ def serve(settings: HostSettings | None = None) -> None:
 def main() -> None:
     """Console entrypoint for `python -m tether`."""
     serve()
-
-
-app = create_app()
-"""Module-level ASGI app for `uvicorn tether.server:app`."""

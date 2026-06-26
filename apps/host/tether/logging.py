@@ -241,16 +241,23 @@ class ContextLoggerMiddleware(BaseHTTPMiddleware):
     ```
     """
 
-    def __init__(self, app: Any, *, base_logger: Logger) -> None:
+    def __init__(self, app: Any, *, base_logger: Logger | None = None) -> None:
         super().__init__(app)
-        self.base_logger: Logger = base_logger
+        self.base_logger: Logger | None = base_logger
 
     async def dispatch(
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        request_logger = self.base_logger.bind(
+        base_logger = self.base_logger or cast(
+            "Logger | None",
+            getattr(request.app.state, "logger", None),
+        )
+        if base_logger is None:
+            error_message = "Application logger is not configured."
+            raise RuntimeError(error_message)
+        request_logger = base_logger.bind(
             request_id=str(uuid4()),
             method=request.method,
             path=request.url.path,
