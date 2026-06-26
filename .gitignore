@@ -12,3 +12,6 @@ apps/agent/dist/
 *.db-shm
 *.sqlite
 data/
+
+# Tether runtime files
+.tether
