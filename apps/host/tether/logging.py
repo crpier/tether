@@ -290,7 +290,7 @@ class ContextLoggerMiddleware(BaseHTTPMiddleware):
             )
             raise
         else:
-            request_logger.info(
+            request_logger.debug(
                 "Request completed",
                 status_code=response.status_code,
                 duration_ms=round((time.perf_counter() - started_at) * 1000, 3),

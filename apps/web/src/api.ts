@@ -6,6 +6,12 @@ export type Conversation = components["schemas"]["ConversationRead"];
 export type Message = components["schemas"]["MessageRead"];
 export type ModelList = components["schemas"]["ModelListRead"];
 export type Session = components["schemas"]["SessionResponse"];
+export type Trigger = components["schemas"]["TriggerRead"];
+export type CreateTrigger = components["schemas"]["CreateTriggerRequest"];
+export type UpdateTrigger = components["schemas"]["UpdateTriggerRequest"];
+export type PushStatus = components["schemas"]["PushStatusRead"];
+export type TriggerRecurrence = components["schemas"]["TriggerRecurrence"];
+export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -18,6 +24,12 @@ export interface TetherApi {
     conversationId: string,
     selectedModel: string,
   ): Promise<Conversation>;
+  listTriggers(): Promise<Trigger[]>;
+  createTrigger(body: CreateTrigger): Promise<Trigger>;
+  deleteTrigger(triggerId: string, version: number): Promise<void>;
+  getPushStatus(endpoint: string): Promise<PushStatus>;
+  subscribePush(endpoint: string, p256dh: string, auth: string): Promise<void>;
+  unsubscribePush(endpoint: string): Promise<PushStatus>;
 }
 
 function requireData<T>(data: T | undefined, response: Response): T {
@@ -76,6 +88,39 @@ export function createRestApi(
           body: { selected_model: selectedModel },
           params: { path: { conversation_id: conversationId } },
         },
+      );
+      return requireData(data, response);
+    },
+    async listTriggers() {
+      const { data, response } = await client.GET("/api/triggers");
+      return requireData(data, response);
+    },
+    async createTrigger(body) {
+      const { data, response } = await client.POST("/api/triggers", { body });
+      return requireData(data, response);
+    },
+    async deleteTrigger(triggerId, version) {
+      const { response } = await client.DELETE("/api/triggers/{trigger_id}", {
+        params: { path: { trigger_id: triggerId }, query: { version } },
+      });
+      requireOk(response);
+    },
+    async getPushStatus(endpoint) {
+      const { data, response } = await client.GET("/api/push/status", {
+        params: { query: { endpoint } },
+      });
+      return requireData(data, response);
+    },
+    async subscribePush(endpoint, p256dh, auth) {
+      const { response } = await client.POST("/api/push/subscriptions", {
+        body: { endpoint, p256dh, auth },
+      });
+      requireOk(response);
+    },
+    async unsubscribePush(endpoint) {
+      const { data, response } = await client.DELETE(
+        "/api/push/subscriptions",
+        { body: { endpoint } },
       );
       return requireData(data, response);
     },

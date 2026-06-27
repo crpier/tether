@@ -399,6 +399,122 @@
         "title": "RetryYouTubeVideoParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/create_trigger",
+      "name": "create_trigger",
+      "params_model": "CreateTriggerParams",
+      "schema": {
+        "$defs": {
+          "TriggerActionKind": {
+            "enum": ["message", "prompt"],
+            "type": "string"
+          },
+          "TriggerRecurrence": {
+            "enum": ["once", "daily", "weekly"],
+            "type": "string"
+          }
+        },
+        "description": "Params for scheduling a trigger.\n\n`once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and\n`time_of_day` (and a `weekday` for weekly). Mismatched fields are rejected\nas a well-formed `invalid_input` envelope, never a corrupt row.",
+        "properties": {
+          "recurrence": {
+            "$ref": "#/$defs/TriggerRecurrence"
+          },
+          "action_kind": {
+            "$ref": "#/$defs/TriggerActionKind"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timezone"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Of Day"
+          },
+          "weekday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Weekday"
+          },
+          "fire_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fire At"
+          }
+        },
+        "required": ["recurrence", "action_kind", "payload"],
+        "title": "CreateTriggerParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_triggers",
+      "name": "list_triggers",
+      "params_model": "ListTriggersParams",
+      "schema": {
+        "description": "Params for listing live triggers; the listing takes no inputs.",
+        "properties": {},
+        "title": "ListTriggersParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/delete_trigger",
+      "name": "delete_trigger",
+      "params_model": "DeleteTriggerParams",
+      "schema": {
+        "description": "Params for deleting a trigger at an observed version.",
+        "properties": {
+          "trigger_id": {
+            "format": "uuid7",
+            "title": "Trigger Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["trigger_id", "version"],
+        "title": "DeleteTriggerParams",
+        "type": "object"
+      }
     }
   ]
 }

@@ -16,7 +16,14 @@ import {
 import type { JSX } from "solid-js";
 
 import { createRestApi } from "./api";
-import type { Conversation, Message, TetherApi } from "./api";
+import type {
+  Conversation,
+  CreateTrigger,
+  Message,
+  TetherApi,
+  TriggerActionKind,
+  TriggerRecurrence,
+} from "./api";
 import { createBrowserChatBus } from "./chat-bus";
 import type { ChatBus, ChatFrame, CreateChatBus } from "./chat-bus";
 
@@ -29,7 +36,9 @@ const queryKeys = {
   conversations: ["conversations"] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
   models: ["models"] as const,
+  push: ["push"] as const,
   session: ["session"] as const,
+  triggers: ["triggers"] as const,
 };
 
 interface DisplayMessage {
@@ -209,6 +218,354 @@ function MessageRows(props: {
   );
 }
 
+interface NotifyItem {
+  body: string;
+  id: string;
+  title?: string | null;
+}
+
+const PUSH_ENDPOINT_KEY = "tether-push-endpoint";
+
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+let cachedPushEndpoint: string | undefined;
+
+function browserPushEndpoint(): string {
+  if (cachedPushEndpoint !== undefined) {
+    return cachedPushEndpoint;
+  }
+  let endpoint: string | null;
+  try {
+    endpoint = window.localStorage.getItem(PUSH_ENDPOINT_KEY);
+  } catch {
+    endpoint = null;
+  }
+  if (endpoint === null) {
+    endpoint = `urn:tether:browser:${crypto.randomUUID()}`;
+    try {
+      window.localStorage.setItem(PUSH_ENDPOINT_KEY, endpoint);
+    } catch {
+      // localStorage unavailable (e.g. opaque origin); keep the in-memory value.
+    }
+  }
+  cachedPushEndpoint = endpoint;
+  return endpoint;
+}
+
+function formatFireTime(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+const WEEKDAYS = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
+function NotificationsPanel(props: { notifications: NotifyItem[] }) {
+  return (
+    <section aria-label="Notifications">
+      <h2>Notifications</h2>
+      <Show
+        fallback={<p>No notifications yet</p>}
+        when={props.notifications.length > 0}
+      >
+        <ul>
+          <For each={props.notifications}>
+            {(item) => (
+              <li>
+                <Show when={item.title}>
+                  {(title) => <strong>{title()} </strong>}
+                </Show>
+                <span>{item.body}</span>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </section>
+  );
+}
+
+function TriggersPanel(props: { api: TetherApi }) {
+  const queryClient = useQueryClient();
+  const triggersQuery = createQuery(() => ({
+    queryFn: () => props.api.listTriggers(),
+    queryKey: queryKeys.triggers,
+  }));
+
+  const [recurrence, setRecurrence] = createSignal<TriggerRecurrence>("once");
+  const [actionKind, setActionKind] =
+    createSignal<TriggerActionKind>("message");
+  const [payload, setPayload] = createSignal("");
+  const [fireAt, setFireAt] = createSignal("");
+  const [timeOfDay, setTimeOfDay] = createSignal("09:00");
+  const [timezone, setTimezone] = createSignal(browserTimezone());
+  const [weekday, setWeekday] = createSignal(0);
+  const [error, setError] = createSignal<string | undefined>();
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.triggers });
+    void queryClient.refetchQueries({ queryKey: queryKeys.triggers });
+  };
+
+  const submit = () => {
+    const rec = recurrence();
+    if (payload().trim().length === 0) {
+      setError("Add a reminder message");
+      return;
+    }
+    let fireAtIso: string | null = null;
+    if (rec === "once") {
+      const parsed = new Date(fireAt());
+      if (Number.isNaN(parsed.getTime())) {
+        setError("Pick a date and time");
+        return;
+      }
+      fireAtIso = parsed.toISOString();
+    }
+    const body: CreateTrigger = {
+      action_kind: actionKind(),
+      fire_at: fireAtIso,
+      payload: payload().trim(),
+      recurrence: rec,
+      time_of_day: rec === "once" ? null : timeOfDay(),
+      timezone: rec === "once" ? null : timezone(),
+      weekday: rec === "weekly" ? weekday() : null,
+    };
+    void (async () => {
+      setError(undefined);
+      try {
+        await props.api.createTrigger(body);
+        setPayload("");
+        setFireAt("");
+        refresh();
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Could not create reminder",
+        );
+      }
+    })();
+  };
+
+  const remove = (triggerId: string, version: number) => {
+    void (async () => {
+      setError(undefined);
+      try {
+        await props.api.deleteTrigger(triggerId, version);
+        refresh();
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Could not delete reminder",
+        );
+      }
+    })();
+  };
+
+  const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
+    event.preventDefault();
+    submit();
+  };
+
+  return (
+    <section aria-label="Reminders">
+      <h2>Reminders</h2>
+      <form onSubmit={onSubmit}>
+        <label>
+          Reminder
+          <input
+            name="payload"
+            onInput={(event) => {
+              setPayload(event.currentTarget.value);
+            }}
+            value={payload()}
+          />
+        </label>
+        <label>
+          Repeat
+          <select
+            name="recurrence"
+            onChange={(event) => {
+              setRecurrence(event.currentTarget.value as TriggerRecurrence);
+            }}
+            value={recurrence()}
+          >
+            <option value="once">Once</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+        </label>
+        <label>
+          Action
+          <select
+            name="action_kind"
+            onChange={(event) => {
+              setActionKind(event.currentTarget.value as TriggerActionKind);
+            }}
+            value={actionKind()}
+          >
+            <option value="message">Send this message</option>
+            <option value="prompt">Run as agent prompt</option>
+          </select>
+        </label>
+        <Show when={recurrence() === "once"}>
+          <label>
+            Date and time
+            <input
+              name="fire_at"
+              onInput={(event) => {
+                setFireAt(event.currentTarget.value);
+              }}
+              type="datetime-local"
+              value={fireAt()}
+            />
+          </label>
+        </Show>
+        <Show when={recurrence() !== "once"}>
+          <label>
+            Time of day
+            <input
+              name="time_of_day"
+              onInput={(event) => {
+                setTimeOfDay(event.currentTarget.value);
+              }}
+              type="time"
+              value={timeOfDay()}
+            />
+          </label>
+          <label>
+            Time zone
+            <input
+              name="timezone"
+              onInput={(event) => {
+                setTimezone(event.currentTarget.value);
+              }}
+              value={timezone()}
+            />
+          </label>
+        </Show>
+        <Show when={recurrence() === "weekly"}>
+          <label>
+            Day of week
+            <select
+              name="weekday"
+              onChange={(event) => {
+                setWeekday(Number(event.currentTarget.value));
+              }}
+              value={weekday()}
+            >
+              <For each={WEEKDAYS}>
+                {(day, index) => <option value={index()}>{day}</option>}
+              </For>
+            </select>
+          </label>
+        </Show>
+        <button type="submit">Add reminder</button>
+      </form>
+      <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
+      <ul>
+        <For each={triggersQuery.data ?? []}>
+          {(trigger) => (
+            <li aria-label={`Reminder: ${trigger.payload}`}>
+              <span>{trigger.payload}</span>
+              <span>{` · ${trigger.recurrence} · ${trigger.status}`}</span>
+              <span>{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
+              <button
+                onClick={() => {
+                  remove(trigger.id, trigger.version);
+                }}
+                type="button"
+              >
+                Delete
+              </button>
+            </li>
+          )}
+        </For>
+      </ul>
+    </section>
+  );
+}
+
+function PushControl(props: { api: TetherApi }) {
+  const queryClient = useQueryClient();
+  const endpoint = browserPushEndpoint();
+  const statusQuery = createQuery(() => ({
+    queryFn: () => props.api.getPushStatus(endpoint),
+    queryKey: queryKeys.push,
+  }));
+  const [busy, setBusy] = createSignal(false);
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.push });
+    void queryClient.refetchQueries({ queryKey: queryKeys.push });
+  };
+
+  const enable = () => {
+    void (async () => {
+      setBusy(true);
+      try {
+        await props.api.subscribePush(endpoint, "browser-key", "browser-auth");
+        refresh();
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
+  const disable = () => {
+    void (async () => {
+      setBusy(true);
+      try {
+        await props.api.unsubscribePush(endpoint);
+        refresh();
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
+  return (
+    <section aria-label="Notification delivery">
+      <h2>Push notifications</h2>
+      <Show fallback={<p>Checking…</p>} when={statusQuery.data}>
+        {(status) => (
+          <Show
+            fallback={
+              <>
+                <p>Not subscribed</p>
+                <button disabled={busy()} onClick={enable} type="button">
+                  Enable notifications
+                </button>
+              </>
+            }
+            when={status().subscribed}
+          >
+            <p>Subscribed</p>
+            <button disabled={busy()} onClick={disable} type="button">
+              Disable notifications
+            </button>
+          </Show>
+        )}
+      </Show>
+    </section>
+  );
+}
+
 function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   const queryClient = useQueryClient();
   const [bus, setBus] = createSignal<ChatBus | undefined>();
@@ -223,6 +580,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
     DisplayMessage[]
   >([]);
   const [messagesRefresh, setMessagesRefresh] = createSignal(0);
+  const [notifications, setNotifications] = createSignal<NotifyItem[]>([]);
 
   const conversationsQuery = createQuery(() => ({
     queryFn: () => props.api.listConversations(),
@@ -275,6 +633,17 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
       if (frame.keys.includes("messages")) {
         setMessagesRefresh((refresh) => refresh + 1);
       }
+      return;
+    }
+    if (frame.type === "notify") {
+      setNotifications((items) => [
+        {
+          body: frame.body,
+          id: `${frame.trigger_id}:${Date.now().toString()}`,
+          title: frame.title,
+        },
+        ...items,
+      ]);
       return;
     }
     const currentConversationId = conversationId();
@@ -414,6 +783,9 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
           </button>
         </form>
       </Show>
+      <NotificationsPanel notifications={notifications()} />
+      <TriggersPanel api={props.api} />
+      <PushControl api={props.api} />
     </main>
   );
 }

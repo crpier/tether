@@ -656,6 +656,234 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/push/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Report whether this browser (or any browser) is subscribed. */
+    get: {
+      parameters: {
+        query?: {
+          endpoint?: string | null;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PushStatusRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/push/subscriptions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Register (or refresh) this browser's push subscription. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["SubscribeRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PushSubscriptionRead"];
+          };
+        };
+      };
+    };
+    /** Remove this browser's push subscription. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["UnsubscribeRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PushStatusRead"];
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/triggers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List live Scheduled triggers, soonest next fire first. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TriggerRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Create a Scheduled trigger. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["CreateTriggerRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TriggerRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/triggers/{trigger_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Replace a trigger's definition, re-arming it from its next occurrence. */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          trigger_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["UpdateTriggerRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TriggerRead"];
+          };
+        };
+      };
+    };
+    post?: never;
+    /** Delete a Scheduled trigger. */
+    delete: {
+      parameters: {
+        query: {
+          version: number;
+        };
+        header?: never;
+        path: {
+          trigger_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TriggerRead"];
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/youtube": {
     parameters: {
       query?: never;
@@ -1008,6 +1236,36 @@ export interface components {
       title: string | null;
     };
     /**
+     * CreateTriggerRequest
+     * @description Body for creating a Scheduled trigger.
+     */
+    CreateTriggerRequest: {
+      action_kind: components["schemas"]["TriggerActionKind"];
+      /**
+       * Fire At
+       * @default null
+       */
+      fire_at: string | null;
+      /** Payload */
+      payload: string;
+      recurrence: components["schemas"]["TriggerRecurrence"];
+      /**
+       * Time Of Day
+       * @default null
+       */
+      time_of_day: string | null;
+      /**
+       * Timezone
+       * @default null
+       */
+      timezone: string | null;
+      /**
+       * Weekday
+       * @default null
+       */
+      weekday: number | null;
+    };
+    /**
      * DedupAdvisoryRead
      * @description The dedup advisory returned alongside a freshly Added item.
      *
@@ -1142,6 +1400,29 @@ export interface components {
       models: components["schemas"]["AgentModelRead"][];
     };
     /**
+     * PushStatusRead
+     * @description HTTP representation of the browser's push-subscription status.
+     */
+    PushStatusRead: {
+      /** Count */
+      count: number;
+      /** Subscribed */
+      subscribed: boolean;
+    };
+    /**
+     * PushSubscriptionRead
+     * @description HTTP representation of a stored push subscription.
+     */
+    PushSubscriptionRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Endpoint */
+      endpoint: string;
+    };
+    /**
      * QuotaMeta
      * @description The quota budget snapshot a guarded call reports.
      *
@@ -1173,6 +1454,21 @@ export interface components {
       selected_model: string;
     };
     /**
+     * SubscribeRequest
+     * @description Body for registering a browser push subscription.
+     *
+     *     >>> SubscribeRequest(endpoint="https://push/abc", p256dh="k", auth="a").endpoint
+     *     'https://push/abc'
+     */
+    SubscribeRequest: {
+      /** Auth */
+      auth: string;
+      /** Endpoint */
+      endpoint: string;
+      /** P256Dh */
+      p256dh: string;
+    };
+    /**
      * TetherRequest
      * @description Body for tethering a Memory at an observed `version`.
      *
@@ -1182,6 +1478,97 @@ export interface components {
     TetherRequest: {
       /** Version */
       version: number;
+    };
+    /** @enum {string} */
+    TriggerActionKind: "message" | "prompt";
+    /**
+     * TriggerRead
+     * @description HTTP representation of a Scheduled trigger.
+     */
+    TriggerRead: {
+      action_kind: components["schemas"]["TriggerActionKind"];
+      /** Attempts */
+      attempts: number;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Last Error */
+      last_error: string | null;
+      /** Next Attempt At */
+      next_attempt_at: string | null;
+      /**
+       * Next Fire At
+       * Format: date-time
+       */
+      next_fire_at: string;
+      /** Payload */
+      payload: string;
+      recurrence: components["schemas"]["TriggerRecurrence"];
+      status: components["schemas"]["TriggerStatus"];
+      /** Timezone */
+      timezone: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Version */
+      version: number;
+      /** Wall Time */
+      wall_time: string | null;
+      /** Weekday */
+      weekday: number | null;
+    };
+    /** @enum {string} */
+    TriggerRecurrence: "once" | "daily" | "weekly";
+    /** @enum {string} */
+    TriggerStatus: "active" | "completed" | "failed";
+    /**
+     * UnsubscribeRequest
+     * @description Body for removing a browser push subscription.
+     */
+    UnsubscribeRequest: {
+      /** Endpoint */
+      endpoint: string;
+    };
+    /**
+     * UpdateTriggerRequest
+     * @description Body for replacing a trigger's definition at an observed version.
+     */
+    UpdateTriggerRequest: {
+      action_kind: components["schemas"]["TriggerActionKind"];
+      /**
+       * Fire At
+       * @default null
+       */
+      fire_at: string | null;
+      /** Payload */
+      payload: string;
+      recurrence: components["schemas"]["TriggerRecurrence"];
+      /**
+       * Time Of Day
+       * @default null
+       */
+      time_of_day: string | null;
+      /**
+       * Timezone
+       * @default null
+       */
+      timezone: string | null;
+      /** Version */
+      version: number;
+      /**
+       * Weekday
+       * @default null
+       */
+      weekday: number | null;
     };
     /** @enum {string} */
     YouTubeSource: "liked" | "watch_later";

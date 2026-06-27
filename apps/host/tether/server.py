@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import uvicorn
 from anyio import Path as AsyncPath
@@ -30,7 +31,7 @@ from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfi
 from tether.chat_ws import websocket_routes
 from tether.conversations import ConversationService, create_conversation_schema
 from tether.events import EventHub
-from tether.logging import ContextLoggerMiddleware, configure_logging
+from tether.logging import ContextLoggerMiddleware, Logger, configure_logging
 from tether.memories import (
     KnowledgeBaseService,
     MemoryService,
@@ -39,7 +40,17 @@ from tether.memories import (
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
+from tether.push import PushService, create_push_schema
 from tether.review import ReviewService
+from tether.scheduler import (
+    EphemeralPiConfig,
+    EphemeralPiPromptRunner,
+    EventNotifier,
+    Scheduler,
+    SchedulerConfig,
+    SystemClock,
+    TriggerDispatcher,
+)
 from tether.telemetry import (
     TelemetryExporter,
     TelemetryMiddleware,
@@ -47,6 +58,8 @@ from tether.telemetry import (
     configure_telemetry,
 )
 from tether.tools import SessionRegistry, internal_tool_routes
+from tether.trigger_tools import internal_trigger_tool_routes
+from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
     InMemoryYouTubeApi,
     YouTubeApi,
@@ -82,6 +95,8 @@ class AppConfig:
     youtube_quota_limit: int = 10_000
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
+    scheduler_concurrency: int = 4
+    scheduler_tick_seconds: float = 30.0
     secure_cookies: bool = False
     tool_base_url: str = "http://127.0.0.1:8000"
 
@@ -122,6 +137,63 @@ class HostSettings(BaseSettings):
         )
 
 
+async def _create_schemas(db: Database) -> None:
+    """Apply every domain's ordered migrations on an initialized database."""
+    await create_memory_schema(db)
+    await create_bucket_item_schema(db)
+    await create_conversation_schema(db)
+    await create_youtube_schema(db)
+    await create_trigger_schema(db)
+    await create_push_schema(db)
+
+
+def _build_scheduler(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    trigger_service: TriggerService,
+    kb_root: Path,
+) -> Scheduler:
+    """Wire the Scheduled-trigger scheduler over its dispatch collaborators.
+
+    Agent-prompt triggers spawn ephemeral pi processes under a dedicated session
+    root; fixed-message triggers never touch pi. Delivery goes out over the
+    in-process event hub as `notify` frames. Shared collaborators (event hub,
+    model catalog, session registry, tool secret, logger) are read from the
+    already-populated `app.state`.
+    """
+    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
+    session_root = (
+        Path(config.pi_session_root)
+        if config.pi_session_root is not None
+        else kb_root / "pi-sessions"
+    )
+    prompt_runner = EphemeralPiPromptRunner(
+        EphemeralPiConfig(
+            session_registry=app.state.session_registry,
+            session_root=session_root / "scheduled",
+            tool_base_url=config.tool_base_url,
+            tool_secret=app.state.tool_secret,
+            model=model_catalog.default_config,
+            extra_extension_paths=config.extra_extension_paths,
+            pi_binary=config.pi_binary,
+        )
+    )
+    return Scheduler(
+        service=trigger_service,
+        dispatcher=TriggerDispatcher(
+            notifier=EventNotifier(app.state.event_hub),
+            agent_runner=prompt_runner,
+        ),
+        clock=SystemClock(),
+        logger=cast("Logger", app.state.logger),
+        config=SchedulerConfig(
+            tick_seconds=config.scheduler_tick_seconds,
+            concurrency=config.scheduler_concurrency,
+        ),
+    )
+
+
 def _lifespan(
     *,
     config: AppConfig,
@@ -150,10 +222,7 @@ def _lifespan(
         async with await Database.initialize(
             backend=Config(database=database_config),
         ) as db:
-            await create_memory_schema(db)
-            await create_bucket_item_schema(db)
-            await create_conversation_schema(db)
-            await create_youtube_schema(db)
+            await _create_schemas(db)
             model_catalog = (
                 AgentModelCatalog(
                     default_model=config.default_model,
@@ -211,13 +280,35 @@ def _lifespan(
                 )
             )
             app.state.conversation_runtime_registry = runtime_registry
+            trigger_service = TriggerService(
+                database=db,
+                event_publisher=event_hub,
+                tracer=telemetry.tracer,
+            )
+            app.state.trigger_service = trigger_service
+            app.state.push_service = PushService(
+                database=db,
+                event_publisher=event_hub,
+            )
+            scheduler = _build_scheduler(
+                app,
+                config=config,
+                trigger_service=trigger_service,
+                kb_root=configured_kb_root,
+            )
+            app.state.scheduler = scheduler
             idle_reaper = asyncio.create_task(runtime_registry.reap_idle_forever())
+            scheduler_task = asyncio.create_task(scheduler.run_forever())
             try:
                 yield
             finally:
                 _ = idle_reaper.cancel()
+                _ = scheduler_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await idle_reaper
+                with contextlib.suppress(asyncio.CancelledError):
+                    await scheduler_task
+                await scheduler.shutdown()
                 await runtime_registry.shutdown_all()
                 telemetry.shutdown()
 
@@ -245,6 +336,7 @@ def create_app(
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
             *internal_youtube_tool_routes(),
+            *internal_trigger_tool_routes(),
             *websocket_routes,
             *docs,
         ],

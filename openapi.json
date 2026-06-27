@@ -267,6 +267,77 @@
         "title": "ConversationRead",
         "type": "object"
       },
+      "CreateTriggerRequest": {
+        "description": "Body for creating a Scheduled trigger.",
+        "properties": {
+          "action_kind": {
+            "$ref": "#/components/schemas/TriggerActionKind"
+          },
+          "fire_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fire At"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/TriggerRecurrence"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Of Day"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timezone"
+          },
+          "weekday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Weekday"
+          }
+        },
+        "required": [
+          "recurrence",
+          "action_kind",
+          "payload"
+        ],
+        "title": "CreateTriggerRequest",
+        "type": "object"
+      },
       "DedupAdvisoryRead": {
         "description": "The dedup advisory returned alongside a freshly Added item.\n\n`severity` is `warn` when an active duplicate already exists, `inform` when\nthe only duplicates are terminal (completed/deleted), `none` otherwise.\nDedup never blocks, so the item is Added regardless.",
         "properties": {
@@ -547,6 +618,45 @@
         "title": "ModelListRead",
         "type": "object"
       },
+      "PushStatusRead": {
+        "description": "HTTP representation of the browser's push-subscription status.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "subscribed": {
+            "title": "Subscribed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "subscribed",
+          "count"
+        ],
+        "title": "PushStatusRead",
+        "type": "object"
+      },
+      "PushSubscriptionRead": {
+        "description": "HTTP representation of a stored push subscription.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "created_at"
+        ],
+        "title": "PushSubscriptionRead",
+        "type": "object"
+      },
       "QuotaMeta": {
         "description": "The quota budget snapshot a guarded call reports.\n\n>>> QuotaMeta(limit=100, used=3, remaining=97).remaining\n97",
         "properties": {
@@ -599,6 +709,30 @@
         "title": "SetConversationModelRequest",
         "type": "object"
       },
+      "SubscribeRequest": {
+        "description": "Body for registering a browser push subscription.\n\n>>> SubscribeRequest(endpoint=\"https://push/abc\", p256dh=\"k\", auth=\"a\").endpoint\n'https://push/abc'",
+        "properties": {
+          "auth": {
+            "title": "Auth",
+            "type": "string"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "p256dh": {
+            "title": "P256Dh",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "p256dh",
+          "auth"
+        ],
+        "title": "SubscribeRequest",
+        "type": "object"
+      },
       "TetherRequest": {
         "description": "Body for tethering a Memory at an observed `version`.\n\n>>> TetherRequest(version=1).version\n1",
         "properties": {
@@ -612,6 +746,235 @@
           "version"
         ],
         "title": "TetherRequest",
+        "type": "object"
+      },
+      "TriggerActionKind": {
+        "enum": [
+          "message",
+          "prompt"
+        ],
+        "type": "string"
+      },
+      "TriggerRead": {
+        "description": "HTTP representation of a Scheduled trigger.",
+        "properties": {
+          "action_kind": {
+            "$ref": "#/components/schemas/TriggerActionKind"
+          },
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "next_fire_at": {
+            "format": "date-time",
+            "title": "Next Fire At",
+            "type": "string"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/TriggerRecurrence"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TriggerStatus"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "wall_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wall Time"
+          },
+          "weekday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekday"
+          }
+        },
+        "required": [
+          "id",
+          "recurrence",
+          "action_kind",
+          "payload",
+          "timezone",
+          "wall_time",
+          "weekday",
+          "next_fire_at",
+          "status",
+          "attempts",
+          "next_attempt_at",
+          "last_error",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TriggerRead",
+        "type": "object"
+      },
+      "TriggerRecurrence": {
+        "enum": [
+          "once",
+          "daily",
+          "weekly"
+        ],
+        "type": "string"
+      },
+      "TriggerStatus": {
+        "enum": [
+          "active",
+          "completed",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "UnsubscribeRequest": {
+        "description": "Body for removing a browser push subscription.",
+        "properties": {
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint"
+        ],
+        "title": "UnsubscribeRequest",
+        "type": "object"
+      },
+      "UpdateTriggerRequest": {
+        "description": "Body for replacing a trigger's definition at an observed version.",
+        "properties": {
+          "action_kind": {
+            "$ref": "#/components/schemas/TriggerActionKind"
+          },
+          "fire_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fire At"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/TriggerRecurrence"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Of Day"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timezone"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "weekday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Weekday"
+          }
+        },
+        "required": [
+          "recurrence",
+          "action_kind",
+          "payload",
+          "version"
+        ],
+        "title": "UpdateTriggerRequest",
         "type": "object"
       },
       "YouTubeSource": {
@@ -1291,6 +1654,211 @@
           }
         },
         "summary": "List host-enabled agent model choices."
+      }
+    },
+    "/api/push/status": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "endpoint",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Endpoint"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushStatusRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Report whether this browser (or any browser) is subscribed."
+      }
+    },
+    "/api/push/subscriptions": {
+      "delete": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnsubscribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushStatusRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Remove this browser's push subscription."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSubscriptionRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Register (or refresh) this browser's push subscription."
+      }
+    },
+    "/api/triggers": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TriggerRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List live Scheduled triggers, soonest next fire first."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTriggerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Create a Scheduled trigger."
+      }
+    },
+    "/api/triggers/{trigger_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trigger_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a Scheduled trigger."
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trigger_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTriggerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Replace a trigger's definition, re-arming it from its next occurrence."
       }
     },
     "/api/youtube": {

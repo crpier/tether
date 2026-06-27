@@ -168,6 +168,7 @@ def request_logs_include_trace_context() -> None:
                     app_password="test-app-password",
                     database_path=":memory:",
                     kb_root=f"{directory}/kb",
+                    logging_level="DEBUG",
                     session_secret="test-session-secret",
                 ),
                 telemetry_settings=TelemetrySettings(
@@ -274,7 +275,7 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
             TETHER_APP_PASSWORD="test-app-password",
             TETHER_DATABASE_PATH=f"{directory}/configured.sqlite3",
             TETHER_KB_ROOT=f"{directory}/kb",
-            TETHER_LOGGING_LEVEL="INFO",
+            TETHER_LOGGING_LEVEL="DEBUG",
             TETHER_SESSION_SECRET="test-session-secret",
         ),
     ):
