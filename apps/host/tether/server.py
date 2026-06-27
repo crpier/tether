@@ -8,6 +8,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
@@ -17,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
 
+from tether.auth import AppSessionMiddleware, auth_routes
 from tether.bucket_items import (
     BucketItemService,
     create_bucket_item_schema,
@@ -40,6 +42,24 @@ from tether.telemetry import (
 from tether.tools import SessionRegistry, internal_tool_routes
 
 
+@dataclass(frozen=True, slots=True)
+class AppConfig:
+    """In-process configuration for one Starlette app instance.
+
+    ```python
+    config = AppConfig(app_password="pw", session_secret="secret")
+    assert config.secure_cookies is False
+    ```
+    """
+
+    app_password: str
+    session_secret: str
+    database_path: str | Path = Path(".tether/tether.sqlite3")
+    kb_root: str | Path = Path(".tether")
+    logging_level: str = "INFO"
+    secure_cookies: bool = False
+
+
 class HostSettings(BaseSettings):
     """Environment-backed configuration for the host server process.
 
@@ -48,8 +68,10 @@ class HostSettings(BaseSettings):
     ```
     """
 
-    model_config = SettingsConfigDict(env_prefix="TETHER_")
+    model_config = SettingsConfigDict(env_prefix="TETHER_", validate_default=True)
 
+    app_password: str = Field(default="", min_length=1)
+    session_secret: str = Field(default="", min_length=1)
     database_path: Path = Path(".tether/tether.sqlite3")
     host: str = "127.0.0.1"
     kb_root: Path = Path(".tether")
@@ -126,9 +148,7 @@ def _lifespan(
 
 def create_app(
     *,
-    database_path: str | Path = ".tether/tether.sqlite3",
-    kb_root: str | Path = ".tether",
-    logging_level: str = "INFO",
+    config: AppConfig,
     telemetry_settings: TelemetrySettings | None = None,
     tool_secret: str | None = None,
 ) -> Starlette:
@@ -138,7 +158,7 @@ def create_app(
     and `/docs` describe exactly the API that is mounted. By default, both the
     SQLite database and markdown Knowledge base live under `.tether`.
     """
-    api_routes = [*routes, *bucket_item_routes]
+    api_routes = [*auth_routes, *routes, *bucket_item_routes]
     docs = openapi_routes(api_routes, title="Tether", version="0.1.0")
     configured_telemetry = telemetry_settings or TelemetrySettings()
     app = Starlette(
@@ -149,18 +169,26 @@ def create_app(
             *docs,
         ],
         lifespan=_lifespan(
-            database_path=database_path,
-            kb_root=kb_root,
-            logging_level=logging_level,
+            database_path=config.database_path,
+            kb_root=config.kb_root,
+            logging_level=config.logging_level,
             telemetry_settings=configured_telemetry,
         ),
     )
+    app.state.app_password = config.app_password
+    app.state.secure_cookies = config.secure_cookies
     app.state.session_registry = SessionRegistry()
+    app.state.session_secret = config.session_secret
     app.state.tool_secret = (
         tool_secret if tool_secret is not None else secrets.token_urlsafe(32)
     )
     app.add_middleware(ContextLoggerMiddleware)
     app.add_middleware(TelemetryMiddleware)
+    app.add_middleware(
+        AppSessionMiddleware,
+        secure=config.secure_cookies,
+        session_secret=config.session_secret,
+    )
     return app
 
 
@@ -173,9 +201,14 @@ def create_app_from_environment() -> Starlette:
     """
     settings = HostSettings()
     return create_app(
-        database_path=settings.database_path,
-        kb_root=settings.kb_root,
-        logging_level=settings.logging_level,
+        config=AppConfig(
+            app_password=settings.app_password,
+            database_path=settings.database_path,
+            kb_root=settings.kb_root,
+            logging_level=settings.logging_level,
+            secure_cookies=settings.telemetry_environment == "production",
+            session_secret=settings.session_secret,
+        ),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
     )

@@ -14,7 +14,7 @@ from typing import Any, cast
 from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 from starlette.testclient import TestClient
 
-from tether.server import create_app
+from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import SessionRegistry
 
@@ -26,8 +26,12 @@ SESSION = "session-abc"
 def make_client(root: Path) -> TestClient:
     """A test app with an isolated DB/KB, a known tool secret, one session."""
     app = create_app(
-        database_path=root / "tether.sqlite3",
-        kb_root=root / ".tether",
+        config=AppConfig(
+            app_password="test-app-password",
+            database_path=root / "tether.sqlite3",
+            kb_root=root / ".tether",
+            session_secret="test-session-secret",
+        ),
         telemetry_settings=TelemetrySettings(install_global_provider=False),
         tool_secret=SECRET,
     )

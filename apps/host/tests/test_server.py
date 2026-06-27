@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 
 from tether import server
 from tether.logging import QUIET_LOGGERS, SILENCED_LOGGERS
-from tether.server import HostSettings, create_app_from_environment, serve
+from tether.server import AppConfig, HostSettings, create_app_from_environment, serve
 from tether.telemetry import TelemetryExporter, TelemetrySettings
 
 
@@ -89,12 +89,14 @@ def host_settings_read_tether_environment_variables() -> None:
     with (
         TemporaryDirectory() as directory,
         configured_environment(
+            TETHER_APP_PASSWORD="configured-password",
             TETHER_DATABASE_PATH=f"{directory}/host.sqlite3",
             TETHER_HOST="127.0.0.2",
             TETHER_KB_ROOT=f"{directory}/kb",
             TETHER_LOGGING_LEVEL="DEBUG",
             TETHER_PORT="9001",
             TETHER_RELOAD="true",
+            TETHER_SESSION_SECRET="configured-session-secret",
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
@@ -103,16 +105,43 @@ def host_settings_read_tether_environment_variables() -> None:
     ):
         settings = HostSettings()
 
+    assert_eq(settings.app_password, "configured-password")
     assert_eq(settings.database_path, Path(directory) / "host.sqlite3")
     assert_eq(settings.host, "127.0.0.2")
     assert_eq(settings.kb_root, Path(directory) / "kb")
     assert_eq(settings.logging_level, "DEBUG")
     assert_eq(settings.port, 9001)
     assert_true(settings.reload)
+    assert_eq(settings.session_secret, "configured-session-secret")
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
     assert_eq(settings.tool_secret, "configured-tool-secret")
+
+
+@test()
+def environment_app_factory_requires_app_password_and_session_secret() -> None:
+    """The host refuses to start without required auth secrets."""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from tether.server import create_app_from_environment; create_app_from_environment()",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=Path(__file__).parents[1],
+        env={
+            name: value
+            for name, value in os.environ.items()
+            if name not in {"TETHER_APP_PASSWORD", "TETHER_SESSION_SECRET"}
+        },
+        text=True,
+    )
+
+    assert_true(completed.returncode != 0)
+    assert_in("app_password", completed.stderr)
+    assert_in("session_secret", completed.stderr)
 
 
 @test()
@@ -121,15 +150,23 @@ def request_logs_include_trace_context() -> None:
     with TemporaryDirectory() as directory, captured_logging() as stream:
         with TestClient(
             server.create_app(
-                database_path=":memory:",
-                kb_root=f"{directory}/kb",
+                config=AppConfig(
+                    app_password="test-app-password",
+                    database_path=":memory:",
+                    kb_root=f"{directory}/kb",
+                    session_secret="test-session-secret",
+                ),
                 telemetry_settings=TelemetrySettings(
                     exporter=TelemetryExporter.NONE,
                     install_global_provider=False,
                 ),
             )
         ) as client:
-            response = client.get("/memories", params={"state": "loose"})
+            login_response = client.post(
+                "/api/auth/login", json={"password": "test-app-password"}
+            )
+            assert_eq(login_response.status_code, 204)
+            response = client.get("/api/memories", params={"state": "loose"})
 
         logged = next(
             json.loads(line)
@@ -167,8 +204,10 @@ with TestClient(create_app_from_environment()):
             cwd=Path(__file__).parents[1],
             env={
                 **os.environ,
+                "TETHER_APP_PASSWORD": "test-app-password",
                 "TETHER_DATABASE_PATH": f"{directory}/host.sqlite3",
                 "TETHER_KB_ROOT": f"{directory}/kb",
+                "TETHER_SESSION_SECRET": "test-session-secret",
             },
             text=True,
         )
@@ -191,10 +230,12 @@ def serve_runs_uvicorn_against_the_environment_app_factory() -> None:
         with captured_logging():
             serve(
                 HostSettings(
+                    app_password="test-app-password",
                     host="127.0.0.2",
                     port=9001,
                     reload=True,
                     logging_level="DEBUG",
+                    session_secret="test-session-secret",
                 )
             )
     finally:
@@ -216,13 +257,19 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
         TemporaryDirectory() as directory,
         captured_logging() as stream,
         configured_environment(
+            TETHER_APP_PASSWORD="test-app-password",
             TETHER_DATABASE_PATH=f"{directory}/configured.sqlite3",
             TETHER_KB_ROOT=f"{directory}/kb",
             TETHER_LOGGING_LEVEL="INFO",
+            TETHER_SESSION_SECRET="test-session-secret",
         ),
     ):
         with TestClient(create_app_from_environment()) as client:
-            response = client.get("/memories", params={"state": "loose"})
+            login_response = client.post(
+                "/api/auth/login", json={"password": "test-app-password"}
+            )
+            assert_eq(login_response.status_code, 204)
+            response = client.get("/api/memories", params={"state": "loose"})
 
         log_events = [
             json.loads(line)["event"] for line in stream.getvalue().splitlines()

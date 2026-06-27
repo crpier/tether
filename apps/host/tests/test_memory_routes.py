@@ -11,31 +11,45 @@ from typing import Any
 from snektest import assert_eq, assert_in, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
-from tether.server import create_app
+from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
+
+APP_PASSWORD = "test-app-password"
+SESSION_SECRET = "test-session-secret"
 
 
 def make_client(root: Path) -> TestClient:
     """Create a test app with isolated persistent DB and `.tether` root."""
     return TestClient(
         create_app(
-            database_path=root / "tether.sqlite3",
-            kb_root=root / ".tether",
+            config=AppConfig(
+                app_password=APP_PASSWORD,
+                database_path=root / "tether.sqlite3",
+                kb_root=root / ".tether",
+                session_secret=SESSION_SECRET,
+            ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
     )
 
 
+def login(client: TestClient) -> None:
+    """Authenticate the test browser."""
+    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
+    assert_eq(response.status_code, 204)
+
+
 def capture(client: TestClient, content: str) -> dict[str, Any]:
     """Capture one Memory through REST and return its JSON representation."""
-    response = client.post("/memories", json={"content": content})
+    login(client)
+    response = client.post("/api/memories", json={"content": content})
     assert_eq(response.status_code, 201)
     return response.json()
 
 
 @test()
 def post_memories_captures_trimmed_content() -> None:
-    """`POST /memories` accepts `content` and returns a loose Memory."""
+    """`POST /api/memories` accepts `content` and returns a loose Memory."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         memory = capture(client, "  I prefer aisle seats  ")
 
@@ -48,7 +62,8 @@ def post_memories_captures_trimmed_content() -> None:
 def post_memories_rejects_blank_content() -> None:
     """`content` must be non-empty after trimming."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        response = client.post("/memories", json={"content": "   "})
+        login(client)
+        response = client.post("/api/memories", json={"content": "   "})
 
     assert_eq(response.status_code, 422)
     assert_eq(response.json()["detail"][0]["loc"], ["content"])
@@ -61,12 +76,12 @@ def keyword_search_returns_tethered_memories_only() -> None:
         loose = capture(client, "needle loose memory")
         tethered = capture(client, "needle tethered memory")
         response = client.post(
-            f"/memories/{tethered['id']}/tether",
+            f"/api/memories/{tethered['id']}/tether",
             json={"version": tethered["version"]},
         )
         assert_eq(response.status_code, 200)
 
-        search_response = client.get("/memories/search", params={"q": "needle"})
+        search_response = client.get("/api/memories/search", params={"q": "needle"})
 
     found = [memory["id"] for memory in search_response.json()]
     assert_in(tethered["id"], found)
@@ -75,11 +90,11 @@ def keyword_search_returns_tethered_memories_only() -> None:
 
 @test()
 def patch_memories_edits_content_and_keeps_version_checks() -> None:
-    """`PATCH /memories/{id}` edits `content` at the observed version."""
+    """`PATCH /api/memories/{id}` edits `content` at the observed version."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         memory = capture(client, "I live in Berlin")
         response = client.patch(
-            f"/memories/{memory['id']}",
+            f"/api/memories/{memory['id']}",
             json={"content": "  I live in Munich  ", "version": memory["version"]},
         )
 
@@ -90,20 +105,20 @@ def patch_memories_edits_content_and_keeps_version_checks() -> None:
 
 @test()
 def delete_memories_soft_deletes_and_removes_from_search() -> None:
-    """`DELETE /memories/{id}` uses the version query param and hides Memory."""
+    """`DELETE /api/memories/{id}` uses the version query param and hides Memory."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         memory = capture(client, "needle deleted memory")
         tether_response = client.post(
-            f"/memories/{memory['id']}/tether",
+            f"/api/memories/{memory['id']}/tether",
             json={"version": memory["version"]},
         )
         tethered = tether_response.json()
 
         delete_response = client.delete(
-            f"/memories/{memory['id']}",
+            f"/api/memories/{memory['id']}",
             params={"version": tethered["version"]},
         )
-        search_response = client.get("/memories/search", params={"q": "needle"})
+        search_response = client.get("/api/memories/search", params={"q": "needle"})
 
     assert_eq(delete_response.status_code, 200)
     assert_eq(search_response.json(), [])
@@ -118,20 +133,29 @@ def configured_database_path_persists_between_app_instances() -> None:
         kb_root = root / ".tether"
         with TestClient(
             create_app(
-                database_path=database_path,
-                kb_root=kb_root,
+                config=AppConfig(
+                    app_password=APP_PASSWORD,
+                    database_path=database_path,
+                    kb_root=kb_root,
+                    session_secret=SESSION_SECRET,
+                ),
                 telemetry_settings=TelemetrySettings(install_global_provider=False),
             )
         ) as client:
             memory = capture(client, "I prefer aisle seats")
         with TestClient(
             create_app(
-                database_path=database_path,
-                kb_root=kb_root,
+                config=AppConfig(
+                    app_password=APP_PASSWORD,
+                    database_path=database_path,
+                    kb_root=kb_root,
+                    session_secret=SESSION_SECRET,
+                ),
                 telemetry_settings=TelemetrySettings(install_global_provider=False),
             )
         ) as client:
-            response = client.get("/memories", params={"state": "loose"})
+            login(client)
+            response = client.get("/api/memories", params={"state": "loose"})
 
         found = [memory["id"] for memory in response.json()]
         assert_in(memory["id"], found)

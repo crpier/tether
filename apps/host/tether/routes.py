@@ -284,12 +284,12 @@ async def reject_memory(request: Request, query: RejectQuery) -> Response:
     return _read_response(memory)
 
 
-# `/memories/search` precedes `/memories/{memory_id}` so the literal path wins.
+# `/api/memories/search` precedes `/api/memories/{memory_id}` so the literal path wins.
 routes: list[Route] = [
-    EndpointRoute("/memories", capture_memory, methods=["POST"]),
-    EndpointRoute("/memories", browse_memories, methods=["GET"]),
-    EndpointRoute("/memories/search", search_memories, methods=["GET"]),
-    EndpointRoute("/memories/{memory_id}", edit_memory, methods=["PATCH"]),
-    EndpointRoute("/memories/{memory_id}", reject_memory, methods=["DELETE"]),
-    EndpointRoute("/memories/{memory_id}/tether", tether_memory, methods=["POST"]),
+    EndpointRoute("/api/memories", capture_memory, methods=["POST"]),
+    EndpointRoute("/api/memories", browse_memories, methods=["GET"]),
+    EndpointRoute("/api/memories/search", search_memories, methods=["GET"]),
+    EndpointRoute("/api/memories/{memory_id}", edit_memory, methods=["PATCH"]),
+    EndpointRoute("/api/memories/{memory_id}", reject_memory, methods=["DELETE"]),
+    EndpointRoute("/api/memories/{memory_id}/tether", tether_memory, methods=["POST"]),
 ]

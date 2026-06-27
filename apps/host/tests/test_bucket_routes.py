@@ -11,19 +11,32 @@ from typing import Any
 from snektest import assert_eq, assert_in, assert_not_in, test
 from starlette.testclient import TestClient
 
-from tether.server import create_app
+from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
+
+APP_PASSWORD = "test-app-password"
+SESSION_SECRET = "test-session-secret"
 
 
 def make_client(root: Path) -> TestClient:
     """Create a test app with isolated persistent DB and `.tether` root."""
     return TestClient(
         create_app(
-            database_path=root / "tether.sqlite3",
-            kb_root=root / ".tether",
+            config=AppConfig(
+                app_password=APP_PASSWORD,
+                database_path=root / "tether.sqlite3",
+                kb_root=root / ".tether",
+                session_secret=SESSION_SECRET,
+            ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
     )
+
+
+def login(client: TestClient) -> None:
+    """Authenticate the test browser."""
+    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
+    assert_eq(response.status_code, 204)
 
 
 def add_item(
@@ -33,9 +46,10 @@ def add_item(
     intent_context: str = "saved on a whim",
 ) -> dict[str, Any]:
     """Add one Bucket item through REST and return the response JSON."""
+    login(client)
     payload = data if data is not None else {"title": "Dune"}
     response = client.post(
-        "/bucket-items",
+        "/api/bucket-items",
         json={
             "item_type": item_type,
             "data": payload,
@@ -48,7 +62,7 @@ def add_item(
 
 @test()
 def post_bucket_items_adds_active_item_with_intent_and_provenance() -> None:
-    """`POST /bucket-items` Adds an active item recording intent + provenance."""
+    """`POST /api/bucket-items` Adds an active item recording intent + provenance."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         body = add_item(
             client, "movie", {"title": "Dune", "year": 2021}, "a friend raved"
@@ -75,8 +89,9 @@ def post_bucket_items_trims_intent_context() -> None:
 def post_bucket_items_rejects_blank_intent_context() -> None:
     """Intent context must be non-empty after trimming."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
         response = client.post(
-            "/bucket-items",
+            "/api/bucket-items",
             json={
                 "item_type": "movie",
                 "data": {"title": "Dune"},
@@ -91,8 +106,9 @@ def post_bucket_items_rejects_blank_intent_context() -> None:
 def post_bucket_items_rejects_invalid_payload() -> None:
     """A payload missing its item type's required field is a 422."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
         response = client.post(
-            "/bucket-items",
+            "/api/bucket-items",
             json={
                 "item_type": "movie",
                 "data": {"year": 2021},
@@ -122,7 +138,7 @@ def post_bucket_items_informs_on_completed_duplicate() -> None:
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         first = add_item(client, "movie", {"title": "Dune"})
         complete_response = client.post(
-            f"/bucket-items/{first['item']['id']}/complete",
+            f"/api/bucket-items/{first['item']['id']}/complete",
             json={"version": first["item"]["version"]},
         )
         assert_eq(complete_response.status_code, 200)
@@ -134,11 +150,11 @@ def post_bucket_items_informs_on_completed_duplicate() -> None:
 
 @test()
 def complete_bucket_item_moves_it_to_completed() -> None:
-    """`POST /bucket-items/{id}/complete` moves the item to terminal history."""
+    """`POST /api/bucket-items/{id}/complete` moves the item to terminal history."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         added = add_item(client)
         response = client.post(
-            f"/bucket-items/{added['item']['id']}/complete",
+            f"/api/bucket-items/{added['item']['id']}/complete",
             json={"version": added["item"]["version"]},
         )
 
@@ -152,13 +168,13 @@ def complete_bucket_item_conflicts_when_already_terminal() -> None:
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         added = add_item(client)
         first = client.post(
-            f"/bucket-items/{added['item']['id']}/complete",
+            f"/api/bucket-items/{added['item']['id']}/complete",
             json={"version": added["item"]["version"]},
         )
         assert_eq(first.status_code, 200)
 
         second = client.post(
-            f"/bucket-items/{added['item']['id']}/complete",
+            f"/api/bucket-items/{added['item']['id']}/complete",
             json={"version": added["item"]["version"]},
         )
 
@@ -167,11 +183,11 @@ def complete_bucket_item_conflicts_when_already_terminal() -> None:
 
 @test()
 def delete_bucket_item_moves_it_to_deleted() -> None:
-    """`DELETE /bucket-items/{id}` uses the version query param."""
+    """`DELETE /api/bucket-items/{id}` uses the version query param."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         added = add_item(client)
         response = client.delete(
-            f"/bucket-items/{added['item']['id']}",
+            f"/api/bucket-items/{added['item']['id']}",
             params={"version": added["item"]["version"]},
         )
 
@@ -181,16 +197,16 @@ def delete_bucket_item_moves_it_to_deleted() -> None:
 
 @test()
 def search_returns_only_active_matches() -> None:
-    """`GET /bucket-items/search` returns active items matching the query."""
+    """`GET /api/bucket-items/search` returns active items matching the query."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         active = add_item(client, "movie", {"title": "Blade Runner"})
         done = add_item(client, "movie", {"title": "Blade of Glory"})
         client.post(
-            f"/bucket-items/{done['item']['id']}/complete",
+            f"/api/bucket-items/{done['item']['id']}/complete",
             json={"version": done["item"]["version"]},
         )
 
-        response = client.get("/bucket-items/search", params={"q": "Blade"})
+        response = client.get("/api/bucket-items/search", params={"q": "Blade"})
 
     found = [item["id"] for item in response.json()]
     assert_in(active["item"]["id"], found)
@@ -199,16 +215,16 @@ def search_returns_only_active_matches() -> None:
 
 @test()
 def browse_active_excludes_terminal_items() -> None:
-    """`GET /bucket-items?state=active` lists only active items."""
+    """`GET /api/bucket-items?state=active` lists only active items."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         active = add_item(client, "movie", {"title": "Active One"})
         gone = add_item(client, "movie", {"title": "Gone One"})
         client.delete(
-            f"/bucket-items/{gone['item']['id']}",
+            f"/api/bucket-items/{gone['item']['id']}",
             params={"version": gone["item"]["version"]},
         )
 
-        response = client.get("/bucket-items", params={"state": "active"})
+        response = client.get("/api/bucket-items", params={"state": "active"})
 
     found = [item["id"] for item in response.json()]
     assert_in(active["item"]["id"], found)
@@ -217,15 +233,15 @@ def browse_active_excludes_terminal_items() -> None:
 
 @test()
 def browse_deleted_returns_retained_history() -> None:
-    """`GET /bucket-items?state=deleted` surfaces retained deleted history."""
+    """`GET /api/bucket-items?state=deleted` surfaces retained deleted history."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         gone = add_item(client, "movie", {"title": "Dismissed"})
         client.delete(
-            f"/bucket-items/{gone['item']['id']}",
+            f"/api/bucket-items/{gone['item']['id']}",
             params={"version": gone["item"]["version"]},
         )
 
-        response = client.get("/bucket-items", params={"state": "deleted"})
+        response = client.get("/api/bucket-items", params={"state": "deleted"})
 
     found = [item["id"] for item in response.json()]
     assert_in(gone["item"]["id"], found)

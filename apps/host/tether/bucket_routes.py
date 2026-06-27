@@ -334,17 +334,19 @@ async def delete_bucket_item(request: Request, query: DeleteQuery) -> Response:
     return _read_response(item)
 
 
-# `/bucket-items/search` precedes `/bucket-items/{bucket_item_id}` so the
-# literal path wins.
+# `/api/bucket-items/search` precedes `/api/bucket-items/{bucket_item_id}` so
+# the literal path wins.
 bucket_item_routes: list[Route] = [
-    EndpointRoute("/bucket-items", add_bucket_item, methods=["POST"]),
-    EndpointRoute("/bucket-items", browse_bucket_items, methods=["GET"]),
-    EndpointRoute("/bucket-items/search", search_bucket_items, methods=["GET"]),
+    EndpointRoute("/api/bucket-items", add_bucket_item, methods=["POST"]),
+    EndpointRoute("/api/bucket-items", browse_bucket_items, methods=["GET"]),
+    EndpointRoute("/api/bucket-items/search", search_bucket_items, methods=["GET"]),
     EndpointRoute(
-        "/bucket-items/{bucket_item_id}", delete_bucket_item, methods=["DELETE"]
+        "/api/bucket-items/{bucket_item_id}",
+        delete_bucket_item,
+        methods=["DELETE"],
     ),
     EndpointRoute(
-        "/bucket-items/{bucket_item_id}/complete",
+        "/api/bucket-items/{bucket_item_id}/complete",
         complete_bucket_item,
         methods=["POST"],
     ),
