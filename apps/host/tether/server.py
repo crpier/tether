@@ -17,6 +17,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
 
+from tether.bucket_items import (
+    BucketItemService,
+    create_bucket_item_schema,
+)
+from tether.bucket_routes import bucket_item_routes
+from tether.bucket_tools import internal_bucket_tool_routes
 from tether.logging import ContextLoggerMiddleware, configure_logging
 from tether.memories import (
     KnowledgeBaseService,
@@ -97,6 +103,7 @@ def _lifespan(
             backend=Config(database=database_config),
         ) as db:
             await create_memory_schema(db)
+            await create_bucket_item_schema(db)
             kb_service = KnowledgeBaseService(kb_root=configured_kb_root)
             memory_service = MemoryService(
                 database=db,
@@ -105,6 +112,10 @@ def _lifespan(
             )
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
+            app.state.bucket_item_service = BucketItemService(
+                database=db,
+                tracer=telemetry.tracer,
+            )
             try:
                 yield
             finally:
@@ -127,10 +138,16 @@ def create_app(
     and `/docs` describe exactly the API that is mounted. By default, both the
     SQLite database and markdown Knowledge base live under `.tether`.
     """
-    docs = openapi_routes(routes, title="Tether", version="0.1.0")
+    api_routes = [*routes, *bucket_item_routes]
+    docs = openapi_routes(api_routes, title="Tether", version="0.1.0")
     configured_telemetry = telemetry_settings or TelemetrySettings()
     app = Starlette(
-        routes=[*routes, *internal_tool_routes(), *docs],
+        routes=[
+            *api_routes,
+            *internal_tool_routes(),
+            *internal_bucket_tool_routes(),
+            *docs,
+        ],
         lifespan=_lifespan(
             database_path=database_path,
             kb_root=kb_root,

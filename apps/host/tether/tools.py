@@ -33,6 +33,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, request_response
 
+from tether.bucket_items import (
+    BucketItemConflictError,
+    BucketItemNotFoundError,
+    EmptyBucketSearchQueryError,
+    EmptyIntentContextError,
+    InvalidItemDataError,
+)
 from tether.logging import Logger, get_request_logger
 from tether.memories import (
     EmptySearchQueryError,
@@ -193,13 +200,13 @@ def _envelope_response(envelope: ToolEnvelope) -> JSONResponse:
     return JSONResponse(envelope.model_dump(mode="json"))
 
 
-class _ToolRoute(Route):
+class ToolRoute(Route):
     """A route that mounts a tool endpoint under Starlette's request contract."""
 
     def __init__(
         self,
         path: str,
-        endpoint: _ToolEndpoint,
+        endpoint: ToolEndpoint,
         *,
         methods: list[str] | None = None,
     ) -> None:
@@ -207,7 +214,7 @@ class _ToolRoute(Route):
         self.app = request_response(endpoint)
 
 
-class _ToolEndpoint:
+class ToolEndpoint:
     """An authorised, envelope-wrapped handler for one tool capability.
 
     The wrapper owns the cross-cutting contract so each tool body stays a thin
@@ -282,11 +289,16 @@ class _ToolEndpoint:
     async def _run_handler(self, request: Request, params: BaseModel) -> ToolEnvelope:
         try:
             return await self.handler(request, params)
-        except MemoryNotFoundError:
-            return _fail("not_found", "memory not found")
-        except MemoryConflictError as error:
+        except MemoryNotFoundError, BucketItemNotFoundError:
+            return _fail("not_found", "not found")
+        except (MemoryConflictError, BucketItemConflictError) as error:
             return _fail("conflict", str(error))
-        except EmptySearchQueryError as error:
+        except (
+            EmptySearchQueryError,
+            EmptyBucketSearchQueryError,
+            EmptyIntentContextError,
+            InvalidItemDataError,
+        ) as error:
             return _fail("invalid_input", str(error))
 
 
@@ -355,34 +367,34 @@ def internal_tool_routes() -> list[Route]:
     deliberately absent from the public OpenAPI document and generated client.
     """
     return [
-        _ToolRoute(
+        ToolRoute(
             "/internal/tools/capture",
-            _ToolEndpoint(CaptureParams, _capture),
+            ToolEndpoint(CaptureParams, _capture),
             methods=["POST"],
         ),
-        _ToolRoute(
+        ToolRoute(
             "/internal/tools/browse",
-            _ToolEndpoint(BrowseParams, _browse),
+            ToolEndpoint(BrowseParams, _browse),
             methods=["POST"],
         ),
-        _ToolRoute(
+        ToolRoute(
             "/internal/tools/search",
-            _ToolEndpoint(SearchParams, _search),
+            ToolEndpoint(SearchParams, _search),
             methods=["POST"],
         ),
-        _ToolRoute(
+        ToolRoute(
             "/internal/tools/tether",
-            _ToolEndpoint(TetherParams, _tether),
+            ToolEndpoint(TetherParams, _tether),
             methods=["POST"],
         ),
-        _ToolRoute(
+        ToolRoute(
             "/internal/tools/edit",
-            _ToolEndpoint(EditParams, _edit),
+            ToolEndpoint(EditParams, _edit),
             methods=["POST"],
         ),
-        _ToolRoute(
+        ToolRoute(
             "/internal/tools/reject",
-            _ToolEndpoint(RejectParams, _reject),
+            ToolEndpoint(RejectParams, _reject),
             methods=["POST"],
         ),
     ]

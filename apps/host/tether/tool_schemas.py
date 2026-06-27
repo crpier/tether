@@ -10,6 +10,13 @@ from typing import TypedDict, cast
 
 from pydantic import BaseModel
 
+from tether.bucket_tools import (
+    AddMovieParams,
+    AddPlaceParams,
+    CompleteBucketItemParams,
+    DeleteBucketItemParams,
+    SearchBucketItemsParams,
+)
 from tether.tools import (
     BrowseParams,
     CaptureParams,
@@ -55,8 +62,25 @@ TOOL_SCHEMA_SPECS = (
     ToolSchemaSpec("/internal/tools/tether", "tether", TetherParams),
     ToolSchemaSpec("/internal/tools/edit", "edit", EditParams),
     ToolSchemaSpec("/internal/tools/reject", "reject", RejectParams),
+    ToolSchemaSpec("/internal/tools/add_movie", "add_movie", AddMovieParams),
+    ToolSchemaSpec("/internal/tools/add_place", "add_place", AddPlaceParams),
+    ToolSchemaSpec(
+        "/internal/tools/complete_bucket_item",
+        "complete_bucket_item",
+        CompleteBucketItemParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/delete_bucket_item",
+        "delete_bucket_item",
+        DeleteBucketItemParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/search_bucket_items",
+        "search_bucket_items",
+        SearchBucketItemsParams,
+    ),
 )
-"""Internal Memory tools exposed to pi, in generated-file order."""
+"""Internal Memory and Bucket item tools exposed to pi, in generated-file order."""
 
 
 def build_tool_schema_document() -> ToolSchemaDocument:

@@ -144,6 +144,141 @@
         "title": "RejectParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/add_movie",
+      "name": "add_movie",
+      "params_model": "AddMovieParams",
+      "schema": {
+        "description": "Params for Adding a `movie` Bucket item.",
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Year"
+          }
+        },
+        "required": ["title", "intent_context"],
+        "title": "AddMovieParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/add_place",
+      "name": "add_place",
+      "params_model": "AddPlaceParams",
+      "schema": {
+        "description": "Params for Adding a `place` Bucket item.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Location"
+          }
+        },
+        "required": ["name", "intent_context"],
+        "title": "AddPlaceParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/complete_bucket_item",
+      "name": "complete_bucket_item",
+      "params_model": "CompleteBucketItemParams",
+      "schema": {
+        "description": "Params for completing a Bucket item at an observed version.",
+        "properties": {
+          "bucket_item_id": {
+            "format": "uuid7",
+            "title": "Bucket Item Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["bucket_item_id", "version"],
+        "title": "CompleteBucketItemParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/delete_bucket_item",
+      "name": "delete_bucket_item",
+      "params_model": "DeleteBucketItemParams",
+      "schema": {
+        "description": "Params for deleting a Bucket item at an observed version.",
+        "properties": {
+          "bucket_item_id": {
+            "format": "uuid7",
+            "title": "Bucket Item Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["bucket_item_id", "version"],
+        "title": "DeleteBucketItemParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/search_bucket_items",
+      "name": "search_bucket_items",
+      "params_model": "SearchBucketItemsParams",
+      "schema": {
+        "description": "Params for keyword Search over active Bucket items.",
+        "properties": {
+          "q": {
+            "title": "Q",
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": ["q"],
+        "title": "SearchBucketItemsParams",
+        "type": "object"
+      }
     }
   ]
 }

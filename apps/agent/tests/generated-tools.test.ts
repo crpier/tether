@@ -9,7 +9,7 @@ interface RegisteredToolSummary {
 }
 
 describe("generated tool extension", () => {
-  test("registers the six Memory tools", () => {
+  test("registers the Memory and Bucket item tools", () => {
     const registeredTools: RegisteredToolSummary[] = [];
     const pi = {
       registerTool(tool: RegisteredToolSummary): void {
@@ -26,6 +26,11 @@ describe("generated tool extension", () => {
       "tether",
       "edit",
       "reject",
+      "add_movie",
+      "add_place",
+      "complete_bucket_item",
+      "delete_bucket_item",
+      "search_bucket_items",
     ]);
   });
 });

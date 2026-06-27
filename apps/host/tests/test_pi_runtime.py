@@ -252,7 +252,19 @@ export default function inspectTools(pi) {
     active_tools = json.loads(event["message"])["active"]
     assert_eq(
         sorted(active_tools),
-        ["browse", "capture", "edit", "reject", "search", "tether"],
+        [
+            "add_movie",
+            "add_place",
+            "browse",
+            "capture",
+            "complete_bucket_item",
+            "delete_bucket_item",
+            "edit",
+            "reject",
+            "search",
+            "search_bucket_items",
+            "tether",
+        ],
     )
     assert_not_in("bash", active_tools)
     assert_not_in("read", active_tools)
