@@ -1,0 +1,63 @@
+"""Emit the OpenAPI document used by generated web clients."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from starlette.routing import Route
+
+from tether.auth import auth_routes
+from tether.bucket_routes import bucket_item_routes
+from tether.openapi import build_openapi
+from tether.routes import routes
+
+_EXPECTED_ARGUMENT_COUNT = 2
+
+
+def public_api_routes() -> list[Route]:
+    """Return the browser-facing REST routes described by OpenAPI.
+
+    ```python
+    paths = build_openapi_document()["paths"]
+    assert "/api/auth/session" in paths
+    ```
+    """
+    return [*auth_routes, *routes, *bucket_item_routes]
+
+
+def build_openapi_document() -> dict[str, Any]:
+    """Build Tether's browser REST OpenAPI document.
+
+    ```python
+    build_openapi_document()["openapi"]
+    # '3.1.0'
+    ```
+    """
+    return build_openapi(public_api_routes(), title="Tether", version="0.1.0")
+
+
+def write_openapi_document(output_path: str | Path) -> None:
+    """Write Tether's OpenAPI document as stable formatted JSON.
+
+    ```python
+    write_openapi_document("openapi.json")
+    ```
+    """
+    _ = Path(output_path).write_text(
+        f"{json.dumps(build_openapi_document(), indent=2, sort_keys=True)}\n"
+    )
+
+
+def main() -> None:
+    """Console entrypoint for `python -m tether.openapi_export`."""
+    if len(sys.argv) != _EXPECTED_ARGUMENT_COUNT:
+        _ = sys.stderr.write("usage: python -m tether.openapi_export <output-path>\n")
+        raise SystemExit(2)
+    write_openapi_document(sys.argv[1])
+
+
+if __name__ == "__main__":
+    main()

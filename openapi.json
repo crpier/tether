@@ -1,0 +1,769 @@
+{
+  "components": {
+    "schemas": {
+      "AddBucketItemRequest": {
+        "description": "Body for Adding a Bucket item under one item type.\n\n>>> AddBucketItemRequest(\n...     item_type=\"movie\", data={\"title\": \"Dune\"}, intent_context=\"recommended\"\n... ).item_type\n'movie'",
+        "properties": {
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Data",
+            "type": "object"
+          },
+          "intent_context": {
+            "$ref": "#/components/schemas/IntentContext"
+          },
+          "item_type": {
+            "$ref": "#/components/schemas/ItemType"
+          }
+        },
+        "required": [
+          "item_type",
+          "data",
+          "intent_context"
+        ],
+        "title": "AddBucketItemRequest",
+        "type": "object"
+      },
+      "AddBucketItemResponse": {
+        "description": "The Add result: the new item plus its dedup advisory.",
+        "properties": {
+          "dedup": {
+            "$ref": "#/components/schemas/DedupAdvisoryRead"
+          },
+          "item": {
+            "$ref": "#/components/schemas/BucketItemRead"
+          }
+        },
+        "required": [
+          "item",
+          "dedup"
+        ],
+        "title": "AddBucketItemResponse",
+        "type": "object"
+      },
+      "BucketItemRead": {
+        "description": "HTTP representation of a Bucket item, exposing its derived `state`.\n\n>>> read = BucketItemRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     item_type=\"movie\",\n...     state=\"active\",\n...     title=\"Dune\",\n...     data={\"title\": \"Dune\"},\n...     intent_context=\"recommended\",\n...     version=1,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     completed_at=None,\n...     deleted_at=None,\n... )\n>>> read.state\n'active'",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Data",
+            "type": "object"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          },
+          "item_type": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BucketItemState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "item_type",
+          "state",
+          "title",
+          "data",
+          "intent_context",
+          "version",
+          "created_at",
+          "updated_at",
+          "completed_at",
+          "deleted_at"
+        ],
+        "title": "BucketItemRead",
+        "type": "object"
+      },
+      "BucketItemState": {
+        "enum": [
+          "active",
+          "completed",
+          "deleted"
+        ],
+        "type": "string"
+      },
+      "CaptureRequest": {
+        "description": "Body for capturing a loose Memory.\n\n>>> CaptureRequest(content=\"I prefer aisle seats\").content\n'I prefer aisle seats'",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/MemoryContent"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "CaptureRequest",
+        "type": "object"
+      },
+      "CompleteRequest": {
+        "description": "Body for completing a Bucket item at an observed `version`.\n\n>>> CompleteRequest(version=1).version\n1",
+        "properties": {
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "CompleteRequest",
+        "type": "object"
+      },
+      "DedupAdvisoryRead": {
+        "description": "The dedup advisory returned alongside a freshly Added item.\n\n`severity` is `warn` when an active duplicate already exists, `inform` when\nthe only duplicates are terminal (completed/deleted), `none` otherwise.\nDedup never blocks, so the item is Added regardless.",
+        "properties": {
+          "duplicates": {
+            "items": {
+              "$ref": "#/components/schemas/BucketItemRead"
+            },
+            "title": "Duplicates",
+            "type": "array"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/DedupSeverity"
+          }
+        },
+        "required": [
+          "severity",
+          "duplicates"
+        ],
+        "title": "DedupAdvisoryRead",
+        "type": "object"
+      },
+      "DedupSeverity": {
+        "enum": [
+          "none",
+          "warn",
+          "inform"
+        ],
+        "type": "string"
+      },
+      "EditRequest": {
+        "description": "Body for editing a Memory's content at an observed `version`.\n\n>>> EditRequest(content=\"I prefer window seats\", version=1).version\n1",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/MemoryContent"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content",
+          "version"
+        ],
+        "title": "EditRequest",
+        "type": "object"
+      },
+      "IntentContext": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "ItemType": {
+        "enum": [
+          "movie",
+          "place"
+        ],
+        "type": "string"
+      },
+      "JsonValue": {},
+      "LoginRequest": {
+        "description": "Body for app login with the shared password.",
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "MemoryContent": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "MemoryRead": {
+        "description": "HTTP representation of a Memory, exposing its derived trust `state`.\n\n>>> read = MemoryRead(\n...     content=\"I prefer aisle seats\",\n...     created_at=datetime(2026, 1, 1),\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     state=\"loose\",\n...     tethered_at=None,\n...     updated_at=datetime(2026, 1, 1),\n...     version=1,\n... )\n>>> read.state\n'loose'",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MemoryState"
+          },
+          "tethered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tethered At"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content",
+          "created_at",
+          "id",
+          "state",
+          "tethered_at",
+          "updated_at",
+          "version"
+        ],
+        "title": "MemoryRead",
+        "type": "object"
+      },
+      "MemoryState": {
+        "enum": [
+          "loose",
+          "tethered"
+        ],
+        "type": "string"
+      },
+      "SessionResponse": {
+        "description": "Whether the request carries a currently valid app session.",
+        "properties": {
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "authenticated"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
+      "TetherRequest": {
+        "description": "Body for tethering a Memory at an observed `version`.\n\n>>> TetherRequest(version=1).version\n1",
+        "properties": {
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "TetherRequest",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Tether",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "OK"
+          }
+        },
+        "summary": "Authenticate with the app password and set a session cookie."
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "responses": {
+          "204": {
+            "description": "OK"
+          }
+        },
+        "summary": "Clear the app session cookie."
+      }
+    },
+    "/api/auth/session": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Report whether the request carries a valid app session."
+      }
+    },
+    "/api/bucket-items": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/BucketItemState"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BucketItemRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List Bucket items in a lifecycle state (active list / retained history)."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddBucketItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddBucketItemResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Add a Bucket item; the response carries its dedup advisory."
+      }
+    },
+    "/api/bucket-items/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BucketItemRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Keyword Search over active Bucket items."
+      }
+    },
+    "/api/bucket-items/{bucket_item_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bucket_item_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BucketItemRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a Bucket item, moving it to terminal history."
+      }
+    },
+    "/api/bucket-items/{bucket_item_id}/complete": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bucket_item_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BucketItemRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Complete a Bucket item, moving it to terminal history."
+      }
+    },
+    "/api/memories": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MemoryState"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Filter the review queue (`loose`) or browse the corpus (`tethered`)."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Capture a loose Memory."
+      }
+    },
+    "/api/memories/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Keyword Search over tethered Memories."
+      }
+    },
+    "/api/memories/{memory_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Soft-delete (reject) a Memory."
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Edit a Memory's `content`; a human edit keeps trust."
+      }
+    },
+    "/api/memories/{memory_id}/tether": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TetherRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Promote a loose Memory to tethered."
+      }
+    }
+  }
+}

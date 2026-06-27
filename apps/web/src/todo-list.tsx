@@ -1,27 +1,36 @@
-import { For } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { For } from "solid-js";
+import { createStore } from "solid-js/store";
 
-type Todo = { id: number; text: string; completed: boolean };
+interface Todo {
+  completed: boolean;
+  id: number;
+  text: string;
+}
 
 export const TodoList = () => {
-  let input!: HTMLInputElement;
+  let input: HTMLInputElement | undefined;
   const [todos, setTodos] = createStore<Todo[]>([]);
   const addTodo = (text: string) => {
-    setTodos(todos.length, { id: todos.length, text, completed: false });
+    setTodos(todos.length, { completed: false, id: todos.length, text });
   };
   const toggleTodo = (id: number) => {
-    setTodos(id, 'completed', (c) => !c);
+    setTodos(id, "completed", (completed) => !completed);
   };
 
   return (
     <>
       <div>
-        <input placeholder="new todo here" ref={input} />
+        <input
+          placeholder="new todo here"
+          ref={(element) => {
+            input = element;
+          }}
+        />
         <button
           onClick={() => {
-            if (!input.value.trim()) return;
+            if (!input?.value.trim()) return;
             addTodo(input.value);
-            input.value = '';
+            input.value = "";
           }}
         >
           Add Todo
@@ -40,7 +49,7 @@ export const TodoList = () => {
                 />
                 <span
                   style={{
-                    'text-decoration': todo.completed ? 'line-through' : 'none',
+                    "text-decoration": todo.completed ? "line-through" : "none",
                   }}
                 >
                   {text}
