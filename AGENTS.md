@@ -12,7 +12,12 @@
 
 - A headed Playwright MCP server (`playwright`, configured in the project-local `.mcp.json`) is available for driving and observing the running SPA. Use it to load the page, click through the affected flow, and read the browser console/network while iterating — not just at the end. It runs headed by default so the developer can watch the browser in real time.
 - Before opening a PR that touches the web app, load the page through the MCP and confirm the console is clean (no errors) on the flows you changed. This catches runtime/integration breakage that static checks and jsdom unit tests miss — the same class of bug as the `/ws` 404. `just validate-web-smoke` (issue #63) is the automated backstop in the gate; the interactive check is the cheap first line of defence.
-- The MCP manages its own browser binary. If the first launch reports a missing browser, install it with `npx playwright install chromium`. Headed mode needs a display (`$DISPLAY`/Wayland).
+- The MCP manages its own browser binary. `.mcp.json` pins `--browser chromium` so it uses Playwright's bundled build (the default `chrome` channel needs a sudo system install). If the first launch reports a missing browser, install it with `npx @playwright/mcp@0.0.76 install-browser chrome-for-testing`. Headed mode needs a display (`$DISPLAY`/Wayland).
+
+## Performance characteristics
+
+- Tether is single-tenant: one user, one host process, local/low-latency calls. It is fast and not subject to multi-user contention. Assume operations return quickly.
+- Prefer short timeouts/waits over generous ones. Long defaults (e.g. 30s Playwright waits) mostly hide real hangs here — if something doesn't respond in a couple of seconds it's usually broken, not slow. Tighten waits in tests and tooling so failures surface fast.
 
 ## Testing and validation
 

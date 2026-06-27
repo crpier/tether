@@ -904,6 +904,18 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
     sendPrompt();
   };
 
+  // Enter sends; Shift+Enter keeps the default newline. Single-tenant app, so a
+  // bare Enter is the expected fast path rather than chasing a submit button.
+  const onMessageKeyDown: JSX.EventHandler<
+    HTMLTextAreaElement,
+    KeyboardEvent
+  > = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendPrompt();
+    }
+  };
+
   return (
     <main aria-labelledby="chat-title" class="flex h-screen flex-col">
       <header class="bg-card flex items-center gap-4 border-b px-5 py-3">
@@ -945,7 +957,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
             <form class="space-y-2" onSubmit={onSubmit}>
               <TextField onChange={setDraft} value={draft()}>
                 <TextFieldLabel>Message</TextFieldLabel>
-                <TextFieldTextArea />
+                <TextFieldTextArea onKeyDown={onMessageKeyDown} />
               </TextField>
               <div class="flex justify-end gap-2">
                 <Button disabled={generating()} type="submit">
