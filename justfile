@@ -23,7 +23,7 @@ validate-host-logs:
 
 # code generation
 codegen:
-    cd apps/host && uv run python -m tether.tool_schemas ../agent/generated/tool-schemas.json
+    uv run python -m tether.tool_schemas apps/agent/generated/tool-schemas.json
     pnpm -C apps/agent codegen
     pnpm -C apps/agent format:generated
 
@@ -33,12 +33,20 @@ codegen-check:
     git diff --exit-code -- apps/agent/generated/tool-schemas.json apps/agent/src/generated
 
 # host tests
-test:
+host-test:
     uv run snektest
 
 # host type check
-typecheck:
+host-typecheck:
     uv run pyright
+
+# host lint
+host-lint:
+    uv run ruff check .
+
+# host format check
+host-format-check:
+    uv run ruff format --check .
 
 # agent tests
 agent-test:
@@ -55,3 +63,15 @@ agent-lint:
 # agent format check
 agent-format-check:
     pnpm -C apps/agent format:check
+
+# all tests
+test: host-test agent-test
+
+# all type checks
+typecheck: host-typecheck agent-typecheck
+
+# all lint checks
+lint: host-lint agent-lint
+
+# all format checks
+format-check: host-format-check agent-format-check
