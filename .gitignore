@@ -15,3 +15,6 @@ data/
 
 # Tether runtime files
 .tether
+
+# Playwright MCP scratch output
+.playwright-mcp/

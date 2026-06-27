@@ -17,6 +17,10 @@ const wsTarget = process.env.TETHER_WS_TARGET ?? "ws://127.0.0.1:8000";
 export default defineConfig({
   plugins: [devtools(), solidPlugin(), tailwindcss()],
   server: {
+    // Bind explicitly to IPv4 so the app is reachable at 127.0.0.1:3000, which
+    // is what the Playwright e2e/MCP tooling targets. Without this Vite binds
+    // to `localhost` -> IPv6 `::1` only, leaving 127.0.0.1 unreachable.
+    host: "127.0.0.1",
     port: 3000,
     proxy: {
       "/api": apiTarget,

@@ -413,6 +413,31 @@ describe("Tether SPA", () => {
     expect(await screen.findByText("Hi there")).toBeInTheDocument();
   });
 
+  test("Enter sends the prompt", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "Hello" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+
+    expect(bus.sent).toEqual([
+      { content: "Hello", conversationId: conversation.id, type: "prompt" },
+    ]);
+    expect(screen.getByText("Hello")).toBeInTheDocument();
+  });
+
+  test("Shift+Enter inserts a newline instead of sending", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "line one" } });
+    fireEvent.keyDown(messageBox, { key: "Enter", shiftKey: true });
+
+    expect(bus.sent).toEqual([]);
+  });
+
   test("stop aborts an in-flight generation", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
