@@ -47,6 +47,14 @@ from tether.telemetry import (
     configure_telemetry,
 )
 from tether.tools import SessionRegistry, internal_tool_routes
+from tether.youtube import (
+    InMemoryYouTubeApi,
+    YouTubeApi,
+    YouTubeApiClient,
+    YouTubeService,
+    create_youtube_schema,
+)
+from tether.youtube_tools import internal_youtube_tool_routes
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +78,8 @@ class AppConfig:
     logging_level: str = "INFO"
     model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
     pi_binary: Path | None = None
+    youtube_api: YouTubeApi | None = None
+    youtube_quota_limit: int = 10_000
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     secure_cookies: bool = False
@@ -143,6 +153,7 @@ def _lifespan(
             await create_memory_schema(db)
             await create_bucket_item_schema(db)
             await create_conversation_schema(db)
+            await create_youtube_schema(db)
             model_catalog = (
                 AgentModelCatalog(
                     default_model=config.default_model,
@@ -169,6 +180,15 @@ def _lifespan(
             app.state.review_service = ReviewService(database=db)
             app.state.bucket_item_service = BucketItemService(
                 database=db,
+                event_publisher=event_hub,
+                tracer=telemetry.tracer,
+            )
+            app.state.youtube_service = YouTubeService(
+                database=db,
+                client=YouTubeApiClient(
+                    config.youtube_api or InMemoryYouTubeApi(),
+                    quota_limit=config.youtube_quota_limit,
+                ),
                 event_publisher=event_hub,
                 tracer=telemetry.tracer,
             )
@@ -224,6 +244,7 @@ def create_app(
             *api_routes,
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
+            *internal_youtube_tool_routes(),
             *websocket_routes,
             *docs,
         ],

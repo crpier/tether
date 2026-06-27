@@ -15,6 +15,7 @@ from tether.conversations import conversation_routes
 from tether.model_selection import model_routes
 from tether.openapi import build_openapi
 from tether.routes import routes
+from tether.youtube_routes import youtube_routes
 
 _EXPECTED_ARGUMENT_COUNT = 2
 
@@ -31,6 +32,7 @@ def public_api_routes() -> list[Route]:
         *auth_routes,
         *routes,
         *bucket_item_routes,
+        *youtube_routes,
         *conversation_routes,
         *model_routes,
     ]

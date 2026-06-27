@@ -9,7 +9,7 @@ interface RegisteredToolSummary {
 }
 
 describe("generated tool extension", () => {
-  test("registers the Memory and Bucket item tools", () => {
+  test("registers the Memory, Bucket item, and YouTube tools", () => {
     const registeredTools: RegisteredToolSummary[] = [];
     const pi = {
       registerTool(tool: RegisteredToolSummary): void {
@@ -32,6 +32,11 @@ describe("generated tool extension", () => {
       "complete_bucket_item",
       "delete_bucket_item",
       "search_bucket_items",
+      "browse_youtube",
+      "search_youtube",
+      "fetch_youtube_transcript",
+      "ignore_youtube_video",
+      "retry_youtube_video",
     ]);
   });
 });

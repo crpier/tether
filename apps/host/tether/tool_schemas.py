@@ -26,6 +26,13 @@ from tether.tools import (
     SearchParams,
     TetherParams,
 )
+from tether.youtube_tools import (
+    BrowseYouTubeParams,
+    FetchYouTubeTranscriptParams,
+    IgnoreYouTubeVideoParams,
+    RetryYouTubeVideoParams,
+    SearchYouTubeParams,
+)
 
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
@@ -82,6 +89,27 @@ TOOL_SCHEMA_SPECS = (
         "/internal/tools/search_bucket_items",
         "search_bucket_items",
         SearchBucketItemsParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/browse_youtube", "browse_youtube", BrowseYouTubeParams
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/search_youtube", "search_youtube", SearchYouTubeParams
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/fetch_youtube_transcript",
+        "fetch_youtube_transcript",
+        FetchYouTubeTranscriptParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/ignore_youtube_video",
+        "ignore_youtube_video",
+        IgnoreYouTubeVideoParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/retry_youtube_video",
+        "retry_youtube_video",
+        RetryYouTubeVideoParams,
     ),
 )
 """Internal Memory and Bucket item tools exposed to pi, in generated-file order."""

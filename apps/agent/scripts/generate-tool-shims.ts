@@ -96,6 +96,14 @@ function resolvePropertySchema(
   root: JsonSchema,
   schema: JsonSchema,
 ): JsonSchema {
+  if (schema.anyOf !== undefined) {
+    // A Pydantic `Enum | None` field renders the enum as a nested `$ref` inside
+    // `anyOf`; resolve each member so the enum branch sees its inlined values.
+    return {
+      ...schema,
+      anyOf: schema.anyOf.map((member) => resolvePropertySchema(root, member)),
+    };
+  }
   if (schema.$ref === undefined) {
     return schema;
   }
@@ -135,11 +143,17 @@ function sentenceForTool(tool: ToolSchema): string {
   return tool.schema.description ?? `${tool.name} Memory tool.`;
 }
 
+function schemaUsesEnum(schema: JsonSchema): boolean {
+  if (schema.enum !== undefined) {
+    return true;
+  }
+  return schema.anyOf?.some(schemaUsesEnum) ?? false;
+}
+
 function usesStringEnum(tool: ToolSchema): boolean {
-  return Object.values(tool.schema.properties ?? {}).some((schema) => {
-    const resolved = resolvePropertySchema(tool.schema, schema);
-    return resolved.enum !== undefined;
-  });
+  return Object.values(tool.schema.properties ?? {}).some((schema) =>
+    schemaUsesEnum(resolvePropertySchema(tool.schema, schema)),
+  );
 }
 
 function renderToolFile(tool: ToolSchema): string {
