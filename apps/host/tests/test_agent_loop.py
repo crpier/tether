@@ -22,6 +22,7 @@ SECRET = "test-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"
 SCRIPTED_MODEL_ID = "tether-agent-loop-faux"
 REVIEW_DIGEST_MODEL_ID = "tether-review-digest-faux"
+TRIAGE_MODEL_ID = "tether-triage-faux"
 SCRIPTED_SESSION_ID = "scripted-session"
 
 
@@ -38,6 +39,11 @@ def _review_digest_fixture_path() -> Path:
         Path(__file__).resolve().parents[2]
         / "agent/tests/fixtures/faux-review-digest.ts"
     )
+
+
+def _triage_fixture_path() -> Path:
+    """Return the committed faux provider that scripts the triage_report loop."""
+    return Path(__file__).resolve().parents[2] / "agent/tests/fixtures/faux-triage.ts"
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -193,6 +199,64 @@ async def scripted_model_groups_duplicate_captures_via_review_digest() -> None:
         for group in cast("list[Any]", dedup_groups_json)
     ]
     assert_in({first_id, second_id}, dedup_clusters)
+
+
+@test()
+async def scripted_model_clusters_duplicate_bucket_items_via_triage_report() -> None:
+    """A canned model Adds two duplicate movies, then triage_report clusters them."""
+    session_dir = await load_fixture(pi_session_dir())
+    host = await load_fixture(live_host())
+    runtime = await PiRuntime.spawn(
+        PiRuntimeConfig(
+            tool_base_url=host.base_url,
+            tool_secret=SECRET,
+            session_dir=session_dir,
+            extra_extension_paths=[_triage_fixture_path()],
+        ),
+        session_registry=host.session_registry,
+    )
+
+    try:
+        set_model = await runtime.client.request(
+            "set_model", provider="faux", modelId=TRIAGE_MODEL_ID
+        )
+        assert_eq(set_model["success"], True)
+
+        prompt = await runtime.client.request(
+            "prompt", message="Add the duplicates and triage the backlog."
+        )
+        assert_eq(prompt["success"], True)
+
+        _ = await runtime.next_event("tool_execution_start", wait_seconds=15)
+        first_add_end = await runtime.next_event("tool_execution_end", wait_seconds=15)
+        _ = await runtime.next_event("tool_execution_start", wait_seconds=15)
+        second_add_end = await runtime.next_event("tool_execution_end", wait_seconds=15)
+        triage_start = await runtime.next_event("tool_execution_start", wait_seconds=15)
+        triage_end = await runtime.next_event("tool_execution_end", wait_seconds=15)
+        _ = await runtime.next_event("agent_end", wait_seconds=15)
+    finally:
+        await runtime.shutdown()
+
+    first_id = _json_object(
+        _json_object(_details_from_tool_end(first_add_end)["result"])["item"]
+    )["id"]
+    second_id = _json_object(
+        _json_object(_details_from_tool_end(second_add_end)["result"])["item"]
+    )["id"]
+
+    assert_eq(triage_start["toolName"], "triage_report")
+    assert_eq(triage_end["isError"], False)
+    triage_details = _details_from_tool_end(triage_end)
+    _assert_success_details(triage_details)
+    assert_is_none(triage_details["provenance"])
+    report = _json_object(triage_details["result"])
+    duplicates_json = report["duplicates"]
+    assert isinstance(duplicates_json, list)
+    duplicate_clusters = [
+        set(cast("list[str]", _json_object(cluster)["bucket_item_ids"]))
+        for cluster in cast("list[Any]", duplicates_json)
+    ]
+    assert_in({first_id, second_id}, duplicate_clusters)
 
 
 @test()

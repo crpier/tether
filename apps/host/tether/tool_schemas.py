@@ -31,6 +31,7 @@ from tether.tools import (
     SearchParams,
     TetherParams,
 )
+from tether.triage_tools import TriageReportParams
 from tether.trigger_tools import (
     CreateTriggerParams,
     DeleteTriggerParams,
@@ -99,6 +100,9 @@ TOOL_SCHEMA_SPECS = (
         "/internal/tools/search_bucket_items",
         "search_bucket_items",
         SearchBucketItemsParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/triage_report", "triage_report", TriageReportParams
     ),
     ToolSchemaSpec(
         "/internal/tools/browse_youtube", "browse_youtube", BrowseYouTubeParams

@@ -327,6 +327,7 @@ export default function inspectTools(pi) {
             "search_youtube",
             "start_recall",
             "tether",
+            "triage_report",
         ],
     )
     assert_not_in("bash", active_tools)

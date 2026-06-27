@@ -292,6 +292,17 @@
       }
     },
     {
+      "endpoint": "/internal/tools/triage_report",
+      "name": "triage_report",
+      "params_model": "TriageReportParams",
+      "schema": {
+        "description": "Params for the Triage report.\n\nThe report is computed over the whole active Bucket list, so it takes no\ninputs beyond the session identity the gate already requires.",
+        "properties": {},
+        "title": "TriageReportParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/browse_youtube",
       "name": "browse_youtube",
       "params_model": "BrowseYouTubeParams",

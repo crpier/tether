@@ -66,6 +66,8 @@ from tether.telemetry import (
     configure_telemetry,
 )
 from tether.tools import SessionRegistry, internal_tool_routes
+from tether.triage import TriageService
+from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
 from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
@@ -264,9 +266,10 @@ def _lifespan(
         app.state.telemetry = telemetry
         configured_kb_root = Path(config.kb_root)
         await AsyncPath(configured_kb_root).mkdir(parents=True, exist_ok=True)
-        database_name = str(config.database_path)
         database_config = (
-            ":memory:" if database_name == ":memory:" else Path(config.database_path)
+            ":memory:"
+            if str(config.database_path) == ":memory:"
+            else Path(config.database_path)
         )
         if database_config != ":memory:":
             await AsyncPath(database_config.parent).mkdir(
@@ -301,6 +304,7 @@ def _lifespan(
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
             app.state.review_service = ReviewService(database=db)
+            app.state.triage_service = TriageService(database=db)
             app.state.bucket_item_service = BucketItemService(
                 database=db,
                 event_publisher=event_hub,
@@ -396,6 +400,7 @@ def create_app(
             *api_routes,
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
+            *internal_triage_tool_routes(),
             *internal_youtube_tool_routes(),
             *internal_trigger_tool_routes(),
             *internal_recall_tool_routes(),
