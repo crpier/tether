@@ -22,7 +22,7 @@ from snektest import (
 )
 
 from tether.pi_runtime import PiRpcClient, PiRuntime, PiRuntimeConfig
-from tether.server import create_app
+from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import SessionRegistry
 
@@ -89,8 +89,12 @@ async def live_host() -> AsyncGenerator[LiveHost]:
     with TemporaryDirectory() as directory:
         root = Path(directory)
         app = create_app(
-            database_path=root / "tether.sqlite3",
-            kb_root=root / ".tether",
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=root / "tether.sqlite3",
+                kb_root=root / ".tether",
+                session_secret="test-session-secret",
+            ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
             tool_secret="test-secret",
         )
