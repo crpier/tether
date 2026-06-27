@@ -21,6 +21,7 @@ from anyio import NamedTemporaryFile, Path
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel, DirectoryPath, Json, PositiveInt
 from snekql.sqlite import (
+    Blob,
     CurrentTimestamp,
     Database,
     Fetched,
@@ -136,6 +137,22 @@ class Memory[S = Pending](Model[S, "Memory[Fetched]"]):
         default=None,
         nullable=True,
     )
+    embedding: Memory.Col[bytes | None] = Blob(
+        default=None,
+        nullable=True,
+    )
+    """Canonical embedding vector for this Memory, as raw bytes.
+
+    SQLite is the source of truth for the vector; the LanceDB index is a derived
+    projection rebuilt from it. `None` until the embedder has run."""
+    embedded_version: Memory.Col[int | None] = Integer(
+        default=None,
+        nullable=True,
+    )
+    """The content `version` the stored `embedding` reflects.
+
+    `None` means an embedding is owed (never produced, or content changed since).
+    The reconciler embeds any Memory whose `embedded_version != version`."""
 
 
 class FrontMatter(BaseModel):

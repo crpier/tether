@@ -30,7 +30,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 from pydantic import PositiveInt
-from snekql.sqlite import Config, Database, Fetched, delete, select
+from snekql.sqlite import Config, Database, Fetched, delete, select, update
 from snektest import (
     assert_eq,
     assert_gt,
@@ -1176,3 +1176,44 @@ async def search_defaults_to_a_limit_of_fifty() -> None:
     found = await service.search("needle")
 
     assert_eq(len(found), 50)
+
+
+@test()
+async def a_captured_memory_owes_an_embedding() -> None:
+    """A fresh Memory has no embedding yet: both embedding columns are NULL.
+
+    The embedding vector is a *derived* artifact produced after capture, so a
+    freshly captured Memory carries `embedding is None` (no bytes) and
+    `embedded_version is None` (the vector owes the current content version)."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture("I prefer aisle seats")
+
+    assert_is_none(memory.embedding)
+    assert_is_none(memory.embedded_version)
+
+
+@test()
+async def the_embedding_columns_round_trip_through_sqlite() -> None:
+    """The embedding BLOB and embedded_version persist and read back exactly.
+
+    SQLite holds the canonical vector as raw bytes; `embedded_version` records
+    the content `version` the vector reflects. This asserts the storage contract
+    the reconciler relies on, independent of how vectors are produced."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("I prefer aisle seats")
+    payload = b"\x00\x01\x02\x03vector-bytes\xfe\xff"
+
+    async with service.database.transaction() as tx:
+        _ = await tx.execute(
+            update(Memory)
+            .set(Memory.embedding.to(payload))
+            .set(Memory.embedded_version.to(memory.version))
+            .where(Memory.id.eq(memory.id))
+        )
+
+    stored = await fetch_memory_row(service, memory)
+    assert_is_not_none(stored)
+    assert stored is not None
+    assert_eq(stored.embedding, payload)
+    assert_eq(stored.embedded_version, memory.version)

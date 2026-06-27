@@ -59,6 +59,7 @@ from tether.scheduler import (
     SystemClock,
     TriggerDispatcher,
 )
+from tether.search_meta import create_search_meta_schema
 from tether.telemetry import (
     Telemetry,
     TelemetryExporter,
@@ -158,6 +159,7 @@ async def _create_schemas(db: Database) -> None:
     await create_trigger_schema(db)
     await create_push_schema(db)
     await create_recall_schema(db)
+    await create_search_meta_schema(db)
 
 
 def _build_scheduler(
