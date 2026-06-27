@@ -559,6 +559,15 @@ class YouTubeService:
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return video
 
+    async def get_video(self, video_id: str) -> IngestedVideo[Fetched]:
+        """Fetch one ingested video by its upstream id, or raise when absent.
+
+        A read-only lookup other capabilities (e.g. starting Recall) use to read
+        a video's stored transcript and metadata without going back upstream.
+        """
+        async with self.database.transaction() as tx:
+            return await self._fetch(tx, video_id)
+
     async def _require_video(self, video_id: str) -> None:
         """Raise if no ingested video carries `video_id` (a read-only check)."""
         async with self.database.transaction() as tx:

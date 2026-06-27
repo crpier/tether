@@ -41,6 +41,13 @@ from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
 from tether.push import PushService, create_push_schema
+from tether.recall import (
+    PiStudyItemGenerator,
+    RecallService,
+    StudyItemGenerator,
+    create_recall_schema,
+)
+from tether.recall_tools import internal_recall_tool_routes
 from tether.review import ReviewService
 from tether.scheduler import (
     EphemeralPiConfig,
@@ -52,6 +59,7 @@ from tether.scheduler import (
     TriggerDispatcher,
 )
 from tether.telemetry import (
+    Telemetry,
     TelemetryExporter,
     TelemetryMiddleware,
     TelemetrySettings,
@@ -98,6 +106,7 @@ class AppConfig:
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
     secure_cookies: bool = False
+    study_item_generator: StudyItemGenerator | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
 
 
@@ -145,6 +154,7 @@ async def _create_schemas(db: Database) -> None:
     await create_youtube_schema(db)
     await create_trigger_schema(db)
     await create_push_schema(db)
+    await create_recall_schema(db)
 
 
 def _build_scheduler(
@@ -191,6 +201,50 @@ def _build_scheduler(
             tick_seconds=config.scheduler_tick_seconds,
             concurrency=config.scheduler_concurrency,
         ),
+    )
+
+
+def _build_recall_service(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    memory_service: MemoryService,
+    kb_root: Path,
+) -> RecallService:
+    """Wire the Recall service over its model-backed study-item generator.
+
+    Distilling a transcript into learnings + prompts is the one model step in
+    Recall, so the generator runs an ephemeral pi under a dedicated session root;
+    everything else (grading, scheduling, the completion tether) is pure. Shared
+    collaborators are read from the already-populated `app.state`.
+    """
+    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
+    session_root = (
+        Path(config.pi_session_root)
+        if config.pi_session_root is not None
+        else kb_root / "pi-sessions"
+    )
+    generator: StudyItemGenerator = config.study_item_generator or PiStudyItemGenerator(
+        EphemeralPiPromptRunner(
+            EphemeralPiConfig(
+                session_registry=app.state.session_registry,
+                session_root=session_root / "recall",
+                tool_base_url=config.tool_base_url,
+                tool_secret=app.state.tool_secret,
+                model=model_catalog.default_config,
+                extra_extension_paths=config.extra_extension_paths,
+                pi_binary=config.pi_binary,
+            )
+        )
+    )
+    telemetry = cast("Telemetry", app.state.telemetry)
+    return RecallService(
+        database=database,
+        memory_service=memory_service,
+        generator=generator,
+        event_publisher=cast("EventHub", app.state.event_hub),
+        tracer=telemetry.tracer,
     )
 
 
@@ -260,6 +314,13 @@ def _lifespan(
                 ),
                 event_publisher=event_hub,
                 tracer=telemetry.tracer,
+            )
+            app.state.recall_service = _build_recall_service(
+                app,
+                config=config,
+                database=db,
+                memory_service=memory_service,
+                kb_root=configured_kb_root,
             )
             app.state.conversation_service = ConversationService(
                 database=db,
@@ -337,6 +398,7 @@ def create_app(
             *internal_bucket_tool_routes(),
             *internal_youtube_tool_routes(),
             *internal_trigger_tool_routes(),
+            *internal_recall_tool_routes(),
             *websocket_routes,
             *docs,
         ],

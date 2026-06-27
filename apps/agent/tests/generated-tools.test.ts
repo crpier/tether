@@ -40,6 +40,9 @@ describe("generated tool extension", () => {
       "create_trigger",
       "list_triggers",
       "delete_trigger",
+      "start_recall",
+      "list_due_recall_prompts",
+      "answer_recall_prompt",
     ]);
   });
 });

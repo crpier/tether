@@ -37,6 +37,9 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "create_trigger",
             "list_triggers",
             "delete_trigger",
+            "start_recall",
+            "list_due_recall_prompts",
+            "answer_recall_prompt",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])

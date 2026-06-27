@@ -17,6 +17,11 @@ from tether.bucket_tools import (
     DeleteBucketItemParams,
     SearchBucketItemsParams,
 )
+from tether.recall_tools import (
+    AnswerRecallPromptParams,
+    ListDueRecallPromptsParams,
+    StartRecallParams,
+)
 from tether.tools import (
     BrowseParams,
     CaptureParams,
@@ -124,6 +129,17 @@ TOOL_SCHEMA_SPECS = (
     ),
     ToolSchemaSpec(
         "/internal/tools/delete_trigger", "delete_trigger", DeleteTriggerParams
+    ),
+    ToolSchemaSpec("/internal/tools/start_recall", "start_recall", StartRecallParams),
+    ToolSchemaSpec(
+        "/internal/tools/list_due_recall_prompts",
+        "list_due_recall_prompts",
+        ListDueRecallPromptsParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/answer_recall_prompt",
+        "answer_recall_prompt",
+        AnswerRecallPromptParams,
     ),
 )
 """Internal Memory and Bucket item tools exposed to pi, in generated-file order."""

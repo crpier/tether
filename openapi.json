@@ -72,6 +72,60 @@
         "title": "AgentModelRead",
         "type": "object"
       },
+      "AnswerOutcomeRead": {
+        "description": "The result of answering: the grading, the rescheduled prompt, completion.",
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "correct": {
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/RecallPromptRead"
+          },
+          "quality": {
+            "title": "Quality",
+            "type": "integer"
+          },
+          "tethered": {
+            "title": "Tethered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "correct",
+          "quality",
+          "completed",
+          "tethered",
+          "prompt"
+        ],
+        "title": "AnswerOutcomeRead",
+        "type": "object"
+      },
+      "AnswerPromptRequest": {
+        "description": "Body for answering a recall prompt: the chosen option and how long it took.\n\n>>> AnswerPromptRequest(selected_index=0, response_ms=1200).selected_index\n0",
+        "properties": {
+          "response_ms": {
+            "minimum": 0,
+            "title": "Response Ms",
+            "type": "integer"
+          },
+          "selected_index": {
+            "minimum": 0,
+            "title": "Selected Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "selected_index",
+          "response_ms"
+        ],
+        "title": "AnswerPromptRequest",
+        "type": "object"
+      },
       "BucketItemRead": {
         "description": "HTTP representation of a Bucket item, exposing its derived `state`.\n\n>>> read = BucketItemRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     item_type=\"movie\",\n...     state=\"active\",\n...     title=\"Dune\",\n...     data={\"title\": \"Dune\"},\n...     intent_context=\"recommended\",\n...     version=1,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     completed_at=None,\n...     deleted_at=None,\n... )\n>>> read.state\n'active'",
         "properties": {
@@ -366,6 +420,23 @@
           "inform"
         ],
         "type": "string"
+      },
+      "DuePromptRead": {
+        "description": "An outstanding prompt plus the study item it belongs to.",
+        "properties": {
+          "prompt": {
+            "$ref": "#/components/schemas/RecallPromptRead"
+          },
+          "study_item": {
+            "$ref": "#/components/schemas/StudyItemRead"
+          }
+        },
+        "required": [
+          "prompt",
+          "study_item"
+        ],
+        "title": "DuePromptRead",
+        "type": "object"
       },
       "EditRequest": {
         "description": "Body for editing a Memory's content at an observed `version`.\n\n>>> EditRequest(content=\"I prefer window seats\", version=1).version\n1",
@@ -681,6 +752,54 @@
         "title": "QuotaMeta",
         "type": "object"
       },
+      "RecallPromptKind": {
+        "const": "multiple_choice",
+        "type": "string"
+      },
+      "RecallPromptRead": {
+        "description": "HTTP representation of a recall prompt, with the answer key withheld.\n\n`correct_index` is deliberately absent: the client renders and answers the\nprompt without being able to read the right choice off the wire.",
+        "properties": {
+          "choices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "due_at": {
+            "format": "date-time",
+            "title": "Due At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RecallPromptKind"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "study_item_id": {
+            "format": "uuid7",
+            "title": "Study Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "study_item_id",
+          "kind",
+          "question",
+          "choices",
+          "due_at"
+        ],
+        "title": "RecallPromptRead",
+        "type": "object"
+      },
       "SessionResponse": {
         "description": "Whether the request carries a currently valid app session.",
         "properties": {
@@ -708,6 +827,87 @@
         ],
         "title": "SetConversationModelRequest",
         "type": "object"
+      },
+      "StartRecallRequest": {
+        "description": "Body for promoting an ingested educational video into a study item.\n\n>>> StartRecallRequest(video_id=\"v1\").video_id\n'v1'",
+        "properties": {
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id"
+        ],
+        "title": "StartRecallRequest",
+        "type": "object"
+      },
+      "StudyItemRead": {
+        "description": "HTTP representation of a study item.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "memory_id": {
+            "format": "uuid7",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "source_title": {
+            "title": "Source Title",
+            "type": "string"
+          },
+          "source_video_id": {
+            "title": "Source Video Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StudyItemState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "memory_id",
+          "source_video_id",
+          "source_title",
+          "state",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ],
+        "title": "StudyItemRead",
+        "type": "object"
+      },
+      "StudyItemState": {
+        "enum": [
+          "studying",
+          "completed"
+        ],
+        "type": "string"
       },
       "SubscribeRequest": {
         "description": "Body for registering a browser push subscription.\n\n>>> SubscribeRequest(endpoint=\"https://push/abc\", p256dh=\"k\", auth=\"a\").endpoint\n'https://push/abc'",
@@ -1742,6 +1942,108 @@
           }
         },
         "summary": "Register (or refresh) this browser's push subscription."
+      }
+    },
+    "/api/recall/prompts": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DuePromptRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List the recall prompts currently owed a review (the outstanding surface)."
+      }
+    },
+    "/api/recall/prompts/{prompt_id}/answer": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerPromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerOutcomeRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Answer a recall prompt, grading and rescheduling it (tethering on completion)."
+      }
+    },
+    "/api/recall/study-items": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StudyItemRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List every study item, newest-first."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRecallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyItemRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Promote an ingested educational video into a study item under Recall."
       }
     },
     "/api/triggers": {

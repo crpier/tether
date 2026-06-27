@@ -17,6 +17,7 @@ import type { JSX } from "solid-js";
 
 import { createRestApi } from "./api";
 import type {
+  AnswerOutcome,
   Conversation,
   CreateTrigger,
   Message,
@@ -37,6 +38,7 @@ const queryKeys = {
   messages: (conversationId: string) => ["messages", conversationId] as const,
   models: ["models"] as const,
   push: ["push"] as const,
+  recall: ["recall"] as const,
   session: ["session"] as const,
   triggers: ["triggers"] as const,
 };
@@ -501,6 +503,100 @@ function TriggersPanel(props: { api: TetherApi }) {
   );
 }
 
+function recallFeedback(outcome: AnswerOutcome): string {
+  if (!outcome.correct) {
+    return "Not quite — this prompt will come back sooner.";
+  }
+  if (outcome.completed) {
+    return outcome.tethered
+      ? "Correct — fully recalled, the memory is now tethered!"
+      : "Correct — fully recalled, study item complete!";
+  }
+  return "Correct — see you next round.";
+}
+
+function RecallPanel(props: { api: TetherApi }) {
+  const queryClient = useQueryClient();
+  const promptsQuery = createQuery(() => ({
+    queryFn: () => props.api.listDueRecallPrompts(),
+    queryKey: queryKeys.recall,
+  }));
+  const [shownAt, setShownAt] = createSignal(Date.now());
+  const [feedback, setFeedback] = createSignal<string | undefined>();
+  const [error, setError] = createSignal<string | undefined>();
+
+  // Restart the response timer whenever the set of due prompts changes, so each
+  // prompt is timed from when it became visible (response time feeds scheduling).
+  createEffect(() => {
+    void promptsQuery.data;
+    setShownAt(Date.now());
+  });
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.recall });
+    void queryClient.refetchQueries({ queryKey: queryKeys.recall });
+  };
+
+  const answer = (promptId: string, choiceIndex: number) => {
+    const responseMs = Math.max(0, Date.now() - shownAt());
+    void (async () => {
+      setError(undefined);
+      try {
+        const outcome = await props.api.answerRecallPrompt(
+          promptId,
+          choiceIndex,
+          responseMs,
+        );
+        setFeedback(recallFeedback(outcome));
+        refresh();
+      } catch (caught) {
+        setError(
+          caught instanceof Error ? caught.message : "Could not submit answer",
+        );
+      }
+    })();
+  };
+
+  return (
+    <section aria-label="Recall">
+      <h2>Recall</h2>
+      <Show when={feedback()}>
+        {(message) => <p role="status">{message()}</p>}
+      </Show>
+      <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
+      <Show
+        fallback={<p>No recall prompts due</p>}
+        when={(promptsQuery.data ?? []).length > 0}
+      >
+        <ul>
+          <For each={promptsQuery.data ?? []}>
+            {(due) => (
+              <li aria-label={`Recall prompt: ${due.prompt.question}`}>
+                <p>{due.prompt.question}</p>
+                <span>{`from ${due.study_item.source_title}`}</span>
+                <div role="group">
+                  <For each={due.prompt.choices}>
+                    {(choice, choiceIndex) => (
+                      <button
+                        onClick={() => {
+                          answer(due.prompt.id, choiceIndex());
+                        }}
+                        type="button"
+                      >
+                        {choice}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </section>
+  );
+}
+
 function PushControl(props: { api: TetherApi }) {
   const queryClient = useQueryClient();
   const endpoint = browserPushEndpoint();
@@ -784,6 +880,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
         </form>
       </Show>
       <NotificationsPanel notifications={notifications()} />
+      <RecallPanel api={props.api} />
       <TriggersPanel api={props.api} />
       <PushControl api={props.api} />
     </main>
