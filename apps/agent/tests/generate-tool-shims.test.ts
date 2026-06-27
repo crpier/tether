@@ -24,4 +24,14 @@ describe("renderTypeBoxProperty", () => {
       "limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 }))",
     );
   });
+
+  test("unwraps a nullable optional to its inner type", () => {
+    const rendered = renderTypeBoxProperty(
+      "year",
+      { anyOf: [{ type: "integer" }, { type: "null" }], default: null },
+      false,
+    );
+
+    expect(rendered).toBe("year: Type.Optional(Type.Integer())");
+  });
 });

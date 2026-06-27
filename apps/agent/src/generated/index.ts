@@ -8,6 +8,11 @@ import { registerSearchTool } from "./search.js";
 import { registerTetherTool } from "./tether.js";
 import { registerEditTool } from "./edit.js";
 import { registerRejectTool } from "./reject.js";
+import { registerAddMovieTool } from "./add_movie.js";
+import { registerAddPlaceTool } from "./add_place.js";
+import { registerCompleteBucketItemTool } from "./complete_bucket_item.js";
+import { registerDeleteBucketItemTool } from "./delete_bucket_item.js";
+import { registerSearchBucketItemsTool } from "./search_bucket_items.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -16,4 +21,9 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerTetherTool(pi);
   registerEditTool(pi);
   registerRejectTool(pi);
+  registerAddMovieTool(pi);
+  registerAddPlaceTool(pi);
+  registerCompleteBucketItemTool(pi);
+  registerDeleteBucketItemTool(pi);
+  registerSearchBucketItemsTool(pi);
 }

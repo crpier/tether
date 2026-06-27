@@ -8,6 +8,7 @@ const GENERATED_HEADER =
 interface JsonSchema {
   $defs?: Record<string, JsonSchema>;
   $ref?: string;
+  anyOf?: JsonSchema[];
   default?: unknown;
   description?: string;
   enum?: string[];
@@ -59,6 +60,16 @@ function renderOptions(schema: JsonSchema): string {
 }
 
 function renderRequiredExpression(schema: JsonSchema): string {
+  if (schema.anyOf !== undefined) {
+    // A Pydantic `T | None` field renders as `anyOf: [<T>, null]`; the column
+    // is already made `Type.Optional(...)` by being absent from `required`, so
+    // only the non-null member needs rendering here.
+    const nonNull = schema.anyOf.find((member) => member.type !== "null");
+    if (nonNull === undefined) {
+      throw new Error(`unsupported schema: ${JSON.stringify(schema)}`);
+    }
+    return renderRequiredExpression(nonNull);
+  }
   if (schema.enum !== undefined) {
     return `StringEnum([${schema.enum.map(quoted).join(", ")}] as const)`;
   }
