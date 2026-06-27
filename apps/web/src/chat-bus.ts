@@ -9,7 +9,13 @@ export type ChatFrame =
       seq?: number;
       tool_name?: string | null;
     }
-  | { type: "invalidate"; keys: string[] };
+  | { type: "invalidate"; keys: string[] }
+  | {
+      type: "notify";
+      trigger_id: string;
+      title?: string | null;
+      body: string;
+    };
 
 export interface ChatBusHandlers {
   onDisconnect(): void;
@@ -30,7 +36,11 @@ function parseFrame(data: string): ChatFrame | null {
     return null;
   }
   const candidate = parsed as Partial<ChatFrame>;
-  if (candidate.type === "chat" || candidate.type === "invalidate") {
+  if (
+    candidate.type === "chat" ||
+    candidate.type === "invalidate" ||
+    candidate.type === "notify"
+  ) {
     return candidate as ChatFrame;
   }
   return null;

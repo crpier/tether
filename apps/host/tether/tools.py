@@ -52,6 +52,11 @@ from tether.memories import (
     MemoryState,
 )
 from tether.routes import MemoryContent, MemoryRead
+from tether.triggers import (
+    InvalidTriggerSpecError,
+    TriggerConflictError,
+    TriggerNotFoundError,
+)
 from tether.youtube import (
     CacheMeta,
     EmptyYouTubeSearchQueryError,
@@ -313,11 +318,16 @@ class ToolEndpoint:
         except (
             MemoryNotFoundError,
             BucketItemNotFoundError,
+            TriggerNotFoundError,
             YouTubeVideoNotFoundError,
             TranscriptUnavailableError,
         ):
             return _fail("not_found", "not found")
-        except (MemoryConflictError, BucketItemConflictError) as error:
+        except (
+            MemoryConflictError,
+            BucketItemConflictError,
+            TriggerConflictError,
+        ) as error:
             return _fail("conflict", str(error))
         except YouTubeQuotaExceededError as error:
             return _fail("quota_exceeded", str(error))
@@ -326,6 +336,7 @@ class ToolEndpoint:
             EmptyBucketSearchQueryError,
             EmptyIntentContextError,
             InvalidItemDataError,
+            InvalidTriggerSpecError,
             EmptyYouTubeSearchQueryError,
         ) as error:
             return _fail("invalid_input", str(error))

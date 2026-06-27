@@ -34,6 +34,9 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "fetch_youtube_transcript",
             "ignore_youtube_video",
             "retry_youtube_video",
+            "create_trigger",
+            "list_triggers",
+            "delete_trigger",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])

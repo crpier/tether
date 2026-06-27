@@ -37,6 +37,9 @@ describe("generated tool extension", () => {
       "fetch_youtube_transcript",
       "ignore_youtube_video",
       "retry_youtube_video",
+      "create_trigger",
+      "list_triggers",
+      "delete_trigger",
     ]);
   });
 });

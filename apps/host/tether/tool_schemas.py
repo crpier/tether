@@ -26,6 +26,11 @@ from tether.tools import (
     SearchParams,
     TetherParams,
 )
+from tether.trigger_tools import (
+    CreateTriggerParams,
+    DeleteTriggerParams,
+    ListTriggersParams,
+)
 from tether.youtube_tools import (
     BrowseYouTubeParams,
     FetchYouTubeTranscriptParams,
@@ -110,6 +115,15 @@ TOOL_SCHEMA_SPECS = (
         "/internal/tools/retry_youtube_video",
         "retry_youtube_video",
         RetryYouTubeVideoParams,
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/create_trigger", "create_trigger", CreateTriggerParams
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/list_triggers", "list_triggers", ListTriggersParams
+    ),
+    ToolSchemaSpec(
+        "/internal/tools/delete_trigger", "delete_trigger", DeleteTriggerParams
     ),
 )
 """Internal Memory and Bucket item tools exposed to pi, in generated-file order."""

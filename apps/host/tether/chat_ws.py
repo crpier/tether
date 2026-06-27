@@ -13,7 +13,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from tether.auth import SESSION_COOKIE, verify_session_cookie
 from tether.conversations import ConversationNotFoundError, JsonValue, MessageDraft
-from tether.events import InvalidateEvent
+from tether.events import HubEvent, NotifyEvent
 from tether.pi_runtime import PiRuntimeError
 
 _POLICY_VIOLATION = 1008
@@ -386,11 +386,21 @@ async def _handle_frame(
 
 async def _event_pump(
     websocket: WebSocket,
-    subscription: asyncio.Queue[InvalidateEvent],
+    subscription: asyncio.Queue[HubEvent],
 ) -> None:
-    """Forward service-layer invalidations to one browser connection."""
+    """Forward service-layer invalidation and notification frames to a browser."""
     while True:
         event = await subscription.get()
+        if isinstance(event, NotifyEvent):
+            await websocket.send_json(
+                {
+                    "type": "notify",
+                    "trigger_id": event.trigger_id,
+                    "title": event.title,
+                    "body": event.body,
+                }
+            )
+            continue
         await websocket.send_json({"type": "invalidate", "keys": event.keys})
 
 
