@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Real-browser smoke check for the web SPA.
+# Real-browser end-to-end check for the web SPA.
 #
 # Boots the host and the Vite dev server on ephemeral ports (so it never
 # collides with a running `just host` / `just web`), points the dev server's
-# /api + /ws proxy at the ephemeral host, then drives headless Chromium through
-# the unauthenticated load and post-login chat view. Fails on any console
-# error, uncaught page error, 5xx response, or failed request.
+# /api + /ws proxy at the ephemeral host, then runs the Playwright suite
+# (apps/web/e2e) against it. Every spec carries a console guard that fails on
+# any console error, uncaught page error, 5xx response, or genuine request
+# failure.
+#
+# Headed vs headless is configurable via TETHER_E2E_HEADED=1 (watch the
+# browser). The live-LLM chat spec is gated by TETHER_E2E_LLM=1 and skipped by
+# default; when enabled, provider credentials + a default model must already be
+# in the environment (they inherit into the host process) and the apps/agent
+# `pi` runtime must be installed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -86,18 +93,19 @@ if ! wait_for "web dev server" "$web_url"; then
     exit 1
 fi
 
-echo "Running browser smoke against $web_url"
-smoke_status=0
-TETHER_SMOKE_WEB_URL="$web_url" \
+echo "Running Playwright e2e suite against $web_url"
+e2e_status=0
+TETHER_E2E_BASE_URL="$web_url" \
 TETHER_APP_PASSWORD="$app_password" \
-TETHER_SMOKE_SCREENSHOT="$runtime_dir/smoke.png" \
-node apps/web/scripts/smoke.mjs || smoke_status="$?"
+TETHER_E2E_HEADED="${TETHER_E2E_HEADED:-}" \
+TETHER_E2E_LLM="${TETHER_E2E_LLM:-}" \
+bash -c "cd apps/web && exec node_modules/.bin/playwright test" || e2e_status="$?"
 
-if [[ "$smoke_status" -ne 0 ]]; then
+if [[ "$e2e_status" -ne 0 ]]; then
     echo "--- host log (tail) ---" >&2
     tail -n 40 "$host_log" >&2 || true
     echo "--- web log (tail) ---" >&2
     tail -n 40 "$web_log" >&2 || true
 fi
 
-exit "$smoke_status"
+exit "$e2e_status"

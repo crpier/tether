@@ -29,6 +29,11 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: false,
+    // Vitest owns the unit tests under src/ plus the e2e support helpers
+    // (`e2e/**/*.test.ts`). The Playwright end-to-end specs (`e2e/**/*.spec.ts`)
+    // are driven by the Playwright runner, not vitest, so they are excluded.
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "e2e/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**/*.spec.ts"],
     setupFiles: ["node_modules/@testing-library/jest-dom/vitest"],
     // Kobalte ships untranspiled .jsx; inline it so vite-plugin-solid transforms
     // it instead of Node trying to load the raw source.
