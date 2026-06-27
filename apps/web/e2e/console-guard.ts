@@ -1,20 +1,31 @@
 /**
- * Pure collection + evaluation of page failures observed during the web smoke
- * run. Deliberately free of any Playwright import so the decision logic (which
- * console levels and HTTP statuses count as failures) can be unit-tested
- * without launching a browser. `attachListeners` is the only Playwright-aware
- * seam, and it is thin enough to drive with a fake page in tests.
+ * Pure collection + evaluation of page failures observed during an end-to-end
+ * run, plus a thin Playwright seam to feed it. The classification logic (which
+ * console levels and HTTP statuses count as failures) is free of any Playwright
+ * runtime import so it can be unit-tested without launching a browser;
+ * `attachListeners` is the only Playwright-aware function and is small enough to
+ * drive with a fake page.
  */
+
+import type { Page } from "@playwright/test";
 
 const SERVER_ERROR_THRESHOLD = 500;
 
-/**
- * @typedef {{ kind: string, detail: string }} Failure
- */
+export interface Failure {
+  kind: string;
+  detail: string;
+}
 
-export function createErrorCollector() {
-  /** @type {Failure[]} */
-  const failures = [];
+export interface ErrorCollector {
+  failures: Failure[];
+  onConsole: (type: string, text: string) => void;
+  onPageError: (message: string) => void;
+  onResponse: (status: number, url: string) => void;
+  onRequestFailed: (url: string, errorText: string) => void;
+}
+
+export function createErrorCollector(): ErrorCollector {
+  const failures: Failure[] = [];
   return {
     failures,
     onConsole(type, text) {
@@ -47,12 +58,12 @@ export function createErrorCollector() {
  * Wire a Playwright `Page`'s diagnostic events into a collector. Kept tiny so
  * the bulk of the logic stays in the pure helpers above.
  */
-export function attachListeners(page, collector) {
+export function attachListeners(page: Page, collector: ErrorCollector): void {
   page.on("console", (message) => {
     collector.onConsole(message.type(), message.text());
   });
   page.on("pageerror", (error) => {
-    collector.onPageError(error.message ?? String(error));
+    collector.onPageError(error.message);
   });
   page.on("response", (response) => {
     collector.onResponse(response.status(), response.url());
@@ -63,11 +74,10 @@ export function attachListeners(page, collector) {
   });
 }
 
-/**
- * @param {Failure[]} failures
- * @returns {{ ok: boolean, report: string }}
- */
-export function summarizeFailures(failures) {
+export function summarizeFailures(failures: Failure[]): {
+  ok: boolean;
+  report: string;
+} {
   if (failures.length === 0) {
     return {
       ok: true,

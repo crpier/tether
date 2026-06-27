@@ -23,6 +23,11 @@ app.config.timestamp_*.js
 # Temp
 gitignore
 
+# Playwright
+/test-results
+/playwright-report
+/playwright/.cache
+
 # System Files
 .DS_Store
 Thumbs.db
