@@ -27,6 +27,19 @@ import type {
 } from "./api";
 import { createBrowserChatBus } from "./chat-bus";
 import type { ChatBus, ChatFrame, CreateChatBus } from "./chat-bus";
+import { Button } from "@/components/ui/button";
+import {
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+  TextFieldTextArea,
+} from "@/components/ui/text-field";
+
+const selectClass =
+  "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 rounded-md border px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px]";
+const panelClass =
+  "bg-card text-card-foreground rounded-xl border p-4 shadow-sm";
+const fieldLabelClass = "text-muted-foreground text-xs font-medium";
 
 export interface AppDependencies {
   api?: TetherApi;
@@ -89,6 +102,21 @@ function messageText(message: DisplayMessage): string {
   return message.content;
 }
 
+function bubbleClass(role: Message["role"]): string {
+  const base = "flex flex-col gap-1 rounded-lg text-sm";
+  switch (role) {
+    case "user":
+      return `${base} bg-primary text-primary-foreground ml-auto max-w-[80%] px-3 py-2`;
+    case "assistant":
+      return `${base} bg-muted mr-auto max-w-[80%] px-3 py-2`;
+    case "tool":
+      return `${base} text-muted-foreground mx-auto py-0.5 text-xs italic`;
+  }
+}
+
+const bubbleLabelClass =
+  "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
+
 function makeQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -126,26 +154,35 @@ function LoginScreen(props: { api: TetherApi }) {
   };
 
   return (
-    <main aria-labelledby="login-title">
-      <h1 id="login-title">Sign in to Tether</h1>
-      <form onSubmit={onSubmit}>
-        <label>
-          Password
-          <input
-            autocomplete="current-password"
-            name="password"
-            onInput={(event) => {
-              setPassword(event.currentTarget.value);
-            }}
-            type="password"
-            value={password()}
-          />
-        </label>
-        <button disabled={submitting()} type="submit">
-          Log in
-        </button>
-      </form>
-      <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
+    <main
+      aria-labelledby="login-title"
+      class="flex min-h-screen items-center justify-center p-6"
+    >
+      <div class="bg-card text-card-foreground w-full max-w-sm space-y-6 rounded-xl border p-8 shadow-sm">
+        <h1 id="login-title" class="text-xl font-semibold tracking-tight">
+          Sign in to Tether
+        </h1>
+        <form onSubmit={onSubmit} class="space-y-4">
+          <TextField value={password()} onChange={setPassword}>
+            <TextFieldLabel>Password</TextFieldLabel>
+            <TextFieldInput
+              autocomplete="current-password"
+              name="password"
+              type="password"
+            />
+          </TextField>
+          <Button class="w-full" disabled={submitting()} type="submit">
+            Log in
+          </Button>
+        </form>
+        <Show when={error()}>
+          {(message) => (
+            <p class="text-destructive text-sm" role="alert">
+              {message()}
+            </p>
+          )}
+        </Show>
+      </div>
     </main>
   );
 }
@@ -176,20 +213,22 @@ function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
   };
 
   return (
-    <div aria-label="Model" role="group">
-      <span>Model</span>
+    <div aria-label="Model" class="flex items-center gap-1.5" role="group">
+      <span class="text-muted-foreground text-xs">Model</span>
       <For each={modelsQuery.data?.models ?? []}>
         {(model) => (
-          <button
+          <Button
             aria-pressed={selectedModel() === model.id}
             disabled={modelsQuery.isLoading}
             onClick={() => {
               persistModel(model.id);
             }}
+            size="sm"
             type="button"
+            variant={selectedModel() === model.id ? "default" : "outline"}
           >
             {model.display_name}
-          </button>
+          </Button>
         )}
       </For>
     </div>
@@ -201,19 +240,27 @@ function MessageRows(props: {
   streamText: string;
 }) {
   return (
-    <section aria-label="Chat transcript">
+    <section
+      aria-label="Chat transcript"
+      class="bg-card flex-1 space-y-3 overflow-y-auto rounded-xl border p-4 shadow-sm"
+    >
       <For each={props.messages}>
         {(message) => (
-          <article aria-label={`${messageLabel(message)} message`}>
-            <strong>{messageLabel(message)}</strong>
-            <p>{messageText(message)}</p>
+          <article
+            aria-label={`${messageLabel(message)} message`}
+            class={bubbleClass(message.role)}
+          >
+            <strong class={bubbleLabelClass}>{messageLabel(message)}</strong>
+            <p class="whitespace-pre-wrap break-words">
+              {messageText(message)}
+            </p>
           </article>
         )}
       </For>
       <Show when={props.streamText.length > 0}>
-        <article aria-label="Tether message">
-          <strong>Tether</strong>
-          <p>{props.streamText}</p>
+        <article aria-label="Tether message" class={bubbleClass("assistant")}>
+          <strong class={bubbleLabelClass}>Tether</strong>
+          <p class="whitespace-pre-wrap break-words">{props.streamText}</p>
         </article>
       </Show>
     </section>
@@ -277,16 +324,18 @@ const WEEKDAYS = [
 
 function NotificationsPanel(props: { notifications: NotifyItem[] }) {
   return (
-    <section aria-label="Notifications">
-      <h2>Notifications</h2>
+    <section aria-label="Notifications" class={panelClass}>
+      <h2 class="mb-3 text-sm font-semibold">Notifications</h2>
       <Show
-        fallback={<p>No notifications yet</p>}
+        fallback={
+          <p class="text-muted-foreground text-sm">No notifications yet</p>
+        }
         when={props.notifications.length > 0}
       >
-        <ul>
+        <ul class="space-y-2">
           <For each={props.notifications}>
             {(item) => (
-              <li>
+              <li class="bg-muted rounded-md border px-3 py-2 text-sm">
                 <Show when={item.title}>
                   {(title) => <strong>{title()} </strong>}
                 </Show>
@@ -385,22 +434,17 @@ function TriggersPanel(props: { api: TetherApi }) {
   };
 
   return (
-    <section aria-label="Reminders">
-      <h2>Reminders</h2>
-      <form onSubmit={onSubmit}>
-        <label>
-          Reminder
-          <input
-            name="payload"
-            onInput={(event) => {
-              setPayload(event.currentTarget.value);
-            }}
-            value={payload()}
-          />
-        </label>
-        <label>
-          Repeat
+    <section aria-label="Reminders" class={panelClass}>
+      <h2 class="mb-3 text-sm font-semibold">Reminders</h2>
+      <form class="space-y-3" onSubmit={onSubmit}>
+        <TextField onChange={setPayload} value={payload()}>
+          <TextFieldLabel>Reminder</TextFieldLabel>
+          <TextFieldInput name="payload" />
+        </TextField>
+        <label class="grid gap-1">
+          <span class={fieldLabelClass}>Repeat</span>
           <select
+            class={selectClass}
             name="recurrence"
             onChange={(event) => {
               setRecurrence(event.currentTarget.value as TriggerRecurrence);
@@ -412,9 +456,10 @@ function TriggersPanel(props: { api: TetherApi }) {
             <option value="weekly">Weekly</option>
           </select>
         </label>
-        <label>
-          Action
+        <label class="grid gap-1">
+          <span class={fieldLabelClass}>Action</span>
           <select
+            class={selectClass}
             name="action_kind"
             onChange={(event) => {
               setActionKind(event.currentTarget.value as TriggerActionKind);
@@ -426,45 +471,26 @@ function TriggersPanel(props: { api: TetherApi }) {
           </select>
         </label>
         <Show when={recurrence() === "once"}>
-          <label>
-            Date and time
-            <input
-              name="fire_at"
-              onInput={(event) => {
-                setFireAt(event.currentTarget.value);
-              }}
-              type="datetime-local"
-              value={fireAt()}
-            />
-          </label>
+          <TextField onChange={setFireAt} value={fireAt()}>
+            <TextFieldLabel>Date and time</TextFieldLabel>
+            <TextFieldInput name="fire_at" type="datetime-local" />
+          </TextField>
         </Show>
         <Show when={recurrence() !== "once"}>
-          <label>
-            Time of day
-            <input
-              name="time_of_day"
-              onInput={(event) => {
-                setTimeOfDay(event.currentTarget.value);
-              }}
-              type="time"
-              value={timeOfDay()}
-            />
-          </label>
-          <label>
-            Time zone
-            <input
-              name="timezone"
-              onInput={(event) => {
-                setTimezone(event.currentTarget.value);
-              }}
-              value={timezone()}
-            />
-          </label>
+          <TextField onChange={setTimeOfDay} value={timeOfDay()}>
+            <TextFieldLabel>Time of day</TextFieldLabel>
+            <TextFieldInput name="time_of_day" type="time" />
+          </TextField>
+          <TextField onChange={setTimezone} value={timezone()}>
+            <TextFieldLabel>Time zone</TextFieldLabel>
+            <TextFieldInput name="timezone" />
+          </TextField>
         </Show>
         <Show when={recurrence() === "weekly"}>
-          <label>
-            Day of week
+          <label class="grid gap-1">
+            <span class={fieldLabelClass}>Day of week</span>
             <select
+              class={selectClass}
               name="weekday"
               onChange={(event) => {
                 setWeekday(Number(event.currentTarget.value));
@@ -477,24 +503,36 @@ function TriggersPanel(props: { api: TetherApi }) {
             </select>
           </label>
         </Show>
-        <button type="submit">Add reminder</button>
+        <Button type="submit">Add reminder</Button>
       </form>
-      <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
-      <ul>
+      <Show when={error()}>
+        {(message) => (
+          <p class="text-destructive mt-2 text-sm" role="alert">
+            {message()}
+          </p>
+        )}
+      </Show>
+      <ul class="mt-3 space-y-2">
         <For each={triggersQuery.data ?? []}>
           {(trigger) => (
-            <li aria-label={`Reminder: ${trigger.payload}`}>
-              <span>{trigger.payload}</span>
-              <span>{` · ${trigger.recurrence} · ${trigger.status}`}</span>
-              <span>{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
-              <button
+            <li
+              aria-label={`Reminder: ${trigger.payload}`}
+              class="bg-muted flex flex-wrap items-center gap-1 rounded-md border px-3 py-2 text-sm"
+            >
+              <span class="font-medium">{trigger.payload}</span>
+              <span class="text-muted-foreground text-xs">{` · ${trigger.recurrence} · ${trigger.status}`}</span>
+              <span class="text-muted-foreground text-xs">{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
+              <Button
+                class="ml-auto"
                 onClick={() => {
                   remove(trigger.id, trigger.version);
                 }}
+                size="sm"
                 type="button"
+                variant="ghost"
               >
                 Delete
-              </button>
+              </Button>
             </li>
           )}
         </For>
@@ -558,33 +596,50 @@ function RecallPanel(props: { api: TetherApi }) {
   };
 
   return (
-    <section aria-label="Recall">
-      <h2>Recall</h2>
+    <section aria-label="Recall" class={panelClass}>
+      <h2 class="mb-3 text-sm font-semibold">Recall</h2>
       <Show when={feedback()}>
-        {(message) => <p role="status">{message()}</p>}
+        {(message) => (
+          <p class="mb-2 text-sm text-emerald-600" role="status">
+            {message()}
+          </p>
+        )}
       </Show>
-      <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
+      <Show when={error()}>
+        {(message) => (
+          <p class="text-destructive mb-2 text-sm" role="alert">
+            {message()}
+          </p>
+        )}
+      </Show>
       <Show
-        fallback={<p>No recall prompts due</p>}
+        fallback={
+          <p class="text-muted-foreground text-sm">No recall prompts due</p>
+        }
         when={(promptsQuery.data ?? []).length > 0}
       >
-        <ul>
+        <ul class="space-y-2">
           <For each={promptsQuery.data ?? []}>
             {(due) => (
-              <li aria-label={`Recall prompt: ${due.prompt.question}`}>
-                <p>{due.prompt.question}</p>
-                <span>{`from ${due.study_item.source_title}`}</span>
-                <div role="group">
+              <li
+                aria-label={`Recall prompt: ${due.prompt.question}`}
+                class="bg-muted space-y-2 rounded-md border px-3 py-2"
+              >
+                <p class="text-sm font-medium">{due.prompt.question}</p>
+                <span class="text-muted-foreground text-xs">{`from ${due.study_item.source_title}`}</span>
+                <div class="flex flex-wrap gap-2" role="group">
                   <For each={due.prompt.choices}>
                     {(choice, choiceIndex) => (
-                      <button
+                      <Button
                         onClick={() => {
                           answer(due.prompt.id, choiceIndex());
                         }}
+                        size="sm"
                         type="button"
+                        variant="outline"
                       >
                         {choice}
-                      </button>
+                      </Button>
                     )}
                   </For>
                 </div>
@@ -636,25 +691,35 @@ function PushControl(props: { api: TetherApi }) {
   };
 
   return (
-    <section aria-label="Notification delivery">
-      <h2>Push notifications</h2>
-      <Show fallback={<p>Checking…</p>} when={statusQuery.data}>
+    <section aria-label="Notification delivery" class={panelClass}>
+      <h2 class="mb-3 text-sm font-semibold">Push notifications</h2>
+      <Show
+        fallback={<p class="text-muted-foreground text-sm">Checking…</p>}
+        when={statusQuery.data}
+      >
         {(status) => (
           <Show
             fallback={
-              <>
-                <p>Not subscribed</p>
-                <button disabled={busy()} onClick={enable} type="button">
+              <div class="space-y-2">
+                <p class="text-muted-foreground text-sm">Not subscribed</p>
+                <Button disabled={busy()} onClick={enable} type="button">
                   Enable notifications
-                </button>
-              </>
+                </Button>
+              </div>
             }
             when={status().subscribed}
           >
-            <p>Subscribed</p>
-            <button disabled={busy()} onClick={disable} type="button">
-              Disable notifications
-            </button>
+            <div class="space-y-2">
+              <p class="text-sm">Subscribed</p>
+              <Button
+                disabled={busy()}
+                onClick={disable}
+                type="button"
+                variant="outline"
+              >
+                Disable notifications
+              </Button>
+            </div>
           </Show>
         )}
       </Show>
@@ -840,9 +905,14 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   };
 
   return (
-    <main aria-labelledby="chat-title">
-      <header>
-        <h1 id="chat-title">Tether chat</h1>
+    <main aria-labelledby="chat-title" class="flex h-screen flex-col">
+      <header class="bg-card flex items-center gap-4 border-b px-5 py-3">
+        <h1
+          id="chat-title"
+          class="mr-auto text-lg font-semibold tracking-tight"
+        >
+          Tether chat
+        </h1>
         <Show when={conversation()}>
           {(currentConversation) => (
             <ModelSelector
@@ -851,38 +921,55 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
             />
           )}
         </Show>
-        <button onClick={logout} type="button">
+        <Button onClick={logout} size="sm" type="button" variant="outline">
           Log out
-        </button>
+        </Button>
       </header>
-      <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
-      <Show
-        fallback={<p>Loading chat…</p>}
-        when={!conversationsQuery.isLoading && conversation() !== undefined}
-      >
-        <MessageRows messages={displayMessages()} streamText={streamText()} />
-        <form onSubmit={onSubmit}>
-          <label>
-            Message
-            <textarea
-              onInput={(event) => {
-                setDraft(event.currentTarget.value);
-              }}
-              value={draft()}
+      <div class="mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)_22rem] gap-5 overflow-hidden p-5">
+        <div class="flex min-h-0 flex-col gap-3">
+          <Show when={error()}>
+            {(message) => (
+              <p class="text-destructive text-sm" role="alert">
+                {message()}
+              </p>
+            )}
+          </Show>
+          <Show
+            fallback={<p class="text-muted-foreground">Loading chat…</p>}
+            when={!conversationsQuery.isLoading && conversation() !== undefined}
+          >
+            <MessageRows
+              messages={displayMessages()}
+              streamText={streamText()}
             />
-          </label>
-          <button disabled={generating()} type="submit">
-            Send
-          </button>
-          <button disabled={!generating()} onClick={abort} type="button">
-            Stop
-          </button>
-        </form>
-      </Show>
-      <NotificationsPanel notifications={notifications()} />
-      <RecallPanel api={props.api} />
-      <TriggersPanel api={props.api} />
-      <PushControl api={props.api} />
+            <form class="space-y-2" onSubmit={onSubmit}>
+              <TextField onChange={setDraft} value={draft()}>
+                <TextFieldLabel>Message</TextFieldLabel>
+                <TextFieldTextArea />
+              </TextField>
+              <div class="flex justify-end gap-2">
+                <Button disabled={generating()} type="submit">
+                  Send
+                </Button>
+                <Button
+                  disabled={!generating()}
+                  onClick={abort}
+                  type="button"
+                  variant="outline"
+                >
+                  Stop
+                </Button>
+              </div>
+            </form>
+          </Show>
+        </div>
+        <aside class="flex min-h-0 flex-col gap-4 overflow-y-auto">
+          <NotificationsPanel notifications={notifications()} />
+          <RecallPanel api={props.api} />
+          <TriggersPanel api={props.api} />
+          <PushControl api={props.api} />
+        </aside>
+      </div>
     </main>
   );
 }
