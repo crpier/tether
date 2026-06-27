@@ -17,12 +17,13 @@ from snektest import (
     assert_in,
     assert_not_in,
     assert_true,
+    fixture,
     load_fixture,
     test,
 )
 
 from tether.pi_runtime import PiRpcClient, PiRuntime, PiRuntimeConfig
-from tether.server import AppConfig, create_app
+from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import SessionRegistry
 
@@ -78,12 +79,14 @@ class LiveHost:
     session_registry: SessionRegistry
 
 
+@fixture
 async def pi_session_dir() -> AsyncGenerator[Path]:
     """Temporary directory for pi session files."""
     with TemporaryDirectory() as directory:
         yield Path(directory)
 
 
+@fixture
 async def live_host() -> AsyncGenerator[LiveHost]:
     """Run the host app on a real loopback port for subprocess callbacks."""
     with TemporaryDirectory() as directory:
@@ -108,6 +111,7 @@ async def live_host() -> AsyncGenerator[LiveHost]:
                 app,
                 host="127.0.0.1",
                 port=port,
+                ws=WS_PROTOCOL,
                 access_log=False,
                 log_config=None,
                 log_level="warning",

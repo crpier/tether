@@ -9,8 +9,13 @@ test pins the runtime dependency so that gap cannot reopen unnoticed.
 """
 
 import importlib.util
+import subprocess
+import sys
 
-from snektest import assert_true, test
+from snektest import assert_eq, assert_true, test
+from uvicorn.config import WS_PROTOCOLS
+
+from tether.server import WS_PROTOCOL
 
 
 @test()
@@ -27,3 +32,34 @@ def uvicorn_has_a_websocket_implementation() -> None:
             "the /ws upgrade will 404 in the running app"
         ),
     )
+
+
+@test(mark="slow")
+def configured_websocket_protocol_is_free_of_legacy_deprecation() -> None:
+    """The uvicorn WebSocket protocol tether configures must not load the
+    deprecated `websockets.legacy` API.
+
+    uvicorn's default `"auto"` resolves to the legacy `websockets` protocol, which
+    imports `websockets.legacy` and emits a `DeprecationWarning` at import time.
+    Import the configured implementation in a fresh interpreter under
+    `-W error::DeprecationWarning` so any such warning becomes a non-zero exit —
+    a clean import cache makes this deterministic regardless of test order.
+    """
+    target = WS_PROTOCOLS[WS_PROTOCOL]
+    assert target is not None, f"WS protocol {WS_PROTOCOL!r} has no implementation"
+    module_name = target.split(":", 1)[0]
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error::DeprecationWarning",
+            "-c",
+            f"import {module_name}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert_eq(result.returncode, 0, msg=result.stderr)

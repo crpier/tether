@@ -7,6 +7,7 @@ SQLite), so claim/settle transitions are exercised end to end.
 """
 
 import asyncio
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -15,11 +16,11 @@ from opentelemetry.trace import Tracer
 from pydantic import UUID7
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_is_none,
     assert_is_not_none,
     assert_true,
+    fixture,
     load_fixture,
     test,
 )
@@ -120,7 +121,8 @@ class StubRunner:
         return self.result
 
 
-async def scheduler_service() -> AsyncFixture[TriggerService]:
+@fixture
+async def scheduler_service() -> AsyncGenerator[TriggerService]:
     """A fresh, isolated trigger database for each scheduler test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_trigger_schema(db)

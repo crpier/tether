@@ -15,7 +15,7 @@ The service under test is `tether.bucket_items.BucketItemService`:
 """
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
 
 import structlog
 from opentelemetry import trace
@@ -23,12 +23,12 @@ from opentelemetry.trace import Tracer
 from pydantic import PositiveInt
 from snekql.sqlite import Config, Database, Fetched, delete, select
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_in,
     assert_is_not_none,
     assert_not_in,
     assert_raises,
+    fixture,
     load_fixture,
     test,
 )
@@ -101,7 +101,8 @@ class LoggedBucketItemService:
         return await self.service.delete(item, logger=self.logger)
 
 
-async def bucket_item_service() -> AsyncFixture[LoggedBucketItemService]:
+@fixture
+async def bucket_item_service() -> AsyncGenerator[LoggedBucketItemService]:
     """A fresh, isolated Tether database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_bucket_item_schema(db)

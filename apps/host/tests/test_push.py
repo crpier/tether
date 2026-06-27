@@ -6,12 +6,13 @@ status convergence) against an in-memory DB, and the mounted app through
 fired by the live scheduler, reaches a connected browser as a `notify` frame.
 """
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
 from snekql.sqlite import Config, Database
-from snektest import AsyncFixture, assert_eq, assert_true, load_fixture, test
+from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from starlette.testclient import TestClient
 
 from tether.push import PushService, create_push_schema
@@ -24,7 +25,8 @@ ENDPOINT = "https://push.example/abc"
 PAST = "2000-01-01T00:00:00+00:00"
 
 
-async def push_service() -> AsyncFixture[PushService]:
+@fixture
+async def push_service() -> AsyncGenerator[PushService]:
     """A fresh, isolated push-subscription database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_push_schema(db)

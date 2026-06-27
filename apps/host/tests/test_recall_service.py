@@ -8,6 +8,7 @@ and a study item tethers its Memory **only** on full completion. Driving
 controlled answers and timestamps keeps it all model-free (issue #20).
 """
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,11 +19,11 @@ from opentelemetry.trace import Tracer
 from pydantic import UUID7
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_is_none,
     assert_is_not_none,
     assert_raises,
+    fixture,
     load_fixture,
     test,
 )
@@ -145,7 +146,8 @@ class RecallFixture:
         return item
 
 
-async def recall_fixture(generator: FakeGenerator) -> AsyncFixture[RecallFixture]:
+@fixture
+async def recall_fixture(generator: FakeGenerator) -> AsyncGenerator[RecallFixture]:
     """A fresh Recall service over an isolated DB, KB dir, and fake generator."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)

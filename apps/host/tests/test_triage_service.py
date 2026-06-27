@@ -8,6 +8,7 @@ every assertion is on that behaviour over seeded items, never on model prose
 production producers would, and staleness is asserted against an injected clock.
 """
 
+from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -17,11 +18,11 @@ from opentelemetry.trace import Tracer
 from pydantic import UUID7
 from snekql.sqlite import Config, Database, Fetched
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_in,
     assert_not_in,
     assert_true,
+    fixture,
     load_fixture,
     test,
 )
@@ -81,7 +82,8 @@ class TriageHarness:
         return await self.triage_service.triage_report(now=now, logger=self.logger)
 
 
-async def triage_harness() -> AsyncFixture[TriageHarness]:
+@fixture
+async def triage_harness() -> AsyncGenerator[TriageHarness]:
     """A fresh isolated database with a Bucket service and a Triage service."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_bucket_item_schema(db)

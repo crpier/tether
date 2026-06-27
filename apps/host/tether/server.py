@@ -20,6 +20,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
+from uvicorn.config import WSProtocolType
 
 from tether.auth import AppSessionMiddleware
 from tether.bucket_items import (
@@ -453,6 +454,16 @@ def create_app_from_environment() -> Starlette:
     )
 
 
+WS_PROTOCOL: WSProtocolType = "websockets-sansio"
+"""uvicorn WebSocket protocol implementation used for the `/ws` upgrade.
+
+uvicorn's default `"auto"` resolves to the legacy `websockets` protocol, which
+imports the deprecated `websockets.legacy` module. The sansio implementation
+serves the same handshake without the deprecation. Keep server and test fixtures
+on this value so both run the protocol shipped in production.
+"""
+
+
 def serve(settings: HostSettings | None = None) -> None:
     """Run the host server with uvicorn using environment-backed settings.
 
@@ -468,6 +479,7 @@ def serve(settings: HostSettings | None = None) -> None:
         host=configured_settings.host,
         port=configured_settings.port,
         reload=configured_settings.reload,
+        ws=WS_PROTOCOL,
         log_config=None,
         access_log=False,
     )
