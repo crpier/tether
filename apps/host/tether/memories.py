@@ -14,7 +14,7 @@ Searches only tethered, non-deleted Memories.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 from uuid import uuid7
 
 from anyio import NamedTemporaryFile, Path
@@ -44,7 +44,17 @@ type MemoryState = Literal["loose", "tethered"]
 
 
 class MemoryProvenance(TypedDict):
-    kind: Literal["manual"]
+    """The origin of a Captured Memory.
+
+    `kind` records the source. `confidence` and `batch` are forward-compatible
+    optional signals for non-manual producers (import, YouTube, web): a captured
+    fact's trustworthiness and the bulk run it arrived in. Manual capture omits
+    both, so it still serializes to exactly `{"kind": "manual"}`.
+    """
+
+    kind: Literal["manual", "import", "youtube", "web"]
+    confidence: NotRequired[Literal["low", "medium", "high"]]
+    batch: NotRequired[str]
 
 
 class MemoryNotFoundError(Exception):
@@ -222,11 +232,19 @@ class MemoryService:
         self,
         content: str,
         *,
+        provenance: MemoryProvenance | None = None,
         logger: Logger,
     ) -> Memory[Fetched]:
         """Capture a loose Memory from content.
-        Always lands `loose` — there is no direct-to-tethered path."""
+
+        Always lands `loose` — there is no direct-to-tethered path. `provenance`
+        defaults to manual; a non-manual producer (import, YouTube, web) passes
+        its own origin so downstream Review can calibrate scrutiny and grouping.
+        """
         normalised_content = _normalise_content(content)
+        memory_provenance = (
+            provenance if provenance is not None else MemoryProvenance(kind="manual")
+        )
         with self.tracer.start_as_current_span(
             "MemoryService.capture",
             attributes={"memory.content_length": len(normalised_content)},
@@ -234,7 +252,12 @@ class MemoryService:
             _debug(logger, "Capturing Memory", content_length=len(normalised_content))
             async with self.database.transaction() as tx:
                 memory = await tx.execute(
-                    insert(Memory(content=normalised_content)).returning()
+                    insert(
+                        Memory(
+                            content=normalised_content,
+                            provenance=memory_provenance,
+                        )
+                    ).returning()
                 )
             span.set_attribute("memory.id", str(memory.id))
             span.set_attribute("memory.version", memory.version)

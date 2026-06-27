@@ -68,6 +68,17 @@
       }
     },
     {
+      "endpoint": "/internal/tools/review_digest",
+      "name": "review_digest",
+      "params_model": "ReviewDigestParams",
+      "schema": {
+        "description": "Params for the AI-assisted Review digest.\n\nThe digest is computed over the whole live queue, so it takes no inputs\nbeyond the session identity the gate already requires.",
+        "properties": {},
+        "title": "ReviewDigestParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/tether",
       "name": "tether",
       "params_model": "TetherParams",

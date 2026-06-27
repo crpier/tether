@@ -39,6 +39,7 @@ from tether.memories import (
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
+from tether.review import ReviewService
 from tether.telemetry import (
     TelemetryExporter,
     TelemetryMiddleware,
@@ -165,6 +166,7 @@ def _lifespan(
             )
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
+            app.state.review_service = ReviewService(database=db)
             app.state.bucket_item_service = BucketItemService(
                 database=db,
                 event_publisher=event_hub,

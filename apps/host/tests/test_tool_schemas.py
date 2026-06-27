@@ -20,6 +20,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "capture",
             "browse",
             "search",
+            "review_digest",
             "tether",
             "edit",
             "reject",
