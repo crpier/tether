@@ -8,6 +8,7 @@ prose. Memories are seeded through `MemoryService` (capture with provenance,
 tether) exactly as the production producers would.
 """
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import structlog
@@ -17,10 +18,10 @@ from opentelemetry.trace import Tracer
 from pydantic import UUID7
 from snekql.sqlite import Config, Database, Fetched
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_in,
     assert_not_in,
+    fixture,
     load_fixture,
     test,
 )
@@ -79,7 +80,8 @@ class ReviewHarness:
         return await self.review_service.review_digest(logger=self.logger)
 
 
-async def review_harness() -> AsyncFixture[ReviewHarness]:
+@fixture
+async def review_harness() -> AsyncGenerator[ReviewHarness]:
     """A fresh isolated database with a Memory service and a Review service."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)

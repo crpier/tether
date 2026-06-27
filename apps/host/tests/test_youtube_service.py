@@ -6,18 +6,20 @@ The fake counts its calls so we can assert ingestion stays within quota and that
 caching elides repeats.
 """
 
+from collections.abc import AsyncGenerator
+
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from snekql.sqlite import Config, Database
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_in,
     assert_is_none,
     assert_is_not_none,
     assert_not_in,
     assert_raises,
+    fixture,
     load_fixture,
     test,
 )
@@ -67,11 +69,12 @@ def video(
     )
 
 
+@fixture
 async def make_service(
     api: InMemoryYouTubeApi,
     *,
     quota_limit: int = 1000,
-) -> AsyncFixture[YouTubeService]:
+) -> AsyncGenerator[YouTubeService]:
     """A fresh DB + guarded client wrapping the given in-memory API."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)

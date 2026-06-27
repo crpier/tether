@@ -19,6 +19,7 @@ A `Memory` exposes `.id`, `.content`, `.version`, and the
 
 import asyncio
 import contextlib
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import structlog
@@ -31,7 +32,6 @@ from opentelemetry.trace import Tracer
 from pydantic import PositiveInt
 from snekql.sqlite import Config, Database, Fetched, delete, select
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_gt,
     assert_in,
@@ -40,6 +40,7 @@ from snektest import (
     assert_not_in,
     assert_raises,
     assert_true,
+    fixture,
     load_fixture,
     test,
 )
@@ -154,7 +155,8 @@ def projection_path(service: LoggedMemoryService, memory: Memory[Fetched]) -> Pa
     return service.kb_service.kb_root / f"{memory.id}.md"
 
 
-async def memory_service() -> AsyncFixture[LoggedMemoryService]:
+@fixture
+async def memory_service() -> AsyncGenerator[LoggedMemoryService]:
     """A fresh, isolated Tether database + an empty markdown KB directory.
 
     The KB lives in a throwaway temp dir so projection assertions observe real

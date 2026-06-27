@@ -7,6 +7,7 @@ boundary), the optimistic-concurrency guards, and the scheduler-facing claim /
 success / failure transitions.
 """
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -14,11 +15,11 @@ from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
-    AsyncFixture,
     assert_eq,
     assert_is_none,
     assert_is_not_none,
     assert_raises,
+    fixture,
     load_fixture,
     test,
 )
@@ -42,7 +43,8 @@ def noop_tracer() -> Tracer:
     return trace.NoOpTracerProvider().get_tracer("test.triggers_service")
 
 
-async def trigger_service() -> AsyncFixture[TriggerService]:
+@fixture
+async def trigger_service() -> AsyncGenerator[TriggerService]:
     """A fresh, isolated trigger database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_trigger_schema(db)
