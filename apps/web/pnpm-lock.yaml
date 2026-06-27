@@ -7,6 +7,9 @@ settings:
 importers:
   .:
     dependencies:
+      "@tanstack/solid-query":
+        specifier: ^5.101.1
+        version: 5.101.1(solid-js@1.9.9)
       openapi-fetch:
         specifier: ^0.17.0
         version: 0.17.0
@@ -1166,6 +1169,20 @@ packages:
       {
         integrity: sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA==,
       }
+
+  "@tanstack/query-core@5.101.1":
+    resolution:
+      {
+        integrity: sha512-Y6Y92dkXtNqx67m2pMSxUsA3zOCwv862JexZRP8/EPwvKXMPu9m8rv43spiXWzOUIggQ3SQApttALStzhA8B4g==,
+      }
+
+  "@tanstack/solid-query@5.101.1":
+    resolution:
+      {
+        integrity: sha512-l46cY0/6Nw/3U+BKGySwg/oen6LiBoj9IKXqHZLxxi2lsQjdbslz5SOOI1dvQJWC7dPTG8Ek//wEFOI0NPMnsg==,
+      }
+    peerDependencies:
+      solid-js: ^1.6.0
 
   "@testing-library/dom@10.4.0":
     resolution:
@@ -3435,6 +3452,13 @@ snapshots:
       solid-js: 1.9.9
 
   "@standard-schema/spec@1.0.0": {}
+
+  "@tanstack/query-core@5.101.1": {}
+
+  "@tanstack/solid-query@5.101.1(solid-js@1.9.9)":
+    dependencies:
+      "@tanstack/query-core": 5.101.1
+      solid-js: 1.9.9
 
   "@testing-library/dom@10.4.0":
     dependencies:
