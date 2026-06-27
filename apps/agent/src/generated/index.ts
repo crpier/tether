@@ -14,6 +14,7 @@ import { registerAddPlaceTool } from "./add_place.js";
 import { registerCompleteBucketItemTool } from "./complete_bucket_item.js";
 import { registerDeleteBucketItemTool } from "./delete_bucket_item.js";
 import { registerSearchBucketItemsTool } from "./search_bucket_items.js";
+import { registerTriageReportTool } from "./triage_report.js";
 import { registerBrowseYoutubeTool } from "./browse_youtube.js";
 import { registerSearchYoutubeTool } from "./search_youtube.js";
 import { registerFetchYoutubeTranscriptTool } from "./fetch_youtube_transcript.js";
@@ -39,6 +40,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCompleteBucketItemTool(pi);
   registerDeleteBucketItemTool(pi);
   registerSearchBucketItemsTool(pi);
+  registerTriageReportTool(pi);
   registerBrowseYoutubeTool(pi);
   registerSearchYoutubeTool(pi);
   registerFetchYoutubeTranscriptTool(pi);

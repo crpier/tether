@@ -29,6 +29,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "complete_bucket_item",
             "delete_bucket_item",
             "search_bucket_items",
+            "triage_report",
             "browse_youtube",
             "search_youtube",
             "fetch_youtube_transcript",
