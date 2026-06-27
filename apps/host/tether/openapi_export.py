@@ -11,6 +11,7 @@ from starlette.routing import Route
 
 from tether.auth import auth_routes
 from tether.bucket_routes import bucket_item_routes
+from tether.conversations import conversation_routes
 from tether.openapi import build_openapi
 from tether.routes import routes
 
@@ -25,7 +26,7 @@ def public_api_routes() -> list[Route]:
     assert "/api/auth/session" in paths
     ```
     """
-    return [*auth_routes, *routes, *bucket_item_routes]
+    return [*auth_routes, *routes, *bucket_item_routes, *conversation_routes]
 
 
 def build_openapi_document() -> dict[str, Any]:

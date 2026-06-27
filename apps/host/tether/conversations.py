@@ -1,0 +1,272 @@
+"""Host-owned conversation and transcript storage."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal, cast
+from uuid import UUID, uuid7
+
+from pydantic import UUID7, BaseModel, PositiveInt
+from snekql.sqlite import (
+    CurrentTimestamp,
+    Database,
+    Fetched,
+    Integer,
+    Model,
+    Pending,
+    Text,
+    insert,
+    select,
+)
+from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
+
+from tether.openapi import EndpointRoute, endpoint
+
+type MessageRole = Literal["user", "assistant", "tool"]
+type JsonValue = (
+    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+)
+
+
+class ConversationNotFoundError(Exception):
+    """Raised when transcript history is requested for an absent conversation."""
+
+
+@dataclass(frozen=True, slots=True)
+class MessageDraft:
+    """A transcript row ready to append to one conversation."""
+
+    content: str
+    conversation_id: UUID
+    role: MessageRole
+    pi_message_id: str | None = None
+    tool_args: dict[str, JsonValue] | None = None
+    tool_name: str | None = None
+    tool_result: dict[str, JsonValue] | None = None
+
+
+class Conversation[S = Pending](Model[S, "Conversation[Fetched]"]):
+    """A stable host-owned chat thread."""
+
+    id: Conversation.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
+    created_at: Conversation.GenCol[datetime] = Text(default=CurrentTimestamp)
+    pi_session_id: Conversation.GenCol[UUID7] = Text(default_factory=uuid7)
+    selected_model: Conversation.Col[str | None] = Text(default=None, nullable=True)
+    title: Conversation.Col[str | None] = Text(default=None, nullable=True)
+
+
+class Message[S = Pending](Model[S, "Message[Fetched]"]):
+    """One settled transcript row owned by the host."""
+
+    id: Message.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
+    conversation_id: Message.Col[UUID7] = Text()
+    seq: Message.Col[PositiveInt] = Integer()
+    role: Message.Col[MessageRole] = Text()
+    content: Message.Col[str] = Text()
+    created_at: Message.GenCol[datetime] = Text(default=CurrentTimestamp)
+    pi_message_id: Message.Col[str | None] = Text(default=None, nullable=True)
+    tool_args: Message.Col[str | None] = Text(default=None, nullable=True)
+    tool_name: Message.Col[str | None] = Text(default=None, nullable=True)
+    tool_result: Message.Col[str | None] = Text(default=None, nullable=True)
+
+
+class ConversationRead(BaseModel):
+    """HTTP representation of a host-owned conversation."""
+
+    created_at: datetime
+    id: UUID7
+    pi_session_id: UUID7
+    selected_model: str | None
+    title: str | None
+
+    @classmethod
+    def from_conversation(cls, conversation: Conversation[Fetched]) -> ConversationRead:
+        """Render a stored Conversation as JSON-safe response data."""
+        return cls(
+            created_at=conversation.created_at,
+            id=conversation.id,
+            pi_session_id=conversation.pi_session_id,
+            selected_model=conversation.selected_model,
+            title=conversation.title,
+        )
+
+
+class MessageRead(BaseModel):
+    """HTTP representation of a settled transcript row."""
+
+    content: str
+    conversation_id: UUID7
+    created_at: datetime
+    id: UUID7
+    pi_message_id: str | None
+    role: MessageRole
+    seq: PositiveInt
+    tool_args: dict[str, JsonValue] | None
+    tool_name: str | None
+    tool_result: dict[str, JsonValue] | None
+
+    @classmethod
+    def from_message(cls, message: Message[Fetched]) -> MessageRead:
+        """Render a stored Message as JSON-safe response data."""
+        return cls(
+            content=message.content,
+            conversation_id=message.conversation_id,
+            created_at=message.created_at,
+            id=message.id,
+            pi_message_id=message.pi_message_id,
+            role=message.role,
+            seq=message.seq,
+            tool_args=json.loads(message.tool_args)
+            if message.tool_args is not None
+            else None,
+            tool_name=message.tool_name,
+            tool_result=cast("dict[str, JsonValue]", json.loads(message.tool_result))
+            if message.tool_result is not None
+            else None,
+        )
+
+
+class ConversationService:
+    """Persistence boundary for conversations and settled transcript rows."""
+
+    def __init__(self, database: Database) -> None:
+        self.database: Database = database
+
+    async def list_conversations(self) -> list[Conversation[Fetched]]:
+        """Return all conversations, creating the v1 default on first access."""
+        async with self.database.transaction() as tx:
+            conversations = await tx.fetch_all(
+                select(Conversation).all().order_by(Conversation.created_at.asc())
+            )
+            if conversations:
+                return conversations
+            conversation = await tx.execute(insert(Conversation()).returning())
+            return [conversation]
+
+    async def fetch_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
+        """Return one conversation or raise when the id is unknown."""
+        async with self.database.transaction() as tx:
+            conversation = await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(conversation_id))
+            )
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation
+
+    async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
+        """Return settled transcript rows for a conversation in display order."""
+        async with self.database.transaction() as tx:
+            conversation = await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(conversation_id))
+            )
+            if conversation is None:
+                raise ConversationNotFoundError(conversation_id)
+            return await tx.fetch_all(
+                select(Message)
+                .where(Message.conversation_id.eq(conversation_id))
+                .order_by(Message.seq.asc())
+            )
+
+    async def append_message(self, draft: MessageDraft) -> Message[Fetched]:
+        """Append one settled transcript row with a monotonic per-thread sequence."""
+        async with self.database.transaction() as tx:
+            conversation = await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(draft.conversation_id))
+            )
+            if conversation is None:
+                raise ConversationNotFoundError(draft.conversation_id)
+            if draft.pi_message_id is not None:
+                existing = await tx.fetch_one_or_none(
+                    select(Message)
+                    .where(Message.conversation_id.eq(draft.conversation_id))
+                    .where(Message.pi_message_id.eq(draft.pi_message_id))
+                )
+                if existing is not None:
+                    return existing
+            latest = await tx.fetch_one_or_none(
+                select(Message)
+                .where(Message.conversation_id.eq(draft.conversation_id))
+                .order_by(Message.seq.desc())
+                .limit(1)
+            )
+            return await tx.execute(
+                insert(
+                    Message(
+                        content=draft.content,
+                        conversation_id=conversation.id,
+                        pi_message_id=draft.pi_message_id,
+                        role=draft.role,
+                        seq=1 if latest is None else latest.seq + 1,
+                        tool_args=json.dumps(draft.tool_args)
+                        if draft.tool_args is not None
+                        else None,
+                        tool_name=draft.tool_name,
+                        tool_result=json.dumps(draft.tool_result)
+                        if draft.tool_result is not None
+                        else None,
+                    )
+                ).returning()
+            )
+
+
+async def create_conversation_schema(database: Database) -> None:
+    """Create conversation and transcript tables on an initialized database."""
+    migrations = {
+        f"003_{label}": sql
+        for label, sql in scaffold_sqlite_statements([Conversation, Message])
+    }
+    await database.migrate(migrations)
+
+
+@endpoint(response=ConversationRead, response_is_list=True)
+async def list_conversations(request: Request) -> Response:
+    """List host-owned conversations."""
+    conversations = await request.app.state.conversation_service.list_conversations()
+    return JSONResponse(
+        [
+            ConversationRead.from_conversation(conversation).model_dump(mode="json")
+            for conversation in conversations
+        ]
+    )
+
+
+async def _messages_response(request: Request, conversation_id: UUID) -> Response:
+    """Serialize settled transcript rows or translate absence to 404."""
+    try:
+        messages = await request.app.state.conversation_service.fetch_messages(
+            conversation_id
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    return JSONResponse(
+        [
+            MessageRead.from_message(message).model_dump(mode="json")
+            for message in messages
+        ]
+    )
+
+
+@endpoint(response=MessageRead, response_is_list=True)
+async def list_messages(request: Request) -> Response:
+    """List settled transcript rows for one conversation."""
+    raw_conversation_id = request.path_params["conversation_id"]
+    try:
+        conversation_id = UUID(raw_conversation_id)
+    except ValueError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    return await _messages_response(request, conversation_id)
+
+
+conversation_routes: list[Route] = [
+    EndpointRoute("/api/conversations", list_conversations, methods=["GET"]),
+    EndpointRoute(
+        "/api/conversations/{conversation_id}/messages",
+        list_messages,
+        methods=["GET"],
+    ),
+]

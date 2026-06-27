@@ -295,6 +295,80 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/conversations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List host-owned conversations. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ConversationRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List settled transcript rows for one conversation. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          conversation_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["MessageRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memories": {
     parameters: {
       query?: never;
@@ -610,6 +684,31 @@ export interface components {
       version: number;
     };
     /**
+     * ConversationRead
+     * @description HTTP representation of a host-owned conversation.
+     */
+    ConversationRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /**
+       * Pi Session Id
+       * Format: uuid7
+       */
+      pi_session_id: string;
+      /** Selected Model */
+      selected_model: string | null;
+      /** Title */
+      title: string | null;
+    };
+    /**
      * DedupAdvisoryRead
      * @description The dedup advisory returned alongside a freshly Added item.
      *
@@ -691,6 +790,46 @@ export interface components {
     };
     /** @enum {string} */
     MemoryState: "loose" | "tethered";
+    /**
+     * MessageRead
+     * @description HTTP representation of a settled transcript row.
+     */
+    MessageRead: {
+      /** Content */
+      content: string;
+      /**
+       * Conversation Id
+       * Format: uuid7
+       */
+      conversation_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Pi Message Id */
+      pi_message_id: string | null;
+      role: components["schemas"]["MessageRole"];
+      /** Seq */
+      seq: number;
+      /** Tool Args */
+      tool_args: {
+        [key: string]: components["schemas"]["JsonValue"];
+      } | null;
+      /** Tool Name */
+      tool_name: string | null;
+      /** Tool Result */
+      tool_result: {
+        [key: string]: components["schemas"]["JsonValue"];
+      } | null;
+    };
+    /** @enum {string} */
+    MessageRole: "user" | "assistant" | "tool";
     /**
      * SessionResponse
      * @description Whether the request carries a currently valid app session.

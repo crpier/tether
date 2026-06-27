@@ -36,6 +36,7 @@ from snekql.sqlite import (
 )
 from yaml import safe_dump, safe_load
 
+from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
 type MemoryState = Literal["loose", "tethered"]
@@ -210,8 +211,10 @@ class MemoryService:
         database: Database,
         kb_service: KnowledgeBaseService,
         tracer: Tracer,
+        event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
+        self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.kb_service: KnowledgeBaseService = kb_service
         self.tracer: Tracer = tracer
 
@@ -240,6 +243,9 @@ class MemoryService:
                 "Memory captured",
                 memory_id=str(memory.id),
                 version=memory.version,
+            )
+            await self.event_publisher.publish(
+                InvalidateEvent(keys=["memories", "review-queue"])
             )
             return memory
 
@@ -393,6 +399,9 @@ class MemoryService:
                 previous_version=memory.version,
                 version=fresh_memory.version,
             )
+            await self.event_publisher.publish(
+                InvalidateEvent(keys=["memories", "review-queue"])
+            )
             return fresh_memory
 
     async def edit_content(
@@ -452,6 +461,9 @@ class MemoryService:
             version=fresh_memory.version,
             tethered=fresh_memory.tethered_at is not None,
         )
+        await self.event_publisher.publish(
+            InvalidateEvent(keys=["memories", "review-queue"])
+        )
         return fresh_memory
 
     async def delete(
@@ -508,6 +520,9 @@ class MemoryService:
             previous_version=memory.version,
             version=deleted_memory.version,
             was_tethered=deleted_memory.tethered_at is not None,
+        )
+        await self.event_publisher.publish(
+            InvalidateEvent(keys=["memories", "review-queue"])
         )
         return deleted_memory
 
