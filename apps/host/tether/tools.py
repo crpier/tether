@@ -52,11 +52,19 @@ from tether.memories import (
     MemoryState,
 )
 from tether.routes import MemoryContent, MemoryRead
+from tether.youtube import (
+    CacheMeta,
+    EmptyYouTubeSearchQueryError,
+    QuotaMeta,
+    TranscriptUnavailableError,
+    YouTubeQuotaExceededError,
+    YouTubeVideoNotFoundError,
+)
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
 """Header carrying the per-process credential injected into pi at spawn."""
 
-type ToolErrorCode = Literal["invalid_input", "not_found", "conflict"]
+type ToolErrorCode = Literal["invalid_input", "not_found", "conflict", "quota_exceeded"]
 
 
 class SessionRegistry:
@@ -96,8 +104,11 @@ class ToolError(BaseModel):
 class ToolEnvelope(BaseModel):
     """The uniform shape every tool returns.
 
-    `quota` is always null for internal tools; `provenance` carries a single
-    Memory's provenance where applicable and is null for collections.
+    `provenance` carries a single Memory's provenance where applicable and is
+    null for collections. `quota` and `cache` are populated only by tools that
+    front an external, quota-metered API (YouTube ingestion): `quota` reports the
+    remaining budget after a guarded call and `cache` whether the result was
+    served live or from cache. Both stay null for the Memory and Bucket tools.
 
     >>> ToolEnvelope(success=True, result={"id": "x"}).quota is None
     True
@@ -107,7 +118,8 @@ class ToolEnvelope(BaseModel):
     result: Any = None
     error: ToolError | None = None
     provenance: MemoryProvenance | BucketItemProvenance | None = None
-    quota: None = None
+    quota: QuotaMeta | None = None
+    cache: CacheMeta | None = None
 
 
 class CaptureParams(BaseModel):
@@ -298,15 +310,23 @@ class ToolEndpoint:
     async def _run_handler(self, request: Request, params: BaseModel) -> ToolEnvelope:
         try:
             return await self.handler(request, params)
-        except MemoryNotFoundError, BucketItemNotFoundError:
+        except (
+            MemoryNotFoundError,
+            BucketItemNotFoundError,
+            YouTubeVideoNotFoundError,
+            TranscriptUnavailableError,
+        ):
             return _fail("not_found", "not found")
         except (MemoryConflictError, BucketItemConflictError) as error:
             return _fail("conflict", str(error))
+        except YouTubeQuotaExceededError as error:
+            return _fail("quota_exceeded", str(error))
         except (
             EmptySearchQueryError,
             EmptyBucketSearchQueryError,
             EmptyIntentContextError,
             InvalidItemDataError,
+            EmptyYouTubeSearchQueryError,
         ) as error:
             return _fail("invalid_input", str(error))
 

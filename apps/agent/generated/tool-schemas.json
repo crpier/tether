@@ -290,6 +290,115 @@
         "title": "SearchBucketItemsParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/browse_youtube",
+      "name": "browse_youtube",
+      "params_model": "BrowseYouTubeParams",
+      "schema": {
+        "$defs": {
+          "YouTubeSource": {
+            "enum": ["liked", "watch_later"],
+            "type": "string"
+          }
+        },
+        "description": "Params for a topic/source-filtered browse of ingested videos.",
+        "properties": {
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Topic"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/YouTubeSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "BrowseYouTubeParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/search_youtube",
+      "name": "search_youtube",
+      "params_model": "SearchYouTubeParams",
+      "schema": {
+        "description": "Params for keyword Search across saved content and transcript text.",
+        "properties": {
+          "q": {
+            "title": "Q",
+            "type": "string"
+          }
+        },
+        "required": ["q"],
+        "title": "SearchYouTubeParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/fetch_youtube_transcript",
+      "name": "fetch_youtube_transcript",
+      "params_model": "FetchYouTubeTranscriptParams",
+      "schema": {
+        "description": "Params for fetching and persisting a video's transcript.",
+        "properties": {
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": ["video_id"],
+        "title": "FetchYouTubeTranscriptParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/ignore_youtube_video",
+      "name": "ignore_youtube_video",
+      "params_model": "IgnoreYouTubeVideoParams",
+      "schema": {
+        "description": "Params for purging a video from ingestion.",
+        "properties": {
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": ["video_id"],
+        "title": "IgnoreYouTubeVideoParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/retry_youtube_video",
+      "name": "retry_youtube_video",
+      "params_model": "RetryYouTubeVideoParams",
+      "schema": {
+        "description": "Params for returning a previously purged video to ingestion.",
+        "properties": {
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": ["video_id"],
+        "title": "RetryYouTubeVideoParams",
+        "type": "object"
+      }
     }
   ]
 }

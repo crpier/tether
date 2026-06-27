@@ -165,6 +165,29 @@
         ],
         "type": "string"
       },
+      "CacheMeta": {
+        "description": "Whether a result was served from cache or fetched live.\n\n>>> CacheMeta(hit=False, source=\"live\").source\n'live'",
+        "properties": {
+          "hit": {
+            "title": "Hit",
+            "type": "boolean"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "cache"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hit",
+          "source"
+        ],
+        "title": "CacheMeta",
+        "type": "object"
+      },
       "CaptureRequest": {
         "description": "Body for capturing a loose Memory.\n\n>>> CaptureRequest(content=\"I prefer aisle seats\").content\n'I prefer aisle seats'",
         "properties": {
@@ -291,6 +314,13 @@
         ],
         "title": "EditRequest",
         "type": "object"
+      },
+      "IngestState": {
+        "enum": [
+          "active",
+          "ignored"
+        ],
+        "type": "string"
       },
       "IntentContext": {
         "minLength": 1,
@@ -517,6 +547,30 @@
         "title": "ModelListRead",
         "type": "object"
       },
+      "QuotaMeta": {
+        "description": "The quota budget snapshot a guarded call reports.\n\n>>> QuotaMeta(limit=100, used=3, remaining=97).remaining\n97",
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "used",
+          "remaining"
+        ],
+        "title": "QuotaMeta",
+        "type": "object"
+      },
       "SessionResponse": {
         "description": "Whether the request carries a currently valid app session.",
         "properties": {
@@ -558,6 +612,149 @@
           "version"
         ],
         "title": "TetherRequest",
+        "type": "object"
+      },
+      "YouTubeSource": {
+        "enum": [
+          "liked",
+          "watch_later"
+        ],
+        "type": "string"
+      },
+      "YouTubeTranscriptResponse": {
+        "description": "A fetched transcript: the updated video, its text, and quota + cache.",
+        "properties": {
+          "cache": {
+            "$ref": "#/components/schemas/CacheMeta"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/QuotaMeta"
+          },
+          "transcript": {
+            "title": "Transcript",
+            "type": "string"
+          },
+          "video": {
+            "$ref": "#/components/schemas/YouTubeVideoRead"
+          }
+        },
+        "required": [
+          "video",
+          "transcript",
+          "quota",
+          "cache"
+        ],
+        "title": "YouTubeTranscriptResponse",
+        "type": "object"
+      },
+      "YouTubeVideoListResponse": {
+        "description": "A browse/search result: the videos plus the call's quota + cache.",
+        "properties": {
+          "cache": {
+            "$ref": "#/components/schemas/CacheMeta"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/QuotaMeta"
+          },
+          "videos": {
+            "items": {
+              "$ref": "#/components/schemas/YouTubeVideoRead"
+            },
+            "title": "Videos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "videos",
+          "quota",
+          "cache"
+        ],
+        "title": "YouTubeVideoListResponse",
+        "type": "object"
+      },
+      "YouTubeVideoRead": {
+        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     transcript=None,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n... )\n>>> read.state\n'active'",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "ignored_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ignored At"
+          },
+          "source": {
+            "$ref": "#/components/schemas/YouTubeSource"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IngestState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "video_id",
+          "source",
+          "state",
+          "title",
+          "channel",
+          "topic",
+          "description",
+          "transcript",
+          "created_at",
+          "updated_at",
+          "ignored_at"
+        ],
+        "title": "YouTubeVideoRead",
         "type": "object"
       }
     }
@@ -1094,6 +1291,167 @@
           }
         },
         "summary": "List host-enabled agent model choices."
+      }
+    },
+    "/api/youtube": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Topic"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/YouTubeSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeVideoListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List active ingested videos, optionally filtered by topic and source."
+      }
+    },
+    "/api/youtube/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeVideoListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Keyword Search across saved content and transcript text."
+      }
+    },
+    "/api/youtube/{video_id}/ignore": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeVideoRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Purge a video from ingestion."
+      }
+    },
+    "/api/youtube/{video_id}/retry": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeVideoRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Un-ignore a previously purged video."
+      }
+    },
+    "/api/youtube/{video_id}/transcript": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeTranscriptResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Fetch and persist a transcript for an ingested video."
       }
     }
   }

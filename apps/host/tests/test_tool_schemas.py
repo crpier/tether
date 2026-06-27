@@ -29,6 +29,11 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "complete_bucket_item",
             "delete_bucket_item",
             "search_bucket_items",
+            "browse_youtube",
+            "search_youtube",
+            "fetch_youtube_transcript",
+            "ignore_youtube_video",
+            "retry_youtube_video",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])

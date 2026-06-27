@@ -656,6 +656,197 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/youtube": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List active ingested videos, optionally filtered by topic and source. */
+    get: {
+      parameters: {
+        query?: {
+          topic?: string | null;
+          source?: components["schemas"]["YouTubeSource"] | null;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["YouTubeVideoListResponse"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/youtube/search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Keyword Search across saved content and transcript text. */
+    get: {
+      parameters: {
+        query: {
+          q: string;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["YouTubeVideoListResponse"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/youtube/{video_id}/ignore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Purge a video from ingestion. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          video_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["YouTubeVideoRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/youtube/{video_id}/retry": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Un-ignore a previously purged video. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          video_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["YouTubeVideoRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/youtube/{video_id}/transcript": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Fetch and persist a transcript for an ingested video. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          video_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["YouTubeTranscriptResponse"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -755,6 +946,22 @@ export interface components {
     /** @enum {string} */
     BucketItemState: "active" | "completed" | "deleted";
     /**
+     * CacheMeta
+     * @description Whether a result was served from cache or fetched live.
+     *
+     *     >>> CacheMeta(hit=False, source="live").source
+     *     'live'
+     */
+    CacheMeta: {
+      /** Hit */
+      hit: boolean;
+      /**
+       * Source
+       * @enum {string}
+       */
+      source: "live" | "cache";
+    };
+    /**
      * CaptureRequest
      * @description Body for capturing a loose Memory.
      *
@@ -827,6 +1034,8 @@ export interface components {
       /** Version */
       version: number;
     };
+    /** @enum {string} */
+    IngestState: "active" | "ignored";
     IntentContext: string;
     /** @enum {string} */
     ItemType: "movie" | "place";
@@ -933,6 +1142,21 @@ export interface components {
       models: components["schemas"]["AgentModelRead"][];
     };
     /**
+     * QuotaMeta
+     * @description The quota budget snapshot a guarded call reports.
+     *
+     *     >>> QuotaMeta(limit=100, used=3, remaining=97).remaining
+     *     97
+     */
+    QuotaMeta: {
+      /** Limit */
+      limit: number;
+      /** Remaining */
+      remaining: number;
+      /** Used */
+      used: number;
+    };
+    /**
      * SessionResponse
      * @description Whether the request carries a currently valid app session.
      */
@@ -958,6 +1182,83 @@ export interface components {
     TetherRequest: {
       /** Version */
       version: number;
+    };
+    /** @enum {string} */
+    YouTubeSource: "liked" | "watch_later";
+    /**
+     * YouTubeTranscriptResponse
+     * @description A fetched transcript: the updated video, its text, and quota + cache.
+     */
+    YouTubeTranscriptResponse: {
+      cache: components["schemas"]["CacheMeta"];
+      quota: components["schemas"]["QuotaMeta"];
+      /** Transcript */
+      transcript: string;
+      video: components["schemas"]["YouTubeVideoRead"];
+    };
+    /**
+     * YouTubeVideoListResponse
+     * @description A browse/search result: the videos plus the call's quota + cache.
+     */
+    YouTubeVideoListResponse: {
+      cache: components["schemas"]["CacheMeta"];
+      quota: components["schemas"]["QuotaMeta"];
+      /** Videos */
+      videos: components["schemas"]["YouTubeVideoRead"][];
+    };
+    /**
+     * YouTubeVideoRead
+     * @description HTTP representation of an ingested video, exposing its derived state.
+     *
+     *     >>> read = YouTubeVideoRead(
+     *     ...     id="018f0000-0000-7000-8000-000000000000",
+     *     ...     video_id="v1",
+     *     ...     source="liked",
+     *     ...     state="active",
+     *     ...     title="Talk",
+     *     ...     channel="PyConf",
+     *     ...     topic="python",
+     *     ...     description="",
+     *     ...     transcript=None,
+     *     ...     created_at=datetime(2026, 1, 1),
+     *     ...     updated_at=datetime(2026, 1, 1),
+     *     ...     ignored_at=None,
+     *     ... )
+     *     >>> read.state
+     *     'active'
+     */
+    YouTubeVideoRead: {
+      /** Channel */
+      channel: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Description */
+      description: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Ignored At */
+      ignored_at: string | null;
+      source: components["schemas"]["YouTubeSource"];
+      state: components["schemas"]["IngestState"];
+      /** Title */
+      title: string;
+      /** Topic */
+      topic: string;
+      /** Transcript */
+      transcript: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Video Id */
+      video_id: string;
     };
   };
   responses: never;

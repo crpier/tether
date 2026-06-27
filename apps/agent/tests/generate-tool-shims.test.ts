@@ -34,4 +34,22 @@ describe("renderTypeBoxProperty", () => {
 
     expect(rendered).toBe("year: Type.Optional(Type.Integer())");
   });
+
+  test("unwraps a nullable optional enum to a StringEnum", () => {
+    const rendered = renderTypeBoxProperty(
+      "source",
+      {
+        anyOf: [
+          { enum: ["liked", "watch_later"], type: "string" },
+          { type: "null" },
+        ],
+        default: null,
+      },
+      false,
+    );
+
+    expect(rendered).toBe(
+      'source: Type.Optional(StringEnum(["liked", "watch_later"] as const))',
+    );
+  });
 });
