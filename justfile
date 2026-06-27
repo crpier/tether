@@ -34,7 +34,7 @@ codegen-check:
 
 # host tests
 host-test:
-    uv run snektest
+    cd apps/host && uv run python -m snektest tests/
 
 # host type check
 host-typecheck:
