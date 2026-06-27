@@ -96,6 +96,20 @@ def first_json_log(stream: CapturedStdout) -> dict[str, object]:
     return json.loads(stream.getvalue().splitlines()[0])
 
 
+def json_log_for_event(stream: CapturedStdout, event: str) -> dict[str, object]:
+    """Parse the first structured log line whose `event` matches `event`.
+
+    Capturing at DEBUG surfaces foreign debug noise (e.g. asyncio's selector
+    line) ahead of our own records, so callers that need a specific event must
+    select it rather than assuming it is first.
+    """
+    return next(
+        parsed
+        for line in stream.getvalue().splitlines()
+        if (parsed := json.loads(line))["event"] == event
+    )
+
+
 @test()
 def process_positional_args_merges_dict_arguments() -> None:
     """Dictionary positional args become structured event fields."""
@@ -281,12 +295,13 @@ def context_logger_middleware_uses_application_logger_from_lifespan() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging(force_tty=False)
+        # Completion logs are DEBUG-level; capture at DEBUG to observe them.
+        app.state.logger = configure_logging("DEBUG", force_tty=False)
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/ok")
 
-    logged = first_json_log(stream)
+    logged = json_log_for_event(stream, "Request completed")
     assert_eq(response.status_code, 200)
     assert_eq(logged["event"], "Request completed")
 
@@ -303,7 +318,8 @@ def context_logger_middleware_logs_completed_requests() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging(force_tty=False)
+        # Completion logs are DEBUG-level; capture at DEBUG to observe them.
+        app.state.logger = configure_logging("DEBUG", force_tty=False)
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get(
@@ -311,7 +327,7 @@ def context_logger_middleware_logs_completed_requests() -> None:
                 headers={"user-agent": "snektest"},
             )
 
-    logged = first_json_log(stream)
+    logged = json_log_for_event(stream, "Request completed")
     assert_eq(response.status_code, 200)
     assert_eq(logged["event"], "Request completed")
     assert_eq(logged["method"], "GET")
