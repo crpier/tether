@@ -21,6 +21,10 @@ install:
 validate-host-logs:
     ./scripts/validate-host-logs.sh
 
+# boot host + web on ephemeral ports, drive headless Chromium, fail on page errors
+validate-web-smoke:
+    ./scripts/validate-web-smoke.sh
+
 # code generation
 codegen:
     uv run python -m tether.openapi_export openapi.json

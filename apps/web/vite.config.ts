@@ -8,14 +8,20 @@ import devtools from "solid-devtools/vite";
 import { defineConfig } from "vitest/config";
 import solidPlugin from "vite-plugin-solid";
 
+// Proxy targets default to the local `just host` port but can be overridden so
+// the web smoke harness can point the dev server at a host on an ephemeral
+// port without colliding with a running dev stack.
+const apiTarget = process.env.TETHER_API_TARGET ?? "http://127.0.0.1:8000";
+const wsTarget = process.env.TETHER_WS_TARGET ?? "ws://127.0.0.1:8000";
+
 export default defineConfig({
   plugins: [devtools(), solidPlugin(), tailwindcss()],
   server: {
     port: 3000,
     proxy: {
-      "/api": "http://127.0.0.1:8000",
+      "/api": apiTarget,
       "/ws": {
-        target: "ws://127.0.0.1:8000",
+        target: wsTarget,
         ws: true,
       },
     },
