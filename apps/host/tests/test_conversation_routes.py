@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tether.conversations import MessageDraft
+from tether.model_selection import AgentModelConfig
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import TOOL_AUTH_HEADER
@@ -25,12 +26,13 @@ class FakePiClient:
 
     def __init__(self) -> None:
         self.commands: list[str] = []
+        self.requests: list[tuple[str, dict[str, object]]] = []
 
     async def request(self, command_type: str, **fields: object) -> dict[str, object]:
-        """Accept prompt and abort commands without starting a subprocess."""
-        _ = fields
+        """Accept host-sent commands without starting a subprocess."""
         self.commands.append(command_type)
-        return {"success": command_type in {"prompt", "abort"}}
+        self.requests.append((command_type, fields))
+        return {"success": command_type in {"prompt", "abort", "set_model"}}
 
 
 class FakeRuntime:
@@ -99,6 +101,36 @@ def make_client(root: Path) -> TestClient:
     )
 
 
+def make_model_client(root: Path) -> TestClient:
+    """Create a test app with a curated model allowlist."""
+    return TestClient(
+        create_app(
+            config=AppConfig(
+                app_password=APP_PASSWORD,
+                database_path=root / "tether.sqlite3",
+                default_model="cheap",
+                kb_root=root / ".tether",
+                model_allowlist=(
+                    AgentModelConfig(
+                        display_name="Cheap Faux",
+                        id="cheap",
+                        model_id="tether-chat-cheap-faux",
+                        provider="faux",
+                    ),
+                    AgentModelConfig(
+                        display_name="Smart Faux",
+                        id="smart",
+                        model_id="tether-chat-smart-faux",
+                        provider="faux",
+                    ),
+                ),
+                session_secret=SESSION_SECRET,
+            ),
+            telemetry_settings=TelemetrySettings(install_global_provider=False),
+        )
+    )
+
+
 def make_faux_chat_client(root: Path) -> TestClient:
     """Create a test app whose pi runtime uses the faux chat provider."""
     return TestClient(
@@ -121,10 +153,97 @@ def make_faux_chat_client(root: Path) -> TestClient:
     )
 
 
+def make_model_echo_client(root: Path) -> TestClient:
+    """Create a test app whose faux provider echoes the active model id."""
+    return TestClient(
+        create_app(
+            config=AppConfig(
+                app_password=APP_PASSWORD,
+                database_path=root / "tether.sqlite3",
+                default_model="cheap",
+                extra_extension_paths=(
+                    Path(__file__).resolve().parents[2]
+                    / "agent/tests/fixtures/model-echo-faux.ts",
+                ),
+                kb_root=root / ".tether",
+                model_allowlist=(
+                    AgentModelConfig(
+                        display_name="Cheap Faux",
+                        id="cheap",
+                        model_id="tether-chat-cheap-faux",
+                        provider="faux",
+                    ),
+                    AgentModelConfig(
+                        display_name="Smart Faux",
+                        id="smart",
+                        model_id="tether-chat-smart-faux",
+                        provider="faux",
+                    ),
+                ),
+                session_secret=SESSION_SECRET,
+                tool_base_url="http://127.0.0.1:9",
+            ),
+            telemetry_settings=TelemetrySettings(install_global_provider=False),
+        )
+    )
+
+
 def login(client: TestClient) -> None:
     """Authenticate the test browser."""
     response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
     assert_eq(response.status_code, 204)
+
+
+def prompt_until_agent_end(
+    client: TestClient,
+    *,
+    conversation_id: str,
+    content: str,
+) -> None:
+    """Send one browser prompt and wait for completion."""
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "conversation_id": conversation_id,
+                "content": content,
+            }
+        )
+        while websocket.receive_json().get("event") != "agent_end":
+            pass
+
+
+@test()
+def models_route_returns_curated_allowlist() -> None:
+    """`GET /api/models` exposes only host-configured models."""
+    with (
+        TemporaryDirectory() as directory,
+        make_model_client(Path(directory)) as client,
+    ):
+        login(client)
+        response = client.get("/api/models")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        response.json(),
+        {
+            "default_model": "cheap",
+            "models": [
+                {
+                    "display_name": "Cheap Faux",
+                    "id": "cheap",
+                    "model_id": "tether-chat-cheap-faux",
+                    "provider": "faux",
+                },
+                {
+                    "display_name": "Smart Faux",
+                    "id": "smart",
+                    "model_id": "tether-chat-smart-faux",
+                    "provider": "faux",
+                },
+            ],
+        },
+    )
 
 
 @test()
@@ -139,6 +258,54 @@ def conversations_route_creates_default_conversation() -> None:
     assert_len(conversations, 1)
     assert_eq(conversations[0]["title"], None)
     assert_eq(conversations[0]["selected_model"], None)
+
+
+@test()
+def configured_default_model_is_stored_on_new_conversations() -> None:
+    """New conversation rows inherit the global default model id."""
+    with (
+        TemporaryDirectory() as directory,
+        make_model_client(Path(directory)) as client,
+    ):
+        login(client)
+        response = client.get("/api/conversations")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()[0]["selected_model"], "cheap")
+
+
+@test()
+def setting_model_persists_and_updates_live_runtime() -> None:
+    """Changing the model stores the selection and dispatches `set_model`."""
+    fake_runtime = FakeRuntime([])
+    with (
+        TemporaryDirectory() as directory,
+        make_model_client(Path(directory)) as client,
+    ):
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        response = client.post(
+            f"/api/conversations/{conversation_id}/model",
+            json={"selected_model": "smart"},
+        )
+        stored = client.get("/api/conversations").json()[0]
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["selected_model"], "smart")
+    assert_eq(stored["selected_model"], "smart")
+    assert_eq(
+        fake_runtime.client.requests,
+        [
+            (
+                "set_model",
+                {"provider": "faux", "modelId": "tether-chat-smart-faux"},
+            )
+        ],
+    )
 
 
 @test()
@@ -170,6 +337,47 @@ def default_conversation_survives_app_restart() -> None:
 
     assert_eq(response.status_code, 200)
     assert_in(conversation_id, [conversation["id"] for conversation in response.json()])
+
+
+@test()
+def stored_model_is_reapplied_after_runtime_respawn() -> None:
+    """A respawned pi process uses the conversation's persisted model."""
+    with (
+        TemporaryDirectory() as directory,
+        make_model_echo_client(Path(directory)) as client,
+    ):
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        prompt_until_agent_end(
+            client,
+            conversation_id=conversation_id,
+            content="Use the default model",
+        )
+        set_response = client.post(
+            f"/api/conversations/{conversation_id}/model",
+            json={"selected_model": "smart"},
+        )
+        portal = client.portal
+        assert portal is not None
+        portal.call(
+            cast(
+                "Starlette", client.app
+            ).state.conversation_runtime_registry.shutdown_all
+        )
+
+        prompt_until_agent_end(
+            client,
+            conversation_id=conversation_id,
+            content="Use the persisted model",
+        )
+        messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
+
+    assert_eq(set_response.status_code, 200)
+    assert_eq(set_response.json()["selected_model"], "smart")
+    assert_eq(
+        [message["content"] for message in messages if message["role"] == "assistant"],
+        ["tether-chat-cheap-faux", "tether-chat-smart-faux"],
+    )
 
 
 @test()

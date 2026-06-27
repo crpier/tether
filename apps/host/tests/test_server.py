@@ -94,6 +94,17 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_HOST="127.0.0.2",
             TETHER_KB_ROOT=f"{directory}/kb",
             TETHER_LOGGING_LEVEL="DEBUG",
+            TETHER_DEFAULT_MODEL="cheap",
+            TETHER_MODEL_ALLOWLIST=json.dumps(
+                [
+                    {
+                        "display_name": "Cheap Faux",
+                        "id": "cheap",
+                        "model_id": "tether-chat-cheap-faux",
+                        "provider": "faux",
+                    }
+                ]
+            ),
             TETHER_PORT="9001",
             TETHER_RELOAD="true",
             TETHER_SESSION_SECRET="configured-session-secret",
@@ -110,6 +121,9 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.host, "127.0.0.2")
     assert_eq(settings.kb_root, Path(directory) / "kb")
     assert_eq(settings.logging_level, "DEBUG")
+    assert_eq(settings.default_model, "cheap")
+    assert_eq(settings.model_allowlist[0].id, "cheap")
+    assert_eq(settings.model_allowlist[0].model_id, "tether-chat-cheap-faux")
     assert_eq(settings.port, 9001)
     assert_true(settings.reload)
     assert_eq(settings.session_secret, "configured-session-secret")

@@ -369,6 +369,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/conversations/{conversation_id}/model": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Select the model used for subsequent turns in one conversation. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          conversation_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["SetConversationModelRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ConversationRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memories": {
     parameters: {
       query?: never;
@@ -578,6 +620,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/models": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List host-enabled agent model choices. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ModelListRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -606,6 +684,20 @@ export interface components {
     AddBucketItemResponse: {
       dedup: components["schemas"]["DedupAdvisoryRead"];
       item: components["schemas"]["BucketItemRead"];
+    };
+    /**
+     * AgentModelRead
+     * @description HTTP representation of one enabled model choice.
+     */
+    AgentModelRead: {
+      /** Display Name */
+      display_name: string;
+      /** Id */
+      id: string;
+      /** Model Id */
+      model_id: string;
+      /** Provider */
+      provider: string;
     };
     /**
      * BucketItemRead
@@ -831,12 +923,30 @@ export interface components {
     /** @enum {string} */
     MessageRole: "user" | "assistant" | "tool";
     /**
+     * ModelListRead
+     * @description HTTP response containing the curated allowlist and global default.
+     */
+    ModelListRead: {
+      /** Default Model */
+      default_model: string | null;
+      /** Models */
+      models: components["schemas"]["AgentModelRead"][];
+    };
+    /**
      * SessionResponse
      * @description Whether the request carries a currently valid app session.
      */
     SessionResponse: {
       /** Authenticated */
       authenticated: boolean;
+    };
+    /**
+     * SetConversationModelRequest
+     * @description Body for selecting a conversation's model.
+     */
+    SetConversationModelRequest: {
+      /** Selected Model */
+      selected_model: string;
     };
     /**
      * TetherRequest

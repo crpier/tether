@@ -36,6 +36,7 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
+from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
 from tether.telemetry import (
@@ -60,11 +61,13 @@ class AppConfig:
     app_password: str
     session_secret: str
     database_path: str | Path = Path(".tether/tether.sqlite3")
+    default_model: str | None = None
     default_model_id: str | None = None
     default_model_provider: str | None = None
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     kb_root: str | Path = Path(".tether")
     logging_level: str = "INFO"
+    model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
     pi_binary: Path | None = None
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
@@ -88,6 +91,8 @@ class HostSettings(BaseSettings):
     host: str = "127.0.0.1"
     kb_root: Path = Path(".tether")
     logging_level: str = "INFO"
+    model_allowlist: tuple[AgentModelConfig, ...] = ()
+    default_model: str | None = None
     port: int = 8000
     reload: bool = False
     telemetry_environment: str = "development"
@@ -137,6 +142,18 @@ def _lifespan(
             await create_memory_schema(db)
             await create_bucket_item_schema(db)
             await create_conversation_schema(db)
+            model_catalog = (
+                AgentModelCatalog(
+                    default_model=config.default_model,
+                    models=tuple(config.model_allowlist),
+                )
+                if config.model_allowlist
+                else AgentModelCatalog.from_legacy_default(
+                    default_model_id=config.default_model_id,
+                    default_model_provider=config.default_model_provider,
+                )
+            )
+            app.state.model_catalog = model_catalog
             kb_service = KnowledgeBaseService(kb_root=configured_kb_root)
             event_hub = EventHub()
             app.state.event_hub = event_hub
@@ -153,11 +170,13 @@ def _lifespan(
                 event_publisher=event_hub,
                 tracer=telemetry.tracer,
             )
-            app.state.conversation_service = ConversationService(database=db)
+            app.state.conversation_service = ConversationService(
+                database=db,
+                model_catalog=model_catalog,
+            )
             runtime_registry = ConversationRuntimeRegistry(
                 RuntimeRegistryConfig(
-                    default_model_id=config.default_model_id,
-                    default_model_provider=config.default_model_provider,
+                    model_catalog=model_catalog,
                     extra_extension_paths=config.extra_extension_paths,
                     idle_seconds=config.pi_idle_seconds,
                     pi_binary=config.pi_binary,
@@ -240,8 +259,10 @@ def create_app_from_environment() -> Starlette:
         config=AppConfig(
             app_password=settings.app_password,
             database_path=settings.database_path,
+            default_model=settings.default_model,
             kb_root=settings.kb_root,
             logging_level=settings.logging_level,
+            model_allowlist=settings.model_allowlist,
             secure_cookies=settings.telemetry_environment == "production",
             session_secret=settings.session_secret,
         ),

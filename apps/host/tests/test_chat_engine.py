@@ -11,6 +11,7 @@ from tether.chat_engine import (
     RuntimeRegistryConfig,
     _RuntimeSlot,
 )
+from tether.model_selection import AgentModelCatalog
 from tether.pi_runtime import PiRuntime
 from tether.tools import SessionRegistry
 
@@ -42,9 +43,8 @@ async def registry_reaps_runtimes_after_the_idle_ttl() -> None:
     with TemporaryDirectory() as directory:
         registry = ConversationRuntimeRegistry(
             RuntimeRegistryConfig(
-                default_model_id=None,
-                default_model_provider=None,
                 extra_extension_paths=(),
+                model_catalog=AgentModelCatalog(default_model=None, models=()),
                 idle_seconds=30 * 60,
                 pi_binary=None,
                 session_registry=SessionRegistry(),

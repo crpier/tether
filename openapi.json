@@ -43,6 +43,35 @@
         "title": "AddBucketItemResponse",
         "type": "object"
       },
+      "AgentModelRead": {
+        "description": "HTTP representation of one enabled model choice.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name",
+          "id",
+          "model_id",
+          "provider"
+        ],
+        "title": "AgentModelRead",
+        "type": "object"
+      },
       "BucketItemRead": {
         "description": "HTTP representation of a Bucket item, exposing its derived `state`.\n\n>>> read = BucketItemRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     item_type=\"movie\",\n...     state=\"active\",\n...     title=\"Dune\",\n...     data={\"title\": \"Dune\"},\n...     intent_context=\"recommended\",\n...     version=1,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     completed_at=None,\n...     deleted_at=None,\n... )\n>>> read.state\n'active'",
         "properties": {
@@ -459,6 +488,35 @@
         ],
         "type": "string"
       },
+      "ModelListRead": {
+        "description": "HTTP response containing the curated allowlist and global default.",
+        "properties": {
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/AgentModelRead"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "default_model",
+          "models"
+        ],
+        "title": "ModelListRead",
+        "type": "object"
+      },
       "SessionResponse": {
         "description": "Whether the request carries a currently valid app session.",
         "properties": {
@@ -471,6 +529,20 @@
           "authenticated"
         ],
         "title": "SessionResponse",
+        "type": "object"
+      },
+      "SetConversationModelRequest": {
+        "description": "Body for selecting a conversation's model.",
+        "properties": {
+          "selected_model": {
+            "title": "Selected Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selected_model"
+        ],
+        "title": "SetConversationModelRequest",
         "type": "object"
       },
       "TetherRequest": {
@@ -764,6 +836,43 @@
         "summary": "List settled transcript rows for one conversation."
       }
     },
+    "/api/conversations/{conversation_id}/model": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetConversationModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Select the model used for subsequent turns in one conversation."
+      }
+    },
     "/api/memories": {
       "get": {
         "parameters": [
@@ -968,6 +1077,23 @@
           }
         },
         "summary": "Promote a loose Memory to tethered."
+      }
+    },
+    "/api/models": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelListRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List host-enabled agent model choices."
       }
     }
   }
