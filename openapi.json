@@ -164,6 +164,57 @@
         "title": "CompleteRequest",
         "type": "object"
       },
+      "ConversationRead": {
+        "description": "HTTP representation of a host-owned conversation.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "pi_session_id": {
+            "format": "uuid7",
+            "title": "Pi Session Id",
+            "type": "string"
+          },
+          "selected_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Model"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "created_at",
+          "id",
+          "pi_session_id",
+          "selected_model",
+          "title"
+        ],
+        "title": "ConversationRead",
+        "type": "object"
+      },
       "DedupAdvisoryRead": {
         "description": "The dedup advisory returned alongside a freshly Added item.\n\n`severity` is `warn` when an active duplicate already exists, `inform` when\nthe only duplicates are terminal (completed/deleted), `none` otherwise.\nDedup never blocks, so the item is Added regardless.",
         "properties": {
@@ -301,6 +352,110 @@
         "enum": [
           "loose",
           "tethered"
+        ],
+        "type": "string"
+      },
+      "MessageRead": {
+        "description": "HTTP representation of a settled transcript row.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid7",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "pi_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pi Message Id"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MessageRole"
+          },
+          "seq": {
+            "exclusiveMinimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tool_args": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Args"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          },
+          "tool_result": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Result"
+          }
+        },
+        "required": [
+          "content",
+          "conversation_id",
+          "created_at",
+          "id",
+          "pi_message_id",
+          "role",
+          "seq",
+          "tool_args",
+          "tool_name",
+          "tool_result"
+        ],
+        "title": "MessageRead",
+        "type": "object"
+      },
+      "MessageRole": {
+        "enum": [
+          "user",
+          "assistant",
+          "tool"
         ],
         "type": "string"
       },
@@ -557,6 +712,56 @@
           }
         },
         "summary": "Complete a Bucket item, moving it to terminal history."
+      }
+    },
+    "/api/conversations": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List host-owned conversations."
+      }
+    },
+    "/api/conversations/{conversation_id}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MessageRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List settled transcript rows for one conversation."
       }
     },
     "/api/memories": {

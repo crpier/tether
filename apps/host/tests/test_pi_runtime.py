@@ -220,6 +220,53 @@ async def runtime_registers_confirmed_uuid7_session_until_shutdown() -> None:
 
 
 @test()
+async def runtime_respawns_with_persisted_session_context() -> None:
+    """Respawning with the same id and dir reloads pi's session transcript."""
+    session_dir = await load_fixture(pi_session_dir())
+    registry = SessionRegistry()
+    session_id = "019f08f0-0000-7000-8000-000000000001"
+    runtime = await PiRuntime.spawn(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+            session_dir=session_dir,
+            session_id=session_id,
+            extra_extension_paths=[
+                Path.cwd().parent / "agent/tests/fixtures/faux-chat-text.ts"
+            ],
+        ),
+        session_registry=registry,
+    )
+    try:
+        _ = await runtime.client.request(
+            "set_model", provider="faux", modelId="tether-chat-text-faux"
+        )
+        _ = await runtime.client.request("prompt", message="remember this")
+        _ = await runtime.next_event("agent_end", wait_seconds=15)
+    finally:
+        await runtime.shutdown()
+
+    resumed = await PiRuntime.spawn(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+            session_dir=session_dir,
+            session_id=session_id,
+            extra_extension_paths=[
+                Path.cwd().parent / "agent/tests/fixtures/faux-chat-text.ts"
+            ],
+        ),
+        session_registry=registry,
+    )
+    try:
+        state = await resumed.client.request("get_state")
+    finally:
+        await resumed.shutdown()
+
+    assert_eq(state["data"]["messageCount"], 2)
+
+
+@test()
 async def runtime_keeps_builtin_tools_inactive() -> None:
     """The spawned process exposes generated Tether tools, not built-ins."""
     session_dir = await load_fixture(pi_session_dir())

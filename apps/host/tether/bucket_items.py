@@ -45,6 +45,7 @@ from snekql.sqlite import (
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
+from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
 type BucketItemState = Literal["active", "completed", "deleted"]
@@ -265,8 +266,10 @@ class BucketItemService:
         self,
         database: Database,
         tracer: Tracer,
+        event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
+        self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.tracer: Tracer = tracer
 
     async def add(
@@ -322,6 +325,7 @@ class BucketItemService:
                 dedup_severity=severity,
                 duplicate_count=len(duplicates),
             )
+            await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
             return AddOutcome(item=item, duplicates=duplicates, severity=severity)
 
     async def search(
@@ -511,6 +515,7 @@ class BucketItemService:
             previous_version=item.version,
             version=fresh_item.version,
         )
+        await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
         return fresh_item
 
     async def _fetch(

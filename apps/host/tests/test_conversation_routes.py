@@ -1,0 +1,491 @@
+"""REST behavior tests for host-owned conversations and transcript."""
+
+import asyncio
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any, cast
+from uuid import UUID
+
+from snektest import assert_eq, assert_in, assert_len, test
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from tether.conversations import MessageDraft
+from tether.server import AppConfig, create_app
+from tether.telemetry import TelemetrySettings
+from tether.tools import TOOL_AUTH_HEADER
+
+APP_PASSWORD = "test-app-password"
+SESSION_SECRET = "test-session-secret"
+
+
+class FakePiClient:
+    """Prompt command test double."""
+
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    async def request(self, command_type: str, **fields: object) -> dict[str, object]:
+        """Accept prompt and abort commands without starting a subprocess."""
+        _ = fields
+        self.commands.append(command_type)
+        return {"success": command_type in {"prompt", "abort"}}
+
+
+class FakeRuntime:
+    """pi runtime test double with queued protocol events."""
+
+    def __init__(self, events: list[dict[str, Any]]) -> None:
+        self.client: FakePiClient = FakePiClient()
+        self._events: list[dict[str, Any]] = events
+
+    async def next_event(
+        self, event_type: str | None = None, *, wait_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        """Return the next queued event."""
+        _ = event_type
+        _ = wait_seconds
+        return self._events.pop(0)
+
+
+class BlockingRuntime:
+    """Runtime whose generation waits until the test releases an event."""
+
+    def __init__(self) -> None:
+        self.client: FakePiClient = FakePiClient()
+        self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def next_event(
+        self, event_type: str | None = None, *, wait_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        """Wait for the next queued event."""
+        _ = event_type
+        return await asyncio.wait_for(self.events.get(), timeout=wait_seconds)
+
+
+class FakeRuntimeRegistry:
+    """Conversation runtime registry test double."""
+
+    def __init__(self, runtime: object) -> None:
+        self.runtime: object = runtime
+
+    def current_for(self, conversation_id: object) -> object:
+        """Return the configured fake runtime without spawning."""
+        _ = conversation_id
+        return self.runtime
+
+    async def runtime_for(self, conversation: object) -> object:
+        """Return the configured fake runtime."""
+        _ = conversation
+        return self.runtime
+
+    async def shutdown_all(self) -> None:
+        """Match the production registry shutdown hook."""
+
+
+def make_client(root: Path) -> TestClient:
+    """Create a test app with isolated persistent DB and `.tether` root."""
+    return TestClient(
+        create_app(
+            config=AppConfig(
+                app_password=APP_PASSWORD,
+                database_path=root / "tether.sqlite3",
+                kb_root=root / ".tether",
+                session_secret=SESSION_SECRET,
+            ),
+            telemetry_settings=TelemetrySettings(install_global_provider=False),
+        )
+    )
+
+
+def make_faux_chat_client(root: Path) -> TestClient:
+    """Create a test app whose pi runtime uses the faux chat provider."""
+    return TestClient(
+        create_app(
+            config=AppConfig(
+                app_password=APP_PASSWORD,
+                database_path=root / "tether.sqlite3",
+                default_model_id="tether-chat-text-faux",
+                default_model_provider="faux",
+                extra_extension_paths=(
+                    Path(__file__).resolve().parents[2]
+                    / "agent/tests/fixtures/faux-chat-text.ts",
+                ),
+                kb_root=root / ".tether",
+                session_secret=SESSION_SECRET,
+                tool_base_url="http://127.0.0.1:9",
+            ),
+            telemetry_settings=TelemetrySettings(install_global_provider=False),
+        )
+    )
+
+
+def login(client: TestClient) -> None:
+    """Authenticate the test browser."""
+    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
+    assert_eq(response.status_code, 204)
+
+
+@test()
+def conversations_route_creates_default_conversation() -> None:
+    """`GET /api/conversations` exposes one durable default conversation."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        response = client.get("/api/conversations")
+
+    assert_eq(response.status_code, 200)
+    conversations = response.json()
+    assert_len(conversations, 1)
+    assert_eq(conversations[0]["title"], None)
+    assert_eq(conversations[0]["selected_model"], None)
+
+
+@test()
+def messages_route_returns_empty_default_transcript() -> None:
+    """`GET /api/conversations/{id}/messages` rehydrates settled history."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversations_response = client.get("/api/conversations")
+        conversation_id = conversations_response.json()[0]["id"]
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), [])
+
+
+@test()
+def default_conversation_survives_app_restart() -> None:
+    """The host stores conversations in the configured SQLite database."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        with make_client(root) as client:
+            login(client)
+            conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with make_client(root) as client:
+            login(client)
+            response = client.get("/api/conversations")
+
+    assert_eq(response.status_code, 200)
+    assert_in(conversation_id, [conversation["id"] for conversation in response.json()])
+
+
+@test()
+def websocket_rejects_unauthenticated_handshake() -> None:
+    """`/ws` requires the signed browser session cookie on upgrade."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        try:
+            with client.websocket_connect("/ws"):
+                close_code = 1000
+        except WebSocketDisconnect as error:
+            close_code = error.code
+
+    assert_eq(close_code, 1008)
+
+
+@test()
+def websocket_prompt_persists_user_message() -> None:
+    """Inbound `prompt` stores the user row before generation starts."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello from ws",
+                }
+            )
+            _ = websocket.receive_json()
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()[0]["role"], "user")
+    assert_eq(response.json()[0]["content"], "Hello from ws")
+    assert_eq(response.json()[0]["seq"], 1)
+
+
+@test()
+def websocket_prompt_streams_and_persists_assistant_message() -> None:
+    """A pi-backed prompt streams completion and stores the settled assistant row."""
+    with (
+        TemporaryDirectory() as directory,
+        make_faux_chat_client(Path(directory)) as client,
+    ):
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello from pi",
+                }
+            )
+            while websocket.receive_json().get("event") != "agent_end":
+                pass
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    messages = response.json()
+    assert_eq([message["role"] for message in messages], ["user", "assistant"])
+    assert_eq(messages[1]["content"], "script complete")
+    assert_eq(messages[1]["seq"], 2)
+
+
+@test()
+def websocket_persists_assistant_message_from_streamed_deltas() -> None:
+    """The host assembles streamed text when pi's final event has no content."""
+    fake_runtime = FakeRuntime(
+        [
+            {"type": "message_start", "message": {"role": "assistant"}},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": {"text": "streamed "},
+                },
+            },
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": {"text": "answer"},
+                },
+            },
+            {"type": "message_end", "message": {"role": "assistant"}},
+            {"type": "agent_end"},
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Stream please",
+                }
+            )
+            frames: list[dict[str, object]] = []
+            while True:
+                frame = cast("dict[str, object]", websocket.receive_json())
+                frames.append(frame)
+                if frame.get("event") == "agent_end":
+                    break
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    messages = response.json()
+    assert_eq(
+        [frame.get("event") for frame in frames],
+        [
+            "user_message",
+            "message_start",
+            "text_delta",
+            "text_delta",
+            "message_end",
+            "agent_end",
+        ],
+    )
+    assert_eq(messages[1]["content"], "streamed answer")
+
+
+@test()
+def append_message_is_idempotent_for_pi_message_ids() -> None:
+    """Retries for a pi message id do not duplicate transcript rows."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        service = cast("Starlette", client.app).state.conversation_service
+        portal = client.portal
+        assert portal is not None
+
+        first = portal.call(
+            service.append_message,
+            MessageDraft(
+                content="capture",
+                conversation_id=UUID(conversation_id),
+                pi_message_id="call-capture",
+                role="tool",
+                tool_name="capture",
+                tool_result={"ok": True},
+            ),
+        )
+        second = portal.call(
+            service.append_message,
+            MessageDraft(
+                content="capture again",
+                conversation_id=UUID(conversation_id),
+                pi_message_id="call-capture",
+                role="tool",
+                tool_name="capture",
+                tool_result={"ok": True},
+            ),
+        )
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    assert_eq(first.id, second.id)
+    assert_len(response.json(), 1)
+
+
+@test()
+def websocket_invalidation_frames_reach_connected_clients() -> None:
+    """Service-layer Memory writes publish invalidate frames over `/ws`."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        with client.websocket_connect("/ws") as websocket:
+            response = client.post("/api/memories", json={"content": "notify me"})
+            frame = websocket.receive_json()
+
+    assert_eq(response.status_code, 201)
+    assert_eq(frame, {"type": "invalidate", "keys": ["memories", "review-queue"]})
+
+
+@test()
+def websocket_internal_tool_capture_publishes_invalidation() -> None:
+    """Agent tool calls mutate services and fan out invalidation frames."""
+    session_id = "019f0906-0000-7000-8000-000000000001"
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        cast("Starlette", client.app).state.session_registry.register(session_id)
+        tool_secret = cast("str", cast("Starlette", client.app).state.tool_secret)
+        with client.websocket_connect("/ws") as websocket:
+            response = client.post(
+                "/internal/tools/capture",
+                headers={TOOL_AUTH_HEADER: tool_secret},
+                json={"session_id": session_id, "content": "tool memory"},
+            )
+            frame = websocket.receive_json()
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["success"], True)
+    assert_eq(frame, {"type": "invalidate", "keys": ["memories", "review-queue"]})
+
+
+@test()
+def websocket_bucket_write_publishes_invalidation() -> None:
+    """Bucket mutations publish their cache key through the shared WS hub."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        with client.websocket_connect("/ws") as websocket:
+            response = client.post(
+                "/api/bucket-items",
+                json={
+                    "item_type": "movie",
+                    "data": {"title": "Dune"},
+                    "intent_context": "recommended",
+                },
+            )
+            frame = websocket.receive_json()
+
+    assert_eq(response.status_code, 201)
+    assert_eq(frame, {"type": "invalidate", "keys": ["bucket-items"]})
+
+
+@test()
+def websocket_abort_forwards_to_current_runtime() -> None:
+    """Inbound `abort` asks the current pi runtime to stop generation."""
+    fake_runtime = FakeRuntime([])
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json({"type": "abort", "conversation_id": conversation_id})
+            frame = websocket.receive_json()
+
+    assert_eq(frame["event"], "abort_ack")
+    assert_eq(fake_runtime.client.commands, ["abort"])
+
+
+@test()
+def websocket_abort_is_processed_while_generation_is_running() -> None:
+    """The receive loop stays alive while a prompt stream is in flight."""
+    fake_runtime = BlockingRuntime()
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Wait for abort",
+                }
+            )
+            first_frame = websocket.receive_json()
+            websocket.send_json({"type": "abort", "conversation_id": conversation_id})
+            abort_frame = websocket.receive_json()
+
+    assert_eq(first_frame["event"], "user_message")
+    assert_eq(abort_frame["event"], "abort_ack")
+    assert_eq(fake_runtime.client.commands, ["prompt", "abort"])
+
+
+@test()
+def websocket_persists_tool_call_rows() -> None:
+    """Tool completion events settle as compact transcript rows."""
+    fake_runtime = FakeRuntime(
+        [
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "call-capture",
+                "toolName": "capture",
+                "args": {"content": "tool memory"},
+            },
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "call-capture",
+                "toolName": "capture",
+                "result": {"details": {"result": {"id": "memory-id"}}},
+                "isError": False,
+            },
+            {"type": "agent_end"},
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Use a tool",
+                }
+            )
+            while websocket.receive_json().get("event") != "agent_end":
+                pass
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    messages = response.json()
+    assert_eq([message["role"] for message in messages], ["user", "tool"])
+    assert_eq(messages[1]["tool_name"], "capture")
+    assert_eq(messages[1]["tool_args"], {"content": "tool memory"})
+    assert_eq(messages[1]["tool_result"], {"details": {"result": {"id": "memory-id"}}})
+    assert_eq(messages[1]["pi_message_id"], "call-capture")

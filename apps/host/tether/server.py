@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import secrets
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import uvicorn
@@ -24,6 +26,10 @@ from tether.bucket_items import (
     create_bucket_item_schema,
 )
 from tether.bucket_tools import internal_bucket_tool_routes
+from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
+from tether.chat_ws import websocket_routes
+from tether.conversations import ConversationService, create_conversation_schema
+from tether.events import EventHub
 from tether.logging import ContextLoggerMiddleware, configure_logging
 from tether.memories import (
     KnowledgeBaseService,
@@ -54,9 +60,16 @@ class AppConfig:
     app_password: str
     session_secret: str
     database_path: str | Path = Path(".tether/tether.sqlite3")
+    default_model_id: str | None = None
+    default_model_provider: str | None = None
+    extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     kb_root: str | Path = Path(".tether")
     logging_level: str = "INFO"
+    pi_binary: Path | None = None
+    pi_idle_seconds: float = 30 * 60
+    pi_session_root: str | Path | None = None
     secure_cookies: bool = False
+    tool_base_url: str = "http://127.0.0.1:8000"
 
 
 class HostSettings(BaseSettings):
@@ -95,9 +108,7 @@ class HostSettings(BaseSettings):
 
 def _lifespan(
     *,
-    database_path: str | Path,
-    kb_root: str | Path,
-    logging_level: str,
+    config: AppConfig,
     telemetry_settings: TelemetrySettings,
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None, bool | None]]:
     """Create lifespan wiring for a configured SQLite DB and KB root."""
@@ -105,15 +116,15 @@ def _lifespan(
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncGenerator[None]:
         """Build the Memory service for the app lifetime and close it after."""
-        app_logger = configure_logging(logging_level)
+        app_logger = configure_logging(config.logging_level)
         telemetry = configure_telemetry(telemetry_settings)
         app.state.logger = app_logger
         app.state.telemetry = telemetry
-        configured_kb_root = Path(kb_root)
+        configured_kb_root = Path(config.kb_root)
         await AsyncPath(configured_kb_root).mkdir(parents=True, exist_ok=True)
-        database_name = str(database_path)
+        database_name = str(config.database_path)
         database_config = (
-            ":memory:" if database_name == ":memory:" else Path(database_path)
+            ":memory:" if database_name == ":memory:" else Path(config.database_path)
         )
         if database_config != ":memory:":
             await AsyncPath(database_config.parent).mkdir(
@@ -125,9 +136,13 @@ def _lifespan(
         ) as db:
             await create_memory_schema(db)
             await create_bucket_item_schema(db)
+            await create_conversation_schema(db)
             kb_service = KnowledgeBaseService(kb_root=configured_kb_root)
+            event_hub = EventHub()
+            app.state.event_hub = event_hub
             memory_service = MemoryService(
                 database=db,
+                event_publisher=event_hub,
                 kb_service=kb_service,
                 tracer=telemetry.tracer,
             )
@@ -135,11 +150,34 @@ def _lifespan(
             app.state.memory_service = memory_service
             app.state.bucket_item_service = BucketItemService(
                 database=db,
+                event_publisher=event_hub,
                 tracer=telemetry.tracer,
             )
+            app.state.conversation_service = ConversationService(database=db)
+            runtime_registry = ConversationRuntimeRegistry(
+                RuntimeRegistryConfig(
+                    default_model_id=config.default_model_id,
+                    default_model_provider=config.default_model_provider,
+                    extra_extension_paths=config.extra_extension_paths,
+                    idle_seconds=config.pi_idle_seconds,
+                    pi_binary=config.pi_binary,
+                    session_registry=app.state.session_registry,
+                    session_root=Path(config.pi_session_root)
+                    if config.pi_session_root is not None
+                    else configured_kb_root / "pi-sessions",
+                    tool_base_url=config.tool_base_url,
+                    tool_secret=app.state.tool_secret,
+                )
+            )
+            app.state.conversation_runtime_registry = runtime_registry
+            idle_reaper = asyncio.create_task(runtime_registry.reap_idle_forever())
             try:
                 yield
             finally:
+                _ = idle_reaper.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await idle_reaper
+                await runtime_registry.shutdown_all()
                 telemetry.shutdown()
 
     return lifespan
@@ -165,12 +203,11 @@ def create_app(
             *api_routes,
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
+            *websocket_routes,
             *docs,
         ],
         lifespan=_lifespan(
-            database_path=config.database_path,
-            kb_root=config.kb_root,
-            logging_level=config.logging_level,
+            config=config,
             telemetry_settings=configured_telemetry,
         ),
     )
