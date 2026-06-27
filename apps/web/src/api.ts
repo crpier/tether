@@ -12,6 +12,8 @@ export type UpdateTrigger = components["schemas"]["UpdateTriggerRequest"];
 export type PushStatus = components["schemas"]["PushStatusRead"];
 export type TriggerRecurrence = components["schemas"]["TriggerRecurrence"];
 export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
+export type DuePrompt = components["schemas"]["DuePromptRead"];
+export type AnswerOutcome = components["schemas"]["AnswerOutcomeRead"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -30,6 +32,12 @@ export interface TetherApi {
   getPushStatus(endpoint: string): Promise<PushStatus>;
   subscribePush(endpoint: string, p256dh: string, auth: string): Promise<void>;
   unsubscribePush(endpoint: string): Promise<PushStatus>;
+  listDueRecallPrompts(): Promise<DuePrompt[]>;
+  answerRecallPrompt(
+    promptId: string,
+    selectedIndex: number,
+    responseMs: number,
+  ): Promise<AnswerOutcome>;
 }
 
 function requireData<T>(data: T | undefined, response: Response): T {
@@ -121,6 +129,20 @@ export function createRestApi(
       const { data, response } = await client.DELETE(
         "/api/push/subscriptions",
         { body: { endpoint } },
+      );
+      return requireData(data, response);
+    },
+    async listDueRecallPrompts() {
+      const { data, response } = await client.GET("/api/recall/prompts");
+      return requireData(data, response);
+    },
+    async answerRecallPrompt(promptId, selectedIndex, responseMs) {
+      const { data, response } = await client.POST(
+        "/api/recall/prompts/{prompt_id}/answer",
+        {
+          body: { selected_index: selectedIndex, response_ms: responseMs },
+          params: { path: { prompt_id: promptId } },
+        },
       );
       return requireData(data, response);
     },

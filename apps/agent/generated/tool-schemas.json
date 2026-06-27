@@ -515,6 +515,62 @@
         "title": "DeleteTriggerParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/start_recall",
+      "name": "start_recall",
+      "params_model": "StartRecallParams",
+      "schema": {
+        "description": "Params for promoting an ingested educational video into a study item.",
+        "properties": {
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": ["video_id"],
+        "title": "StartRecallParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_due_recall_prompts",
+      "name": "list_due_recall_prompts",
+      "params_model": "ListDueRecallPromptsParams",
+      "schema": {
+        "description": "Params for listing outstanding recall prompts.\n\nThe due list is computed over the whole live schedule, so it takes no inputs\nbeyond the session identity the gate already requires.",
+        "properties": {},
+        "title": "ListDueRecallPromptsParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/answer_recall_prompt",
+      "name": "answer_recall_prompt",
+      "params_model": "AnswerRecallPromptParams",
+      "schema": {
+        "description": "Params for answering a recall prompt: the chosen option and elapsed time.",
+        "properties": {
+          "prompt_id": {
+            "format": "uuid7",
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "selected_index": {
+            "minimum": 0,
+            "title": "Selected Index",
+            "type": "integer"
+          },
+          "response_ms": {
+            "minimum": 0,
+            "title": "Response Ms",
+            "type": "integer"
+          }
+        },
+        "required": ["prompt_id", "selected_index", "response_ms"],
+        "title": "AnswerRecallPromptParams",
+        "type": "object"
+      }
     }
   ]
 }

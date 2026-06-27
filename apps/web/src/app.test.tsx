@@ -10,8 +10,10 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { App } from "./app";
 import type {
+  AnswerOutcome,
   Conversation,
   CreateTrigger,
+  DuePrompt,
   Message,
   ModelList,
   PushStatus,
@@ -67,6 +69,35 @@ function message(overrides: Partial<Message>): Message {
   };
 }
 
+function duePrompt(overrides: {
+  choices?: string[];
+  promptId?: string;
+  question?: string;
+  sourceTitle?: string;
+}): DuePrompt {
+  const promptId = overrides.promptId ?? "018f0000-0000-7000-8000-0000000000c1";
+  return {
+    prompt: {
+      choices: overrides.choices ?? ["One thread", "Many threads"],
+      due_at: "2026-01-01T00:00:00Z",
+      id: promptId,
+      kind: "multiple_choice",
+      question: overrides.question ?? "What does async IO multiplex?",
+      study_item_id: "018f0000-0000-7000-8000-0000000000d1",
+    },
+    study_item: {
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      id: "018f0000-0000-7000-8000-0000000000d1",
+      memory_id: "018f0000-0000-7000-8000-0000000000e1",
+      source_title: overrides.sourceTitle ?? "Async IO Explained",
+      source_video_id: "v1",
+      state: "studying",
+      updated_at: "2026-01-01T00:00:00Z",
+    },
+  };
+}
+
 function trigger(overrides: Partial<Trigger>): Trigger {
   return {
     action_kind: "message",
@@ -101,15 +132,24 @@ class FakeApi implements TetherApi {
   storedTriggers: Trigger[];
   subscribeCalls: { auth: string; endpoint: string; p256dh: string }[] = [];
   unsubscribeCalls: string[] = [];
+  storedDuePrompts: DuePrompt[];
+  answerCalls: {
+    promptId: string;
+    responseMs: number;
+    selectedIndex: number;
+  }[] = [];
+  correctIndices: Record<string, number> = {};
 
   constructor(options: {
     authenticated: boolean;
+    duePrompts?: DuePrompt[];
     messages?: Message[];
     triggers?: Trigger[];
   }) {
     this.authenticated = options.authenticated;
     this.storedMessages = options.messages ?? [];
     this.storedTriggers = options.triggers ?? [];
+    this.storedDuePrompts = options.duePrompts ?? [];
   }
 
   getSession() {
@@ -192,6 +232,43 @@ class FakeApi implements TetherApi {
     this.unsubscribeCalls.push(endpoint);
     this.pushSubscribed = false;
     return Promise.resolve({ count: 0, subscribed: false });
+  }
+
+  listDueRecallPrompts(): Promise<DuePrompt[]> {
+    return Promise.resolve(this.storedDuePrompts);
+  }
+
+  answerRecallPrompt(
+    promptId: string,
+    selectedIndex: number,
+    responseMs: number,
+  ): Promise<AnswerOutcome> {
+    const answered = this.storedDuePrompts.find(
+      (due) => due.prompt.id === promptId,
+    );
+    this.answerCalls.push({ promptId, responseMs, selectedIndex });
+    this.storedDuePrompts = this.storedDuePrompts.filter(
+      (due) => due.prompt.id !== promptId,
+    );
+    const correct = selectedIndex === this.correctIndices[promptId];
+    return Promise.resolve({
+      completed: false,
+      correct,
+      prompt: answered?.prompt ?? this.placeholderPrompt(promptId),
+      quality: correct ? 5 : 1,
+      tethered: false,
+    });
+  }
+
+  private placeholderPrompt(promptId: string): DuePrompt["prompt"] {
+    return {
+      choices: [],
+      due_at: "2026-01-01T00:00:00Z",
+      id: promptId,
+      kind: "multiple_choice",
+      question: "",
+      study_item_id: promptId,
+    };
   }
 }
 
@@ -470,5 +547,63 @@ describe("Tether SPA", () => {
     });
 
     expect(await screen.findByText("call the dentist")).toBeInTheDocument();
+  });
+
+  test("lists outstanding recall prompts with their choices", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      duePrompts: [duePrompt({ question: "What does async IO multiplex?" })],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText(
+      "Recall prompt: What does async IO multiplex?",
+    );
+    expect(
+      within(row).getByRole("button", { name: "One thread" }),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByRole("button", { name: "Many threads" }),
+    ).toBeInTheDocument();
+  });
+
+  test("answering a recall prompt submits the chosen option", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      duePrompts: [
+        duePrompt({
+          choices: ["One thread", "Many threads"],
+          promptId: "018f0000-0000-7000-8000-0000000000c9",
+        }),
+      ],
+    });
+    api.correctIndices["018f0000-0000-7000-8000-0000000000c9"] = 0;
+    renderApp(api);
+
+    const row = await screen.findByLabelText(
+      "Recall prompt: What does async IO multiplex?",
+    );
+    fireEvent.click(within(row).getByRole("button", { name: "One thread" }));
+
+    await waitFor(() => {
+      expect(api.answerCalls).toHaveLength(1);
+    });
+    expect(api.answerCalls[0].promptId).toBe(
+      "018f0000-0000-7000-8000-0000000000c9",
+    );
+    expect(api.answerCalls[0].selectedIndex).toBe(0);
+    expect(
+      await screen.findByText("Correct — see you next round."),
+    ).toBeInTheDocument();
+  });
+
+  test("shows an empty state when no recall prompts are due", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    expect(
+      await screen.findByText("No recall prompts due"),
+    ).toBeInTheDocument();
   });
 });

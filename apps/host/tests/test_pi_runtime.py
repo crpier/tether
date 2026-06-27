@@ -306,6 +306,7 @@ export default function inspectTools(pi) {
         [
             "add_movie",
             "add_place",
+            "answer_recall_prompt",
             "browse",
             "browse_youtube",
             "capture",
@@ -316,6 +317,7 @@ export default function inspectTools(pi) {
             "edit",
             "fetch_youtube_transcript",
             "ignore_youtube_video",
+            "list_due_recall_prompts",
             "list_triggers",
             "reject",
             "retry_youtube_video",
@@ -323,6 +325,7 @@ export default function inspectTools(pi) {
             "search",
             "search_bucket_items",
             "search_youtube",
+            "start_recall",
             "tether",
         ],
     )

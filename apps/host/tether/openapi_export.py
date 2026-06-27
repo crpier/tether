@@ -15,6 +15,7 @@ from tether.conversations import conversation_routes
 from tether.model_selection import model_routes
 from tether.openapi import build_openapi
 from tether.push import push_routes
+from tether.recall_routes import recall_routes
 from tether.routes import routes
 from tether.trigger_routes import trigger_routes
 from tether.youtube_routes import youtube_routes
@@ -39,6 +40,7 @@ def public_api_routes() -> list[Route]:
         *model_routes,
         *trigger_routes,
         *push_routes,
+        *recall_routes,
     ]
 
 

@@ -22,6 +22,9 @@ import { registerRetryYoutubeVideoTool } from "./retry_youtube_video.js";
 import { registerCreateTriggerTool } from "./create_trigger.js";
 import { registerListTriggersTool } from "./list_triggers.js";
 import { registerDeleteTriggerTool } from "./delete_trigger.js";
+import { registerStartRecallTool } from "./start_recall.js";
+import { registerListDueRecallPromptsTool } from "./list_due_recall_prompts.js";
+import { registerAnswerRecallPromptTool } from "./answer_recall_prompt.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -44,4 +47,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCreateTriggerTool(pi);
   registerListTriggersTool(pi);
   registerDeleteTriggerTool(pi);
+  registerStartRecallTool(pi);
+  registerListDueRecallPromptsTool(pi);
+  registerAnswerRecallPromptTool(pi);
 }

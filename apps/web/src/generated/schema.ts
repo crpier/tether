@@ -758,6 +758,144 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/recall/prompts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the recall prompts currently owed a review (the outstanding surface). */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["DuePromptRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/recall/prompts/{prompt_id}/answer": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Answer a recall prompt, grading and rescheduling it (tethering on completion). */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          prompt_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["AnswerPromptRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["AnswerOutcomeRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/recall/study-items": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every study item, newest-first. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["StudyItemRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Promote an ingested educational video into a study item under Recall. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["StartRecallRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["StudyItemRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/triggers": {
     parameters: {
       query?: never;
@@ -1119,6 +1257,34 @@ export interface components {
       provider: string;
     };
     /**
+     * AnswerOutcomeRead
+     * @description The result of answering: the grading, the rescheduled prompt, completion.
+     */
+    AnswerOutcomeRead: {
+      /** Completed */
+      completed: boolean;
+      /** Correct */
+      correct: boolean;
+      prompt: components["schemas"]["RecallPromptRead"];
+      /** Quality */
+      quality: number;
+      /** Tethered */
+      tethered: boolean;
+    };
+    /**
+     * AnswerPromptRequest
+     * @description Body for answering a recall prompt: the chosen option and how long it took.
+     *
+     *     >>> AnswerPromptRequest(selected_index=0, response_ms=1200).selected_index
+     *     0
+     */
+    AnswerPromptRequest: {
+      /** Response Ms */
+      response_ms: number;
+      /** Selected Index */
+      selected_index: number;
+    };
+    /**
      * BucketItemRead
      * @description HTTP representation of a Bucket item, exposing its derived `state`.
      *
@@ -1281,6 +1447,14 @@ export interface components {
     /** @enum {string} */
     DedupSeverity: "none" | "warn" | "inform";
     /**
+     * DuePromptRead
+     * @description An outstanding prompt plus the study item it belongs to.
+     */
+    DuePromptRead: {
+      prompt: components["schemas"]["RecallPromptRead"];
+      study_item: components["schemas"]["StudyItemRead"];
+    };
+    /**
      * EditRequest
      * @description Body for editing a Memory's content at an observed `version`.
      *
@@ -1437,6 +1611,37 @@ export interface components {
       /** Used */
       used: number;
     };
+    /** @constant */
+    RecallPromptKind: "multiple_choice";
+    /**
+     * RecallPromptRead
+     * @description HTTP representation of a recall prompt, with the answer key withheld.
+     *
+     *     `correct_index` is deliberately absent: the client renders and answers the
+     *     prompt without being able to read the right choice off the wire.
+     */
+    RecallPromptRead: {
+      /** Choices */
+      choices: string[];
+      /**
+       * Due At
+       * Format: date-time
+       */
+      due_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      kind: components["schemas"]["RecallPromptKind"];
+      /** Question */
+      question: string;
+      /**
+       * Study Item Id
+       * Format: uuid7
+       */
+      study_item_id: string;
+    };
     /**
      * SessionResponse
      * @description Whether the request carries a currently valid app session.
@@ -1453,6 +1658,52 @@ export interface components {
       /** Selected Model */
       selected_model: string;
     };
+    /**
+     * StartRecallRequest
+     * @description Body for promoting an ingested educational video into a study item.
+     *
+     *     >>> StartRecallRequest(video_id="v1").video_id
+     *     'v1'
+     */
+    StartRecallRequest: {
+      /** Video Id */
+      video_id: string;
+    };
+    /**
+     * StudyItemRead
+     * @description HTTP representation of a study item.
+     */
+    StudyItemRead: {
+      /** Completed At */
+      completed_at: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /**
+       * Memory Id
+       * Format: uuid7
+       */
+      memory_id: string;
+      /** Source Title */
+      source_title: string;
+      /** Source Video Id */
+      source_video_id: string;
+      state: components["schemas"]["StudyItemState"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /** @enum {string} */
+    StudyItemState: "studying" | "completed";
     /**
      * SubscribeRequest
      * @description Body for registering a browser push subscription.
