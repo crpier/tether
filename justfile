@@ -5,7 +5,7 @@ default:
 
 # Python host (Starlette, auto-reload)
 host:
-    TETHER_RELOAD=true uv run python -m tether
+    TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret uv run python -m tether
 
 # SolidJS web (Vite dev server)
 web:
