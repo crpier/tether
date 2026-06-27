@@ -13,6 +13,7 @@ from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
 from tether.conversations import Conversation
+from tether.model_selection import AgentModelCatalog, ModelNotAllowedError
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig
 from tether.tools import SessionRegistry
 
@@ -21,9 +22,8 @@ from tether.tools import SessionRegistry
 class RuntimeRegistryConfig:
     """Configuration for spawning conversation-bound pi runtimes."""
 
-    default_model_id: str | None
-    default_model_provider: str | None
     extra_extension_paths: Sequence[Path]
+    model_catalog: AgentModelCatalog
     pi_binary: Path | None
     session_registry: SessionRegistry
     session_root: Path
@@ -81,14 +81,17 @@ class ConversationRuntimeRegistry:
             ),
             session_registry=self.config.session_registry,
         )
-        if (
-            self.config.default_model_provider is not None
-            and self.config.default_model_id is not None
-        ):
+        try:
+            selected_model = self.config.model_catalog.resolve(
+                conversation.selected_model
+            )
+        except ModelNotAllowedError:
+            selected_model = self.config.model_catalog.default_config
+        if selected_model is not None:
             _ = await runtime.client.request(
                 "set_model",
-                provider=self.config.default_model_provider,
-                modelId=self.config.default_model_id,
+                provider=selected_model.provider,
+                modelId=selected_model.model_id,
             )
         self._runtimes[conversation_key] = _RuntimeSlot(
             last_used=self._now(), runtime=runtime

@@ -19,12 +19,18 @@ from snekql.sqlite import (
     Text,
     insert,
     select,
+    update,
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from tether.model_selection import (
+    AgentModelCatalog,
+    AgentModelConfig,
+    ModelNotAllowedError,
+)
 from tether.openapi import EndpointRoute, endpoint
 
 type MessageRole = Literal["user", "assistant", "tool"]
@@ -96,6 +102,12 @@ class ConversationRead(BaseModel):
         )
 
 
+class SetConversationModelRequest(BaseModel):
+    """Body for selecting a conversation's model."""
+
+    selected_model: str
+
+
 class MessageRead(BaseModel):
     """HTTP representation of a settled transcript row."""
 
@@ -134,8 +146,17 @@ class MessageRead(BaseModel):
 class ConversationService:
     """Persistence boundary for conversations and settled transcript rows."""
 
-    def __init__(self, database: Database) -> None:
+    def __init__(
+        self,
+        database: Database,
+        *,
+        model_catalog: AgentModelCatalog | None = None,
+    ) -> None:
         self.database: Database = database
+        self.model_catalog: AgentModelCatalog = model_catalog or AgentModelCatalog(
+            default_model=None,
+            models=(),
+        )
 
     async def list_conversations(self) -> list[Conversation[Fetched]]:
         """Return all conversations, creating the v1 default on first access."""
@@ -145,7 +166,11 @@ class ConversationService:
             )
             if conversations:
                 return conversations
-            conversation = await tx.execute(insert(Conversation()).returning())
+            conversation = await tx.execute(
+                insert(
+                    Conversation(selected_model=self.model_catalog.default_model)
+                ).returning()
+            )
             return [conversation]
 
     async def fetch_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
@@ -157,6 +182,28 @@ class ConversationService:
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation
+
+    async def set_selected_model(
+        self,
+        conversation_id: UUID,
+        selected_model: str,
+    ) -> tuple[Conversation[Fetched], AgentModelConfig]:
+        """Persist a conversation's selected allowlist model id."""
+        model = self.model_catalog.resolve(selected_model)
+        if model is None:
+            raise ModelNotAllowedError(selected_model)
+        async with self.database.transaction() as tx:
+            _ = await tx.execute(
+                update(Conversation)
+                .set(Conversation.selected_model.to(model.id))
+                .where(Conversation.id.eq(conversation_id))
+            )
+            conversation = await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(conversation_id))
+            )
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation, model
 
     async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
         """Return settled transcript rows for a conversation in display order."""
@@ -251,6 +298,45 @@ async def _messages_response(request: Request, conversation_id: UUID) -> Respons
     )
 
 
+@endpoint(request_body=SetConversationModelRequest, response=ConversationRead)
+async def set_conversation_model(
+    request: Request,
+    body: SetConversationModelRequest,
+) -> Response:
+    """Select the model used for subsequent turns in one conversation."""
+    raw_conversation_id = request.path_params["conversation_id"]
+    try:
+        conversation_id = UUID(raw_conversation_id)
+    except ValueError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    try:
+        (
+            conversation,
+            selected_model,
+        ) = await request.app.state.conversation_service.set_selected_model(
+            conversation_id,
+            body.selected_model,
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    except ModelNotAllowedError:
+        return JSONResponse({"detail": "model not allowed"}, status_code=422)
+    runtime = request.app.state.conversation_runtime_registry.current_for(
+        conversation.id
+    )
+    if runtime is not None:
+        response = await runtime.client.request(
+            "set_model",
+            provider=selected_model.provider,
+            modelId=selected_model.model_id,
+        )
+        if response.get("success") is not True:
+            return JSONResponse({"detail": "set_model failed"}, status_code=502)
+    return JSONResponse(
+        ConversationRead.from_conversation(conversation).model_dump(mode="json")
+    )
+
+
 @endpoint(response=MessageRead, response_is_list=True)
 async def list_messages(request: Request) -> Response:
     """List settled transcript rows for one conversation."""
@@ -264,6 +350,11 @@ async def list_messages(request: Request) -> Response:
 
 conversation_routes: list[Route] = [
     EndpointRoute("/api/conversations", list_conversations, methods=["GET"]),
+    EndpointRoute(
+        "/api/conversations/{conversation_id}/model",
+        set_conversation_model,
+        methods=["POST"],
+    ),
     EndpointRoute(
         "/api/conversations/{conversation_id}/messages",
         list_messages,
