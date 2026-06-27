@@ -18,12 +18,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
 
-from tether.auth import AppSessionMiddleware, auth_routes
+from tether.auth import AppSessionMiddleware
 from tether.bucket_items import (
     BucketItemService,
     create_bucket_item_schema,
 )
-from tether.bucket_routes import bucket_item_routes
 from tether.bucket_tools import internal_bucket_tool_routes
 from tether.logging import ContextLoggerMiddleware, configure_logging
 from tether.memories import (
@@ -32,7 +31,7 @@ from tether.memories import (
     create_memory_schema,
 )
 from tether.openapi import openapi_routes
-from tether.routes import routes
+from tether.openapi_export import public_api_routes
 from tether.telemetry import (
     TelemetryExporter,
     TelemetryMiddleware,
@@ -154,11 +153,11 @@ def create_app(
 ) -> Starlette:
     """Construct the Starlette application with Memory routes and lifespan wiring.
 
-    The Memory routes are also handed to `openapi_routes` so `/openapi.json`
+    The public REST routes are also handed to `openapi_routes` so `/openapi.json`
     and `/docs` describe exactly the API that is mounted. By default, both the
     SQLite database and markdown Knowledge base live under `.tether`.
     """
-    api_routes = [*auth_routes, *routes, *bucket_item_routes]
+    api_routes = public_api_routes()
     docs = openapi_routes(api_routes, title="Tether", version="0.1.0")
     configured_telemetry = telemetry_settings or TelemetrySettings()
     app = Starlette(

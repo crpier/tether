@@ -122,6 +122,18 @@ class EndpointRoute(Route):
         self.app = request_response(endpoint)
 
 
+def _component_definition(name: str, definition: dict[str, Any]) -> dict[str, Any]:
+    """Keep arbitrary JSON data useful to generated clients.
+
+    Recursive JSON aliases are valid OpenAPI, but not every client generator can
+    express them. An unconstrained schema still states the wire contract: any
+    JSON value is accepted in these positions.
+    """
+    if name == "JsonValue":
+        return {}
+    return definition
+
+
 def _register(model: type[BaseModel], components: dict[str, Any]) -> str:
     """Add a model and its nested definitions to `components` and name the ref.
 
@@ -131,7 +143,7 @@ def _register(model: type[BaseModel], components: dict[str, Any]) -> str:
     """
     schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
     for name, definition in schema.pop("$defs", {}).items():
-        components.setdefault(name, definition)
+        components.setdefault(name, _component_definition(name, definition))
     components[model.__name__] = schema
     return model.__name__
 
@@ -170,7 +182,7 @@ def _query_parameters(
     """
     schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
     for name, definition in schema.pop("$defs", {}).items():
-        components.setdefault(name, definition)
+        components.setdefault(name, _component_definition(name, definition))
     required = set(schema.get("required", []))
     return [
         {

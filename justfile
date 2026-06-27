@@ -23,6 +23,9 @@ validate-host-logs:
 
 # code generation
 codegen:
+    uv run python -m tether.openapi_export openapi.json
+    pnpm -C apps/web codegen
+    pnpm -C apps/web format:generated
     uv run python -m tether.tool_schemas apps/agent/generated/tool-schemas.json
     pnpm -C apps/agent codegen
     pnpm -C apps/agent format:generated
@@ -30,7 +33,7 @@ codegen:
 # generated-code drift check
 codegen-check:
     just codegen
-    git diff --exit-code -- apps/agent/generated/tool-schemas.json apps/agent/src/generated
+    git diff --exit-code -- openapi.json apps/web/src/generated apps/agent/generated/tool-schemas.json apps/agent/src/generated
 
 # host tests
 host-test:
