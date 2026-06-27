@@ -53,6 +53,7 @@ from tether.memories import (
     Memory,
     MemoryConflictError,
     MemoryNotFoundError,
+    MemoryProvenance,
     MemoryService,
     MemoryState,
     create_memory_schema,
@@ -81,9 +82,15 @@ class LoggedMemoryService:
         """Expose the wrapped KB service for projection assertions."""
         return self.service.kb_service
 
-    async def capture(self, content: str) -> Memory[Fetched]:
+    async def capture(
+        self,
+        content: str,
+        provenance: MemoryProvenance | None = None,
+    ) -> Memory[Fetched]:
         """Capture through the wrapped service with logging context."""
-        return await self.service.capture(content, logger=self.logger)
+        return await self.service.capture(
+            content, provenance=provenance, logger=self.logger
+        )
 
     async def search(
         self,
@@ -265,6 +272,22 @@ async def capture_records_manual_provenance() -> None:
     memory = await service.capture("I prefer aisle seats on flights")
 
     assert_eq(memory.provenance, {"kind": "manual"})
+
+
+@test()
+async def capture_stores_supplied_provenance() -> None:
+    """Capture persists a richer provenance verbatim when one is supplied."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture(
+        "imported during a YouTube binge",
+        MemoryProvenance(kind="youtube", confidence="low", batch="yt-2026-06"),
+    )
+
+    assert_eq(
+        memory.provenance,
+        {"kind": "youtube", "confidence": "low", "batch": "yt-2026-06"},
+    )
 
 
 @test()

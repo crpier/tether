@@ -22,6 +22,7 @@ from tether.tools import (
     CaptureParams,
     EditParams,
     RejectParams,
+    ReviewDigestParams,
     SearchParams,
     TetherParams,
 )
@@ -59,6 +60,9 @@ TOOL_SCHEMA_SPECS = (
     ToolSchemaSpec("/internal/tools/capture", "capture", CaptureParams),
     ToolSchemaSpec("/internal/tools/browse", "browse", BrowseParams),
     ToolSchemaSpec("/internal/tools/search", "search", SearchParams),
+    ToolSchemaSpec(
+        "/internal/tools/review_digest", "review_digest", ReviewDigestParams
+    ),
     ToolSchemaSpec("/internal/tools/tether", "tether", TetherParams),
     ToolSchemaSpec("/internal/tools/edit", "edit", EditParams),
     ToolSchemaSpec("/internal/tools/reject", "reject", RejectParams),

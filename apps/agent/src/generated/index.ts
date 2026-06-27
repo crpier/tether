@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCaptureTool } from "./capture.js";
 import { registerBrowseTool } from "./browse.js";
 import { registerSearchTool } from "./search.js";
+import { registerReviewDigestTool } from "./review_digest.js";
 import { registerTetherTool } from "./tether.js";
 import { registerEditTool } from "./edit.js";
 import { registerRejectTool } from "./reject.js";
@@ -18,6 +19,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
   registerBrowseTool(pi);
   registerSearchTool(pi);
+  registerReviewDigestTool(pi);
   registerTetherTool(pi);
   registerEditTool(pi);
   registerRejectTool(pi);

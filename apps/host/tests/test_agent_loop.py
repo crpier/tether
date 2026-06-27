@@ -21,6 +21,7 @@ from tether.pi_runtime import PiRuntime, PiRuntimeConfig
 SECRET = "test-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"
 SCRIPTED_MODEL_ID = "tether-agent-loop-faux"
+REVIEW_DIGEST_MODEL_ID = "tether-review-digest-faux"
 SCRIPTED_SESSION_ID = "scripted-session"
 
 
@@ -28,6 +29,14 @@ def _agent_fixture_path() -> Path:
     """Return the committed faux provider extension used by subprocess tests."""
     return (
         Path(__file__).resolve().parents[2] / "agent/tests/fixtures/faux-agent-loop.ts"
+    )
+
+
+def _review_digest_fixture_path() -> Path:
+    """Return the committed faux provider that scripts the review_digest loop."""
+    return (
+        Path(__file__).resolve().parents[2]
+        / "agent/tests/fixtures/faux-review-digest.ts"
     )
 
 
@@ -126,6 +135,64 @@ async def scripted_model_drives_capture_tether_search_through_generated_shims() 
         tethered_memory["id"],
         [_json_object(search_hit)["id"] for search_hit in search_hits],
     )
+
+
+@test()
+async def scripted_model_groups_duplicate_captures_via_review_digest() -> None:
+    """A canned model captures two near-dups, then review_digest clusters them."""
+    session_dir = await load_fixture(pi_session_dir())
+    host = await load_fixture(live_host())
+    runtime = await PiRuntime.spawn(
+        PiRuntimeConfig(
+            tool_base_url=host.base_url,
+            tool_secret=SECRET,
+            session_dir=session_dir,
+            extra_extension_paths=[_review_digest_fixture_path()],
+        ),
+        session_registry=host.session_registry,
+    )
+
+    try:
+        set_model = await runtime.client.request(
+            "set_model", provider="faux", modelId=REVIEW_DIGEST_MODEL_ID
+        )
+        assert_eq(set_model["success"], True)
+
+        prompt = await runtime.client.request(
+            "prompt", message="Capture the duplicates and review the queue."
+        )
+        assert_eq(prompt["success"], True)
+
+        _ = await runtime.next_event("tool_execution_start", wait_seconds=15)
+        first_capture_end = await runtime.next_event(
+            "tool_execution_end", wait_seconds=15
+        )
+        _ = await runtime.next_event("tool_execution_start", wait_seconds=15)
+        second_capture_end = await runtime.next_event(
+            "tool_execution_end", wait_seconds=15
+        )
+        digest_start = await runtime.next_event("tool_execution_start", wait_seconds=15)
+        digest_end = await runtime.next_event("tool_execution_end", wait_seconds=15)
+        _ = await runtime.next_event("agent_end", wait_seconds=15)
+    finally:
+        await runtime.shutdown()
+
+    first_id = _json_object(_details_from_tool_end(first_capture_end)["result"])["id"]
+    second_id = _json_object(_details_from_tool_end(second_capture_end)["result"])["id"]
+
+    assert_eq(digest_start["toolName"], "review_digest")
+    assert_eq(digest_end["isError"], False)
+    digest_details = _details_from_tool_end(digest_end)
+    _assert_success_details(digest_details)
+    assert_is_none(digest_details["provenance"])
+    digest = _json_object(digest_details["result"])
+    dedup_groups_json = digest["dedup_groups"]
+    assert isinstance(dedup_groups_json, list)
+    dedup_clusters = [
+        set(cast("list[str]", _json_object(group)["memory_ids"]))
+        for group in cast("list[Any]", dedup_groups_json)
+    ]
+    assert_in({first_id, second_id}, dedup_clusters)
 
 
 @test()

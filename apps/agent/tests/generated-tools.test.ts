@@ -23,6 +23,7 @@ describe("generated tool extension", () => {
       "capture",
       "browse",
       "search",
+      "review_digest",
       "tether",
       "edit",
       "reject",

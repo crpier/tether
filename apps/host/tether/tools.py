@@ -36,6 +36,7 @@ from starlette.routing import Route, request_response
 from tether.bucket_items import (
     BucketItemConflictError,
     BucketItemNotFoundError,
+    BucketItemProvenance,
     EmptyBucketSearchQueryError,
     EmptyIntentContextError,
     InvalidItemDataError,
@@ -105,7 +106,7 @@ class ToolEnvelope(BaseModel):
     success: bool
     result: Any = None
     error: ToolError | None = None
-    provenance: MemoryProvenance | None = None
+    provenance: MemoryProvenance | BucketItemProvenance | None = None
     quota: None = None
 
 
@@ -148,6 +149,14 @@ class SearchParams(BaseModel):
 
     q: str
     limit: PositiveInt = 50
+
+
+class ReviewDigestParams(BaseModel):
+    """Params for the AI-assisted Review digest.
+
+    The digest is computed over the whole live queue, so it takes no inputs
+    beyond the session identity the gate already requires.
+    """
 
 
 def _memory_reference(memory_id: UUID, version: PositiveInt) -> Memory[Fetched]:
@@ -331,6 +340,14 @@ async def _search(request: Request, params: SearchParams) -> ToolEnvelope:
     return _ok_memories(memories)
 
 
+async def _review_digest(request: Request, _params: ReviewDigestParams) -> ToolEnvelope:
+    """Compute the read-only AI-assisted Review digest over the live queue."""
+    digest = await request.app.state.review_service.review_digest(
+        logger=_tool_logger(request)
+    )
+    return ToolEnvelope(success=True, result=digest.model_dump(mode="json"))
+
+
 async def _tether(request: Request, params: TetherParams) -> ToolEnvelope:
     """Promote a loose Memory to tethered."""
     memory = await request.app.state.memory_service.tether(
@@ -380,6 +397,11 @@ def internal_tool_routes() -> list[Route]:
         ToolRoute(
             "/internal/tools/search",
             ToolEndpoint(SearchParams, _search),
+            methods=["POST"],
+        ),
+        ToolRoute(
+            "/internal/tools/review_digest",
+            ToolEndpoint(ReviewDigestParams, _review_digest),
             methods=["POST"],
         ),
         ToolRoute(

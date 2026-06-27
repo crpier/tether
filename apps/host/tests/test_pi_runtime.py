@@ -312,6 +312,7 @@ export default function inspectTools(pi) {
             "delete_bucket_item",
             "edit",
             "reject",
+            "review_digest",
             "search",
             "search_bucket_items",
             "tether",
