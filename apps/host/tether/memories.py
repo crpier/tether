@@ -31,7 +31,6 @@ from snekql.sqlite import (
     Text,
     Transaction,
     insert,
-    scaffold,
     select,
     update,
 )
@@ -745,15 +744,46 @@ class MemoryService:
         return memory
 
 
-async def create_memory_schema(database: Database) -> None:
-    """Create the Memory table on an already-initialized database.
+# snekql builds schema by replaying a hand-authored migration chain and records
+# each step by *name*, never re-running or checksumming an applied one. So a
+# migration body must be frozen at authoring time: editing `001_memories` to add
+# columns (e.g. via `scaffold([Memory])`, which regenerates the current model)
+# adds them to fresh databases but silently skips every existing one. New columns
+# therefore arrive as their own forward migration, applied on top of the frozen
+# base. Replaying the whole chain on a fresh database yields the current schema.
+_MEMORY_MIGRATIONS: dict[str, str] = {
+    # Original Memory table, as first shipped (before embedding columns). Frozen.
+    "001_memories": (
+        'CREATE TABLE "memory" ('
+        '"id" TEXT PRIMARY KEY, '
+        '"content" TEXT, '
+        '"version" INTEGER, '
+        '"provenance" TEXT, '
+        "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+        "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+        '"tethered_at" TEXT, '
+        '"deleted_at" TEXT'
+        ") STRICT"
+    ),
+    # Hybrid search (PR #72): canonical embedding vector + the content `version`
+    # it reflects. Added here so pre-#72 databases gain the columns on next boot.
+    "002_memory_embedding": 'ALTER TABLE "memory" ADD COLUMN "embedding" BLOB',
+    "003_memory_embedded_version": (
+        'ALTER TABLE "memory" ADD COLUMN "embedded_version" INTEGER'
+    ),
+}
 
-    snekql builds schema by replaying migrations rather than from models
-    directly, so the scaffolded DDL for `Memory` is applied as a single
-    migration. The caller owns `Database.initialize` (and thus the backend
-    choice) and hands the live database here before serving requests.
+
+async def create_memory_schema(database: Database) -> None:
+    """Bring the Memory table to the current schema on an initialized database.
+
+    Applies the frozen Memory migration chain: a fresh database is built by
+    replaying every step, while an existing one applies only the steps it has
+    not yet seen (so a pre-embedding database gains the embedding columns). The
+    caller owns `Database.initialize` (and thus the backend choice) and hands
+    the live database here before serving requests.
 
     >>> database = await Database.initialize(backend=Config(database=":memory:"))
     >>> await create_memory_schema(database)
     """
-    await database.migrate({"001_memories": scaffold([Memory])})
+    await database.migrate(_MEMORY_MIGRATIONS)
