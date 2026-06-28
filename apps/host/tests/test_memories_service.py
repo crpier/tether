@@ -1261,3 +1261,80 @@ async def the_embedding_columns_round_trip_through_sqlite() -> None:
     assert stored is not None
     assert_eq(stored.embedding, payload)
     assert_eq(stored.embedded_version, memory.version)
+
+
+# The legacy `memory` schema as shipped before the embedding columns existed
+# (PR #72 / hybrid search). A real pre-#72 `.tether/tether.sqlite3` carries
+# exactly this DDL, recorded under the `001_memories` migration key. Frozen here
+# so the test can stand up a database that looks like an existing deployment.
+_LEGACY_MEMORY_DDL = (
+    'CREATE TABLE "memory" ('
+    '"id" TEXT PRIMARY KEY, '
+    '"content" TEXT, '
+    '"version" INTEGER, '
+    '"provenance" TEXT, '
+    "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+    "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+    '"tethered_at" TEXT, '
+    '"deleted_at" TEXT'
+    ") STRICT"
+)
+
+
+@fixture
+async def legacy_upgraded_memory_service() -> AsyncGenerator[LoggedMemoryService]:
+    """A service over a database that began life on the pre-embedding schema.
+
+    Stands up the legacy `memory` table under the original `001_memories` key,
+    then runs `create_memory_schema` to bring it current — the exact path a real
+    pre-#72 `.tether/tether.sqlite3` takes on the next boot.
+    """
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await db.migrate({"001_memories": _LEGACY_MEMORY_DDL})
+    await create_memory_schema(db)
+    async with TemporaryDirectory() as kb_root:
+        yield LoggedMemoryService(
+            MemoryService(
+                database=db,
+                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
+                tracer=noop_tracer(),
+            ),
+            logger=structlog.stdlib.get_logger("test.memory_service"),
+        )
+    await db.close()
+
+
+@test()
+async def create_memory_schema_upgrades_a_legacy_pre_embedding_database() -> None:
+    """An existing pre-embedding database gains the embedding columns.
+
+    snekql records migrations by key and never re-runs an applied one, so a
+    database that ran the original `001_memories` (before the embedding columns
+    were added to the model) keeps a `memory` table without them. Capture then
+    fails with `table memory has no column named embedding`. `create_memory_schema`
+    must carry a forward migration that adds the columns to such a database, not
+    rely on `scaffold` regenerating the current model under the same key.
+    """
+    service = await load_fixture(legacy_upgraded_memory_service())
+
+    # Capture exercises the INSERT that references the embedding columns, and
+    # browse exercises the SELECT that decodes them: both 500'd before the fix.
+    memory = await service.capture("I prefer window seats")
+    assert_is_none(memory.embedding)
+    assert_is_none(memory.embedded_version)
+
+    loose = await service.browse_by_state("loose")
+    assert_eq([m.id for m in loose], [memory.id])
+
+    payload = b"vector-bytes"
+    async with service.database.transaction() as tx:
+        _ = await tx.execute(
+            update(Memory)
+            .set(Memory.embedding.to(payload))
+            .set(Memory.embedded_version.to(memory.version))
+            .where(Memory.id.eq(memory.id))
+        )
+    stored = await fetch_memory_row(service, memory)
+    assert stored is not None
+    assert_eq(stored.embedding, payload)
+    assert_eq(stored.embedded_version, memory.version)
