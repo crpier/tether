@@ -11,6 +11,7 @@ from typing import Any
 from snektest import assert_eq, assert_in, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
+from tether.embeddings import FakeEmbedder
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
@@ -19,7 +20,10 @@ SESSION_SECRET = "test-session-secret"
 
 
 def make_client(root: Path) -> TestClient:
-    """Create a test app with isolated persistent DB and `.tether` root."""
+    """Create a test app with isolated persistent DB and `.tether` root.
+
+    Wires a `FakeEmbedder` so the hybrid-search path runs end-to-end through the
+    real index without downloading an embedding model."""
     return TestClient(
         create_app(
             config=AppConfig(
@@ -29,6 +33,7 @@ def make_client(root: Path) -> TestClient:
                 session_secret=SESSION_SECRET,
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
+            embedder=FakeEmbedder(),
         )
     )
 

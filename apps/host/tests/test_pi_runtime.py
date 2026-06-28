@@ -22,6 +22,7 @@ from snektest import (
     test,
 )
 
+from tether.embeddings import FakeEmbedder
 from tether.pi_runtime import PiRpcClient, PiRuntime, PiRuntimeConfig
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
@@ -100,6 +101,7 @@ async def live_host() -> AsyncGenerator[LiveHost]:
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
             tool_secret="test-secret",
+            embedder=FakeEmbedder(),
         )
         bound_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         bound_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

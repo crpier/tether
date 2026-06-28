@@ -14,13 +14,14 @@ Searches only tethered, non-deleted Memories.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
 from uuid import uuid7
 
 from anyio import NamedTemporaryFile, Path
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel, DirectoryPath, Json, PositiveInt
 from snekql.sqlite import (
+    Blob,
     CurrentTimestamp,
     Database,
     Fetched,
@@ -38,6 +39,9 @@ from yaml import safe_dump, safe_load
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
+
+if TYPE_CHECKING:
+    from tether.search_index import SearchCandidate
 
 type MemoryState = Literal["loose", "tethered"]
 """A Memory's trust state. `deleted` is an orthogonal soft-delete marker, not a state."""
@@ -75,6 +79,14 @@ class MemoryConflictError(Exception):
 
 class EmptySearchQueryError(Exception):
     """Raised when a keyword Search is asked to run on a blank query."""
+
+
+class SearchUnavailableError(Exception):
+    """Raised when `search` is called on a MemoryService wired without a searcher.
+
+    Search needs the embedder + index seam (`MemorySearchService`). A bare
+    MemoryService (e.g. some tests, the Recall path) never calls `search`, so the
+    dependency is optional; reaching `search` without it is a wiring bug."""
 
 
 class EmptyMemoryContentError(Exception):
@@ -136,6 +148,22 @@ class Memory[S = Pending](Model[S, "Memory[Fetched]"]):
         default=None,
         nullable=True,
     )
+    embedding: Memory.Col[bytes | None] = Blob(
+        default=None,
+        nullable=True,
+    )
+    """Canonical embedding vector for this Memory, as raw bytes.
+
+    SQLite is the source of truth for the vector; the LanceDB index is a derived
+    projection rebuilt from it. `None` until the embedder has run."""
+    embedded_version: Memory.Col[int | None] = Integer(
+        default=None,
+        nullable=True,
+    )
+    """The content `version` the stored `embedding` reflects.
+
+    `None` means an embedding is owed (never produced, or content changed since).
+    The reconciler embeds any Memory whose `embedded_version != version`."""
 
 
 class FrontMatter(BaseModel):
@@ -210,6 +238,22 @@ class KnowledgeBaseService:
             await path.unlink()
 
 
+class MemorySearcher(Protocol):
+    """The search seam the spine needs: the query read-path plus the index hooks.
+
+    A structural Protocol (satisfied by `MemorySearchService`) so the spine does
+    not import the concrete facade — that import would close a cycle, since the
+    facade depends on `Memory`."""
+
+    async def candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[SearchCandidate]: ...
+    async def index_memory(
+        self, memory: Memory[Fetched], *, logger: Logger
+    ) -> None: ...
+    async def deindex_memory(self, memory_id: UUID7, *, logger: Logger) -> None: ...
+
+
 class MemoryService:
     """Capability surface for the Memory Review spine, over a snekql database.
 
@@ -222,11 +266,18 @@ class MemoryService:
         kb_service: KnowledgeBaseService,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
+        searcher: MemorySearcher | None = None,
     ) -> None:
         self.database: Database = database
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.kb_service: KnowledgeBaseService = kb_service
         self.tracer: Tracer = tracer
+        self.searcher: MemorySearcher | None = searcher
+        """Search seam (embedder + index + reconciler hooks); `None` if unwired.
+
+        Optional because the Recall path and many service tests construct a bare
+        MemoryService that never searches. The Review trigger sites best-effort
+        index through it; `search` requires it."""
 
     async def capture(
         self,
@@ -279,41 +330,59 @@ class MemoryService:
         *,
         logger: Logger,
     ) -> list[Memory[Fetched]]:
-        """Keyword Search the assistant uses to pull context.
+        """Hybrid Search the assistant uses to pull context.
 
-        Placeholder matcher: the query is split into whitespace terms, each
-        matched case-insensitively with `LIKE` and AND-ed; results are
-        tethered-only, newest-first, unranked, capped at `limit` (default 50).
-        Because the order is recency, the cap keeps the newest matches."""
-        terms = query.split()
-        if not terms:
+        The query is embedded and run through the index's lexical + semantic
+        arms, fused by RRF; the ranked candidate ids are then re-fetched from
+        SQLite and re-filtered to `tethered ∧ ¬deleted`. That upstream re-filter
+        is where the assistant-only-sees-tethered invariant is enforced: a
+        drifted index (an orphan a missed event left behind) can surface a
+        candidate, but a loose or deleted Memory is dropped here and never
+        reaches the assistant. Results keep the index's
+        relevance order; the SQLite round-trip preserves it, not recency."""
+        normalised_query = query.strip()
+        if not normalised_query:
             msg = "keyword Search requires a non-empty query"
             raise EmptySearchQueryError(msg)
+        if self.searcher is None:
+            msg = "MemoryService.search requires a configured searcher"
+            raise SearchUnavailableError(msg)
         with self.tracer.start_as_current_span(
             "MemoryService.search",
-            attributes={
-                "memory.search.limit": limit,
-                "memory.search.terms_count": len(terms),
-            },
+            attributes={"memory.search.limit": limit},
         ) as span:
-            _debug(logger, "Searching Memories", terms_count=len(terms), limit=limit)
-            tethered_matches = select(Memory).where(
-                Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
+            _debug(logger, "Searching Memories", limit=limit)
+            candidates = await self.searcher.candidates(
+                normalised_query, limit=limit, logger=logger
             )
-            for term in terms:
-                tethered_matches = tethered_matches.where(
-                    Memory.content.like(f"%{term}%")
+            span.set_attribute("memory.search.candidate_count", len(candidates))
+            if not candidates:
+                _debug(
+                    logger,
+                    "Memory Search completed",
+                    limit=limit,
+                    candidate_count=0,
+                    result_count=0,
                 )
+                return []
+            rank = {
+                candidate.id: position for position, candidate in enumerate(candidates)
+            }
             async with self.database.transaction() as tx:
                 memories = await tx.fetch_all(
-                    tethered_matches.order_by(Memory.created_at.desc()).limit(limit)
+                    select(Memory).where(
+                        Memory.id.in_(*rank)
+                        & Memory.tethered_at.is_not_null()
+                        & Memory.deleted_at.is_null()
+                    )
                 )
+            memories.sort(key=lambda memory: rank[memory.id])
             span.set_attribute("memory.search.result_count", len(memories))
             _debug(
                 logger,
                 "Memory Search completed",
-                terms_count=len(terms),
                 limit=limit,
+                candidate_count=len(candidates),
                 result_count=len(memories),
             )
             return memories
@@ -414,6 +483,7 @@ class MemoryService:
                         msg = f"Tried to update memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                         raise MemoryConflictError(msg)
             await self._try_set_projection(fresh_memory, logger=logger)
+            await self._try_index(fresh_memory, logger=logger)
             span.set_attribute("memory.version", fresh_memory.version)
             _info(
                 logger,
@@ -473,9 +543,12 @@ class MemoryService:
                 msg = f"Tried to edit memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                 raise MemoryConflictError(msg)
 
-        # An invariant is that loose memories don't have projections
+        # An invariant is that loose memories don't have projections, and loose
+        # memories aren't indexed — so both derived artifacts refresh only when
+        # the edited Memory is tethered.
         if fresh_memory.tethered_at is not None:
             await self._try_set_projection(fresh_memory, logger=logger)
+            await self._try_index(fresh_memory, logger=logger)
         _info(
             logger,
             "Memory content edited",
@@ -536,6 +609,7 @@ class MemoryService:
                 raise MemoryConflictError(msg)
 
         await self._try_remove_projection(memory.id, logger=logger)
+        await self._try_deindex(deleted_memory.id, logger=logger)
         _info(
             logger,
             "Memory deleted",
@@ -613,6 +687,47 @@ class MemoryService:
             _exception(
                 logger,
                 "Failed to remove Memory projection",
+                memory_id=str(memory_id),
+            )
+
+    async def _try_index(
+        self,
+        memory: Memory[Fetched],
+        *,
+        logger: Logger,
+    ) -> None:
+        """Best-effort index a Memory after a tether/edit; never fails the write.
+
+        Like the markdown projection, the index entry is a derived artifact and
+        SQLite is canonical: a failed hook is logged, not raised, because the
+        reconciler's pass is the correctness backstop. No-op when search is
+        unwired."""
+        if self.searcher is None:
+            return
+        _debug(logger, "Indexing Memory for search", memory_id=str(memory.id))
+        try:
+            await self.searcher.index_memory(memory, logger=logger)
+        except Exception:
+            _exception(
+                logger, "Failed to index Memory for search", memory_id=str(memory.id)
+            )
+
+    async def _try_deindex(
+        self,
+        memory_id: UUID7,
+        *,
+        logger: Logger,
+    ) -> None:
+        """Best-effort drop a Memory from the index after delete; never raises."""
+        if self.searcher is None:
+            return
+        _debug(logger, "Deindexing Memory from search", memory_id=str(memory_id))
+        try:
+            await self.searcher.deindex_memory(memory_id, logger=logger)
+        except Exception:
+            _exception(
+                logger,
+                "Failed to deindex Memory from search",
                 memory_id=str(memory_id),
             )
 

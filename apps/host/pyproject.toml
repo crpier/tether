@@ -7,8 +7,11 @@ requires-python = ">=3.14"
 dependencies = [
     "aiosqlite>=0.22.1",
     "anyio>=4.14.0",
+    "fastembed>=0.8.0",
     "httpx2>=2.5.0",
     "itsdangerous>=2.2.0",
+    "lancedb>=0.33.0",
+    "numpy>=2.5.0",
     "opentelemetry-api>=1.43.0",
     "opentelemetry-sdk>=1.43.0",
     "pydantic>=2.13.4",
@@ -68,6 +71,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
   "ARG001",  # Allow unused function arguments. Stub route handlers in tests take Starlette request/body params they sometimes ignore.
+  "ARG002",  # Allow unused method arguments. Test doubles implement Protocols whose signatures include params (e.g. `logger`) the stub ignores.
   "FBT003",  # Allow boolean positional values in function calls. This is useful for assert_* function.
   "N802",    # Don't force function names to be snake_case. Useful e.g. when writing tests for classes.
   "N999",    # Don't force module names to be snake_case. Useful e.g. when writing tests for classes.

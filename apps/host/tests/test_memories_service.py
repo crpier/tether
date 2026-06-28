@@ -20,6 +20,7 @@ A `Memory` exposes `.id`, `.content`, `.version`, and the
 import asyncio
 import contextlib
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
@@ -30,7 +31,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 from pydantic import PositiveInt
-from snekql.sqlite import Config, Database, Fetched, delete, select
+from snekql.sqlite import Config, Database, Fetched, delete, select, update
 from snektest import (
     assert_eq,
     assert_gt,
@@ -46,6 +47,7 @@ from snektest import (
 )
 from structlog.testing import capture_logs
 
+from tether.embeddings import FakeEmbedder
 from tether.logging import Logger
 from tether.memories import (
     EmptyMemoryContentError,
@@ -59,6 +61,10 @@ from tether.memories import (
     MemoryState,
     create_memory_schema,
 )
+from tether.memory_search import MemorySearchService
+from tether.reconciler import SearchReconciler
+from tether.search_index import SearchDocument, SearchIndex
+from tether.search_meta import SearchMetaService, create_search_meta_schema
 
 
 def noop_tracer() -> Tracer:
@@ -173,6 +179,65 @@ async def memory_service() -> AsyncGenerator[LoggedMemoryService]:
     await db.close()
 
 
+_SEARCH_DIM = 64
+"""FakeEmbedder width for search fixtures: wide enough to avoid token collisions."""
+
+
+@dataclass
+class SearchableHarness:
+    """A MemoryService wired with the real search seam, plus its internals.
+
+    Exposes the underlying `SearchIndex` so tests can deliberately drift it (index
+    an id SQLite would never return) and prove the ADR-0001 re-filter holds."""
+
+    service: LoggedMemoryService
+    index: SearchIndex
+    embedder: FakeEmbedder
+    logger: Logger
+
+
+@fixture
+async def searchable_memory_service() -> AsyncGenerator[SearchableHarness]:
+    """A MemoryService backed by a real LanceDB index + a deterministic embedder.
+
+    Uses `FakeEmbedder` (no model download) and a throwaway on-disk index, so the
+    full tether/edit/delete -> index -> hybrid-search path runs in the gate.
+    """
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
+    await create_search_meta_schema(db)
+    embedder = FakeEmbedder(vector_dim=_SEARCH_DIM)
+    logger = structlog.stdlib.get_logger("test.memory_service.search")
+    async with TemporaryDirectory() as root:
+        root_path = Path(root)
+        kb_root = root_path / "kb"
+        kb_root.mkdir()
+        index = await SearchIndex.open(
+            index_dir=root_path / "index", vector_dim=_SEARCH_DIM
+        )
+        reconciler = SearchReconciler(
+            database=db,
+            index=index,
+            embedder=embedder,
+            meta=SearchMetaService(database=db),
+        )
+        service = MemoryService(
+            database=db,
+            kb_service=KnowledgeBaseService(kb_root=kb_root),
+            tracer=noop_tracer(),
+            searcher=MemorySearchService(
+                embedder=embedder, index=index, writer=reconciler
+            ),
+        )
+        yield SearchableHarness(
+            service=LoggedMemoryService(service, logger=logger),
+            index=index,
+            embedder=embedder,
+            logger=logger,
+        )
+    await db.close()
+
+
 class FailingOnceKnowledgeBaseService(KnowledgeBaseService):
     """A KB adapter that drops the first projection write."""
 
@@ -237,8 +302,8 @@ async def capture_logs_the_captured_memory_id_without_content() -> None:
 
 @test()
 async def search_logs_the_result_count() -> None:
-    """Keyword Search emits debug context about match count."""
-    service = await load_fixture(memory_service())
+    """Hybrid Search emits debug context about candidate and result counts."""
+    service = (await load_fixture(searchable_memory_service())).service
     _ = await capture_tethered_memory(service, "needle matching memory")
 
     with capture_logs() as logs:
@@ -249,8 +314,8 @@ async def search_logs_the_result_count() -> None:
             "event": "Memory Search completed",
             "log_level": "debug",
             "limit": 50,
+            "candidate_count": 1,
             "result_count": 1,
-            "terms_count": 1,
         },
         logs,
     )
@@ -334,7 +399,7 @@ async def capturing_does_not_project_markdown() -> None:
 @test()
 async def loose_memory_is_excluded_from_search() -> None:
     """a loose Memory is not yet part of the assistant's Search."""
-    service = await load_fixture(memory_service())
+    service = (await load_fixture(searchable_memory_service())).service
 
     loose = await service.capture("I prefer aisle seats on flights")
 
@@ -345,7 +410,7 @@ async def loose_memory_is_excluded_from_search() -> None:
 @test()
 async def tether_makes_loose_memory_searchable() -> None:
     """Tether is the trust transition that admits a Memory to Search."""
-    service = await load_fixture(memory_service())
+    service = (await load_fixture(searchable_memory_service())).service
 
     memory = await capture_tethered_memory(
         service, "I prefer window seats on long flights"
@@ -358,7 +423,7 @@ async def tether_makes_loose_memory_searchable() -> None:
 @test()
 async def deleted_memory_is_excluded_from_search() -> None:
     """Reject removes a tethered Memory from the assistant's Search."""
-    service = await load_fixture(memory_service())
+    service = (await load_fixture(searchable_memory_service())).service
     memory = await capture_tethered_memory(
         service, "got a penicillin prescription back in 2019"
     )
@@ -371,7 +436,10 @@ async def deleted_memory_is_excluded_from_search() -> None:
 
 @test()
 async def search_requires_a_non_empty_query() -> None:
-    """Keyword Search rejects blank queries instead of browsing all Memory."""
+    """Hybrid Search rejects blank queries before reaching the index.
+
+    The blank-query guard runs ahead of the searcher check, so a bare service
+    (no search seam) still rejects rather than embedding an empty string."""
     service = await load_fixture(memory_service())
 
     with assert_raises(EmptySearchQueryError):
@@ -379,68 +447,59 @@ async def search_requires_a_non_empty_query() -> None:
 
 
 @test()
-async def search_matches_memory_with_all_terms() -> None:
-    """Keyword Search includes Memories containing every query term."""
-    service = await load_fixture(memory_service())
-    matching = await capture_tethered_memory(
-        service, "I prefer window seats on flights"
+async def search_ranks_the_more_relevant_memory_first() -> None:
+    """Hybrid Search is relevance-ranked: the stronger match leads the results."""
+    service = (await load_fixture(searchable_memory_service())).service
+    relevant = await capture_tethered_memory(
+        service, "penicillin prescription from the pharmacy"
     )
+    _ = await capture_tethered_memory(service, "grocery shopping list for sunday")
 
-    found = [hit.id for hit in await service.search("window flights")]
+    found = [hit.id for hit in await service.search("penicillin prescription")]
 
-    assert_in(matching.id, found)
+    assert_eq(found[0], relevant.id)
 
 
 @test()
-async def search_excludes_memory_missing_a_query_term() -> None:
-    """Keyword Search ANDs whitespace terms together."""
-    service = await load_fixture(memory_service())
-    non_matching = await capture_tethered_memory(
-        service, "I prefer window tables in cafes"
-    )
+async def search_returns_nothing_when_no_memory_is_tethered() -> None:
+    """With nothing tethered the index is empty, so Search yields no results."""
+    service = (await load_fixture(searchable_memory_service())).service
+    _ = await service.capture("a loose, never-tethered memory")
 
-    found = [hit.id for hit in await service.search("window flights")]
-
-    assert_not_in(non_matching.id, found)
+    assert_eq(await service.search("memory"), [])
 
 
 @test()
-async def search_orders_matches_newest_first() -> None:
-    """Keyword Search is unranked, so recency orders equal LIKE matches."""
-    service = await load_fixture(memory_service())
-    older = await capture_tethered_memory(service, "needle older memory")
+async def search_excludes_an_orphan_left_in_a_drifted_index() -> None:
+    """ADR-0001 is enforced by the SQLite re-filter, not the index.
 
-    # We sleep a bit because the precision of our datetimes in sqlite is miliseconds.
-    await asyncio.sleep(0.01)
-    newer = await capture_tethered_memory(service, "needle newer memory")
+    A missed event can leave the index holding a Memory that is no longer
+    `tethered ∧ ¬deleted`. Even when such an orphan is the top candidate, the
+    re-filter against SQLite drops it: the assistant never sees it. Here a loose
+    Memory is indexed directly (simulating drift) and must not surface."""
+    harness = await load_fixture(searchable_memory_service())
+    service = harness.service
+    loose = await service.capture("orphaned aisle-seat preference")
+    vector = await harness.embedder.embed_documents([loose.content])
 
-    found = [hit.id for hit in await service.search("needle")]
+    await harness.index.upsert(
+        [SearchDocument(id=loose.id, content=loose.content, vector=vector[0])]
+    )
 
-    assert_eq(found, [newer.id, older.id])
+    found = [hit.id for hit in await service.search("aisle")]
+    assert_not_in(loose.id, found)
 
 
 @test()
 async def human_edit_of_tethered_memory_is_searchable_by_new_text() -> None:
-    """A human edit of tethered Memory makes the new text Searchable."""
-    service = await load_fixture(memory_service())
+    """A human edit of tethered Memory re-indexes it under the new text."""
+    service = (await load_fixture(searchable_memory_service())).service
     memory = await capture_tethered_memory(service, "I live in Berlin")
 
     memory = await service.edit_content(memory, "I live in Munich")
 
     found = [hit.id for hit in await service.search("Munich")]
     assert_in(memory.id, found)
-
-
-@test()
-async def human_edit_of_tethered_memory_drops_from_old_text() -> None:
-    """An edit replaces searchable text: old wording no longer matches."""
-    service = await load_fixture(memory_service())
-    memory = await capture_tethered_memory(service, "I live in Berlin")
-
-    memory = await service.edit_content(memory, "I live in Munich")
-
-    found = [hit.id for hit in await service.search("Berlin")]
-    assert_not_in(memory.id, found)
 
 
 @test()
@@ -614,7 +673,7 @@ async def stale_delete_leaves_memory_live() -> None:
 @test()
 async def stale_delete_keeps_memory_searchable() -> None:
     """A rejected stale delete does not remove the Memory from Search."""
-    service = await load_fixture(memory_service())
+    service = (await load_fixture(searchable_memory_service())).service
     observed = await service.capture("I live in Berlin")
     _ = await service.tether(observed)
 
@@ -768,7 +827,7 @@ async def editing_a_loose_memory_keeps_it_loose() -> None:
 @test()
 async def editing_a_loose_memory_stays_excluded_from_search() -> None:
     """edited loose Memory stays outside assistant Search."""
-    service = await load_fixture(memory_service())
+    service = (await load_fixture(searchable_memory_service())).service
     memory = await service.capture("I think I am allergic to penicillin")
 
     _ = await service.edit_content(memory, "I am allergic to penicillin")
@@ -1003,8 +1062,8 @@ async def projection_failure_does_not_roll_back_tether() -> None:
 
         tethered = await service.tether(memory)
 
-        found = [hit.id for hit in await service.search("aisle")]
-        assert_in(tethered.id, found)
+        live = [hit.id for hit in await service.browse_by_state("tethered")]
+        assert_in(tethered.id, live)
         assert_true(not projection_path(service, tethered).exists())
     await db.close()
 
@@ -1141,8 +1200,8 @@ async def tethered_browse_orders_by_tethered_at_not_created_at() -> None:
 
 @test()
 async def search_caps_results_at_the_given_limit() -> None:
-    """Keyword Search returns at most `limit` matches."""
-    service = await load_fixture(memory_service())
+    """Hybrid Search returns at most `limit` matches."""
+    service = (await load_fixture(searchable_memory_service())).service
     for _ in range(3):
         _ = await capture_tethered_memory(service, "needle in the haystack")
 
@@ -1152,27 +1211,53 @@ async def search_caps_results_at_the_given_limit() -> None:
 
 
 @test()
-async def search_keeps_the_newest_within_the_limit() -> None:
-    """When limited, keyword Search keeps the newest matches (recency-ordered)."""
-    service = await load_fixture(memory_service())
-    _ = await capture_tethered_memory(service, "needle oldest")
-    await asyncio.sleep(0.01)
-    middle = await capture_tethered_memory(service, "needle middle")
-    await asyncio.sleep(0.01)
-    newest = await capture_tethered_memory(service, "needle newest")
-
-    found = [hit.id for hit in await service.search("needle", limit=2)]
-
-    assert_eq(found, [newest.id, middle.id])
-
-
-@test()
 async def search_defaults_to_a_limit_of_fifty() -> None:
-    """Keyword Search defaults `limit` to 50."""
-    service = await load_fixture(memory_service())
+    """Hybrid Search defaults `limit` to 50."""
+    service = (await load_fixture(searchable_memory_service())).service
     for index in range(51):
         _ = await capture_tethered_memory(service, f"needle number {index}")
 
     found = await service.search("needle")
 
     assert_eq(len(found), 50)
+
+
+@test()
+async def a_captured_memory_owes_an_embedding() -> None:
+    """A fresh Memory has no embedding yet: both embedding columns are NULL.
+
+    The embedding vector is a *derived* artifact produced after capture, so a
+    freshly captured Memory carries `embedding is None` (no bytes) and
+    `embedded_version is None` (the vector owes the current content version)."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture("I prefer aisle seats")
+
+    assert_is_none(memory.embedding)
+    assert_is_none(memory.embedded_version)
+
+
+@test()
+async def the_embedding_columns_round_trip_through_sqlite() -> None:
+    """The embedding BLOB and embedded_version persist and read back exactly.
+
+    SQLite holds the canonical vector as raw bytes; `embedded_version` records
+    the content `version` the vector reflects. This asserts the storage contract
+    the reconciler relies on, independent of how vectors are produced."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("I prefer aisle seats")
+    payload = b"\x00\x01\x02\x03vector-bytes\xfe\xff"
+
+    async with service.database.transaction() as tx:
+        _ = await tx.execute(
+            update(Memory)
+            .set(Memory.embedding.to(payload))
+            .set(Memory.embedded_version.to(memory.version))
+            .where(Memory.id.eq(memory.id))
+        )
+
+    stored = await fetch_memory_row(service, memory)
+    assert_is_not_none(stored)
+    assert stored is not None
+    assert_eq(stored.embedding, payload)
+    assert_eq(stored.embedded_version, memory.version)

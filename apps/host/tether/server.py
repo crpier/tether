@@ -31,6 +31,7 @@ from tether.bucket_tools import internal_bucket_tool_routes
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
 from tether.chat_ws import websocket_routes
 from tether.conversations import ConversationService, create_conversation_schema
+from tether.embeddings import Embedder, FastEmbedder
 from tether.events import EventHub
 from tether.logging import ContextLoggerMiddleware, Logger, configure_logging
 from tether.memories import (
@@ -38,6 +39,7 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
+from tether.memory_search import MemorySearchService
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
@@ -49,6 +51,7 @@ from tether.recall import (
     create_recall_schema,
 )
 from tether.recall_tools import internal_recall_tool_routes
+from tether.reconciler import SearchReconciler
 from tether.review import ReviewService
 from tether.scheduler import (
     EphemeralPiConfig,
@@ -59,6 +62,8 @@ from tether.scheduler import (
     SystemClock,
     TriggerDispatcher,
 )
+from tether.search_index import SearchIndex
+from tether.search_meta import SearchMetaService, create_search_meta_schema
 from tether.telemetry import (
     Telemetry,
     TelemetryExporter,
@@ -108,6 +113,7 @@ class AppConfig:
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
+    search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
     study_item_generator: StudyItemGenerator | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
@@ -158,6 +164,7 @@ async def _create_schemas(db: Database) -> None:
     await create_trigger_schema(db)
     await create_push_schema(db)
     await create_recall_schema(db)
+    await create_search_meta_schema(db)
 
 
 def _build_scheduler(
@@ -251,12 +258,49 @@ def _build_recall_service(
     )
 
 
+async def _build_search(
+    *,
+    database: Database,
+    embedder: Embedder | None,
+    index_dir: Path,
+    logger: Logger,
+) -> tuple[MemorySearchService | None, SearchReconciler | None]:
+    """Wire the search subsystem when an embedder is supplied, else disable it.
+
+    Opens the index, converges it with SQLite once on boot (embedding any owed
+    tethered Memory and dropping orphans — a no-op, and no model load, on an
+    empty corpus), and returns the searcher for `MemoryService` alongside the
+    reconciler the lifespan drives on a periodic pass. With no embedder returns
+    `(None, None)`: the index is never opened and no model loads."""
+    if embedder is None:
+        return None, None
+    search_index = await SearchIndex.open(
+        index_dir=index_dir, vector_dim=embedder.vector_dim
+    )
+    reconciler = SearchReconciler(
+        database=database,
+        index=search_index,
+        embedder=embedder,
+        meta=SearchMetaService(database=database),
+    )
+    _ = await reconciler.reconcile(logger=logger)
+    searcher = MemorySearchService(
+        embedder=embedder, index=search_index, writer=reconciler
+    )
+    return searcher, reconciler
+
+
 def _lifespan(
     *,
     config: AppConfig,
     telemetry_settings: TelemetrySettings,
+    embedder: Embedder | None = None,
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None, bool | None]]:
-    """Create lifespan wiring for a configured SQLite DB and KB root."""
+    """Create lifespan wiring for a configured SQLite DB and KB root.
+
+    `embedder` defaults to the in-host `FastEmbedder` (loads the ONNX model on
+    first boot); tests inject a `FakeEmbedder` to keep the search path in the
+    gate without a model download."""
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncGenerator[None]:
@@ -296,11 +340,22 @@ def _lifespan(
             kb_service = KnowledgeBaseService(kb_root=configured_kb_root)
             event_hub = EventHub()
             app.state.event_hub = event_hub
+            # Search is wired only when an embedder is supplied. Production
+            # (`create_app_from_environment`) passes a `FastEmbedder`; tests that
+            # exercise search pass a `FakeEmbedder`; everything else runs with
+            # search disabled and never opens the index or loads a model.
+            searcher, search_reconciler = await _build_search(
+                database=db,
+                embedder=embedder,
+                index_dir=configured_kb_root / "index",
+                logger=app_logger,
+            )
             memory_service = MemoryService(
                 database=db,
                 event_publisher=event_hub,
                 kb_service=kb_service,
                 tracer=telemetry.tracer,
+                searcher=searcher,
             )
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
@@ -363,17 +418,31 @@ def _lifespan(
                 kb_root=configured_kb_root,
             )
             app.state.scheduler = scheduler
-            idle_reaper = asyncio.create_task(runtime_registry.reap_idle_forever())
-            scheduler_task = asyncio.create_task(scheduler.run_forever())
+            background_tasks = [
+                asyncio.create_task(runtime_registry.reap_idle_forever()),
+                asyncio.create_task(scheduler.run_forever()),
+            ]
+            # The boot reconcile above primes the index; this periodic pass is the
+            # correctness backstop the best-effort latency hooks lean on — it
+            # sweeps orphans and runs optimize() while the host is up, not only at
+            # boot. Started only when search is wired (an embedder was supplied).
+            if search_reconciler is not None:
+                background_tasks.append(
+                    asyncio.create_task(
+                        search_reconciler.reconcile_forever(
+                            interval_seconds=config.search_reconcile_seconds,
+                            logger=app_logger,
+                        )
+                    )
+                )
             try:
                 yield
             finally:
-                _ = idle_reaper.cancel()
-                _ = scheduler_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await idle_reaper
-                with contextlib.suppress(asyncio.CancelledError):
-                    await scheduler_task
+                for task in background_tasks:
+                    _ = task.cancel()
+                for task in background_tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
                 await scheduler.shutdown()
                 await runtime_registry.shutdown_all()
                 telemetry.shutdown()
@@ -386,12 +455,15 @@ def create_app(
     config: AppConfig,
     telemetry_settings: TelemetrySettings | None = None,
     tool_secret: str | None = None,
+    embedder: Embedder | None = None,
 ) -> Starlette:
     """Construct the Starlette application with Memory routes and lifespan wiring.
 
     The public REST routes are also handed to `openapi_routes` so `/openapi.json`
     and `/docs` describe exactly the API that is mounted. By default, both the
-    SQLite database and markdown Knowledge base live under `.tether`.
+    SQLite database and markdown Knowledge base live under `.tether`. `embedder`
+    defaults to the in-host `FastEmbedder`; tests pass a `FakeEmbedder` to drive
+    the search path without downloading a model.
     """
     api_routes = public_api_routes()
     docs = openapi_routes(api_routes, title="Tether", version="0.1.0")
@@ -411,6 +483,7 @@ def create_app(
         lifespan=_lifespan(
             config=config,
             telemetry_settings=configured_telemetry,
+            embedder=embedder,
         ),
     )
     app.state.app_password = config.app_password
@@ -451,6 +524,7 @@ def create_app_from_environment() -> Starlette:
         ),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
+        embedder=FastEmbedder(),
     )
 
 
