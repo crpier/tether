@@ -107,16 +107,20 @@ def host_settings_read_tether_environment_variables() -> None:
             ),
             TETHER_PORT="9001",
             TETHER_RELOAD="true",
+            TETHER_SECURE_COOKIES="true",
             TETHER_SESSION_SECRET="configured-session-secret",
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
             TETHER_TOOL_SECRET="configured-tool-secret",
+            TETHER_WEB_DIST=f"{directory}/dist",
         ),
     ):
         settings = HostSettings()
 
     assert_eq(settings.app_password, "configured-password")
+    assert_true(settings.secure_cookies)
+    assert_eq(settings.web_dist, Path(directory) / "dist")
     assert_eq(settings.database_path, Path(directory) / "host.sqlite3")
     assert_eq(settings.host, "127.0.0.2")
     assert_eq(settings.kb_root, Path(directory) / "kb")
@@ -263,6 +267,75 @@ def serve_runs_uvicorn_against_the_environment_app_factory() -> None:
     assert_eq(calls[0]["reload"], True)
     assert_eq(calls[0]["log_config"], None)
     assert_eq(calls[0]["access_log"], False)
+
+
+@test()
+def the_host_serves_the_built_spa_without_shadowing_the_api() -> None:
+    """With a built SPA configured, the host serves index.html and its assets,
+    falls back to index.html for unknown client routes, and still routes `/api`."""
+    with TemporaryDirectory() as directory:
+        dist = Path(directory) / "dist"
+        (dist / "assets").mkdir(parents=True)
+        _ = (dist / "index.html").write_text("<!doctype html><title>Tether</title>")
+        _ = (dist / "assets" / "app.js").write_text("console.log('tether')")
+        with TestClient(
+            server.create_app(
+                config=AppConfig(
+                    app_password="test-app-password",
+                    database_path=":memory:",
+                    kb_root=f"{directory}/kb",
+                    session_secret="test-session-secret",
+                    web_dist=dist,
+                ),
+                telemetry_settings=TelemetrySettings(
+                    exporter=TelemetryExporter.NONE,
+                    install_global_provider=False,
+                ),
+            )
+        ) as client:
+            root = client.get("/")
+            asset = client.get("/assets/app.js")
+            client_route = client.get("/some/spa/route")
+            login = client.post(
+                "/api/auth/login", json={"password": "test-app-password"}
+            )
+            api = client.get("/api/memories", params={"state": "loose"})
+
+    assert_eq(root.status_code, 200)
+    assert_in("Tether", root.text)
+    assert_eq(asset.status_code, 200)
+    assert_in("tether", asset.text)
+    # An unknown non-API path falls back to the SPA shell for client-side routing.
+    assert_eq(client_route.status_code, 200)
+    assert_in("Tether", client_route.text)
+    # The API is mounted ahead of the SPA catch-all and still responds.
+    assert_eq(login.status_code, 204)
+    assert_eq(api.status_code, 200)
+
+
+@test()
+def the_host_serves_no_spa_when_web_dist_is_unset() -> None:
+    """Without a configured SPA build the root path is unhandled (dev/test default)."""
+    with (
+        TemporaryDirectory() as directory,
+        TestClient(
+            server.create_app(
+                config=AppConfig(
+                    app_password="test-app-password",
+                    database_path=":memory:",
+                    kb_root=f"{directory}/kb",
+                    session_secret="test-session-secret",
+                ),
+                telemetry_settings=TelemetrySettings(
+                    exporter=TelemetryExporter.NONE,
+                    install_global_provider=False,
+                ),
+            )
+        ) as client,
+    ):
+        root = client.get("/")
+
+    assert_eq(root.status_code, 404)
 
 
 @test()

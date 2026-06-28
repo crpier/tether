@@ -82,3 +82,11 @@ lint: host-lint agent-lint
 
 # all format checks
 format-check: host-format-check agent-format-check
+
+# build + run the production image locally via docker compose (see docs/deploy.md)
+deploy-local:
+    docker compose up -d --build
+
+# stop the local compose stack (keeps the data + model-cache volumes)
+deploy-local-down:
+    docker compose down

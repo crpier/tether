@@ -20,6 +20,12 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.routing import Mount
+from starlette.staticfiles import StaticFiles
+from starlette.status import HTTP_404_NOT_FOUND
+from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
 from tether.agent_trace import AgentTraceRecorder
@@ -119,6 +125,7 @@ class AppConfig:
     secure_cookies: bool = False
     study_item_generator: StudyItemGenerator | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
+    web_dist: Path | None = None
 
 
 class HostSettings(BaseSettings):
@@ -141,6 +148,8 @@ class HostSettings(BaseSettings):
     default_model: str | None = None
     port: int = 8000
     reload: bool = False
+    secure_cookies: bool = False
+    web_dist: Path | None = None
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -456,6 +465,46 @@ def _lifespan(
     return lifespan
 
 
+class _SpaStaticFiles(StaticFiles):
+    """Serve the built SPA, falling back to `index.html` for client routes.
+
+    The web app does client-side routing, so a GET for a path that isn't a real
+    asset must return the SPA shell (`index.html`) instead of a bare 404 —
+    otherwise refreshing or deep-linking a client route breaks. This is the
+    conventional single-page-app contract; the API/WS/docs routes are matched
+    ahead of this catch-all mount, so only genuinely unmatched paths reach here.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        """Resolve a static asset, serving the SPA shell when none matches.
+
+        In `html` mode `StaticFiles` *raises* `HTTPException(404)` for an
+        unmatched path rather than returning a 404 response, so the fallback is
+        handled in both the raised and returned form.
+        """
+        try:
+            response = await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != HTTP_404_NOT_FOUND:
+                raise
+            return await super().get_response("index.html", scope)
+        if response.status_code == HTTP_404_NOT_FOUND:
+            return await super().get_response("index.html", scope)
+        return response
+
+
+def _spa_mount(web_dist: str | Path) -> Mount | None:
+    """Build the SPA catch-all mount when a built `web_dist` directory exists.
+
+    Returns `None` when no build is configured or present (the dev/test default),
+    so the host runs API + WS only and the root path stays unhandled.
+    """
+    dist = Path(web_dist)
+    if not dist.is_dir():
+        return None
+    return Mount("/", app=_SpaStaticFiles(directory=dist, html=True), name="spa")
+
+
 def create_app(
     *,
     config: AppConfig,
@@ -474,6 +523,7 @@ def create_app(
     api_routes = public_api_routes()
     docs = openapi_routes(api_routes, title="Tether", version="0.1.0")
     configured_telemetry = telemetry_settings or TelemetrySettings()
+    spa_mount = _spa_mount(config.web_dist) if config.web_dist is not None else None
     app = Starlette(
         routes=[
             *api_routes,
@@ -486,6 +536,10 @@ def create_app(
             *internal_recall_tool_routes(),
             *websocket_routes,
             *docs,
+            # The SPA catch-all mounts at "/", so it must come last — every API,
+            # WS, and docs route above is matched before requests fall through to
+            # the static shell. Absent in dev/test (no build configured).
+            *([spa_mount] if spa_mount is not None else []),
         ],
         lifespan=_lifespan(
             config=config,
@@ -527,8 +581,9 @@ def create_app_from_environment() -> Starlette:
             kb_root=settings.kb_root,
             logging_level=settings.logging_level,
             model_allowlist=settings.model_allowlist,
-            secure_cookies=settings.telemetry_environment == "production",
+            secure_cookies=settings.secure_cookies,
             session_secret=settings.session_secret,
+            web_dist=settings.web_dist,
         ),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
