@@ -156,6 +156,22 @@ async def upsert_updates_existing_content() -> None:
 
 
 @test()
+async def list_ids_reports_every_indexed_document() -> None:
+    """`list_ids` returns exactly the ids currently stored, for orphan diffing."""
+    async with TemporaryDirectory() as tmp:
+        index = await SearchIndex.open(index_dir=Path(tmp) / "index", vector_dim=_DIM)
+        assert_eq(await index.list_ids(), set())
+        first = _doc("dentist appointment", [1.0, 0.0, 0.0, 0.0])
+        second = _doc("grocery list", [0.0, 1.0, 0.0, 0.0])
+        await index.upsert([first, second])
+
+        assert_eq(await index.list_ids(), {first.id, second.id})
+
+        await index.remove([first.id])
+        assert_eq(await index.list_ids(), {second.id})
+
+
+@test()
 async def remove_drops_documents_from_results() -> None:
     """A removed id no longer appears in search results."""
     async with TemporaryDirectory() as tmp:

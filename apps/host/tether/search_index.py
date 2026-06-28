@@ -102,6 +102,11 @@ class SearchIndex:
         self._table: AsyncTable = table
         self._vector_dim: int = vector_dim
 
+    @property
+    def vector_dim(self) -> int:
+        """Width of the vectors this index stores; fixes its schema."""
+        return self._vector_dim
+
     @classmethod
     async def open(cls, *, index_dir: Path, vector_dim: int) -> SearchIndex:
         """Open the index at `index_dir`, creating the table if it is absent.
@@ -200,6 +205,16 @@ class SearchIndex:
     async def count(self) -> int:
         """Number of documents currently indexed."""
         return await self._table.count_rows()
+
+    async def list_ids(self) -> set[UUID]:
+        """Every document id currently in the index.
+
+        The reconciler diffs this against SQLite's `tethered ∧ ¬deleted` set to
+        drop orphans (rows whose Memory was deleted or never un-tethered) left
+        behind by a missed event — the correctness backstop for the latency
+        path."""
+        rows = await self._table.query().select([_ID_COLUMN]).to_list()
+        return {UUID(str(row[_ID_COLUMN])) for row in rows}
 
     async def optimize(self) -> None:
         """Run LanceDB's background hygiene (compaction, index maintenance)."""
