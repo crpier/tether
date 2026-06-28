@@ -117,8 +117,12 @@ class FakeEmbedder:
 class FastEmbedder:
     """In-host FastEmbed/ONNX embedder; the sole importer of `fastembed`.
 
-    The model loads once at construction (~seconds, downloads on first ever use)
-    and inference runs on the default executor to keep the event loop free."""
+    The ONNX model is loaded lazily on the first embed call (it downloads on
+    first ever use), not at construction, so building the embedder is cheap and
+    booting the host never blocks on a model download — the model materializes
+    only when something is actually embedded. `model_name` / `vector_dim` are
+    fixed constants, so the index schema can be opened before the model loads.
+    Inference runs on the default executor to keep the event loop free."""
 
     def __init__(
         self,
@@ -128,7 +132,7 @@ class FastEmbedder:
     ) -> None:
         self._model_name: str = model_name
         self._vector_dim: int = vector_dim
-        self._model: TextEmbedding = TextEmbedding(model_name=model_name)
+        self._model: TextEmbedding | None = None
 
     @property
     def model_name(self) -> str:
@@ -138,14 +142,20 @@ class FastEmbedder:
     def vector_dim(self) -> int:
         return self._vector_dim
 
+    def _ensure_model(self) -> TextEmbedding:
+        """Load the ONNX model on first use; cached for the embedder's lifetime."""
+        if self._model is None:
+            self._model = TextEmbedding(model_name=self._model_name)
+        return self._model
+
     def _embed_documents_sync(self, texts: list[str]) -> list[Vector]:
         return [
             [float(value) for value in array.tolist()]
-            for array in self._model.embed(texts)
+            for array in self._ensure_model().embed(texts)
         ]
 
     def _embed_query_sync(self, text: str) -> Vector:
-        array = next(iter(self._model.query_embed([text])))
+        array = next(iter(self._ensure_model().query_embed([text])))
         return [float(value) for value in array.tolist()]
 
     async def embed_documents(self, texts: Sequence[str]) -> list[Vector]:

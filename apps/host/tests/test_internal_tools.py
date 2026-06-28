@@ -14,6 +14,7 @@ from typing import Any, cast
 from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 from starlette.testclient import TestClient
 
+from tether.embeddings import FakeEmbedder
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import SessionRegistry
@@ -34,6 +35,7 @@ def make_client(root: Path) -> TestClient:
         ),
         telemetry_settings=TelemetrySettings(install_global_provider=False),
         tool_secret=SECRET,
+        embedder=FakeEmbedder(),
     )
     cast("SessionRegistry", app.state.session_registry).register(SESSION)
     return TestClient(app)
