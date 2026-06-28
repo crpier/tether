@@ -13,8 +13,6 @@ bulk corpus content summarised to counts), so a trace is safe to return as-is.
 
 from __future__ import annotations
 
-from typing import cast
-
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -27,7 +25,7 @@ _MAX_LIMIT = 200
 
 def _recorder(request: Request) -> AgentTraceRecorder:
     """Return the host's agent-trace recorder."""
-    return cast("AgentTraceRecorder", request.app.state.trace_recorder)
+    return request.app.state.trace_recorder
 
 
 def _limit(request: Request) -> int:

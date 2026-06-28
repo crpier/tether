@@ -65,6 +65,11 @@ def _is_sensitive_key(key: str) -> bool:
     return any(marker in lowered for marker in _SENSITIVE_KEY_MARKERS)
 
 
+def _empty_tool_calls() -> list[ToolCallTrace]:
+    """Typed default factory for a run's tool-call list."""
+    return []
+
+
 def redact_args(args: dict[str, Any]) -> dict[str, Any]:
     """Mask credential-shaped keys and truncate long string arguments.
 
@@ -86,41 +91,41 @@ def summarize_result(result: object) -> object:
     """Project a tool result into a trace-safe summary.
 
     Collections are reduced to a count so a browse/search never dumps the corpus
-    into a trace; objects keep their shallow scalar fields with long strings
-    truncated; everything else is passed through (small, structured envelopes).
+    into a trace; objects are walked recursively so a long string or a bulk
+    collection nested anywhere inside an envelope is truncated/collapsed too, not
+    just at the top level; scalars pass through (small, structured envelopes).
 
     >>> summarize_result([1, 2, 3])
     {'kind': 'collection', 'count': 3}
+    >>> summarize_result({"page": {"rows": [1, 2], "id": "m1"}})["page"]
+    {'rows': {'kind': 'collection', 'count': 2}, 'id': 'm1'}
     """
     if isinstance(result, list):
+        # Narrowed to a list whose element types are unknown; we only count it,
+        # so casting away the element type is safe.
         return {"kind": "collection", "count": len(cast("list[Any]", result))}
     if isinstance(result, dict):
         summary: dict[str, Any] = {}
+        # Narrowed to a dict with unknown key/value types; each value is re-run
+        # through this same summariser, so the cast only feeds that recursion.
         for key, value in cast("dict[Any, Any]", result).items():
-            field_key = str(key)
-            if isinstance(value, str):
-                summary[field_key] = _truncate(value)
-            elif isinstance(value, list):
-                summary[field_key] = {
-                    "kind": "collection",
-                    "count": len(cast("list[Any]", value)),
-                }
-            else:
-                summary[field_key] = value
+            summary[str(key)] = summarize_result(value)
         return summary
     if isinstance(result, str):
         return _truncate(result)
     return result
 
 
-def _empty_tool_calls() -> list[ToolCallTrace]:
-    """Typed default factory for a run's tool-call list."""
-    return []
-
-
 @dataclass(frozen=True, slots=True)
 class ToolCallTrace:
-    """One tool call within a run: name, args, envelope outcome, timing."""
+    """One tool call within a run: name, args, envelope outcome, timing.
+
+    >>> call = ToolCallTrace(
+    ...     seq=1, tool="capture", args={"content": "hi"}, success=True, duration_ms=2.0
+    ... )
+    >>> call.render()["tool"], call.render()["success"]
+    ('capture', True)
+    """
 
     seq: int
     tool: str
@@ -151,7 +156,15 @@ class ToolCallTrace:
 
 @dataclass(slots=True)
 class RunTrace:
-    """The trace of one agent run, mutated while the run is live."""
+    """The trace of one agent run, mutated while the run is live.
+
+    >>> run = RunTrace(run_id="r1", session_id="s1", kind="conversation", started_at=0.0)
+    >>> run.is_active
+    True
+    >>> run.ended_at = 0.5
+    >>> run.is_active, run.duration_ms
+    (False, 500.0)
+    """
 
     run_id: str
     session_id: str
@@ -203,6 +216,21 @@ class AgentTraceRecorder:
     and retains a bounded history of completed runs for after-the-fact
     inspection. Recording is best-effort and must never break the agent: a tool
     call for an unknown session is dropped, not raised.
+
+    >>> recorder = AgentTraceRecorder()
+    >>> run_id = recorder.begin_run(session_id="s1", kind="conversation", prompt="hi")
+    >>> recorder.record_tool_call(
+    ...     session_id="s1",
+    ...     tool="capture",
+    ...     args={"content": "a fact"},
+    ...     envelope={"success": True, "result": {"id": "m1"}},
+    ...     duration_ms=2.0,
+    ... )
+    >>> ended = recorder.end_run(session_id="s1", termination="completed")
+    >>> recorder.get_run(run_id) is ended  # inspectable after the fact
+    True
+    >>> [call.tool for call in ended.tool_calls]
+    ['capture']
     """
 
     def __init__(

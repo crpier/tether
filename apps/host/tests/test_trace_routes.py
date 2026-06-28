@@ -8,7 +8,6 @@ so the routes can be asserted without spawning a pi subprocess.
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
 
 from snektest import assert_eq, assert_true, test
 from starlette.testclient import TestClient
@@ -61,22 +60,18 @@ def trace_routes_require_an_app_session() -> None:
     """The inspection surface is gated like every other browser-facing route."""
     with TemporaryDirectory() as directory:
         app = _make_app(Path(directory))
-        run_id = _seed_completed_run(
-            cast("AgentTraceRecorder", app.state.trace_recorder)
-        )
+        run_id = _seed_completed_run(app.state.trace_recorder)
         with TestClient(app) as client:
             assert_eq(client.get("/api/traces").status_code, 401)
             assert_eq(client.get(f"/api/traces/{run_id}").status_code, 401)
 
 
 @test()
-def a_completed_run_is_inspectable_with_secrets_redacted() -> None:
-    """An authenticated browser can read a past run; secret args are masked."""
+def a_completed_run_appears_in_the_recent_runs_list() -> None:
+    """An authenticated browser sees a past run in the recent-runs listing."""
     with TemporaryDirectory() as directory:
         app = _make_app(Path(directory))
-        run_id = _seed_completed_run(
-            cast("AgentTraceRecorder", app.state.trace_recorder)
-        )
+        run_id = _seed_completed_run(app.state.trace_recorder)
         with TestClient(app) as client:
             _login(client)
 
@@ -85,6 +80,16 @@ def a_completed_run_is_inspectable_with_secrets_redacted() -> None:
             runs = listed.json()["runs"]
             assert_eq(len(runs), 1)
             assert_eq(runs[0]["run_id"], run_id)
+
+
+@test()
+def a_completed_run_is_inspectable_with_secrets_redacted() -> None:
+    """Reading a past run by id renders its trace with secret args masked."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory))
+        run_id = _seed_completed_run(app.state.trace_recorder)
+        with TestClient(app) as client:
+            _login(client)
 
             detail = client.get(f"/api/traces/{run_id}")
             assert_eq(detail.status_code, 200)

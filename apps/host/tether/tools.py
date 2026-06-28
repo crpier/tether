@@ -278,6 +278,7 @@ class ToolEndpoint:
         session_failure = self._reject_unknown_session(request, body)
         if session_failure is not None:
             return session_failure
+        # `_reject_unknown_session` already proved this is a registered `str`.
         session_id = cast("str", body["session_id"])
         run_context = self._run_context(request, session_id)
         with structlog.contextvars.bound_contextvars(**run_context):
@@ -320,6 +321,7 @@ class ToolEndpoint:
         if recorder is None:
             return
         recorder.record_tool_call(
+            # Reached only after `__call__` validated the session id is a `str`.
             session_id=cast("str", body["session_id"]),
             tool=request.url.path.rsplit("/", 1)[-1],
             args={key: value for key, value in body.items() if key != "session_id"},
@@ -407,10 +409,12 @@ def _elapsed_ms(started: float) -> float:
 
 
 def _trace_recorder(request: Request) -> AgentTraceRecorder | None:
-    """Return the host's agent-trace recorder, if one is installed."""
-    return cast(
-        "AgentTraceRecorder | None", getattr(request.app.state, "trace_recorder", None)
-    )
+    """Return the host's agent-trace recorder, if one is installed.
+
+    `getattr` with a `None` default keeps the tool path working in setups (some
+    tests) that never install a recorder onto `app.state`.
+    """
+    return getattr(request.app.state, "trace_recorder", None)
 
 
 def _tool_logger(request: Request) -> Logger:

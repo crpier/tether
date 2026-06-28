@@ -165,3 +165,18 @@ def collection_results_are_summarised_to_a_count() -> None:
         summarize_result({"items": [1, 2], "id": "m1"}),
         {"items": {"kind": "collection", "count": 2}, "id": "m1"},
     )
+
+
+@test()
+def nested_corpus_content_is_summarised_at_every_depth() -> None:
+    """A bulk collection or long string nested inside an envelope is reduced too."""
+    assert_eq(
+        summarize_result({"page": {"rows": [1, 2, 3], "blob": "x" * 600, "id": "m1"}}),
+        {
+            "page": {
+                "rows": {"kind": "collection", "count": 3},
+                "blob": "x" * 500 + "…(truncated)",
+                "id": "m1",
+            }
+        },
+    )

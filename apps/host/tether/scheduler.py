@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid7
 
+import structlog
 from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
@@ -178,12 +179,19 @@ class EphemeralPiPromptRunner:
             session_registry=self.config.session_registry,
         )
         recorder = self.config.trace_recorder
-        if recorder is not None:
-            _ = recorder.begin_run(
+        run_id = (
+            recorder.begin_run(
                 session_id=session_id, kind=self.config.run_kind, prompt=prompt
             )
+            if recorder is not None
+            else None
+        )
+        # Correlate host log lines emitted while driving this pi with the run id
+        # the tool seam also stamps onto its loopback tool calls.
+        log_context = {"run_id": run_id} if run_id is not None else {}
         try:
-            final_text = await self._drive(runtime, prompt, session_id)
+            with structlog.contextvars.bound_contextvars(**log_context):
+                final_text = await self._drive(runtime, prompt, session_id)
         except Exception as error:
             if recorder is not None:
                 _ = recorder.end_run(

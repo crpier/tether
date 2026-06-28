@@ -7,6 +7,7 @@ import contextlib
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -336,33 +337,42 @@ async def _run_prompt(
     session_id = str(conversation.pi_session_id)
     termination: Termination = "completed"
     run_error: str | None = None
-    if recorder is not None:
-        _ = recorder.begin_run(
+    run_id = (
+        recorder.begin_run(
             session_id=session_id,
             kind="conversation",
             prompt=content,
             conversation_id=str(conversation_id),
         )
+        if recorder is not None
+        else None
+    )
+    # Correlate every host log line emitted while driving this prompt with the
+    # run id the tool seam also stamps onto loopback tool calls.
+    log_context = {"run_id": run_id} if run_id is not None else {}
     try:
-        runtime = await websocket.app.state.conversation_runtime_registry.runtime_for(
-            conversation
-        )
-        prompt_response = await runtime.client.request("prompt", message=content)
-        if prompt_response.get("success") is not True:
-            termination, run_error = "error", "prompt failed"
-            await _send_error(
+        with structlog.contextvars.bound_contextvars(**log_context):
+            runtime = (
+                await websocket.app.state.conversation_runtime_registry.runtime_for(
+                    conversation
+                )
+            )
+            prompt_response = await runtime.client.request("prompt", message=content)
+            if prompt_response.get("success") is not True:
+                termination, run_error = "error", "prompt failed"
+                await _send_error(
+                    websocket,
+                    conversation_id=conversation_id,
+                    detail="prompt failed",
+                )
+                return
+            await _stream_runtime(
                 websocket,
                 conversation_id=conversation_id,
-                detail="prompt failed",
+                runtime=runtime,
+                recorder=recorder,
+                session_id=session_id,
             )
-            return
-        await _stream_runtime(
-            websocket,
-            conversation_id=conversation_id,
-            runtime=runtime,
-            recorder=recorder,
-            session_id=session_id,
-        )
     except PiRuntimeError as error:
         termination, run_error = "error", str(error)
         await _send_error(
