@@ -11,6 +11,7 @@ from pydantic import BaseModel, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from tether.agent_trace import AgentTraceRecorder, Termination
 from tether.auth import SESSION_COOKIE, verify_session_cookie
 from tether.conversations import ConversationNotFoundError, JsonValue, MessageDraft
 from tether.events import HubEvent, NotifyEvent
@@ -57,6 +58,13 @@ def _delta_text(assistant_event: dict[str, Any]) -> str:
     if isinstance(text, str):
         return text
     return ""
+
+
+def _is_assistant_message(message: object) -> bool:
+    """Report whether a pi message envelope is an assistant turn."""
+    if not isinstance(message, dict):
+        return False
+    return cast("dict[str, Any]", message).get("role") == "assistant"
 
 
 def _message_text(message: object) -> str:
@@ -223,6 +231,8 @@ async def _stream_runtime(
     *,
     conversation_id: UUID,
     runtime: Any,
+    recorder: AgentTraceRecorder | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Forward pi events and persist settled assistant messages."""
     pending_tool_args: dict[str, dict[str, Any]] = {}
@@ -232,6 +242,12 @@ async def _stream_runtime(
         match event.get("type"):
             case "message_start":
                 streamed_text.clear()
+                if (
+                    recorder is not None
+                    and session_id is not None
+                    and _is_assistant_message(event.get("message"))
+                ):
+                    recorder.record_model_turn(session_id=session_id)
                 await _forward_message_start(
                     websocket, conversation_id=conversation_id, event=event
                 )
@@ -313,12 +329,27 @@ async def _run_prompt(
             "seq": message.seq,
         }
     )
+    recorder = cast(
+        "AgentTraceRecorder | None",
+        getattr(websocket.app.state, "trace_recorder", None),
+    )
+    session_id = str(conversation.pi_session_id)
+    termination: Termination = "completed"
+    run_error: str | None = None
+    if recorder is not None:
+        _ = recorder.begin_run(
+            session_id=session_id,
+            kind="conversation",
+            prompt=content,
+            conversation_id=str(conversation_id),
+        )
     try:
         runtime = await websocket.app.state.conversation_runtime_registry.runtime_for(
             conversation
         )
         prompt_response = await runtime.client.request("prompt", message=content)
         if prompt_response.get("success") is not True:
+            termination, run_error = "error", "prompt failed"
             await _send_error(
                 websocket,
                 conversation_id=conversation_id,
@@ -329,13 +360,27 @@ async def _run_prompt(
             websocket,
             conversation_id=conversation_id,
             runtime=runtime,
+            recorder=recorder,
+            session_id=session_id,
         )
     except PiRuntimeError as error:
+        termination, run_error = "error", str(error)
         await _send_error(
             websocket,
             conversation_id=conversation_id,
             detail=str(error),
         )
+    except TimeoutError as error:
+        termination, run_error = "timeout", str(error)
+        raise
+    except asyncio.CancelledError:
+        termination, run_error = "aborted", "generation cancelled"
+        raise
+    finally:
+        if recorder is not None:
+            _ = recorder.end_run(
+                session_id=session_id, termination=termination, error=run_error
+            )
 
 
 async def _handle_frame(

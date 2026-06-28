@@ -32,6 +32,7 @@ from uuid import uuid7
 from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
+from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.events import EventPublisher, NotifyEvent
 from tether.logging import Logger
 from tether.model_selection import AgentModelConfig
@@ -105,6 +106,13 @@ class AgentPromptRunner(Protocol):
         ...
 
 
+def _is_assistant_message(message: object) -> bool:
+    """Report whether a pi message envelope is an assistant turn."""
+    if not isinstance(message, dict):
+        return False
+    return cast("dict[str, Any]", message).get("role") == "assistant"
+
+
 def _assistant_message_text(message: object) -> str:
     """Extract the displayed text from a settled pi assistant message."""
     if not isinstance(message, dict):
@@ -137,6 +145,8 @@ class EphemeralPiConfig:
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     pi_binary: Path | None = None
     event_timeout_seconds: float = 60.0
+    trace_recorder: AgentTraceRecorder | None = None
+    run_kind: RunKind = "scheduled"
 
 
 class EphemeralPiPromptRunner:
@@ -167,29 +177,54 @@ class EphemeralPiPromptRunner:
             ),
             session_registry=self.config.session_registry,
         )
+        recorder = self.config.trace_recorder
+        if recorder is not None:
+            _ = recorder.begin_run(
+                session_id=session_id, kind=self.config.run_kind, prompt=prompt
+            )
         try:
-            if self.config.model is not None:
-                _ = await runtime.client.request(
-                    "set_model",
-                    provider=self.config.model.provider,
-                    modelId=self.config.model.model_id,
+            final_text = await self._drive(runtime, prompt, session_id)
+        except Exception as error:
+            if recorder is not None:
+                _ = recorder.end_run(
+                    session_id=session_id, termination="error", error=str(error)
                 )
-            response = await runtime.client.request("prompt", message=prompt)
-            if response.get("success") is not True:
-                message = "agent prompt was rejected by pi"
-                raise PiRuntimeError(message)
-            return await self._collect_final_text(runtime)
+            raise
+        else:
+            if recorder is not None:
+                _ = recorder.end_run(session_id=session_id, termination="completed")
+            return final_text
         finally:
             await runtime.shutdown()
 
-    async def _collect_final_text(self, runtime: PiRuntime) -> str:
+    async def _drive(self, runtime: PiRuntime, prompt: str, session_id: str) -> str:
+        """Set the model, send the prompt, and drain pi to its final text."""
+        if self.config.model is not None:
+            _ = await runtime.client.request(
+                "set_model",
+                provider=self.config.model.provider,
+                modelId=self.config.model.model_id,
+            )
+        response = await runtime.client.request("prompt", message=prompt)
+        if response.get("success") is not True:
+            message = "agent prompt was rejected by pi"
+            raise PiRuntimeError(message)
+        return await self._collect_final_text(runtime, session_id)
+
+    async def _collect_final_text(self, runtime: PiRuntime, session_id: str) -> str:
         """Drain pi events to the turn's end, keeping the last assistant text."""
+        recorder = self.config.trace_recorder
         final_text = ""
         while True:
             event = await runtime.next_event(
                 wait_seconds=self.config.event_timeout_seconds
             )
             match event.get("type"):
+                case "message_start":
+                    if recorder is not None and _is_assistant_message(
+                        event.get("message")
+                    ):
+                        recorder.record_model_turn(session_id=session_id)
                 case "message_end":
                     text = _assistant_message_text(event.get("message"))
                     if text:

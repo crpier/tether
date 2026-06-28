@@ -22,6 +22,7 @@ from snekql.sqlite import Config, Database
 from starlette.applications import Starlette
 from uvicorn.config import WSProtocolType
 
+from tether.agent_trace import AgentTraceRecorder
 from tether.auth import AppSessionMiddleware
 from tether.bucket_items import (
     BucketItemService,
@@ -72,6 +73,7 @@ from tether.telemetry import (
     configure_telemetry,
 )
 from tether.tools import SessionRegistry, internal_tool_routes
+from tether.trace_routes import trace_routes
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
@@ -197,6 +199,8 @@ def _build_scheduler(
             model=model_catalog.default_config,
             extra_extension_paths=config.extra_extension_paths,
             pi_binary=config.pi_binary,
+            trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+            run_kind="scheduled",
         )
     )
     return Scheduler(
@@ -245,6 +249,8 @@ def _build_recall_service(
                 model=model_catalog.default_config,
                 extra_extension_paths=config.extra_extension_paths,
                 pi_binary=config.pi_binary,
+                trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+                run_kind="recall",
             )
         )
     )
@@ -471,6 +477,7 @@ def create_app(
     app = Starlette(
         routes=[
             *api_routes,
+            *trace_routes(),
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
             *internal_triage_tool_routes(),
@@ -489,6 +496,7 @@ def create_app(
     app.state.app_password = config.app_password
     app.state.secure_cookies = config.secure_cookies
     app.state.session_registry = SessionRegistry()
+    app.state.trace_recorder = AgentTraceRecorder()
     app.state.session_secret = config.session_secret
     app.state.tool_secret = (
         tool_secret if tool_secret is not None else secrets.token_urlsafe(32)

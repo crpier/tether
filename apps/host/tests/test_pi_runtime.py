@@ -22,6 +22,7 @@ from snektest import (
     test,
 )
 
+from tether.agent_trace import AgentTraceRecorder
 from tether.embeddings import FakeEmbedder
 from tether.pi_runtime import PiRpcClient, PiRuntime, PiRuntimeConfig
 from tether.server import WS_PROTOCOL, AppConfig, create_app
@@ -78,6 +79,7 @@ class LiveHost:
 
     base_url: str
     session_registry: SessionRegistry
+    trace_recorder: AgentTraceRecorder
 
 
 @fixture
@@ -126,6 +128,7 @@ async def live_host() -> AsyncGenerator[LiveHost]:
             yield LiveHost(
                 base_url=f"http://127.0.0.1:{port}",
                 session_registry=cast("SessionRegistry", app.state.session_registry),
+                trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
             )
         finally:
             server.should_exit = True
