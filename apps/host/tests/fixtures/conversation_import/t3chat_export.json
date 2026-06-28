@@ -1,0 +1,100 @@
+{
+  "version": "10.63.3",
+  "threads": [
+    {
+      "_id": "jd70fx01x5dwkg74hdhywq5ajs881nm5",
+      "id": "264c0550-f4b2-445d-a71c-6e951e1fed60",
+      "threadId": "264c0550-f4b2-445d-a71c-6e951e1fed60",
+      "title": "Recipe ideas",
+      "userSetTitle": false,
+      "model": "gpt-4o",
+      "visibility": "private",
+      "status": "done",
+      "created_at": 1737934227856,
+      "createdAt": 1737934227856,
+      "updated_at": 1737934230000,
+      "last_message_at": 1737934230000
+    },
+    {
+      "_id": "jd79p8n2ejnhvd73se5ya28xtn87r5fq",
+      "id": "8801eb29-fc12-433b-a996-71b2cd0553b4",
+      "threadId": "8801eb29-fc12-433b-a996-71b2cd0553b4",
+      "title": "Blank thread",
+      "userSetTitle": false,
+      "model": "gpt-4o",
+      "visibility": "private",
+      "status": "done",
+      "created_at": 1737900000000,
+      "createdAt": 1737900000000
+    }
+  ],
+  "messages": [
+    {
+      "_id": "m_a3",
+      "id": "a3aaaaaa-0000-0000-0000-000000000003",
+      "messageId": "a3aaaaaa-0000-0000-0000-000000000003",
+      "threadId": "264c0550-f4b2-445d-a71c-6e951e1fed60",
+      "role": "assistant",
+      "content": "  Try a sheet-pan dinner: roast the vegetables together.  ",
+      "status": "done",
+      "model": "gpt-4o",
+      "created_at": 1737934229000,
+      "updated_at": 1737934229000
+    },
+    {
+      "_id": "m_a1",
+      "id": "a1aaaaaa-0000-0000-0000-000000000001",
+      "messageId": "a1aaaaaa-0000-0000-0000-000000000001",
+      "threadId": "264c0550-f4b2-445d-a71c-6e951e1fed60",
+      "role": "user",
+      "content": "What can I cook with potatoes and carrots?",
+      "status": "done",
+      "created_at": 1737934227900,
+      "updated_at": 1737934227900
+    },
+    {
+      "_id": "m_a2_empty",
+      "id": "a2aaaaaa-0000-0000-0000-000000000002",
+      "messageId": "a2aaaaaa-0000-0000-0000-000000000002",
+      "threadId": "264c0550-f4b2-445d-a71c-6e951e1fed60",
+      "role": "assistant",
+      "content": "   ",
+      "status": "done",
+      "created_at": 1737934228000,
+      "updated_at": 1737934228000
+    },
+    {
+      "_id": "m_a4_waiting",
+      "id": "a4aaaaaa-0000-0000-0000-000000000004",
+      "messageId": "a4aaaaaa-0000-0000-0000-000000000004",
+      "threadId": "264c0550-f4b2-445d-a71c-6e951e1fed60",
+      "role": "assistant",
+      "content": "",
+      "status": "waiting",
+      "created_at": 1737934231000,
+      "updated_at": 1737934231000
+    },
+    {
+      "_id": "m_b1_empty",
+      "id": "b1bbbbbb-0000-0000-0000-000000000001",
+      "messageId": "b1bbbbbb-0000-0000-0000-000000000001",
+      "threadId": "8801eb29-fc12-433b-a996-71b2cd0553b4",
+      "role": "user",
+      "content": "",
+      "status": "cancelled",
+      "created_at": 1737900001000,
+      "updated_at": 1737900001000
+    },
+    {
+      "_id": "m_orphan",
+      "id": "cccccccc-0000-0000-0000-000000000001",
+      "messageId": "cccccccc-0000-0000-0000-000000000001",
+      "threadId": "ffffffff-dead-dead-dead-ffffffffffff",
+      "role": "user",
+      "content": "This message belongs to a thread missing from the export.",
+      "status": "done",
+      "created_at": 1737800000000,
+      "updated_at": 1737800000000
+    }
+  ]
+}
