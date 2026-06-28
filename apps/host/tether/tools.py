@@ -25,14 +25,17 @@ from __future__ import annotations
 import hmac
 import json
 from collections.abc import Awaitable, Callable
+from time import perf_counter
 from typing import Any, Literal, cast
 from uuid import UUID
 
+import structlog
 from pydantic import UUID7, BaseModel, PositiveInt, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, request_response
 
+from tether.agent_trace import AgentTraceRecorder
 from tether.bucket_items import (
     BucketItemConflictError,
     BucketItemNotFoundError,
@@ -275,10 +278,56 @@ class ToolEndpoint:
         session_failure = self._reject_unknown_session(request, body)
         if session_failure is not None:
             return session_failure
+        # `_reject_unknown_session` already proved this is a registered `str`.
+        session_id = cast("str", body["session_id"])
+        run_context = self._run_context(request, session_id)
+        with structlog.contextvars.bound_contextvars(**run_context):
+            envelope, duration_ms = await self._invoke(request, body)
+        self._record_tool_call(request, body, envelope, duration_ms)
+        return _envelope_response(envelope)
+
+    async def _invoke(
+        self, request: Request, body: dict[str, Any]
+    ) -> tuple[ToolEnvelope, float]:
+        """Validate params and run the handler, timing the tool call.
+
+        A validation failure short-circuits to a `success:false` envelope without
+        touching the handler; both paths are timed so the trace records how long
+        every tool call took, malformed input included.
+        """
+        started = perf_counter()
         params = self._validated_params(body)
-        if isinstance(params, JSONResponse):
-            return params
-        return _envelope_response(await self._run_handler(request, params))
+        if isinstance(params, ToolEnvelope):
+            return params, _elapsed_ms(started)
+        return await self._run_handler(request, params), _elapsed_ms(started)
+
+    def _run_context(self, request: Request, session_id: str) -> dict[str, str]:
+        """Bind the active run id so handler logs correlate with the trace."""
+        recorder = _trace_recorder(request)
+        if recorder is None:
+            return {}
+        run = recorder.current_run(session_id)
+        return {} if run is None else {"run_id": run.run_id}
+
+    def _record_tool_call(
+        self,
+        request: Request,
+        body: dict[str, Any],
+        envelope: ToolEnvelope,
+        duration_ms: float,
+    ) -> None:
+        """Append this tool call to its session's active run, if recording."""
+        recorder = _trace_recorder(request)
+        if recorder is None:
+            return
+        recorder.record_tool_call(
+            # Reached only after `__call__` validated the session id is a `str`.
+            session_id=cast("str", body["session_id"]),
+            tool=request.url.path.rsplit("/", 1)[-1],
+            args={key: value for key, value in body.items() if key != "session_id"},
+            envelope=envelope.model_dump(mode="json"),
+            duration_ms=duration_ms,
+        )
 
     def _reject_invalid_secret(self, request: Request) -> JSONResponse | None:
         offered_secret = request.headers.get(TOOL_AUTH_HEADER, "")
@@ -309,16 +358,14 @@ class ToolEndpoint:
             return None
         return JSONResponse({"detail": "unknown session"}, status_code=401)
 
-    def _validated_params(self, body: dict[str, Any]) -> BaseModel | JSONResponse:
+    def _validated_params(self, body: dict[str, Any]) -> BaseModel | ToolEnvelope:
         payload: dict[str, Any] = {
             key: value for key, value in body.items() if key != "session_id"
         }
         try:
             return self.params_model.model_validate(payload)
         except ValidationError as error:
-            return _envelope_response(
-                _fail("invalid_input", _validation_message(error))
-            )
+            return _fail("invalid_input", _validation_message(error))
 
     async def _run_handler(self, request: Request, params: BaseModel) -> ToolEnvelope:
         try:
@@ -354,6 +401,20 @@ class ToolEndpoint:
             InvalidAnswerError,
         ) as error:
             return _fail("invalid_input", str(error))
+
+
+def _elapsed_ms(started: float) -> float:
+    """Milliseconds elapsed since a `perf_counter` reading."""
+    return round((perf_counter() - started) * 1000, 3)
+
+
+def _trace_recorder(request: Request) -> AgentTraceRecorder | None:
+    """Return the host's agent-trace recorder, if one is installed.
+
+    `getattr` with a `None` default keeps the tool path working in setups (some
+    tests) that never install a recorder onto `app.state`.
+    """
+    return getattr(request.app.state, "trace_recorder", None)
 
 
 def _tool_logger(request: Request) -> Logger:

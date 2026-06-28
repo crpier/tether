@@ -16,7 +16,9 @@ from snektest import (
 )
 
 from tests.test_pi_runtime import live_host, pi_session_dir
+from tether.model_selection import AgentModelConfig
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig
+from tether.scheduler import EphemeralPiConfig, EphemeralPiPromptRunner
 
 SECRET = "test-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"
@@ -257,6 +259,61 @@ async def scripted_model_clusters_duplicate_bucket_items_via_triage_report() -> 
         for cluster in cast("list[Any]", duplicates_json)
     ]
     assert_in({first_id, second_id}, duplicate_clusters)
+
+
+@test()
+async def agent_run_trace_captures_ordered_tool_calls_and_envelopes() -> None:
+    """A scripted run is recorded as one trace over its tool calls + envelopes."""
+    session_root = await load_fixture(pi_session_dir())
+    host = await load_fixture(live_host())
+    runner = EphemeralPiPromptRunner(
+        EphemeralPiConfig(
+            session_registry=host.session_registry,
+            session_root=session_root,
+            tool_base_url=host.base_url,
+            tool_secret=SECRET,
+            model=AgentModelConfig(
+                id="faux",
+                display_name="Faux",
+                provider="faux",
+                model_id=SCRIPTED_MODEL_ID,
+            ),
+            extra_extension_paths=[_agent_fixture_path()],
+            trace_recorder=host.trace_recorder,
+            run_kind="scheduled",
+        )
+    )
+
+    _ = await runner.run("Capture, tether, and search the scripted memory.")
+
+    runs = host.trace_recorder.recent_runs(limit=5)
+    assert_eq(len(runs), 1)
+    run = runs[0]
+    assert_eq(run.kind, "scheduled")
+    assert_eq(run.termination, "completed")
+    assert_true(not run.is_active)
+    assert_true(run.iterations >= 1)
+    # The run is also inspectable by id after it completed.
+    fetched = host.trace_recorder.get_run(run.run_id)
+    assert fetched is not None
+    assert_eq(fetched.run_id, run.run_id)
+
+    assert_eq([call.tool for call in run.tool_calls], ["capture", "tether", "search"])
+    assert_true(all(call.success for call in run.tool_calls))
+
+    capture = run.tool_calls[0]
+    assert_eq(capture.args, {"content": "agent loop needle memory"})
+    captured = _json_object(capture.result)
+    assert_eq(captured["content"], "agent loop needle memory")
+    assert_eq(captured["state"], "loose")
+    # The single-memory envelope's provenance rides along in the trace.
+    assert_eq(capture.provenance, {"kind": "manual"})
+
+    # The search envelope's collection result is summarised, not dumped.
+    search = run.tool_calls[2]
+    assert_eq(search.args, {"q": "needle", "limit": 5})
+    search_result = _json_object(search.result)
+    assert_eq(search_result["kind"], "collection")
 
 
 @test()
