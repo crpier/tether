@@ -1,7 +1,7 @@
 """Provider parsers normalising AI-chat exports into one conversation shape.
 
 Conversation import bootstraps Memories and Bucket items from external AI-chat
-exports (#22). Each provider exports its own JSON dialect; this module is the
+exports. Each provider exports its own JSON dialect; this module is the
 first stage of the pipeline: a per-provider parser that reads a raw export and
 yields a list of `ImportedConversation` — the single normalised shape the rest
 of the pipeline (scheduler jobs, agentic extraction, the Candidate gate) builds
@@ -106,11 +106,18 @@ def _normalise_role(value: object) -> ImportedRole | None:
     return None
 
 
-def _sort_key(value: object) -> float:
-    """Order key for a turn: its epoch-ms capture time, undated turns last."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    return float("inf")
+def _pick(source: dict[str, object], *keys: str) -> object:
+    """Return the first present, non-`None` value among `keys`.
+
+    Providers are inconsistent about snake_case vs camelCase for the same
+    field (a t3chat export carries `created_at` and/or `createdAt`); reading
+    several spellings keeps provenance whichever the export happens to use.
+    """
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return value
+    return None
 
 
 class T3ChatParser:
@@ -149,6 +156,10 @@ class T3ChatParser:
             if not isinstance(raw_thread, dict):
                 continue
             thread = cast("dict[str, object]", raw_thread)
+            # A thread's own id is the value its messages reference as `threadId`
+            # (see `_group_turns`); they must match for a thread to claim its
+            # turns. If a future export diverges these, the thread finds no turns
+            # and is dropped like an empty one — never silently mis-joined.
             thread_id = thread.get("id") or thread.get("threadId")
             if not isinstance(thread_id, str):
                 continue
@@ -157,18 +168,27 @@ class T3ChatParser:
                 # A thread whose only messages were empty (or had none) has no
                 # turn to extract from; drop it rather than emit an empty shell.
                 continue
-            turns.sort(key=_turn_sort_key)
+            turns.sort(key=lambda turn: turn[0])
             title = thread.get("title")
             conversations.append(
                 ImportedConversation(
                     source="t3chat",
                     source_conversation_id=thread_id,
                     title=title if isinstance(title, str) and title else None,
-                    created_at=_from_epoch_millis(thread.get("created_at")),
+                    created_at=_from_epoch_millis(
+                        _pick(thread, "created_at", "createdAt")
+                    ),
                     messages=tuple(message for _, message in turns),
                 )
             )
         return conversations
+
+    @staticmethod
+    def _sort_key(value: object) -> float:
+        """Order key for a turn: its epoch-ms capture time, undated turns last."""
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return float("inf")
 
     def _group_turns(
         self, messages: list[object]
@@ -192,11 +212,11 @@ class T3ChatParser:
                 continue
             if not isinstance(content, str) or not content.strip():
                 continue
-            created_raw = message.get("created_at")
+            created_raw = _pick(message, "created_at", "createdAt")
             message_id = message.get("id")
             grouped[thread_id].append(
                 (
-                    _sort_key(created_raw),
+                    self._sort_key(created_raw),
                     ImportedMessage(
                         role=role,
                         content=content.strip(),
@@ -208,11 +228,6 @@ class T3ChatParser:
                 )
             )
         return grouped
-
-
-def _turn_sort_key(turn: tuple[float, ImportedMessage]) -> float:
-    """Order turns oldest-first by capture time; undated turns sort last."""
-    return turn[0]
 
 
 PARSERS: dict[ConversationSource, ConversationParser] = {
