@@ -335,9 +335,10 @@ class MemoryService:
         The query is embedded and run through the index's lexical + semantic
         arms, fused by RRF; the ranked candidate ids are then re-fetched from
         SQLite and re-filtered to `tethered ∧ ¬deleted`. That upstream re-filter
-        is where ADR-0001 is enforced: a drifted index (an orphan a missed event
-        left behind) can surface a candidate, but a loose or deleted Memory is
-        dropped here and never reaches the assistant. Results keep the index's
+        is where the assistant-only-sees-tethered invariant is enforced: a
+        drifted index (an orphan a missed event left behind) can surface a
+        candidate, but a loose or deleted Memory is dropped here and never
+        reaches the assistant. Results keep the index's
         relevance order; the SQLite round-trip preserves it, not recency."""
         normalised_query = query.strip()
         if not normalised_query:

@@ -22,6 +22,8 @@ end-to-end check against the *real* `SearchIndex`. No model download, no network
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,8 +207,8 @@ async def _edit_content(db: Database, memory: Memory[Fetched], content: str) -> 
 
 
 @test()
-async def reconcile_indexes_tethered_memories_and_persists_embeddings() -> None:
-    """A tethered Memory is embedded into SQLite and pushed to the index."""
+async def reconcile_indexes_a_tethered_memory() -> None:
+    """A tethered Memory is embedded and pushed into the index."""
     h = await load_fixture(harness())
     memory = await _add_memory(h.database, "dentist appointment tuesday")
 
@@ -214,6 +216,16 @@ async def reconcile_indexes_tethered_memories_and_persists_embeddings() -> None:
 
     assert_eq(report.embedded, 1)
     assert_in(memory.id, set(h.index.docs))
+
+
+@test()
+async def reconcile_persists_the_embedding_to_sqlite() -> None:
+    """The vector the pass computes is written back to the canonical SQLite row."""
+    h = await load_fixture(harness())
+    memory = await _add_memory(h.database, "dentist appointment tuesday")
+
+    _ = await h.reconciler.reconcile(logger=_logger())
+
     fresh = await _fetch(h.database, memory.id)
     assert_is_not_none(fresh.embedding)
     assert fresh.embedding is not None
@@ -228,7 +240,7 @@ async def reconcile_records_the_active_model_marker() -> None:
     h = await load_fixture(harness())
     _ = await h.reconciler.reconcile(logger=_logger())
 
-    marker = await h.meta.get(logger=_logger())
+    marker = await h.meta.fetch(logger=_logger())
     assert_is_not_none(marker)
     assert marker is not None
     assert_eq(marker.embedding_model, "fake-a")
@@ -258,6 +270,24 @@ async def reconcile_is_idempotent() -> None:
     memory = await _add_memory(h.database, "dentist appointment")
     _ = await h.reconciler.reconcile(logger=_logger())
     embedded_after_first = h.embedder.documents_embedded
+
+    report = await h.reconciler.reconcile(logger=_logger())
+
+    assert_eq(report.embedded, 0)
+    assert_eq(h.embedder.documents_embedded, embedded_after_first)
+    assert_eq(set(h.index.docs), {memory.id})
+
+
+@test()
+async def reconcile_rebuilds_the_index_from_sqlite_without_reembedding() -> None:
+    """On restore the gitignored index is gone but SQLite (vectors + marker)
+    survives; the pass refills the empty index from stored vectors, no re-embed."""
+    h = await load_fixture(harness())
+    memory = await _add_memory(h.database, "dentist appointment")
+    _ = await h.reconciler.reconcile(logger=_logger())
+    embedded_after_first = h.embedder.documents_embedded
+    # Simulate a restore: drop the derived index, leave SQLite untouched.
+    h.index.docs.clear()
 
     report = await h.reconciler.reconcile(logger=_logger())
 
@@ -316,7 +346,7 @@ async def a_model_change_reembeds_the_corpus_and_rebuilds() -> None:
     assert_eq(report.embedded, 1)
     assert_eq(h.index.rebuilds, 1)
     assert_in(memory.id, set(h.index.docs))
-    marker = await h.meta.get(logger=_logger())
+    marker = await h.meta.fetch(logger=_logger())
     assert marker is not None
     assert_eq(marker.embedding_model, "fake-b")
 
@@ -331,6 +361,26 @@ async def reconcile_runs_optimize_each_pass() -> None:
     _ = await h.reconciler.reconcile(logger=_logger())
 
     assert_eq(h.index.optimize_calls, 2)
+
+
+@test()
+async def reconcile_forever_runs_passes_until_cancelled() -> None:
+    """The periodic loop keeps reconciling (the correctness backstop) until cancelled."""
+    h = await load_fixture(harness())
+    _ = await _add_memory(h.database, "dentist appointment")
+
+    task = asyncio.create_task(
+        h.reconciler.reconcile_forever(interval_seconds=0.001, logger=_logger())
+    )
+    for _ in range(1000):  # bounded wait so a broken loop fails fast, never hangs
+        if h.index.optimize_calls >= 1:
+            break
+        await asyncio.sleep(0.001)
+    _ = task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert_true(h.index.optimize_calls >= 1)
 
 
 @test()

@@ -113,6 +113,7 @@ class AppConfig:
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
+    search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
     study_item_generator: StudyItemGenerator | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
@@ -263,15 +264,16 @@ async def _build_search(
     embedder: Embedder | None,
     index_dir: Path,
     logger: Logger,
-) -> MemorySearchService | None:
+) -> tuple[MemorySearchService | None, SearchReconciler | None]:
     """Wire the search subsystem when an embedder is supplied, else disable it.
 
     Opens the index, converges it with SQLite once on boot (embedding any owed
     tethered Memory and dropping orphans — a no-op, and no model load, on an
-    empty corpus), and returns the searcher for `MemoryService`. With no embedder
-    returns `None`: the index is never opened and no model loads."""
+    empty corpus), and returns the searcher for `MemoryService` alongside the
+    reconciler the lifespan drives on a periodic pass. With no embedder returns
+    `(None, None)`: the index is never opened and no model loads."""
     if embedder is None:
-        return None
+        return None, None
     search_index = await SearchIndex.open(
         index_dir=index_dir, vector_dim=embedder.vector_dim
     )
@@ -282,7 +284,10 @@ async def _build_search(
         meta=SearchMetaService(database=database),
     )
     _ = await reconciler.reconcile(logger=logger)
-    return MemorySearchService(embedder=embedder, index=search_index, writer=reconciler)
+    searcher = MemorySearchService(
+        embedder=embedder, index=search_index, writer=reconciler
+    )
+    return searcher, reconciler
 
 
 def _lifespan(
@@ -339,17 +344,18 @@ def _lifespan(
             # (`create_app_from_environment`) passes a `FastEmbedder`; tests that
             # exercise search pass a `FakeEmbedder`; everything else runs with
             # search disabled and never opens the index or loads a model.
+            searcher, search_reconciler = await _build_search(
+                database=db,
+                embedder=embedder,
+                index_dir=configured_kb_root / "index",
+                logger=app_logger,
+            )
             memory_service = MemoryService(
                 database=db,
                 event_publisher=event_hub,
                 kb_service=kb_service,
                 tracer=telemetry.tracer,
-                searcher=await _build_search(
-                    database=db,
-                    embedder=embedder,
-                    index_dir=configured_kb_root / "index",
-                    logger=app_logger,
-                ),
+                searcher=searcher,
             )
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
@@ -412,17 +418,31 @@ def _lifespan(
                 kb_root=configured_kb_root,
             )
             app.state.scheduler = scheduler
-            idle_reaper = asyncio.create_task(runtime_registry.reap_idle_forever())
-            scheduler_task = asyncio.create_task(scheduler.run_forever())
+            background_tasks = [
+                asyncio.create_task(runtime_registry.reap_idle_forever()),
+                asyncio.create_task(scheduler.run_forever()),
+            ]
+            # The boot reconcile above primes the index; this periodic pass is the
+            # correctness backstop the best-effort latency hooks lean on — it
+            # sweeps orphans and runs optimize() while the host is up, not only at
+            # boot. Started only when search is wired (an embedder was supplied).
+            if search_reconciler is not None:
+                background_tasks.append(
+                    asyncio.create_task(
+                        search_reconciler.reconcile_forever(
+                            interval_seconds=config.search_reconcile_seconds,
+                            logger=app_logger,
+                        )
+                    )
+                )
             try:
                 yield
             finally:
-                _ = idle_reaper.cancel()
-                _ = scheduler_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await idle_reaper
-                with contextlib.suppress(asyncio.CancelledError):
-                    await scheduler_task
+                for task in background_tasks:
+                    _ = task.cancel()
+                for task in background_tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
                 await scheduler.shutdown()
                 await runtime_registry.shutdown_all()
                 telemetry.shutdown()

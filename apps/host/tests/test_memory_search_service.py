@@ -10,16 +10,15 @@ facade wires the pieces together and preserves the index's ranking.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
 from uuid import UUID, uuid4
 
 import structlog
-from snekql.sqlite import Fetched
+from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import assert_eq, assert_true, test
 
 from tether.embeddings import FakeEmbedder, Vector
 from tether.logging import Logger
-from tether.memories import Memory
+from tether.memories import Memory, create_memory_schema
 from tether.memory_search import MemorySearchService
 from tether.search_index import SearchCandidate
 
@@ -28,6 +27,20 @@ _DIM = 16
 
 def _logger() -> Logger:
     return structlog.stdlib.get_logger("test.memory_search")
+
+
+async def _make_memory(content: str) -> Memory[Fetched]:
+    """Build a real fetched Memory via an in-memory DB (no cast, no LanceDB)."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
+    async with db.transaction() as tx:
+        created = await tx.execute(insert(Memory(content=content)).returning())
+        memory = await tx.fetch_one_or_none(
+            select(Memory).where(Memory.id.eq(created.id))
+        )
+    assert memory is not None
+    await db.close()
+    return memory
 
 
 class RecordingIndex:
@@ -104,12 +117,11 @@ async def index_memory_delegates_to_the_writer() -> None:
         index=RecordingIndex([]),
         writer=writer,
     )
-    memory_id = uuid4()
-    memory = cast("Memory[Fetched]", _StubMemory(memory_id))
+    memory = await _make_memory("a tethered fact")
 
     await service.index_memory(memory, logger=_logger())
 
-    assert_eq(writer.indexed, [memory_id])
+    assert_eq(writer.indexed, [memory.id])
 
 
 @test()
@@ -126,10 +138,3 @@ async def deindex_memory_delegates_to_the_writer() -> None:
     await service.deindex_memory(memory_id, logger=_logger())
 
     assert_true(memory_id in writer.deindexed)
-
-
-class _StubMemory:
-    """Minimal stand-in exposing the only attribute the hook reads: `id`."""
-
-    def __init__(self, memory_id: UUID) -> None:
-        self.id: UUID = memory_id

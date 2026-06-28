@@ -8,7 +8,7 @@ compared. The table is a singleton — one row, replaced in place.
 
 >>> service = SearchMetaService(database=database)
 >>> await service.set(model="BAAI/bge-small-en-v1.5", vector_dim=384, logger=logger)
->>> marker = await service.get(logger=logger)
+>>> marker = await service.fetch(logger=logger)
 >>> marker.embedding_model
 'BAAI/bge-small-en-v1.5'
 """
@@ -38,6 +38,14 @@ _SINGLETON_ID = 1
 """The only valid primary key: search_meta holds exactly one row."""
 
 
+class SearchMetaInvariantError(Exception):
+    """Raised when the search_meta singleton is in an impossible state.
+
+    The table is replaced in place under a transaction, so a row read back
+    immediately after its own update must exist; if it does not, the store has
+    been corrupted out from under us rather than merely emptied."""
+
+
 class SearchMeta[S = Pending](Model[S, "SearchMeta[Fetched]"]):
     id: SearchMeta.Col[int] = Integer(primary_key=True, default=_SINGLETON_ID)
     """Fixed singleton key; the table never holds more than one row."""
@@ -56,7 +64,7 @@ class SearchMetaService:
     def __init__(self, database: Database) -> None:
         self.database: Database = database
 
-    async def get(self, *, logger: Logger) -> SearchMeta[Fetched] | None:
+    async def fetch(self, *, logger: Logger) -> SearchMeta[Fetched] | None:
         """Return the active marker, or `None` if no embedding has run yet."""
         logger.debug("Reading search metadata marker")
         async with self.database.transaction() as tx:
@@ -103,7 +111,7 @@ class SearchMetaService:
             )
             if fetched is None:  # pragma: no cover - just-updated row must exist
                 message = "search_meta singleton vanished after update"
-                raise RuntimeError(message)
+                raise SearchMetaInvariantError(message)
             return fetched
 
 

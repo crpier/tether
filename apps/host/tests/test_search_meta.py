@@ -45,7 +45,7 @@ async def an_unwritten_marker_reads_as_none() -> None:
     """Before any embedding runs, there is no active model marker."""
     service = await load_fixture(search_meta_service())
 
-    marker = await service.get(logger=_logger())
+    marker = await service.fetch(logger=_logger())
 
     assert_is_none(marker)
 
@@ -57,7 +57,7 @@ async def setting_the_marker_persists_model_and_dimension() -> None:
 
     await service.set(model="BAAI/bge-small-en-v1.5", vector_dim=384, logger=_logger())
 
-    marker = await service.get(logger=_logger())
+    marker = await service.fetch(logger=_logger())
     assert_is_not_none(marker)
     assert marker is not None
     assert_eq(marker.embedding_model, "BAAI/bge-small-en-v1.5")
@@ -72,7 +72,7 @@ async def setting_the_marker_again_overwrites_the_singleton() -> None:
 
     await service.set(model="intfloat/e5-large-v2", vector_dim=1024, logger=_logger())
 
-    marker = await service.get(logger=_logger())
+    marker = await service.fetch(logger=_logger())
     assert_is_not_none(marker)
     assert marker is not None
     assert_eq(marker.embedding_model, "intfloat/e5-large-v2")

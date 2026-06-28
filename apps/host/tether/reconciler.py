@@ -34,6 +34,7 @@ only through `Embedder`, so it is fully testable against fakes of both.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -52,6 +53,22 @@ if TYPE_CHECKING:
     from tether.embeddings import Embedder, Vector
     from tether.logging import Logger
     from tether.search_meta import SearchMetaService
+
+
+class EmbedderIndexMismatchError(Exception):
+    """Raised when the embedder and index disagree on vector width.
+
+    They share one fixed-size vector space: an embedder producing N-wide vectors
+    can only write to an index built for N. A mismatch is a wiring error, not a
+    drift the reconciler can repair, so it is refused at construction."""
+
+
+class MissingEmbeddingError(Exception):
+    """Raised when a non-owed Memory unexpectedly has no stored vector.
+
+    A Memory excluded from the owed set is asserted to already carry a vector at
+    its current version; this guards that invariant rather than silently
+    indexing an empty embedding."""
 
 
 class SearchIndexPort(Protocol):
@@ -99,7 +116,7 @@ class SearchReconciler:
                 f"index vector width {index.vector_dim} does not match embedder "
                 f"width {embedder.vector_dim}"
             )
-            raise ValueError(message)
+            raise EmbedderIndexMismatchError(message)
         self.database: Database = database
         self.index: SearchIndexPort = index
         self.embedder: Embedder = embedder
@@ -111,7 +128,7 @@ class SearchReconciler:
         On a model change every vector is recomputed and the index rebuilt;
         otherwise only owed Memories are embedded and the index is converged in
         place (upsert the desired set, drop orphans)."""
-        marker = await self.meta.get(logger=logger)
+        marker = await self.meta.fetch(logger=logger)
         # A *genuine* model swap (marker present but disagreeing) discards every
         # vector and rebuilds. A missing marker is just a first/restore run: the
         # incremental path populates the empty index, re-embedding owed rows
@@ -146,7 +163,9 @@ class SearchReconciler:
             vector = fresh_vectors.get(memory.id)
             if vector is None:
                 stored = memory.embedding
-                assert stored is not None  # a non-owed Memory always has a vector
+                if stored is None:  # pragma: no cover - invariant: non-owed ⇒ vector
+                    message = f"Memory {memory.id} has no embedding but was not owed"
+                    raise MissingEmbeddingError(message)
                 vector = vector_from_bytes(stored)
             documents.append(
                 SearchDocument(id=memory.id, content=memory.content, vector=vector)
@@ -178,6 +197,22 @@ class SearchReconciler:
             rebuilt=report.rebuilt,
         )
         return report
+
+    async def reconcile_forever(
+        self, *, interval_seconds: float, logger: Logger
+    ) -> None:
+        """Run `reconcile` on a fixed interval until cancelled.
+
+        This is the correctness backstop the latency hooks lean on: it sweeps
+        orphans a missed event left behind and runs `optimize()` while the host
+        is up, not only at boot. A failed pass is logged and swallowed so a
+        transient error never kills the loop — the next tick retries."""
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                _ = await self.reconcile(logger=logger)
+            except Exception:
+                logger.exception("Periodic search reconcile failed; retrying next tick")
 
     async def index_memory(self, memory: Memory[Fetched], *, logger: Logger) -> None:
         """Make a single tethered Memory searchable now (the tether/edit hook).

@@ -25,10 +25,12 @@ import asyncio
 import hashlib
 import math
 from collections.abc import Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
-from fastembed import TextEmbedding
+
+if TYPE_CHECKING:
+    from fastembed import TextEmbedding
 
 type Vector = list[float]
 """A dense embedding as plain floats; the seam's currency."""
@@ -143,8 +145,14 @@ class FastEmbedder:
         return self._vector_dim
 
     def _ensure_model(self) -> TextEmbedding:
-        """Load the ONNX model on first use; cached for the embedder's lifetime."""
+        """Load the ONNX model on first use; cached for the embedder's lifetime.
+
+        `fastembed` is imported here, not at module top, so merely importing this
+        module (which the composition root does even when search is disabled)
+        never pulls in fastembed/onnxruntime."""
         if self._model is None:
+            from fastembed import TextEmbedding  # noqa: PLC0415 - lazy heavy ML import
+
             self._model = TextEmbedding(model_name=self._model_name)
         return self._model
 

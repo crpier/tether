@@ -11,7 +11,7 @@ reconciler and search path drive:
   flat-scan cosine search over the caller-supplied query vector, fusing the two
   with Reciprocal Rank Fusion (`RRFReranker`).
 
-Design choices baked in here (see ADR 0009):
+Design choices baked in here:
 
 - *Native FTS only, no vector ANN index.* The FTS index is created once on table
   creation; new/edited rows are found immediately via flat-scan of the unindexed

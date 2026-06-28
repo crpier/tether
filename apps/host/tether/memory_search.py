@@ -9,8 +9,8 @@ three correlated ones, and the reconciler stays write-only:
 - `candidates` is the read path: embed the query, run hybrid search, return the
   RRF-ranked `(id, score)` candidates. It deliberately does *not* filter by
   tether/delete state — `MemoryService` re-filters the candidates against SQLite,
-  which is where the ADR-0001 invariant (the assistant searches only
-  `tethered ∧ ¬deleted` Memories) is enforced. Enforcing it upstream of the
+  which is where the invariant that the assistant searches only
+  `tethered ∧ ¬deleted` Memories is enforced. Enforcing it upstream of the
   index means a drifted index (an orphan a missed event left behind) can never
   leak a loose or deleted Memory into a result.
 - `index_memory` / `deindex_memory` are the per-Memory latency hooks the spine
