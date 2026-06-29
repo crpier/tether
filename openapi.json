@@ -220,7 +220,7 @@
         "type": "string"
       },
       "CacheMeta": {
-        "description": "Whether a result was served from cache or fetched live.\n\n>>> CacheMeta(hit=False, source=\"live\").source\n'live'",
+        "description": "Whether a result was served from the local cache or fetched live.\n\n>>> CacheMeta(hit=False, source=\"live\").source\n'live'",
         "properties": {
           "hit": {
             "title": "Hit",
@@ -729,7 +729,7 @@
         "type": "object"
       },
       "QuotaMeta": {
-        "description": "The quota budget snapshot a guarded call reports.\n\n>>> QuotaMeta(limit=100, used=3, remaining=97).remaining\n97",
+        "description": "The day's quota budget snapshot a guarded call reports.\n\n>>> QuotaMeta(limit=100, used=3, remaining=97).remaining\n97",
         "properties": {
           "limit": {
             "title": "Limit",

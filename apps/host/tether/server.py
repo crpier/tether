@@ -11,6 +11,7 @@ import secrets
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -85,10 +86,13 @@ from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
 from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
+    DailyQuota,
     InMemoryYouTubeApi,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeService,
+    YouTubeSyncConfig,
+    YouTubeSyncService,
     create_youtube_schema,
 )
 from tether.youtube_tools import internal_youtube_tool_routes
@@ -116,7 +120,13 @@ class AppConfig:
     model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
     pi_binary: Path | None = None
     youtube_api: YouTubeApi | None = None
-    youtube_quota_limit: int = 10_000
+    youtube_daily_quota_limit: int = 10_000
+    youtube_sync_enabled: bool = True
+    youtube_sync_interval_seconds: float = 5 * 60
+    youtube_sync_hot_pages: int = 2
+    youtube_sync_backfill_pages: int = 1
+    youtube_sync_page_size: int = 50
+    youtube_likes_cutoff_date: date | None = None
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -176,6 +186,56 @@ async def _create_schemas(db: Database) -> None:
     await create_push_schema(db)
     await create_recall_schema(db)
     await create_search_meta_schema(db)
+
+
+async def _wire_youtube(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    event_publisher: EventHub,
+    logger: Logger,
+) -> list[asyncio.Task[None]]:
+    """Wire the read-only YouTube service + background sync onto `app.state`.
+
+    Both share one budgeted client over the configured upstream `YouTubeApi`
+    (the in-memory fake when none is configured); the sync owns all upstream
+    traffic while the service reads only the local ingested corpus. When a real
+    client is configured, an idempotent boot pass primes the corpus and the
+    returned task is the periodic sync loop; otherwise no sync runs.
+    """
+    tracer = cast("Telemetry", app.state.telemetry).tracer
+    client = YouTubeApiClient(
+        config.youtube_api or InMemoryYouTubeApi(),
+        DailyQuota(database, limit=config.youtube_daily_quota_limit),
+        clock=SystemClock(),
+    )
+    app.state.youtube_service = YouTubeService(
+        database=database, client=client, event_publisher=event_publisher, tracer=tracer
+    )
+    sync = YouTubeSyncService(
+        database=database,
+        client=client,
+        tracer=tracer,
+        config=YouTubeSyncConfig(
+            hot_pages=config.youtube_sync_hot_pages,
+            backfill_pages=config.youtube_sync_backfill_pages,
+            page_size=config.youtube_sync_page_size,
+            cutoff_date=config.youtube_likes_cutoff_date,
+        ),
+        event_publisher=event_publisher,
+    )
+    app.state.youtube_sync = sync
+    if config.youtube_api is None or not config.youtube_sync_enabled:
+        return []
+    _ = await sync.sync(logger=logger)
+    return [
+        asyncio.create_task(
+            sync.sync_forever(
+                interval_seconds=config.youtube_sync_interval_seconds, logger=logger
+            )
+        )
+    ]
 
 
 def _build_scheduler(
@@ -381,14 +441,12 @@ def _lifespan(
                 event_publisher=event_hub,
                 tracer=telemetry.tracer,
             )
-            app.state.youtube_service = YouTubeService(
+            youtube_tasks = await _wire_youtube(
+                app,
+                config=config,
                 database=db,
-                client=YouTubeApiClient(
-                    config.youtube_api or InMemoryYouTubeApi(),
-                    quota_limit=config.youtube_quota_limit,
-                ),
                 event_publisher=event_hub,
-                tracer=telemetry.tracer,
+                logger=app_logger,
             )
             app.state.recall_service = _build_recall_service(
                 app,
@@ -450,6 +508,9 @@ def _lifespan(
                         )
                     )
                 )
+            # The YouTube ingestion sync loop (empty unless a real client is
+            # configured) joins the cancelled-on-shutdown background tasks.
+            background_tasks.extend(youtube_tasks)
             try:
                 yield
             finally:

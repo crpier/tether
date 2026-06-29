@@ -1341,7 +1341,7 @@ export interface components {
     BucketItemState: "active" | "completed" | "deleted";
     /**
      * CacheMeta
-     * @description Whether a result was served from cache or fetched live.
+     * @description Whether a result was served from the local cache or fetched live.
      *
      *     >>> CacheMeta(hit=False, source="live").source
      *     'live'
@@ -1598,7 +1598,7 @@ export interface components {
     };
     /**
      * QuotaMeta
-     * @description The quota budget snapshot a guarded call reports.
+     * @description The day's quota budget snapshot a guarded call reports.
      *
      *     >>> QuotaMeta(limit=100, used=3, remaining=97).remaining
      *     97
