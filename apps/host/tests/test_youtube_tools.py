@@ -54,7 +54,7 @@ def make_client(
             kb_root=root / ".tether",
             session_secret="test-session-secret",
             youtube_api=api,
-            youtube_quota_limit=quota_limit,
+            youtube_daily_quota_limit=quota_limit,
         ),
         telemetry_settings=TelemetrySettings(install_global_provider=False),
         tool_secret=SECRET,
@@ -76,8 +76,12 @@ def call(client: TestClient, tool: str, **params: Any) -> dict[str, Any]:
 
 @test()
 def browse_returns_videos_with_quota_and_cache_metadata() -> None:
-    """A successful browse conforms to the envelope and exposes quota + cache."""
-    api = InMemoryYouTubeApi(liked=[video("v1")], watch_later=[video("v2")])
+    """A successful browse conforms to the envelope and exposes quota + cache.
+
+    The boot sync mirrors the seeded liked videos; the browse reads local state,
+    so the envelope reports a cache hit and the day's persisted spend.
+    """
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
     with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
         envelope = call(client, "browse_youtube")
 
@@ -85,18 +89,17 @@ def browse_returns_videos_with_quota_and_cache_metadata() -> None:
     found = {item["video_id"] for item in envelope["result"]}
     assert_in("v1", found)
     assert_in("v2", found)
-    assert_eq(envelope["cache"]["hit"], False)
-    assert_eq(envelope["cache"]["source"], "live")
+    assert_eq(envelope["cache"]["hit"], True)
+    assert_eq(envelope["cache"]["source"], "cache")
     assert_eq(envelope["quota"]["limit"], 1000)
     assert_eq(envelope["quota"]["used"], 2)
 
 
 @test()
-def repeated_browse_reports_a_cache_hit() -> None:
-    """A second browse is served from cache and the envelope says so."""
+def browse_reports_a_cache_hit() -> None:
+    """Browse reads the local corpus, so the envelope reports a cache hit."""
     api = InMemoryYouTubeApi(liked=[video("v1")])
     with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
-        _ = call(client, "browse_youtube")
         envelope = call(client, "browse_youtube")
 
     assert_eq(envelope["cache"]["hit"], True)
@@ -117,14 +120,19 @@ def browse_filters_by_topic() -> None:
 
 
 @test()
-def browse_exhausting_quota_yields_a_quota_exceeded_envelope() -> None:
-    """A depleted budget surfaces as a well-formed quota_exceeded envelope."""
-    api = InMemoryYouTubeApi(liked=[video("v1")], watch_later=[video("v2")])
+def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
+    """A depleted budget surfaces as a well-formed quota_exceeded envelope.
+
+    The boot sync spends the whole day's budget (list + detail) mirroring the one
+    liked video, so the upstream transcript fetch has nothing left and the guard
+    refuses it before calling out.
+    """
+    api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
     with (
         TemporaryDirectory() as directory,
-        make_client(Path(directory), api, quota_limit=1) as client,
+        make_client(Path(directory), api, quota_limit=2) as client,
     ):
-        envelope = call(client, "browse_youtube")
+        envelope = call(client, "fetch_youtube_transcript", video_id="v1")
 
     assert_eq(envelope["success"], False)
     assert_eq(envelope["error"]["code"], "quota_exceeded")

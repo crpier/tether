@@ -1,17 +1,19 @@
 """Behaviour tests for the YouTube ingestion service layer.
 
-These drive `YouTubeService` directly against a real in-memory SQLite database
-and an in-memory `YouTubeApi` (`InMemoryYouTubeApi`) — never a live YouTube call.
-The fake counts its calls so we can assert ingestion stays within quota and that
-caching elides repeats.
+These drive `YouTubeService`, `YouTubeSyncService`, and `DailyQuota` directly
+against a real in-memory SQLite database and a paginated in-memory `YouTubeApi`
+(`InMemoryYouTubeApi`) — never a live YouTube call. The fake counts its calls so
+we can assert browse/search stay local and the sync stays within budget.
 """
 
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database
+from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,
     assert_in,
@@ -26,15 +28,17 @@ from snektest import (
 
 from tether.logging import Logger
 from tether.youtube import (
-    CacheMeta,
+    DailyQuota,
     EmptyYouTubeSearchQueryError,
+    IngestedVideo,
     InMemoryYouTubeApi,
-    QuotaMeta,
     RawYouTubeVideo,
     TranscriptUnavailableError,
     YouTubeApiClient,
     YouTubeQuotaExceededError,
     YouTubeService,
+    YouTubeSyncConfig,
+    YouTubeSyncService,
     YouTubeVideoNotFoundError,
     create_youtube_schema,
     derive_ingest_state,
@@ -51,51 +55,95 @@ def test_logger() -> Logger:
     return structlog.stdlib.get_logger("test.youtube_service")
 
 
+class FakeClock:
+    """A controllable clock so quota-rollover tests need not wait for midnight."""
+
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, delta: timedelta) -> None:
+        self._now += delta
+
+
 def video(
     video_id: str,
     *,
     title: str = "A Talk",
-    channel: str = "PyConf",
     topic: str = "python",
     description: str = "",
+    liked_at: datetime | None = None,
 ) -> RawYouTubeVideo:
     """Build a raw upstream video with sensible defaults."""
     return RawYouTubeVideo(
         video_id=video_id,
         title=title,
-        channel=channel,
+        channel="PyConf",
         topic=topic,
         description=description,
+        liked_at=liked_at,
     )
+
+
+@dataclass
+class Env:
+    """The wired ingestion surfaces sharing one database and one client."""
+
+    service: YouTubeService
+    sync: YouTubeSyncService
+    db: Database
+    quota: DailyQuota
+    client: YouTubeApiClient
+    api: InMemoryYouTubeApi
 
 
 @fixture
-async def make_service(
+async def make_env(
     api: InMemoryYouTubeApi,
     *,
-    quota_limit: int = 1000,
-) -> AsyncGenerator[YouTubeService]:
-    """A fresh DB + guarded client wrapping the given in-memory API."""
+    daily_limit: int = 1000,
+    clock: FakeClock | None = None,
+    config: YouTubeSyncConfig | None = None,
+) -> AsyncGenerator[Env]:
+    """A fresh DB plus the service + sync wired over a shared budgeted client."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
-    client = YouTubeApiClient(api, quota_limit=quota_limit)
-    yield YouTubeService(database=db, client=client, tracer=noop_tracer())
+    quota = DailyQuota(db, limit=daily_limit)
+    client = YouTubeApiClient(api, quota, clock=clock)
+    service = YouTubeService(database=db, client=client, tracer=noop_tracer())
+    sync = YouTubeSyncService(
+        database=db, client=client, tracer=noop_tracer(), config=config
+    )
+    yield Env(service=service, sync=sync, db=db, quota=quota, client=client, api=api)
     await db.close()
 
 
-# --- Browse: liked + watch-later, topic-filtered ---
+# --- Browse reads only the local corpus ---
 
 
 @test()
-async def browse_returns_liked_and_watch_later() -> None:
-    """Browsing surfaces videos from both saved lists."""
-    api = InMemoryYouTubeApi(
-        liked=[video("v1", title="Liked one")],
-        watch_later=[video("v2", title="Later one")],
-    )
-    service = await load_fixture(make_service(api))
+async def browse_is_empty_until_a_sync_runs() -> None:
+    """Browse reads only local state, so it never calls upstream itself."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api))
 
-    result = await service.browse(logger=test_logger())
+    result = await env.service.browse(logger=test_logger())
+
+    assert_eq(result.videos, [])
+    # No browse ever touches the upstream list.
+    assert_eq(api.list_calls, 0)
+
+
+@test()
+async def sync_then_browse_surfaces_liked_videos() -> None:
+    """A sync mirrors liked videos into the corpus that browse then reads."""
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
+    env = await load_fixture(make_env(api))
+
+    _ = await env.sync.sync(logger=test_logger())
+    result = await env.service.browse(logger=test_logger())
 
     found = {row.video_id for row in result.videos}
     assert_in("v1", found)
@@ -106,14 +154,12 @@ async def browse_returns_liked_and_watch_later() -> None:
 async def browse_filters_by_topic() -> None:
     """A topic filter narrows browse to videos under that topic."""
     api = InMemoryYouTubeApi(
-        liked=[
-            video("v1", topic="python"),
-            video("v2", topic="rust"),
-        ]
+        liked=[video("v1", topic="python"), video("v2", topic="rust")]
     )
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.browse(topic="python", logger=test_logger())
+    result = await env.service.browse(topic="python", logger=test_logger())
 
     found = {row.video_id for row in result.videos}
     assert_in("v1", found)
@@ -124,111 +170,156 @@ async def browse_filters_by_topic() -> None:
 async def browse_topic_filter_is_case_insensitive() -> None:
     """Topic filtering matches regardless of case."""
     api = InMemoryYouTubeApi(liked=[video("v1", topic="Python")])
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.browse(topic="python", logger=test_logger())
+    result = await env.service.browse(topic="python", logger=test_logger())
 
     assert_in("v1", {row.video_id for row in result.videos})
 
 
 @test()
-async def browse_filters_by_source() -> None:
-    """A source filter restricts browse to one saved list and only pulls it."""
-    api = InMemoryYouTubeApi(
-        liked=[video("v1")],
-        watch_later=[video("v2")],
-    )
-    service = await load_fixture(make_service(api))
+async def browse_reports_the_days_quota_snapshot() -> None:
+    """Browse exposes the day's persisted budget, not a per-call spend."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api, daily_limit=10))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.browse(source="watch_later", logger=test_logger())
+    result = await env.service.browse(logger=test_logger())
 
-    found = {row.video_id for row in result.videos}
-    assert_in("v2", found)
-    assert_not_in("v1", found)
-
-
-@test()
-async def repeated_browse_is_served_from_cache() -> None:
-    """A second browse spends no further quota and reports a cache hit."""
-    api = InMemoryYouTubeApi(liked=[video("v1")], watch_later=[video("v2")])
-    service = await load_fixture(make_service(api))
-
-    first = await service.browse(logger=test_logger())
-    second = await service.browse(logger=test_logger())
-
-    assert_eq(first.cache.hit, False)
-    assert_eq(second.cache.hit, True)
-    # Two sources pulled live exactly once each on the first browse.
-    assert_eq(api.list_calls, 2)
-
-
-@test()
-async def browse_reports_quota_metadata() -> None:
-    """Browse exposes the remaining quota budget after its live calls."""
-    api = InMemoryYouTubeApi(liked=[video("v1")], watch_later=[video("v2")])
-    service = await load_fixture(make_service(api, quota_limit=10))
-
-    result = await service.browse(logger=test_logger())
-
-    assert isinstance(result.quota, QuotaMeta)
     assert_eq(result.quota.limit, 10)
+    # One hot page: one list unit + one metadata unit.
     assert_eq(result.quota.used, 2)
     assert_eq(result.quota.remaining, 8)
+    assert_eq(result.cache.source, "cache")
+
+
+# --- Sync: pagination, backfill cursor, cutoff ---
 
 
 @test()
-async def browse_raises_when_quota_is_exhausted() -> None:
-    """A depleted budget guards the upstream API rather than calling it."""
-    api = InMemoryYouTubeApi(liked=[video("v1")], watch_later=[video("v2")])
-    service = await load_fixture(make_service(api, quota_limit=1))
+async def sync_pages_and_backfills_across_runs() -> None:
+    """Hot pages plus an advancing backfill cursor cover history over passes."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=2)
+    env = await load_fixture(make_env(api, config=config))
 
-    with assert_raises(YouTubeQuotaExceededError):
-        _ = await service.browse(logger=test_logger())
+    _ = await env.sync.sync(logger=test_logger())
+    after_first = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
+    _ = await env.sync.sync(logger=test_logger())
+    after_second = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
 
-    # The second source list was never pulled.
-    assert_eq(api.list_calls, 1)
-
-
-# --- Ignore / purge with retry ---
+    # First pass: hot page (v1,v2) + one backfill page (v3,v4).
+    assert_eq(after_first, {"v1", "v2", "v3", "v4"})
+    # Second pass resumes the cursor and reaches the tail.
+    assert_eq(after_second, {"v1", "v2", "v3", "v4", "v5"})
 
 
 @test()
-async def ignored_video_drops_out_of_browse() -> None:
-    """Purging a video removes it from browse results."""
+async def backfill_cursor_resumes_after_a_restart() -> None:
+    """The persisted cursor lets a fresh sync instance resume the backfill."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=2)
+    env = await load_fixture(make_env(api, config=config))
+    _ = await env.sync.sync(logger=test_logger())
+
+    # A new sync instance over the same database stands in for a restart.
+    restarted = YouTubeSyncService(
+        database=env.db, client=env.client, tracer=noop_tracer(), config=config
+    )
+    _ = await restarted.sync(logger=test_logger())
+
+    found = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
+    assert_in("v5", found)
+
+
+@test()
+async def cutoff_date_stops_the_backfill() -> None:
+    """Videos liked before the cutoff are dropped and end the backfill."""
+    recent = datetime(2026, 6, 1, tzinfo=UTC)
+    old = datetime(2024, 1, 1, tzinfo=UTC)
+    api = InMemoryYouTubeApi(
+        liked=[
+            video("v1", liked_at=recent),
+            video("v2", liked_at=recent),
+            video("v3", liked_at=old),
+        ]
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=2, page_size=2, cutoff_date=date(2025, 1, 1)
+    )
+    env = await load_fixture(make_env(api, config=config))
+
+    _ = await env.sync.sync(logger=test_logger())
+
+    found = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
+    assert_in("v1", found)
+    assert_in("v2", found)
+    assert_not_in("v3", found)
+
+
+@test()
+async def sync_preserves_enriched_metadata() -> None:
+    """The detail fetch's enriched fields round-trip onto the ingested row."""
+    liked_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    raw = RawYouTubeVideo(
+        video_id="v1",
+        title="Async IO",
+        channel="PyConf",
+        topic="python",
+        channel_id="UC123",
+        liked_at=liked_at,
+        duration_seconds=600,
+        caption_available=True,
+        topic_categories=("python", "async"),
+    )
+    env = await load_fixture(make_env(InMemoryYouTubeApi(liked=[raw])))
+    _ = await env.sync.sync(logger=test_logger())
+
+    stored = await env.service.get_video("v1")
+
+    assert_eq(stored.channel_id, "UC123")
+    assert_eq(stored.duration_seconds, 600)
+    assert_eq(stored.caption_available, 1)
+    assert_is_not_none(stored.liked_at)
+
+
+# --- Ignore / retry survive re-sync ---
+
+
+@test()
+async def ignored_video_drops_out_of_browse_and_stays_ignored() -> None:
+    """Purging removes a video from browse; a later sync keeps it ignored."""
     api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    _ = await service.ignore("v1", logger=test_logger())
-    result = await service.browse(logger=test_logger())
+    _ = await env.service.ignore("v1", logger=test_logger())
+    _ = await env.sync.sync(logger=test_logger())
+    result = await env.service.browse(logger=test_logger())
 
     assert_not_in("v1", {row.video_id for row in result.videos})
     assert_in("v2", {row.video_id for row in result.videos})
 
 
 @test()
-async def ignore_marks_the_video_ignored() -> None:
-    """Ignoring stamps the ignore state on the row."""
-    api = InMemoryYouTubeApi(liked=[video("v1")])
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
-
-    ignored = await service.ignore("v1", logger=test_logger())
-
-    assert_eq(derive_ingest_state(ignored), "ignored")
-    _ = assert_is_not_none(ignored.ignored_at)
-
-
-@test()
 async def retry_returns_an_ignored_video_to_ingestion() -> None:
     """Retry un-ignores a purged video so browse surfaces it again."""
     api = InMemoryYouTubeApi(liked=[video("v1")])
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
-    _ = await service.ignore("v1", logger=test_logger())
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+    _ = await env.service.ignore("v1", logger=test_logger())
 
-    retried = await service.retry("v1", logger=test_logger())
-    result = await service.browse(logger=test_logger())
+    retried = await env.service.retry("v1", logger=test_logger())
+    result = await env.service.browse(logger=test_logger())
 
     assert_eq(derive_ingest_state(retried), "active")
     assert_is_none(retried.ignored_at)
@@ -236,30 +327,15 @@ async def retry_returns_an_ignored_video_to_ingestion() -> None:
 
 
 @test()
-async def re_browsing_does_not_resurrect_an_ignored_video() -> None:
-    """A still-upstream ignored video stays purged across re-ingestion."""
-    api = InMemoryYouTubeApi(liked=[video("v1")])
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
-    _ = await service.ignore("v1", logger=test_logger())
-
-    # A browse forced past the cache would still re-mirror v1; it must stay ignored.
-    result = await service.browse(logger=test_logger())
-
-    assert_not_in("v1", {row.video_id for row in result.videos})
-
-
-@test()
 async def ignoring_an_unknown_video_raises() -> None:
     """Purging a video that was never ingested is a not-found error."""
-    api = InMemoryYouTubeApi()
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
 
     with assert_raises(YouTubeVideoNotFoundError):
-        _ = await service.ignore("nope", logger=test_logger())
+        _ = await env.service.ignore("nope", logger=test_logger())
 
 
-# --- Fetch transcript ---
+# --- Transcript fetch (still upstream, budget-guarded) ---
 
 
 @test()
@@ -268,24 +344,24 @@ async def fetch_transcript_returns_and_persists_the_text() -> None:
     api = InMemoryYouTubeApi(
         liked=[video("v1")], transcripts={"v1": "the transcript body"}
     )
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.fetch_transcript("v1", logger=test_logger())
+    result = await env.service.fetch_transcript("v1", logger=test_logger())
 
     assert_eq(result.transcript, "the transcript body")
     assert_eq(result.video.transcript, "the transcript body")
 
 
 @test()
-async def fetch_transcript_is_cached_on_repeat() -> None:
-    """A second fetch is served from cache without another live call."""
+async def fetch_transcript_is_served_from_the_row_on_repeat() -> None:
+    """A stored transcript short-circuits with no further upstream call."""
     api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    first = await service.fetch_transcript("v1", logger=test_logger())
-    second = await service.fetch_transcript("v1", logger=test_logger())
+    first = await env.service.fetch_transcript("v1", logger=test_logger())
+    second = await env.service.fetch_transcript("v1", logger=test_logger())
 
     assert_eq(first.cache.hit, False)
     assert_eq(second.cache.hit, True)
@@ -293,49 +369,50 @@ async def fetch_transcript_is_cached_on_repeat() -> None:
 
 
 @test()
-async def fetch_transcript_for_unknown_video_raises() -> None:
-    """A transcript fetch for a non-ingested video is a not-found error."""
-    api = InMemoryYouTubeApi(transcripts={"v1": "body"})
-    service = await load_fixture(make_service(api))
+async def transcript_survives_a_re_sync() -> None:
+    """Re-ingesting a video never drops its locally fetched transcript."""
+    api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+    _ = await env.service.fetch_transcript("v1", logger=test_logger())
 
-    with assert_raises(YouTubeVideoNotFoundError):
-        _ = await service.fetch_transcript("v1", logger=test_logger())
+    _ = await env.sync.sync(logger=test_logger())
+    stored = await env.service.get_video("v1")
+
+    assert_eq(stored.transcript, "body")
 
 
 @test()
-async def fetch_transcript_unavailable_raises_without_spending_repeatedly() -> None:
+async def fetch_transcript_for_unknown_video_raises() -> None:
+    """A transcript fetch for a non-ingested video is a not-found error."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi(transcripts={"v1": "body"})))
+
+    with assert_raises(YouTubeVideoNotFoundError):
+        _ = await env.service.fetch_transcript("v1", logger=test_logger())
+
+
+@test()
+async def fetch_transcript_unavailable_raises() -> None:
     """A video with no upstream transcript surfaces as unavailable."""
     api = InMemoryYouTubeApi(liked=[video("v1")])
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
     with assert_raises(TranscriptUnavailableError):
-        _ = await service.fetch_transcript("v1", logger=test_logger())
+        _ = await env.service.fetch_transcript("v1", logger=test_logger())
 
 
-# --- Search across saved content + transcript text ---
+# --- Search across saved content + transcript text (local only) ---
 
 
 @test()
 async def search_matches_saved_title() -> None:
     """Search matches against the saved video title."""
     api = InMemoryYouTubeApi(liked=[video("v1", title="Async Python deep dive")])
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.search("async", logger=test_logger())
-
-    assert_in("v1", {row.video_id for row in result.videos})
-
-
-@test()
-async def search_matches_saved_description() -> None:
-    """Search matches against the saved description text."""
-    api = InMemoryYouTubeApi(
-        liked=[video("v1", title="Talk", description="covers asyncio internals")]
-    )
-    service = await load_fixture(make_service(api))
-
-    result = await service.search("asyncio", logger=test_logger())
+    result = await env.service.search("async", logger=test_logger())
 
     assert_in("v1", {row.video_id for row in result.videos})
 
@@ -344,14 +421,14 @@ async def search_matches_saved_description() -> None:
 async def search_matches_fetched_transcript_text() -> None:
     """Once fetched, transcript text is searchable."""
     api = InMemoryYouTubeApi(
-        liked=[video("v1", title="Talk", description="")],
+        liked=[video("v1", title="Talk")],
         transcripts={"v1": "today we discuss coroutines at length"},
     )
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
-    _ = await service.fetch_transcript("v1", logger=test_logger())
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+    _ = await env.service.fetch_transcript("v1", logger=test_logger())
 
-    result = await service.search("coroutines", logger=test_logger())
+    result = await env.service.search("coroutines", logger=test_logger())
 
     assert_in("v1", {row.video_id for row in result.videos})
 
@@ -360,25 +437,12 @@ async def search_matches_fetched_transcript_text() -> None:
 async def search_does_not_match_unfetched_transcript() -> None:
     """A term only in a not-yet-fetched transcript does not match."""
     api = InMemoryYouTubeApi(
-        liked=[video("v1", title="Talk", description="")],
-        transcripts={"v1": "coroutines"},
+        liked=[video("v1", title="Talk")], transcripts={"v1": "coroutines"}
     )
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.search("coroutines", logger=test_logger())
-
-    assert_not_in("v1", {row.video_id for row in result.videos})
-
-
-@test()
-async def search_excludes_ignored_videos() -> None:
-    """A purged video drops out of Search."""
-    api = InMemoryYouTubeApi(liked=[video("v1", title="needle one")])
-    service = await load_fixture(make_service(api))
-    _ = await service.browse(logger=test_logger())
-    _ = await service.ignore("v1", logger=test_logger())
-
-    result = await service.search("needle", logger=test_logger())
+    result = await env.service.search("coroutines", logger=test_logger())
 
     assert_not_in("v1", {row.video_id for row in result.videos})
 
@@ -392,9 +456,10 @@ async def search_ands_terms_together() -> None:
             video("v2", title="Async Rust patterns"),
         ]
     )
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
 
-    result = await service.search("async python", logger=test_logger())
+    result = await env.service.search("async python", logger=test_logger())
 
     found = {row.video_id for row in result.videos}
     assert_in("v1", found)
@@ -402,22 +467,98 @@ async def search_ands_terms_together() -> None:
 
 
 @test()
-async def search_rejects_a_blank_query() -> None:
-    """A blank Search query is rejected rather than listing everything."""
-    api = InMemoryYouTubeApi(liked=[video("v1")])
-    service = await load_fixture(make_service(api))
+async def search_excludes_ignored_videos() -> None:
+    """A purged video drops out of Search."""
+    api = InMemoryYouTubeApi(liked=[video("v1", title="needle one")])
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+    _ = await env.service.ignore("v1", logger=test_logger())
 
-    with assert_raises(EmptyYouTubeSearchQueryError):
-        _ = await service.search("   ", logger=test_logger())
+    result = await env.service.search("needle", logger=test_logger())
+
+    assert_not_in("v1", {row.video_id for row in result.videos})
 
 
 @test()
-async def cache_metadata_is_well_formed() -> None:
-    """Browse cache metadata is a structured CacheMeta value."""
+async def search_rejects_a_blank_query() -> None:
+    """A blank Search query is rejected rather than listing everything."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi(liked=[video("v1")])))
+
+    with assert_raises(EmptyYouTubeSearchQueryError):
+        _ = await env.service.search("   ", logger=test_logger())
+
+
+# --- DailyQuota: persistence, exhaustion, rollover ---
+
+
+@test()
+async def quota_persists_spend_across_instances() -> None:
+    """A fresh DailyQuota over the same database sees prior spend."""
     api = InMemoryYouTubeApi(liked=[video("v1")])
-    service = await load_fixture(make_service(api))
+    env = await load_fixture(make_env(api, daily_limit=100))
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    await env.quota.spend(7, now=now)
 
-    result = await service.browse(logger=test_logger())
+    reopened = DailyQuota(env.db, limit=100)
 
-    assert isinstance(result.cache, CacheMeta)
-    assert_eq(result.cache.source, "live")
+    assert_eq(await reopened.used(now=now), 7)
+
+
+@test()
+async def quota_raises_before_calling_out_when_exhausted() -> None:
+    """A depleted day guards the upstream call rather than overspending."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api, daily_limit=3))
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    await env.quota.spend(3, now=now)
+
+    with assert_raises(YouTubeQuotaExceededError):
+        await env.quota.spend(1, now=now)
+
+
+@test()
+async def quota_rolls_over_at_the_next_utc_day() -> None:
+    """Spend resets on a new UTC day so sync resumes automatically."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api, daily_limit=5))
+    day_one = datetime(2026, 6, 1, 23, 0, tzinfo=UTC)
+    await env.quota.spend(5, now=day_one)
+
+    day_two = day_one + timedelta(hours=2)
+
+    assert_eq(await env.quota.used(now=day_two), 0)
+    await env.quota.spend(5, now=day_two)
+    assert_eq(await env.quota.used(now=day_two), 5)
+
+
+@test()
+async def sync_stops_on_quota_exhaustion_without_raising() -> None:
+    """An exhausted budget halts the sync gracefully, mirroring partial work."""
+    clock = FakeClock(datetime(2026, 6, 1, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    # Budget covers one page (list + metadata) and no more.
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=2, page_size=2)
+    env = await load_fixture(make_env(api, daily_limit=2, clock=clock, config=config))
+
+    report = await env.sync.sync(logger=test_logger())
+
+    # The first page mirrored; the budget then stopped further pulls.
+    assert_eq(report.upserted, 2)
+    found = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
+    assert_eq(found, {"v1", "v2"})
+
+
+@test()
+async def schema_is_idempotent_to_create() -> None:
+    """Re-running schema creation is a no-op (migrations recorded by name)."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    await create_youtube_schema(db)
+    async with db.transaction() as tx:
+        rows: list[IngestedVideo[Fetched]] = await tx.fetch_all(
+            select(IngestedVideo).all()
+        )
+    assert_eq(rows, [])
+    await db.close()

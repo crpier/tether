@@ -50,7 +50,7 @@ def make_client(
                 kb_root=root / ".tether",
                 session_secret=SESSION_SECRET,
                 youtube_api=api,
-                youtube_quota_limit=quota_limit,
+                youtube_daily_quota_limit=quota_limit,
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
@@ -65,8 +65,12 @@ def login(client: TestClient) -> None:
 
 @test()
 def get_youtube_browses_with_quota_and_cache_metadata() -> None:
-    """`GET /api/youtube` lists ingested videos and exposes quota + cache."""
-    api = InMemoryYouTubeApi(liked=[video("v1")], watch_later=[video("v2")])
+    """`GET /api/youtube` lists synced videos and exposes the day's quota + cache.
+
+    The boot sync mirrors the seeded liked videos into the corpus; the browse
+    itself reads local state, so it reports a cache hit and the day's spend.
+    """
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
     with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
         login(client)
         response = client.get("/api/youtube")
@@ -76,7 +80,8 @@ def get_youtube_browses_with_quota_and_cache_metadata() -> None:
     found = {item["video_id"] for item in body["videos"]}
     assert_in("v1", found)
     assert_in("v2", found)
-    assert_eq(body["cache"]["hit"], False)
+    # Browse is local: a cache hit, reporting the boot sync's spend (list+detail).
+    assert_eq(body["cache"]["hit"], True)
     assert_eq(body["quota"]["used"], 2)
 
 
