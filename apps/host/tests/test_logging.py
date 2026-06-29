@@ -38,6 +38,7 @@ from tether.logging import (
     get_bound_request_logger,
     get_request_logger,
 )
+from tether.model_selection import AgentModelCatalog, ModelSelectionConfigError
 
 
 class CapturedStdout(StringIO):
@@ -266,9 +267,13 @@ def configure_logging_quiets_noisy_loggers() -> None:
 
 @test()
 def configure_logging_silences_uvicorn_loggers() -> None:
-    """Uvicorn must not emit its own lifecycle or access logs."""
+    """Uvicorn must not emit its own routine lifecycle or access logs.
+
+    Access logs are fully disabled; the `uvicorn`/`uvicorn.error` lifecycle
+    loggers are quieted to WARNING (see the startup-failure test), so their
+    routine INFO chatter is dropped at the level floor rather than disabled.
+    """
     logging.getLogger("uvicorn").addHandler(logging.StreamHandler(StringIO()))
-    logging.getLogger("uvicorn.error").addHandler(logging.StreamHandler(StringIO()))
     logging.getLogger("uvicorn.access").addHandler(logging.StreamHandler(StringIO()))
 
     with captured_logging(is_tty=False) as stream:
@@ -280,10 +285,46 @@ def configure_logging_silences_uvicorn_loggers() -> None:
             assert_false(logger.propagate)
             assert_true(logger.disabled)
 
-        logging.getLogger("uvicorn.error").warning("Started server process")
+        logging.getLogger("uvicorn").info("Started server process")
+        logging.getLogger("uvicorn.error").info("Application startup complete.")
         logging.getLogger("uvicorn.access").info("GET / HTTP/1.1")
 
     assert_eq(stream.getvalue(), "")
+
+
+@test()
+def configure_logging_surfaces_uvicorn_startup_failures() -> None:
+    """Uvicorn error-level output (e.g. lifespan startup crashes) must be visible.
+
+    `serve()` runs uvicorn with `log_config=None`, so uvicorn configures no
+    logging of its own. If `uvicorn.error` were also fully silenced, a lifespan
+    startup exception — which uvicorn logs at ERROR on that logger with
+    `exc_info` — would vanish, leaving only an unexplained `restart:`/exit-3
+    loop. It must instead render through the structlog root handler. Routine
+    INFO lifecycle chatter on the same logger stays suppressed (WARNING floor).
+    """
+    with captured_logging(is_tty=False) as stream:
+        configure_logging(force_tty=False)
+
+        uvicorn_error = logging.getLogger("uvicorn.error")
+        assert_true(uvicorn_error.propagate)
+        assert_false(uvicorn_error.disabled)
+        assert_eq(uvicorn_error.level, logging.WARNING)
+
+        # Routine INFO lifecycle line: dropped at the WARNING floor.
+        uvicorn_error.info("Application startup complete.")
+        assert_eq(stream.getvalue(), "")
+
+        # The startup-failure path uvicorn takes: ERROR + exc_info, with the
+        # genuine misconfiguration exception the host lifespan raises.
+        try:
+            AgentModelCatalog(default_model="default", models=())
+        except ModelSelectionConfigError:
+            uvicorn_error.error("Exception in 'lifespan' protocol\n", exc_info=True)
+
+    record = json_log_for_event(stream, "Exception in 'lifespan' protocol\n")
+    assert_eq(record["level"], "error")
+    assert_in("default model is not present in the allowlist", str(record["exception"]))
 
 
 @test()
