@@ -8,12 +8,12 @@ we can assert browse/search stay local and the sync stays within budget.
 
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database, Fetched, select
+from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,
     assert_in,
@@ -28,6 +28,7 @@ from snektest import (
 
 from tether.logging import Logger
 from tether.youtube import (
+    _LIKES_LAST_RUN_KEY,
     DailyQuota,
     EmptyYouTubeSearchQueryError,
     IngestedVideo,
@@ -40,6 +41,7 @@ from tether.youtube import (
     YouTubeSyncConfig,
     YouTubeSyncService,
     YouTubeVideoNotFoundError,
+    _state_get,
     create_youtube_schema,
     derive_ingest_state,
 )
@@ -194,6 +196,62 @@ async def browse_reports_the_days_quota_snapshot() -> None:
     assert_eq(result.cache.source, "cache")
 
 
+@test()
+async def browse_orders_by_liked_at_then_falls_back_to_created_at() -> None:
+    """Browse is newest-liked-first; null-liked rows fall back to created-at."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+
+    async with env.db.transaction() as tx:
+        # A liked row (old created_at), and two null-liked rows whose only
+        # ordering signal is created_at — the newest-created sorts first.
+        _ = await tx.execute(
+            insert(
+                IngestedVideo(
+                    video_id="liked",
+                    source="liked",
+                    title="t",
+                    channel="c",
+                    topic="python",
+                    description="",
+                    liked_at=datetime(2026, 6, 1, tzinfo=UTC),
+                    created_at=datetime(2020, 1, 1, tzinfo=UTC),
+                )
+            )
+        )
+        _ = await tx.execute(
+            insert(
+                IngestedVideo(
+                    video_id="null_new",
+                    source="liked",
+                    title="t",
+                    channel="c",
+                    topic="python",
+                    description="",
+                    created_at=datetime(2025, 6, 2, tzinfo=UTC),
+                )
+            )
+        )
+        _ = await tx.execute(
+            insert(
+                IngestedVideo(
+                    video_id="null_old",
+                    source="liked",
+                    title="t",
+                    channel="c",
+                    topic="python",
+                    description="",
+                    created_at=datetime(2025, 6, 1, tzinfo=UTC),
+                )
+            )
+        )
+
+    order = [
+        r.video_id for r in (await env.service.browse(logger=test_logger())).videos
+    ]
+
+    assert_eq(order, ["liked", "null_new", "null_old"])
+
+
 # --- Sync: pagination, backfill cursor, cutoff ---
 
 
@@ -264,6 +322,73 @@ async def cutoff_date_stops_the_backfill() -> None:
     assert_in("v1", found)
     assert_in("v2", found)
     assert_not_in("v3", found)
+
+
+@test()
+async def cutoff_compares_liked_at_in_utc() -> None:
+    """A non-UTC liked_at is normalised to UTC before the cutoff comparison."""
+    # 00:30 at +02:00 is 22:30 the *previous* UTC day, which falls before the
+    # cutoff; a naive `.date()` would read 2025-01-01 and wrongly keep it.
+    plus_two = timezone(timedelta(hours=2))
+    api = InMemoryYouTubeApi(
+        liked=[video("v1", liked_at=datetime(2025, 1, 1, 0, 30, tzinfo=plus_two))]
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=0, page_size=10, cutoff_date=date(2025, 1, 1)
+    )
+    env = await load_fixture(make_env(api, config=config))
+
+    _ = await env.sync.sync(logger=test_logger())
+
+    found = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
+    assert_not_in("v1", found)
+
+
+@test()
+async def members_only_videos_are_skipped_during_sync() -> None:
+    """A liked video with no fetchable metadata (members-only) is not ingested."""
+    api = InMemoryYouTubeApi(
+        liked=[video("v1"), video("members")], unavailable=["members"]
+    )
+    env = await load_fixture(make_env(api))
+
+    _ = await env.sync.sync(logger=test_logger())
+
+    found = {
+        row.video_id for row in (await env.service.browse(logger=test_logger())).videos
+    }
+    assert_in("v1", found)
+    assert_not_in("members", found)
+
+
+@test()
+async def sync_marks_last_run_from_the_injected_clock() -> None:
+    """The last-run timestamp is sourced from the injected clock, not wall time."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api, clock=clock))
+
+    _ = await env.sync.sync(logger=test_logger())
+
+    last_run = await _state_get(env.db, _LIKES_LAST_RUN_KEY)
+    assert_eq(last_run, clock.now().isoformat())
+
+
+@test()
+async def quota_exhaustion_during_enrich_does_not_count_pulled() -> None:
+    """A page whose metadata fetch is blocked by quota is not counted as pulled."""
+    clock = FakeClock(datetime(2026, 6, 1, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
+    # One unit covers the list call; the enrich call then exceeds the budget.
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=0, page_size=2)
+    env = await load_fixture(make_env(api, daily_limit=1, clock=clock, config=config))
+
+    report = await env.sync.sync(logger=test_logger())
+
+    assert_eq(report.pulled, 0)
+    assert_eq(report.upserted, 0)
 
 
 @test()

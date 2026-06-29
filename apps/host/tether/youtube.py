@@ -217,9 +217,16 @@ class InMemoryYouTubeApi(YouTubeApi):
         *,
         liked: Sequence[RawYouTubeVideo] = (),
         transcripts: Mapping[str, str] | None = None,
+        unavailable: Sequence[str] = (),
     ) -> None:
         self._liked: list[RawYouTubeVideo] = list(liked)
-        self._by_id: dict[str, RawYouTubeVideo] = {v.video_id: v for v in self._liked}
+        # `unavailable` ids appear in the liked pages but yield no metadata,
+        # standing in for members-only / private / deleted videos the real
+        # `videos.list` call silently omits.
+        unavailable_ids = set(unavailable)
+        self._by_id: dict[str, RawYouTubeVideo] = {
+            v.video_id: v for v in self._liked if v.video_id not in unavailable_ids
+        }
         self._transcripts: dict[str, str] = dict(transcripts or {})
         self.list_calls: int = 0
         self.metadata_calls: int = 0
@@ -486,6 +493,14 @@ class YouTubeApiClient:
         self._quota: DailyQuota = quota
         self._clock: Clock = clock or SystemClock()
 
+    def now(self) -> datetime:
+        """Return the current instant from the shared clock.
+
+        The sync service reads its bookkeeping time from here so spend and
+        last-run timestamps come from one clock rather than diverging.
+        """
+        return self._clock.now()
+
     async def snapshot(self) -> QuotaMeta:
         """Report the day's remaining budget without spending."""
         return await self._quota.snapshot(now=self._clock.now())
@@ -607,8 +622,10 @@ class YouTubeSyncService:
                     )
                     pages += 1
                     scoped, reached_cutoff = self._apply_cutoff(page.videos)
-                    pulled += len(scoped)
+                    # Count the page as pulled only once `_mirror_page` returns;
+                    # a quota stop mid-enrich must not overstate the report.
                     upserted += await self._mirror_page(scoped)
+                    pulled += len(scoped)
                     hot_token = page.next_page_token
                     if hot_token is None or reached_cutoff:
                         break
@@ -625,8 +642,8 @@ class YouTubeSyncService:
                     )
                     pages += 1
                     scoped, hit_cutoff = self._apply_cutoff(page.videos)
-                    pulled += len(scoped)
                     upserted += await self._mirror_page(scoped)
+                    pulled += len(scoped)
                     cursor = page.next_page_token
                     if hit_cutoff:
                         cursor = None
@@ -666,8 +683,10 @@ class YouTubeSyncService:
                 _ = await self.sync(logger=logger)
             except asyncio.CancelledError:
                 raise
-            except Exception as error:
-                logger.warning("YouTube sync pass failed", error=str(error))
+            except Exception:
+                # Mirror the search reconciler: keep the loop alive but preserve
+                # the traceback for the swallowed failure.
+                logger.exception("YouTube sync pass failed")
 
     def _apply_cutoff(
         self, videos: Sequence[RawYouTubeVideo]
@@ -678,14 +697,22 @@ class YouTubeSyncService:
         kept: list[RawYouTubeVideo] = []
         reached = False
         for raw in videos:
-            if raw.liked_at is not None and raw.liked_at.date() < self.cutoff_date:
+            if (
+                raw.liked_at is not None
+                and raw.liked_at.astimezone(UTC).date() < self.cutoff_date
+            ):
                 reached = True
                 continue
             kept.append(raw)
         return kept, reached
 
     async def _mirror_page(self, videos: Sequence[RawYouTubeVideo]) -> int:
-        """Enrich and upsert a page, preserving local transcript + ignore state."""
+        """Enrich and upsert a page, preserving local transcript + ignore state.
+
+        A video the detail fetch omits is un-ingestable (members-only, private,
+        deleted) and is skipped rather than mirrored from the thin liked-page
+        entry, keeping the corpus clean.
+        """
         if not videos:
             return 0
         details = await self.client.fetch_video_metadata(
@@ -694,7 +721,9 @@ class YouTubeSyncService:
         upserted = 0
         async with self.database.transaction() as tx:
             for raw in videos:
-                enriched = details.get(raw.video_id, raw)
+                enriched = details.get(raw.video_id)
+                if enriched is None:
+                    continue
                 await self._upsert(tx, enriched)
                 upserted += 1
         return upserted
@@ -763,7 +792,7 @@ class YouTubeSyncService:
 
     async def _mark_run(self) -> None:
         await _state_set(
-            self.database, _LIKES_LAST_RUN_KEY, datetime.now(UTC).isoformat()
+            self.database, _LIKES_LAST_RUN_KEY, self.client.now().isoformat()
         )
 
 
@@ -832,7 +861,9 @@ class YouTubeService:
                 query = query.where(IngestedVideo.topic.like(topic))
             async with self.database.transaction() as tx:
                 videos = await tx.fetch_all(
-                    query.order_by(IngestedVideo.liked_at.desc())
+                    query.order_by(
+                        IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
+                    )
                 )
         _debug(logger, "YouTube browse completed", result_count=len(videos))
         return BrowseResult(
@@ -862,7 +893,9 @@ class YouTubeService:
             )
         async with self.database.transaction() as tx:
             videos = await tx.fetch_all(
-                statement.order_by(IngestedVideo.liked_at.desc())
+                statement.order_by(
+                    IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
+                )
             )
         _debug(logger, "YouTube search completed", result_count=len(videos))
         return SearchResult(
