@@ -34,6 +34,14 @@ dev = [
     "ruff>=0.15.18",
     "snektest",
 ]
+# Real YouTube ingestion needs the Google OAuth + Data API clients. They are an
+# optional group (not core deps) so the rest of Tether runs without them; the
+# OAuth adapter imports them lazily and raises a clear error if they are absent.
+# Install with `uv sync --group youtube` before running `just youtube-auth`.
+youtube = [
+    "google-api-python-client>=2.0.0",
+    "google-auth-oauthlib>=1.0.0",
+]
 
 [tool.uv.sources]
 snektest = { path = "../../../snektest", editable = true }

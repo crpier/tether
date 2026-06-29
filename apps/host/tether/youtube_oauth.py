@@ -1,0 +1,555 @@
+"""OAuth-backed concrete `YouTubeApi` adapter + the `just youtube-auth` bootstrap.
+
+The paginated `YouTubeApi` seam (see `tether.youtube`) is, in production, fed by
+this thin I/O adapter over the YouTube Data API v3. A plain API key cannot read a
+user's own liked list — that needs OAuth, the liked list is exposed only as a
+special playlist, and full metadata is a separate batched call. So this module:
+
+* runs an installed-app OAuth flow once (local browser on an ephemeral port, or a
+  no-browser mode that just prints the URL), caches the token as JSON, refreshes
+  it automatically on expiry, and refuses a token missing a required scope;
+* resolves the authenticated channel's *likes* playlist, pages through it, and
+  maps each item's added/published timestamps onto `RawYouTubeVideo`;
+* fetches full video metadata in id-batched `videos.list` calls.
+
+The adapter holds **no** caching, budgeting, or paging cadence — all of that lives
+in the `YouTubeSyncService`/`YouTubeApiClient` from #80, keeping the network
+boundary as dumb (and as faked-in-tests) as possible. The Google client libraries
+are imported lazily so the rest of Tether runs without them installed; the import
+path raises a clear `GoogleClientUnavailableError` when they are missing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import json
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Protocol, cast, runtime_checkable
+
+from tether.youtube import LikedPage, RawYouTubeVideo, TranscriptUnavailableError
+
+YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+"""Read access to the user's account, including the liked-videos playlist."""
+
+YOUTUBE_CAPTION_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+"""The scope captions.download needs; requested now so the later transcript slice
+does not force a second authorization."""
+
+REQUIRED_SCOPES: tuple[str, ...] = (YOUTUBE_READONLY_SCOPE, YOUTUBE_CAPTION_SCOPE)
+"""Minimum scopes a stored token must carry, validated up front on load."""
+
+_LIKES_PLAYLIST_ALIAS = "LL"
+"""The well-known liked-videos playlist alias, used when channel resolution finds
+no explicit likes playlist."""
+
+_MAX_IDS_PER_CALL = 50
+"""The YouTube Data API `videos.list` per-call id maximum."""
+
+_GOOGLE_INSTALL_HINT = (
+    "Google client libraries are not installed. Install them with "
+    "`uv pip install google-api-python-client google-auth-oauthlib` "
+    "(or add them to the host dependencies) and re-run."
+)
+
+
+class GoogleClientUnavailableError(Exception):
+    """Raised when the lazily-imported Google client libraries are missing."""
+
+
+class YouTubeAuthError(Exception):
+    """Raised when a stored token is absent, missing a scope, or unrecoverable.
+
+    The message instructs the user to delete the token and re-run the auth
+    recipe; a half-authorized or revoked token fails loudly here rather than
+    mid-sync.
+    """
+
+
+@runtime_checkable
+class GoogleCredentials(Protocol):
+    """The subset of `google.oauth2.credentials.Credentials` the adapter uses."""
+
+    @property
+    def valid(self) -> bool:
+        """Whether the token is currently usable (present and not expired)."""
+        ...
+
+    @property
+    def expired(self) -> bool:
+        """Whether the token has passed its expiry."""
+        ...
+
+    @property
+    def refresh_token(self) -> str | None:
+        """The refresh token, if the grant issued one."""
+        ...
+
+    @property
+    def scopes(self) -> Sequence[str] | None:
+        """The scopes the token was granted."""
+        ...
+
+    def refresh(self, request: object, /) -> None:
+        """Refresh the access token in place, or raise on an unrecoverable grant."""
+        ...
+
+    def to_json(self) -> str:
+        """Serialize the credentials to the cached-token JSON form."""
+        ...
+
+
+class _ListRequest(Protocol):
+    """A built Data API request whose `execute()` performs the blocking call."""
+
+    def execute(self) -> dict[str, Any]:
+        """Run the request synchronously and return the decoded JSON body."""
+        ...
+
+
+class _ResourceCollection(Protocol):
+    """A Data API resource collection (e.g. `playlistItems`) exposing `list`."""
+
+    def list(self, **kwargs: Any) -> _ListRequest:
+        """Build a list request for this collection with the given parameters."""
+        ...
+
+
+class _YouTubeResource(Protocol):
+    """The discovery client returned by `googleapiclient.discovery.build`."""
+
+    def channels(self) -> _ResourceCollection:
+        """The `channels` collection."""
+        ...
+
+    def playlistItems(self) -> _ResourceCollection:  # noqa: N802 (mirrors the Data API method name)
+        """The `playlistItems` collection."""
+        ...
+
+    def videos(self) -> _ResourceCollection:
+        """The `videos` collection."""
+        ...
+
+
+type CredentialsFromInfo = Callable[
+    [Mapping[str, object], Sequence[str]], GoogleCredentials
+]
+"""Builds credentials from cached-token info + the required scopes."""
+
+type RequestFactory = Callable[[], object]
+"""Builds the transport request object a credentials refresh needs."""
+
+type DiscoveryBuild = Callable[..., _YouTubeResource]
+"""Builds the Data API discovery resource from authorized credentials."""
+
+
+@dataclass(frozen=True, slots=True)
+class OAuthConfig:
+    """Paths + toggles for the OAuth flow and token cache.
+
+    `token_path` and `client_secret_path` default under the data dir at the call
+    site; `no_browser` prints the auth URL instead of opening a browser, for
+    authorizing on a headless box.
+    """
+
+    token_path: Path
+    client_secret_path: Path
+    scopes: tuple[str, ...] = REQUIRED_SCOPES
+    no_browser: bool = False
+
+
+def _load_module(name: str) -> ModuleType:
+    """Import a Google client module lazily, mapping absence to a clear error."""
+    try:
+        return importlib.import_module(name)
+    except ImportError as error:
+        raise GoogleClientUnavailableError(_GOOGLE_INSTALL_HINT) from error
+
+
+def _default_credentials_from_info() -> CredentialsFromInfo:
+    module = _load_module("google.oauth2.credentials")
+    return cast("CredentialsFromInfo", module.Credentials.from_authorized_user_info)
+
+
+def _default_request_factory() -> RequestFactory:
+    module = _load_module("google.auth.transport.requests")
+    return cast("RequestFactory", module.Request)
+
+
+def _default_discovery_build() -> DiscoveryBuild:
+    module = _load_module("googleapiclient.discovery")
+    return cast("DiscoveryBuild", module.build)
+
+
+def _require_scopes(creds: GoogleCredentials, required: Sequence[str]) -> None:
+    """Reject a token missing any required scope, before it is used for sync."""
+    granted = set(creds.scopes or ())
+    missing = [scope for scope in required if scope not in granted]
+    if missing:
+        message = (
+            f"stored YouTube token is missing required scope(s): "
+            f"{', '.join(missing)}. Re-run `just youtube-auth` to re-authorize."
+        )
+        raise YouTubeAuthError(message)
+
+
+def load_credentials(
+    config: OAuthConfig,
+    *,
+    credentials_from_info: CredentialsFromInfo | None = None,
+    request_factory: RequestFactory | None = None,
+) -> GoogleCredentials:
+    """Load cached credentials, validate scopes, and refresh on expiry.
+
+    Raises `YouTubeAuthError` when the token is absent, missing a required scope,
+    cannot be refreshed (revoked/expired with no usable refresh token), or the
+    refresh itself fails — every case actionable by re-running the auth recipe. A
+    successful refresh is written back to `token_path` so the next run reuses it.
+
+    The Google-backed builders are injectable so the mechanics test against fakes
+    without importing the real libraries or hitting the network.
+    """
+    if not config.token_path.exists():
+        message = (
+            f"no cached YouTube token at {config.token_path}; "
+            f"run `just youtube-auth` to authorize."
+        )
+        raise YouTubeAuthError(message)
+    info = cast(
+        "Mapping[str, object]", json.loads(config.token_path.read_text("utf-8"))
+    )
+    build = credentials_from_info or _default_credentials_from_info()
+    creds = build(info, list(config.scopes))
+    _require_scopes(creds, config.scopes)
+    if creds.valid:
+        return creds
+    if creds.refresh_token is None:
+        message = (
+            f"cached YouTube token at {config.token_path} is expired and cannot "
+            f"refresh. Delete it and run `just youtube-auth` to re-authorize."
+        )
+        raise YouTubeAuthError(message)
+    request = (request_factory or _default_request_factory())()
+    try:
+        creds.refresh(request)
+    except Exception as error:
+        message = (
+            f"cached YouTube token at {config.token_path} could not be refreshed "
+            f"(revoked or unrecoverable). Delete it and run `just youtube-auth` "
+            f"to re-authorize."
+        )
+        raise YouTubeAuthError(message) from error
+    _ = config.token_path.write_text(creds.to_json(), encoding="utf-8")
+    return creds
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    """Parse an RFC3339 Data API timestamp into an aware datetime, or None."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_int(value: object) -> int | None:
+    """Parse a Data API count (returned as a string) into an int, or None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)  # pyright: ignore[reportArgumentType]  (value is Any from JSON)
+    except TypeError, ValueError:
+        return None
+
+
+def _as_bool(value: object) -> bool | None:
+    """Coerce a Data API flag (bool or 'true'/'false' string) into a bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return None
+
+
+def _parse_duration_seconds(value: object) -> int | None:
+    """Parse an ISO 8601 duration (e.g. `PT1H2M3S`) into whole seconds, or None."""
+    if not isinstance(value, str) or not value.startswith("PT"):
+        return None
+    total = 0
+    number = ""
+    for char in value[2:]:
+        if char.isdigit():
+            number += char
+            continue
+        if not number:
+            return None
+        amount = int(number)
+        if char == "H":
+            total += amount * 3600
+        elif char == "M":
+            total += amount * 60
+        elif char == "S":
+            total += amount
+        else:
+            return None
+        number = ""
+    return total
+
+
+def _str_or_none(value: object) -> str | None:
+    """Return a non-empty string value, else None."""
+    return value if isinstance(value, str) and value else None
+
+
+def _thumbnails(value: object) -> dict[str, str]:
+    """Flatten the Data API thumbnails map into {label: url}."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for label, payload in cast("dict[str, object]", value).items():
+        if isinstance(payload, dict):
+            url = cast("dict[str, object]", payload).get("url")
+            if isinstance(url, str):
+                out[label] = url
+    return out
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    """Return a tuple of the string entries of a Data API list, else empty."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in cast("list[object]", value) if isinstance(item, str))
+
+
+def _section(item: Mapping[str, object], key: str) -> Mapping[str, object]:
+    """Return a nested object section as a mapping, defaulting to empty."""
+    value = item.get(key)
+    return cast("Mapping[str, object]", value) if isinstance(value, dict) else {}
+
+
+class OAuthYouTubeApi:
+    """A thin OAuth-backed `YouTubeApi`: liked-page reads + batched metadata.
+
+    Construct it with an already-built discovery resource (tests inject a fake);
+    `from_config` is the production path that loads credentials and builds the
+    real client. Blocking Data API calls run in a worker thread so the adapter
+    satisfies the async seam. It holds no budget or cache — the guarded client
+    and the sync own that.
+    """
+
+    def __init__(
+        self,
+        resource: _YouTubeResource,
+        *,
+        likes_playlist_id: str | None = None,
+    ) -> None:
+        self._resource: _YouTubeResource = resource
+        # Resolved once on first use and cached for the adapter's lifetime, so the
+        # channel lookup costs a single extra call rather than one per page.
+        self._likes_playlist_id: str | None = likes_playlist_id
+
+    @classmethod
+    def from_config(cls, config: OAuthConfig) -> OAuthYouTubeApi:
+        """Build the production adapter: load credentials, build the client."""
+        creds = load_credentials(config)
+        build = _default_discovery_build()
+        resource = build("youtube", "v3", credentials=creds, cache_discovery=False)
+        return cls(resource)
+
+    async def list_liked_page(
+        self, *, page_token: str | None, page_size: int
+    ) -> LikedPage:
+        """Return one page of the liked-videos playlist and the next-page cursor."""
+        playlist_id = await self._resolve_likes_playlist()
+        payload = await asyncio.to_thread(
+            self._list_playlist_items, playlist_id, page_token, page_size
+        )
+        items = payload.get("items", [])
+        videos = [
+            self._map_liked_item(cast("Mapping[str, object]", item))
+            for item in items
+            if isinstance(item, dict)
+        ]
+        next_token = payload.get("nextPageToken")
+        return LikedPage(
+            videos=videos,
+            next_page_token=next_token if isinstance(next_token, str) else None,
+        )
+
+    async def fetch_video_metadata(
+        self, video_ids: Sequence[str]
+    ) -> Mapping[str, RawYouTubeVideo]:
+        """Return full metadata for the given ids, batched to the per-call limit.
+
+        Ids the `videos.list` call omits (members-only, private, deleted) are
+        simply absent from the result, so the sync skips them.
+        """
+        ids = list(video_ids)
+        if not ids:
+            return {}
+        result: dict[str, RawYouTubeVideo] = {}
+        for start in range(0, len(ids), _MAX_IDS_PER_CALL):
+            chunk = ids[start : start + _MAX_IDS_PER_CALL]
+            payload = await asyncio.to_thread(self._list_videos, chunk)
+            for item in payload.get("items", []):
+                if not isinstance(item, dict):
+                    continue
+                raw = self._map_video(cast("Mapping[str, object]", item))
+                if raw.video_id:
+                    result[raw.video_id] = raw
+        return result
+
+    async def fetch_transcript(self, video_id: str) -> str:
+        """Transcripts are a later slice; the seam method always reports absence."""
+        raise TranscriptUnavailableError(video_id)
+
+    async def _resolve_likes_playlist(self) -> str:
+        if self._likes_playlist_id is not None:
+            return self._likes_playlist_id
+        resolved = await asyncio.to_thread(self._fetch_likes_playlist_id)
+        self._likes_playlist_id = resolved
+        return resolved
+
+    def _fetch_likes_playlist_id(self) -> str:
+        response = (
+            self._resource.channels().list(part="contentDetails", mine=True).execute()
+        )
+        items = response.get("items", [])
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            content = _section(cast("Mapping[str, object]", items[0]), "contentDetails")
+            related = _section(content, "relatedPlaylists")
+            likes = related.get("likes")
+            if isinstance(likes, str) and likes:
+                return likes
+        return _LIKES_PLAYLIST_ALIAS
+
+    def _list_playlist_items(
+        self, playlist_id: str, page_token: str | None, page_size: int
+    ) -> dict[str, Any]:
+        params: dict[str, object] = {
+            "part": "snippet,contentDetails",
+            "playlistId": playlist_id,
+            "maxResults": page_size,
+        }
+        if page_token is not None:
+            params["pageToken"] = page_token
+        return self._resource.playlistItems().list(**params).execute()
+
+    def _list_videos(self, video_ids: Sequence[str]) -> dict[str, Any]:
+        return (
+            self._resource.videos()
+            .list(
+                part="snippet,contentDetails,statistics,status,topicDetails",
+                id=",".join(video_ids),
+                maxResults=len(video_ids),
+            )
+            .execute()
+        )
+
+    def _map_liked_item(self, item: Mapping[str, object]) -> RawYouTubeVideo:
+        snippet = _section(item, "snippet")
+        content = _section(item, "contentDetails")
+        resource_id = _section(snippet, "resourceId")
+        return RawYouTubeVideo(
+            video_id=_str_or_none(resource_id.get("videoId")) or "",
+            title=_str_or_none(snippet.get("title")) or "",
+            channel=_str_or_none(snippet.get("videoOwnerChannelTitle")) or "",
+            channel_id=_str_or_none(snippet.get("videoOwnerChannelId")),
+            topic="",
+            description=_str_or_none(snippet.get("description")) or "",
+            # The playlist item's added timestamp is when the user liked it; the
+            # content-details timestamp is when the video itself was published.
+            liked_at=_parse_timestamp(snippet.get("publishedAt")),
+            video_published_at=_parse_timestamp(content.get("videoPublishedAt")),
+        )
+
+    def _map_video(self, item: Mapping[str, object]) -> RawYouTubeVideo:
+        snippet = _section(item, "snippet")
+        content = _section(item, "contentDetails")
+        statistics = _section(item, "statistics")
+        status = _section(item, "status")
+        topic_details = _section(item, "topicDetails")
+        return RawYouTubeVideo(
+            video_id=_str_or_none(item.get("id")) or "",
+            title=_str_or_none(snippet.get("title")) or "",
+            channel=_str_or_none(snippet.get("channelTitle")) or "",
+            channel_id=_str_or_none(snippet.get("channelId")),
+            topic="",
+            description=_str_or_none(snippet.get("description")) or "",
+            video_published_at=_parse_timestamp(snippet.get("publishedAt")),
+            duration_seconds=_parse_duration_seconds(content.get("duration")),
+            category_id=_str_or_none(snippet.get("categoryId")),
+            default_language=_str_or_none(snippet.get("defaultLanguage")),
+            default_audio_language=_str_or_none(snippet.get("defaultAudioLanguage")),
+            caption_available=_as_bool(content.get("caption")),
+            privacy_status=_str_or_none(status.get("privacyStatus")),
+            licensed_content=_as_bool(content.get("licensedContent")),
+            made_for_kids=_as_bool(status.get("madeForKids")),
+            live_broadcast_content=_str_or_none(snippet.get("liveBroadcastContent")),
+            definition=_str_or_none(content.get("definition")),
+            dimension=_str_or_none(content.get("dimension")),
+            statistics_view_count=_parse_int(statistics.get("viewCount")),
+            statistics_like_count=_parse_int(statistics.get("likeCount")),
+            statistics_comment_count=_parse_int(statistics.get("commentCount")),
+            topic_categories=_string_tuple(topic_details.get("topicCategories")),
+            tags=_string_tuple(snippet.get("tags")),
+            thumbnails=_thumbnails(snippet.get("thumbnails")),
+        )
+
+
+def _default_installed_app_flow() -> Any:
+    module = _load_module("google_auth_oauthlib.flow")
+    return module.InstalledAppFlow
+
+
+@dataclass(frozen=True, slots=True)
+class AuthFlowResult:
+    """The outcome of a bootstrap run: the cached token path + verified titles."""
+
+    token_path: Path
+    recent_titles: list[str]
+
+
+def run_auth_flow(config: OAuthConfig) -> GoogleCredentials:
+    """Run the installed-app OAuth flow once and cache the token to disk.
+
+    Opens the browser on an ephemeral local port, or — in `no_browser` mode —
+    prints the authorization URL for a headless box. Requires the OAuth client
+    secret JSON to already be in place.
+    """
+    if not config.client_secret_path.exists():
+        message = (
+            f"no OAuth client secret at {config.client_secret_path}; download a "
+            f"Desktop-app OAuth client JSON from the Google Cloud Console and "
+            f"place it there."
+        )
+        raise YouTubeAuthError(message)
+    flow_cls = _default_installed_app_flow()
+    flow = flow_cls.from_client_secrets_file(
+        str(config.client_secret_path), list(config.scopes)
+    )
+    creds = cast(
+        "GoogleCredentials",
+        flow.run_local_server(port=0, open_browser=not config.no_browser),
+    )
+    config.token_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = config.token_path.write_text(creds.to_json(), encoding="utf-8")
+    return creds
+
+
+async def _recent_liked_titles(api: OAuthYouTubeApi, count: int) -> list[str]:
+    page = await api.list_liked_page(page_token=None, page_size=count)
+    return [video.title for video in page.videos[:count]]
+
+
+def bootstrap(config: OAuthConfig, *, verify_count: int = 5) -> AuthFlowResult:
+    """Authorize, then read the most-recent liked titles as an end-to-end check."""
+    _ = run_auth_flow(config)
+    api = OAuthYouTubeApi.from_config(config)
+    titles = asyncio.run(_recent_liked_titles(api, verify_count))
+    return AuthFlowResult(token_path=config.token_path, recent_titles=titles)

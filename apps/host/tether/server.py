@@ -95,6 +95,7 @@ from tether.youtube import (
     YouTubeSyncService,
     create_youtube_schema,
 )
+from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
 from tether.youtube_tools import internal_youtube_tool_routes
 
 
@@ -160,6 +161,9 @@ class HostSettings(BaseSettings):
     reload: bool = False
     secure_cookies: bool = False
     web_dist: Path | None = None
+    youtube_token_path: Path = Path(".tether/youtube-oauth-token.json")
+    youtube_client_secret_path: Path = Path(".tether/youtube-client-secret.json")
+    youtube_oauth_no_browser: bool = False
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -626,6 +630,26 @@ def create_app(
     return app
 
 
+def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
+    """Build the OAuth-backed upstream client when a token has been authorized.
+
+    With no cached token, returns `None` so ingestion runs the in-memory fake and
+    the background sync stays off — and the Google client libraries are never
+    imported, keeping the rest of Tether runnable without them. Once the user has
+    run `just youtube-auth`, the token exists and this wires the real client so
+    the #80 sync activates automatically.
+    """
+    if not settings.youtube_token_path.exists():
+        return None
+    return OAuthYouTubeApi.from_config(
+        OAuthConfig(
+            token_path=settings.youtube_token_path,
+            client_secret_path=settings.youtube_client_secret_path,
+            no_browser=settings.youtube_oauth_no_browser,
+        )
+    )
+
+
 def create_app_from_environment() -> Starlette:
     """Create the ASGI app from `TETHER_` environment variables.
 
@@ -645,6 +669,7 @@ def create_app_from_environment() -> Starlette:
             secure_cookies=settings.secure_cookies,
             session_secret=settings.session_secret,
             web_dist=settings.web_dist,
+            youtube_api=build_configured_youtube_api(settings),
         ),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
