@@ -51,6 +51,34 @@ class FakeRuntime:
         return self._events.pop(0)
 
 
+class FailingPromptClient(FakePiClient):
+    """Prompt client that returns pi's failure payload."""
+
+    async def request(self, command_type: str, **fields: object) -> dict[str, object]:
+        """Fail prompts with the configured provider error."""
+        self.commands.append(command_type)
+        self.requests.append((command_type, fields))
+        if command_type == "prompt":
+            return {"success": False, "error": "No API key for openai-codex/gpt-5.5"}
+        return {"success": True}
+
+
+class FailingPromptRuntime:
+    """Runtime whose prompt command fails before streaming starts."""
+
+    def __init__(self) -> None:
+        self.client: FailingPromptClient = FailingPromptClient()
+
+    async def next_event(
+        self, event_type: str | None = None, *, wait_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        """Prompt failure should prevent stream consumption."""
+        _ = event_type
+        _ = wait_seconds
+        message = "stream should not be read after prompt failure"
+        raise AssertionError(message)
+
+
 class BlockingRuntime:
     """Runtime whose generation waits until the test releases an event."""
 
@@ -445,6 +473,32 @@ def websocket_prompt_streams_and_persists_assistant_message() -> None:
     assert_eq([message["role"] for message in messages], ["user", "assistant"])
     assert_eq(messages[1]["content"], "script complete")
     assert_eq(messages[1]["seq"], 2)
+
+
+@test()
+def websocket_prompt_failure_reports_pi_detail() -> None:
+    """A failed pi prompt surfaces the provider-specific detail to the browser."""
+    runtime = FailingPromptRuntime()
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello",
+                }
+            )
+            _ = websocket.receive_json()
+            frame = websocket.receive_json()
+
+    assert_eq(frame["event"], "error")
+    assert_eq(frame["detail"], "prompt failed: No API key for openai-codex/gpt-5.5")
 
 
 @test()

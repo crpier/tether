@@ -87,6 +87,21 @@ def _message_text(message: object) -> str:
     return "".join(chunks)
 
 
+def _prompt_failure_detail(response: dict[str, object]) -> str:
+    """Render pi's failed prompt response for the browser."""
+    for key in ("error", "detail", "message"):
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return f"prompt failed: {value}"
+    data = response.get("data")
+    if isinstance(data, dict):
+        for key in ("error", "detail", "message"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return f"prompt failed: {value}"
+    return "prompt failed"
+
+
 async def _send_error(
     websocket: WebSocket,
     *,
@@ -359,11 +374,12 @@ async def _run_prompt(
             )
             prompt_response = await runtime.client.request("prompt", message=content)
             if prompt_response.get("success") is not True:
-                termination, run_error = "error", "prompt failed"
+                failure_detail = _prompt_failure_detail(prompt_response)
+                termination, run_error = "error", failure_detail
                 await _send_error(
                     websocket,
                     conversation_id=conversation_id,
-                    detail="prompt failed",
+                    detail=failure_detail,
                 )
                 return
             await _stream_runtime(

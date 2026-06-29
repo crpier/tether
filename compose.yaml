@@ -9,13 +9,18 @@ services:
       dockerfile: Dockerfile
     image: tether-host:latest
     restart: unless-stopped
-    env_file: .env
+    env_file: ${TETHER_ENV_FILE:-.env}
     environment:
       # Source of truth + derived KB live on the durable `data` volume, separate
       # from the image so a redeploy never touches them.
       TETHER_DATABASE_PATH: /data/tether.sqlite3
       TETHER_KB_ROOT: /data/kb
       FASTEMBED_CACHE_PATH: /cache/fastembed
+      # Provider credentials for the embedded pi runtime. This is deliberately
+      # separate from pi sessions (stored under /data/kb/pi-sessions) and from
+      # Tether app secrets in .env. It holds pi's auth.json, e.g. Codex OAuth
+      # and OpenCode Go API-key credentials.
+      PI_CODING_AGENT_DIR: /pi-agent
     # Bind to loopback only: locally that's all you need, and on the VM Tailscale
     # `serve` (running on the host, outside compose) reverse-proxies to it — the
     # app is never published on the VM's public interface.
@@ -24,6 +29,9 @@ services:
     volumes:
       - data:/data
       - model-cache:/cache
+      # Local default: seed from ~/.pi/agent/auth.json if desired. Deployment
+      # should set TETHER_PI_AGENT_DIR=/srv/tether/pi-agent and back it up.
+      - ${TETHER_PI_AGENT_DIR:-${HOME}/.local/share/tether/pi-agent}:/pi-agent
 
 volumes:
   data:

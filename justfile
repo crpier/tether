@@ -83,9 +83,80 @@ lint: host-lint agent-lint
 # all format checks
 format-check: host-format-check agent-format-check
 
+# validate a compose env file before starting the app
+validate-env env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -f "{{env_file}}" || (echo "missing {{env_file}}; copy .env.example to .env" >&2; exit 1)
+    TETHER_ENV_FILE="{{env_file}}" uv run python - <<'PY'
+    import os
+    import sys
+    from pathlib import Path
+
+    from dotenv import dotenv_values
+
+    from tether.model_selection import AgentModelCatalog
+    from tether.server import HostSettings
+
+    env_file = Path(os.environ["TETHER_ENV_FILE"])
+    values = dotenv_values(env_file)
+    errors = []
+
+    for key in ["TETHER_APP_PASSWORD", "TETHER_SESSION_SECRET", "TETHER_DEFAULT_MODEL", "TETHER_MODEL_ALLOWLIST"]:
+        value = values.get(key)
+        if value is None or value == "" or value == "change-me":
+            errors.append(f"{key} must be set in {env_file}")
+
+    for key, value in values.items():
+        if value is not None:
+            os.environ[key] = value
+
+    try:
+        settings = HostSettings()
+        AgentModelCatalog(default_model=settings.default_model, models=settings.model_allowlist)
+        if any(model.provider == "anthropic" for model in settings.model_allowlist):
+            errors.append("TETHER_MODEL_ALLOWLIST must use pi subscription providers, not anthropic")
+    except Exception as exc:
+        errors.append(str(exc))
+
+    pi_agent_dir = values.get("TETHER_PI_AGENT_DIR") or "${HOME}/.local/share/tether/pi-agent"
+    pi_agent_dir = os.path.expandvars(os.path.expanduser(pi_agent_dir))
+    if not Path(pi_agent_dir).is_absolute():
+        errors.append("TETHER_PI_AGENT_DIR must resolve to an absolute path")
+
+    if errors:
+        for error in errors:
+            print(f"env error: {error}", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"{env_file} ok")
+    PY
+    TETHER_ENV_FILE="{{env_file}}" docker compose --env-file "{{env_file}}" config --quiet
+
+# start the whole app via docker compose; creates the pi credential dir if needed
+app-start env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just validate-env "{{env_file}}"
+    dir=$(TETHER_ENV_FILE="{{env_file}}" uv run python - <<'PY'
+    import os
+    from pathlib import Path
+
+    from dotenv import dotenv_values
+
+    values = dotenv_values(os.environ["TETHER_ENV_FILE"])
+    raw = values.get("TETHER_PI_AGENT_DIR") or "${HOME}/.local/share/tether/pi-agent"
+    print(Path(os.path.expandvars(os.path.expanduser(raw))))
+    PY
+    )
+    mkdir -p "$dir"
+    chmod 700 "$dir"
+    if [ ! -f "$dir/auth.json" ]; then
+      echo "warning: $dir/auth.json not found; pi provider auth is not bootstrapped" >&2
+    fi
+    TETHER_ENV_FILE="{{env_file}}" docker compose --env-file "{{env_file}}" up -d --build
+
 # build + run the production image locally via docker compose (see docs/deploy.md)
-deploy-local:
-    docker compose up -d --build
+deploy-local: app-start
 
 # stop the local compose stack (keeps the data + model-cache volumes)
 deploy-local-down:
