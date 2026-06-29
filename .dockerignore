@@ -1,0 +1,22 @@
+# Rebuilt inside the image — never ship host-machine copies.
+**/node_modules
+**/.venv
+**/dist
+**/__pycache__
+**/*.pyc
+
+# Local state / runtime data (lives on docker volumes in the container).
+.tether
+data
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# VCS, scratch, test artifacts, and secrets.
+.git
+.env
+.playwright-mcp
+apps/web/test-results
+apps/web/playwright-report

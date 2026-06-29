@@ -1,0 +1,30 @@
+# Tether — single-service deploy. Same file runs locally (over http://localhost)
+# and on the VM (behind Tailscale HTTPS, which terminates TLS outside compose and
+# proxies to the published port). Copy `.env.example` to `.env` and fill secrets
+# before `docker compose up`.
+services:
+  host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tether-host:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Source of truth + derived KB live on the durable `data` volume, separate
+      # from the image so a redeploy never touches them.
+      TETHER_DATABASE_PATH: /data/tether.sqlite3
+      TETHER_KB_ROOT: /data/kb
+      FASTEMBED_CACHE_PATH: /cache/fastembed
+    # Bind to loopback only: locally that's all you need, and on the VM Tailscale
+    # `serve` (running on the host, outside compose) reverse-proxies to it — the
+    # app is never published on the VM's public interface.
+    ports:
+      - "127.0.0.1:${TETHER_HOST_PORT:-8000}:8000"
+    volumes:
+      - data:/data
+      - model-cache:/cache
+
+volumes:
+  data:
+  model-cache:

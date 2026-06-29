@@ -16,5 +16,8 @@ data/
 # Tether runtime files
 .tether
 
+# Deploy secrets (compose reads this; `.env.example` is the committed template).
+.env
+
 # Playwright MCP scratch output
 .playwright-mcp/

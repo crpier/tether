@@ -31,10 +31,21 @@ from structlog.typing import EventDict, WrappedLogger
 type Logger = structlog.stdlib.BoundLogger
 
 
-QUIET_LOGGERS = ("watchfiles.main",)
-"""Server loggers that should share the root handler but emit warnings only."""
+QUIET_LOGGERS = ("watchfiles.main", "uvicorn", "uvicorn.error")
+"""Server loggers that share the root handler but emit warnings only.
 
-SILENCED_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+The `uvicorn`/`uvicorn.error` pair is quieted rather than silenced: `serve()`
+runs uvicorn with `log_config=None`, so uvicorn configures no logging of its
+own. Fully silencing these would discard uvicorn's ERROR-level output —
+including the lifespan *startup-failure* traceback it logs on `uvicorn.error`
+with `exc_info` — leaving a misconfigured deploy to crash-loop (`restart:` +
+exit 3) with nothing in the logs. They must stay quiet *and* propagate: the
+parent `uvicorn` keeps `propagate=True` so a child `uvicorn.error` record can
+reach the structlog root handler instead of stdlib's last-resort stderr sink.
+At WARNING the routine INFO lifecycle chatter ("Application startup complete.")
+stays suppressed while genuine failures surface through structlog."""
+
+SILENCED_LOGGERS = ("uvicorn.access",)
 """Uvicorn loggers that are fully disabled because uvicorn owns its formatting."""
 _REQUEST_LOGGER: ContextVar[Logger | None] = ContextVar(
     "tether_request_logger",
