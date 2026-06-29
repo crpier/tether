@@ -637,7 +637,7 @@ def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
     the background sync stays off — and the Google client libraries are never
     imported, keeping the rest of Tether runnable without them. Once the user has
     run `just youtube-auth`, the token exists and this wires the real client so
-    the #80 sync activates automatically.
+    the background ingestion sync activates automatically.
     """
     if not settings.youtube_token_path.exists():
         return None

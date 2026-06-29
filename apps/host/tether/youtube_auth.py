@@ -3,7 +3,7 @@
 Wired to the `just youtube-auth` recipe. Reads the token/client-secret paths and
 the no-browser toggle from the `TETHER_` environment, runs the installed-app
 OAuth flow, caches the token, and prints the most-recent liked titles so the user
-can confirm authorization worked end to end. The background sync from #80 then
+can confirm authorization worked end to end. The background ingestion sync then
 activates on the next host start because a real upstream client is configured.
 
 It reads its own small settings (the three `TETHER_YOUTUBE_*` variables) rather

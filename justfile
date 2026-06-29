@@ -13,8 +13,9 @@ web:
 
 # one-time YouTube OAuth bootstrap (caches a token, prints recent liked titles)
 # set TETHER_YOUTUBE_OAUTH_NO_BROWSER=1 to print the URL instead of opening a browser
+# --group youtube ensures the optional Google client libraries are installed first
 youtube-auth:
-    uv run python -m tether.youtube_auth
+    uv run --group youtube python -m tether.youtube_auth
 
 # sync/install all deps
 install:

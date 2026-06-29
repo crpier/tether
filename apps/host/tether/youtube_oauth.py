@@ -13,8 +13,8 @@ special playlist, and full metadata is a separate batched call. So this module:
 * fetches full video metadata in id-batched `videos.list` calls.
 
 The adapter holds **no** caching, budgeting, or paging cadence — all of that lives
-in the `YouTubeSyncService`/`YouTubeApiClient` from #80, keeping the network
-boundary as dumb (and as faked-in-tests) as possible. The Google client libraries
+in the `YouTubeSyncService`/`YouTubeApiClient`, keeping the network boundary as
+dumb (and as faked-in-tests) as possible. The Google client libraries
 are imported lazily so the rest of Tether runs without them installed; the import
 path raises a clear `GoogleClientUnavailableError` when they are missing.
 """
@@ -26,7 +26,7 @@ import importlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, cast, runtime_checkable
@@ -37,8 +37,8 @@ YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 """Read access to the user's account, including the liked-videos playlist."""
 
 YOUTUBE_CAPTION_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
-"""The scope captions.download needs; requested now so the later transcript slice
-does not force a second authorization."""
+"""The scope captions.download needs; requested now so adding transcript support
+later does not force a second authorization."""
 
 REQUIRED_SCOPES: tuple[str, ...] = (YOUTUBE_READONLY_SCOPE, YOUTUBE_CAPTION_SCOPE)
 """Minimum scopes a stored token must carry, validated up front on load."""
@@ -170,6 +170,8 @@ def _load_module(name: str) -> ModuleType:
         raise GoogleClientUnavailableError(_GOOGLE_INSTALL_HINT) from error
 
 
+# The Google client libraries ship no type stubs, so their attributes type as
+# `Any`; each cast below pins one to the call signature the adapter relies on.
 def _default_credentials_from_info() -> CredentialsFromInfo:
     module = _load_module("google.oauth2.credentials")
     return cast("CredentialsFromInfo", module.Credentials.from_authorized_user_info)
@@ -185,9 +187,9 @@ def _default_discovery_build() -> DiscoveryBuild:
     return cast("DiscoveryBuild", module.build)
 
 
-def _require_scopes(creds: GoogleCredentials, required: Sequence[str]) -> None:
+def _require_scopes(credentials: GoogleCredentials, required: Sequence[str]) -> None:
     """Reject a token missing any required scope, before it is used for sync."""
-    granted = set(creds.scopes or ())
+    granted = set(credentials.scopes or ())
     missing = [scope for scope in required if scope not in granted]
     if missing:
         message = (
@@ -219,15 +221,16 @@ def load_credentials(
             f"run `just youtube-auth` to authorize."
         )
         raise YouTubeAuthError(message)
+    # `json.loads` returns `Any`; the cached token is always a JSON object here.
     info = cast(
         "Mapping[str, object]", json.loads(config.token_path.read_text("utf-8"))
     )
     build = credentials_from_info or _default_credentials_from_info()
-    creds = build(info, list(config.scopes))
-    _require_scopes(creds, config.scopes)
-    if creds.valid:
-        return creds
-    if creds.refresh_token is None:
+    credentials = build(info, list(config.scopes))
+    _require_scopes(credentials, config.scopes)
+    if credentials.valid:
+        return credentials
+    if credentials.refresh_token is None:
         message = (
             f"cached YouTube token at {config.token_path} is expired and cannot "
             f"refresh. Delete it and run `just youtube-auth` to re-authorize."
@@ -235,7 +238,7 @@ def load_credentials(
         raise YouTubeAuthError(message)
     request = (request_factory or _default_request_factory())()
     try:
-        creds.refresh(request)
+        credentials.refresh(request)
     except Exception as error:
         message = (
             f"cached YouTube token at {config.token_path} could not be refreshed "
@@ -243,8 +246,8 @@ def load_credentials(
             f"to re-authorize."
         )
         raise YouTubeAuthError(message) from error
-    _ = config.token_path.write_text(creds.to_json(), encoding="utf-8")
-    return creds
+    _ = config.token_path.write_text(credentials.to_json(), encoding="utf-8")
+    return credentials
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -356,9 +359,11 @@ class OAuthYouTubeApi:
     @classmethod
     def from_config(cls, config: OAuthConfig) -> OAuthYouTubeApi:
         """Build the production adapter: load credentials, build the client."""
-        creds = load_credentials(config)
+        credentials = load_credentials(config)
         build = _default_discovery_build()
-        resource = build("youtube", "v3", credentials=creds, cache_discovery=False)
+        resource = build(
+            "youtube", "v3", credentials=credentials, cache_discovery=False
+        )
         return cls(resource)
 
     async def list_liked_page(
@@ -392,6 +397,8 @@ class OAuthYouTubeApi:
         ids = list(video_ids)
         if not ids:
             return {}
+        # Statistics are volatile, so stamp when this batch read them.
+        fetched_at = datetime.now(UTC)
         result: dict[str, RawYouTubeVideo] = {}
         for start in range(0, len(ids), _MAX_IDS_PER_CALL):
             chunk = ids[start : start + _MAX_IDS_PER_CALL]
@@ -399,13 +406,13 @@ class OAuthYouTubeApi:
             for item in payload.get("items", []):
                 if not isinstance(item, dict):
                     continue
-                raw = self._map_video(cast("Mapping[str, object]", item))
+                raw = self._map_video(cast("Mapping[str, object]", item), fetched_at)
                 if raw.video_id:
                     result[raw.video_id] = raw
         return result
 
     async def fetch_transcript(self, video_id: str) -> str:
-        """Transcripts are a later slice; the seam method always reports absence."""
+        """Transcripts land later; the seam method always reports absence."""
         raise TranscriptUnavailableError(video_id)
 
     async def _resolve_likes_playlist(self) -> str:
@@ -468,7 +475,9 @@ class OAuthYouTubeApi:
             video_published_at=_parse_timestamp(content.get("videoPublishedAt")),
         )
 
-    def _map_video(self, item: Mapping[str, object]) -> RawYouTubeVideo:
+    def _map_video(
+        self, item: Mapping[str, object], statistics_fetched_at: datetime
+    ) -> RawYouTubeVideo:
         snippet = _section(item, "snippet")
         content = _section(item, "contentDetails")
         statistics = _section(item, "statistics")
@@ -496,15 +505,35 @@ class OAuthYouTubeApi:
             statistics_view_count=_parse_int(statistics.get("viewCount")),
             statistics_like_count=_parse_int(statistics.get("likeCount")),
             statistics_comment_count=_parse_int(statistics.get("commentCount")),
+            statistics_fetched_at=statistics_fetched_at,
             topic_categories=_string_tuple(topic_details.get("topicCategories")),
             tags=_string_tuple(snippet.get("tags")),
             thumbnails=_thumbnails(snippet.get("thumbnails")),
         )
 
 
-def _default_installed_app_flow() -> Any:
+class _InstalledAppFlow(Protocol):
+    """The subset of `InstalledAppFlow` the bootstrap drives."""
+
+    def run_local_server(self, *, port: int, open_browser: bool) -> GoogleCredentials:
+        """Run the local-server consent flow and return the granted credentials."""
+        ...
+
+
+class _InstalledAppFlowFactory(Protocol):
+    """The `InstalledAppFlow` class, entered via its client-secrets constructor."""
+
+    def from_client_secrets_file(
+        self, client_secrets_file: str, scopes: Sequence[str], /
+    ) -> _InstalledAppFlow:
+        """Build a flow from a downloaded Desktop-app client-secret JSON."""
+        ...
+
+
+def _default_installed_app_flow() -> _InstalledAppFlowFactory:
     module = _load_module("google_auth_oauthlib.flow")
-    return module.InstalledAppFlow
+    # The Google libraries ship no type stubs, so the class types as `Any`.
+    return cast("_InstalledAppFlowFactory", module.InstalledAppFlow)
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,13 +562,10 @@ def run_auth_flow(config: OAuthConfig) -> GoogleCredentials:
     flow = flow_cls.from_client_secrets_file(
         str(config.client_secret_path), list(config.scopes)
     )
-    creds = cast(
-        "GoogleCredentials",
-        flow.run_local_server(port=0, open_browser=not config.no_browser),
-    )
+    credentials = flow.run_local_server(port=0, open_browser=not config.no_browser)
     config.token_path.parent.mkdir(parents=True, exist_ok=True)
-    _ = config.token_path.write_text(creds.to_json(), encoding="utf-8")
-    return creds
+    _ = config.token_path.write_text(credentials.to_json(), encoding="utf-8")
+    return credentials
 
 
 async def _recent_liked_titles(api: OAuthYouTubeApi, count: int) -> list[str]:

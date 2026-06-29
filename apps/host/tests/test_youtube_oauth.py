@@ -266,6 +266,7 @@ async def fetch_video_metadata_maps_enriched_fields() -> None:
     assert_eq(raw.statistics_view_count, 1234)
     assert_eq(raw.statistics_like_count, 56)
     assert_eq(raw.statistics_comment_count, 7)
+    assert_eq(raw.statistics_fetched_at is not None, True)
     assert_eq(raw.tags, ("python", "async"))
     assert_eq(raw.topic_categories, ("https://en.wikipedia.org/wiki/Software",))
     assert_eq(raw.thumbnails["high"], "http://img/high.jpg")
@@ -325,7 +326,7 @@ async def fetch_video_metadata_empty_makes_no_call() -> None:
 
 @test()
 async def fetch_transcript_reports_unavailable() -> None:
-    """Transcripts are a later slice; the seam method reports absence."""
+    """Transcripts land later; the seam method reports absence."""
     api = OAuthYouTubeApi(FakeResource())
 
     with assert_raises(TranscriptUnavailableError):
