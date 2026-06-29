@@ -95,8 +95,9 @@ def _prompt_failure_detail(response: dict[str, object]) -> str:
             return f"prompt failed: {value}"
     data = response.get("data")
     if isinstance(data, dict):
+        data_dict = cast("dict[str, object]", data)
         for key in ("error", "detail", "message"):
-            value = data.get(key)
+            value = data_dict.get(key)
             if isinstance(value, str) and value.strip():
                 return f"prompt failed: {value}"
     return "prompt failed"
