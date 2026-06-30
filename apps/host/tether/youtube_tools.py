@@ -73,14 +73,17 @@ def _tool_logger(request: Request) -> Logger:
     return get_request_logger(request)
 
 
-def _compact_video(video: IngestedVideo[Fetched]) -> dict[str, object]:
+def _compact_video(
+    video: IngestedVideo[Fetched], *, snippet: str | None = None
+) -> dict[str, object]:
     """A transcript-free list row for the model.
 
     Browse/search lists are bounded for context, so they carry only what's
-    needed to pick a video — never the transcript or long description (the model
-    calls `fetch_youtube_transcript` for a specific `video_id` when it needs the
-    text, and `search_youtube` already matches transcripts server-side)."""
-    return {
+    needed to pick a video — never the full transcript (the model calls
+    `fetch_youtube_transcript` for a specific `video_id` when it needs the text).
+    Semantic search additionally attaches `snippet`: the best-matching transcript
+    excerpt, so the model can tell similar candidates apart without a fetch."""
+    row: dict[str, object] = {
         "video_id": video.video_id,
         "title": video.title,
         "channel": video.channel,
@@ -88,13 +91,20 @@ def _compact_video(video: IngestedVideo[Fetched]) -> dict[str, object]:
         "source": video.source,
         "state": derive_ingest_state(video),
     }
+    if snippet is not None:
+        row["snippet"] = snippet
+    return row
 
 
 def _ok_videos(result: BrowseResult | SearchResult) -> ToolEnvelope:
     """Envelope a compact video collection with the call's quota + cache."""
+    snippets = result.snippets if isinstance(result, SearchResult) else {}
     return ToolEnvelope(
         success=True,
-        result=[_compact_video(video) for video in result.videos],
+        result=[
+            _compact_video(video, snippet=snippets.get(video.video_id))
+            for video in result.videos
+        ],
         quota=result.quota,
         cache=result.cache,
     )

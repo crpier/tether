@@ -32,9 +32,9 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
@@ -58,6 +58,9 @@ from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
+if TYPE_CHECKING:
+    from tether.transcript_search import TranscriptSearchService
+
 type YouTubeSource = Literal["liked", "watch_later"]
 """Which saved list a video was ingested from."""
 
@@ -67,6 +70,15 @@ type IngestState = Literal["active", "ignored"]
 # The empty default for `TranscriptProvider.fetch`'s `paused_sources`, hoisted to a
 # module constant so the value is not constructed in a parameter default expression.
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
+
+# Cap on videos returned by semantic search when the caller passes no explicit
+# limit, keeping assistant-facing results within the model's context.
+_DEFAULT_SEMANTIC_LIMIT = 50
+
+
+def _empty_snippets() -> dict[str, str]:
+    """Typed empty default for `SearchResult.snippets` (the lexical path)."""
+    return {}
 
 
 class Clock(Protocol):
@@ -627,11 +639,16 @@ class BrowseResult:
 
 @dataclass(frozen=True, slots=True)
 class SearchResult:
-    """A search across saved content + transcripts, with the day's quota/cache."""
+    """A search across saved content + transcripts, with the day's quota/cache.
+
+    `snippets` maps a matched video's `video_id` to the transcript excerpt that
+    explains the match; it is populated by the semantic path and empty for the
+    lexical fallback."""
 
     videos: list[IngestedVideo[Fetched]]
     cache: CacheMeta
     quota: QuotaMeta
+    snippets: dict[str, str] = field(default_factory=_empty_snippets)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1873,6 +1890,11 @@ class YouTubeService:
         self.tracer: Tracer = tracer
         self.provider: TranscriptProvider = provider or NullTranscriptProvider()
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
+        # Optional, late-bound search collaborator (wired by the composition root
+        # after construction). When set, semantic transcript search replaces the
+        # lexical fallback; left None (search disabled), `search` keeps the SQLite
+        # LIKE behaviour.
+        self.transcript_search: TranscriptSearchService | None = None
 
     async def browse(
         self,
@@ -1913,17 +1935,72 @@ class YouTubeService:
     async def search(
         self, query: str, *, limit: int | None = None, logger: Logger
     ) -> SearchResult:
-        """Keyword Search across saved content and transcript text (local only).
+        """Search saved content and transcript text (local only).
 
-        Each whitespace term is matched case-insensitively against the title,
-        description, or transcript and AND-ed; only active videos match. `limit`
-        caps the rows returned (`None` is unbounded) to keep assistant-facing
-        results within the model's context.
+        When semantic transcript search is wired (`transcript_search`), the query
+        is embedded and matched against the transcript-chunk index, ranking videos
+        by relevance and returning the best-matching snippet per video. With
+        search disabled it falls back to the lexical SQLite `LIKE` path: each
+        whitespace term matched case-insensitively against title, description, or
+        transcript and AND-ed. Only active videos match; `limit` caps the rows.
         """
-        terms = query.split()
-        if not terms:
+        if not query.split():
             message = "keyword Search requires a non-empty query"
             raise EmptyYouTubeSearchQueryError(message)
+        if self.transcript_search is not None:
+            return await self._semantic_search(query, limit=limit, logger=logger)
+        return await self._lexical_search(query, limit=limit, logger=logger)
+
+    async def _semantic_search(
+        self, query: str, *, limit: int | None, logger: Logger
+    ) -> SearchResult:
+        """Embed the query, rank videos by transcript relevance, attach snippets."""
+        assert self.transcript_search is not None
+        video_limit = limit if limit is not None else _DEFAULT_SEMANTIC_LIMIT
+        _debug(logger, "Searching YouTube transcripts semantically", limit=video_limit)
+        matches = await self.transcript_search.candidates(
+            query, limit=video_limit, logger=logger
+        )
+        if not matches:
+            _debug(logger, "YouTube semantic search completed", result_count=0)
+            return SearchResult(
+                videos=[],
+                cache=CacheMeta(hit=True, source="cache"),
+                quota=await self.client.snapshot(),
+            )
+        video_ids = [match.video_id for match in matches]
+        async with self.database.transaction() as tx:
+            videos = await tx.fetch_all(
+                select(IngestedVideo)
+                .where(IngestedVideo.video_id.in_(*video_ids))
+                .where(IngestedVideo.ignored_at.is_null())
+            )
+        by_video_id = {video.video_id: video for video in videos}
+        # Preserve relevance order and drop any match whose video has since been
+        # ignored or deleted (index drift the next reconcile would clean up).
+        ordered = [
+            by_video_id[match.video_id]
+            for match in matches
+            if match.video_id in by_video_id
+        ]
+        snippets = {
+            match.video_id: match.snippet
+            for match in matches
+            if match.video_id in by_video_id
+        }
+        _debug(logger, "YouTube semantic search completed", result_count=len(ordered))
+        return SearchResult(
+            videos=ordered,
+            cache=CacheMeta(hit=True, source="cache"),
+            quota=await self.client.snapshot(),
+            snippets=snippets,
+        )
+
+    async def _lexical_search(
+        self, query: str, *, limit: int | None, logger: Logger
+    ) -> SearchResult:
+        """The SQLite `LIKE` fallback used when semantic search is disabled."""
+        terms = query.split()
         _debug(logger, "Searching YouTube ingestion", terms_count=len(terms))
         statement = select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
         for term in terms:
