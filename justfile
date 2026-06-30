@@ -11,15 +11,13 @@ host:
 web:
     pnpm -C apps/web dev
 
-# local dev loop: host (auto-reload) + web (Vite HMR) together. Ctrl-C stops both.
-# This is the fast iteration path — open http://127.0.0.1:3000 (the Vite server,
-# which proxies /api + /ws to the host). Do NOT iterate via `docker compose
-# --build`; that rebuilds the prod image every change. See docs/development.md.
+# fast dev loop: host (auto-reload) + web (HMR) together; open :3000 (docs/development.md)
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "web → http://127.0.0.1:3000  (open this)   host → http://127.0.0.1:8000"
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
+        TETHER_LOGGING_LEVEL=DEBUG \
         uv run python -m tether &
     host_pid=$!
     pnpm -C apps/web dev &
@@ -28,8 +26,7 @@ dev:
     # return as soon as either process exits; the trap tears the other down
     wait -n
 
-# one-time local setup: write .env with generated secrets + create the pi-agent
-# dir. Idempotent — refuses to clobber an existing .env. Run `just pi-auth` next.
+# one-time local setup: write .env with generated secrets + create the pi-agent dir
 bootstrap:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -55,9 +52,7 @@ bootstrap:
     echo "pi-agent dir: $dir"
     echo "next: just pi-auth   (log in to your model provider)"
 
-# one-time pi provider login (Codex / OpenCode Go). Writes auth.json into the
-# pi-agent dir the app reads/mounts. Interactive: run e.g. `/login openai-codex`,
-# then exit. Mirrors `just youtube-auth`. Needs agent deps (`just install`).
+# one-time interactive pi provider login; writes auth.json into the pi-agent dir
 pi-auth:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -243,11 +238,7 @@ deploy-local: app-start
 deploy-local-down:
     docker compose down
 
-# follow the host container logs, rendered readable (the container emits JSON).
-# Pass a run_id to follow one chat turn end-to-end: `just logs <run_id>`. The
-# run_id is stamped on every host log line servicing that turn (see chat_ws).
-# Requires `jq`; falls back to raw lines without it. (Native `just dev` already
-# prints colorized logs to the terminal — this is for the docker path.)
+# follow host container logs readable; `just logs <run_id>` filters one chat turn
 logs run_id="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -266,13 +257,11 @@ logs run_id="":
       docker compose logs -f --no-log-prefix host | pipe
     fi
 
-# install a laptop-authorized YouTube token into the running container's data
-# volume. The box can't run the browser OAuth flow, so authorize locally first
-# with `just youtube-auth`, then run this and restart the host. See docs/deploy.md.
+# install a laptop-authorized YouTube token into the container data volume (docs/deploy.md)
 youtube-token-install token=".tether/youtube-oauth-token.json":
     #!/usr/bin/env bash
     set -euo pipefail
-    test -f "{{token}}" || { echo "no token at {{token}}; run `just youtube-auth` first" >&2; exit 1; }
+    test -f "{{token}}" || { echo 'no token at {{token}}; run `just youtube-auth` first' >&2; exit 1; }
     docker compose exec -T host mkdir -p /data/youtube
     docker compose cp "{{token}}" host:/data/youtube/token.json
     echo "installed at /data/youtube/token.json; pick it up with: docker compose restart host"

@@ -120,6 +120,52 @@ def browse_filters_by_topic() -> None:
 
 
 @test()
+def browse_rows_are_compact_and_omit_the_transcript() -> None:
+    """List rows carry only pick fields — never the (context-heavy) transcript.
+
+    Even after a transcript is fetched and stored, browse must not echo it back:
+    the model fetches a specific transcript on demand.
+    """
+    api = InMemoryYouTubeApi(
+        liked=[video("v1", title="Talk")],
+        transcripts={"v1": "today we cover coroutines"},
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        _ = call(client, "fetch_youtube_transcript", video_id="v1")
+        envelope = call(client, "browse_youtube")
+
+    row = envelope["result"][0]
+    assert_not_in("transcript", row)
+    assert_not_in("description", row)
+    assert_eq(
+        set(row),
+        {"video_id", "title", "channel", "topic", "source", "state"},
+    )
+
+
+@test()
+def browse_caps_rows_at_the_limit() -> None:
+    """A browse returns at most `limit` rows."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{n}") for n in range(5)])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call(client, "browse_youtube", limit=2)
+
+    assert_eq(len(envelope["result"]), 2)
+
+
+@test()
+def search_caps_rows_at_the_limit() -> None:
+    """A keyword search returns at most `limit` rows."""
+    api = InMemoryYouTubeApi(
+        liked=[video(f"v{n}", title="async python") for n in range(5)]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call(client, "search_youtube", q="async", limit=2)
+
+    assert_eq(len(envelope["result"]), 2)
+
+
+@test()
 def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
     """A depleted budget surfaces as a well-formed quota_exceeded envelope.
 

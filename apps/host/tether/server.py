@@ -101,6 +101,8 @@ from tether.youtube import (
     TranscriptSyncService,
     YouTubeApi,
     YouTubeApiClient,
+    YouTubeApiGate,
+    YouTubeApiGateConfig,
     YouTubeService,
     YouTubeSyncConfig,
     YouTubeSyncService,
@@ -143,14 +145,16 @@ class AppConfig:
     youtube_sync_backfill_pages: int = 1
     youtube_sync_page_size: int = 50
     youtube_likes_cutoff_date: date | None = None
+    youtube_api_gate_pause_base_seconds: float = 15 * 60
+    youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
     transcript_provider: TranscriptProvider | None = None
     transcript_sync_enabled: bool = True
     transcript_sync_interval_seconds: float = 5 * 60
     transcript_sync_recent_window: int = 50
     transcript_retry_backoff_base_seconds: float = 10 * 60
-    transcript_retry_backoff_cap_seconds: float = 12 * 60 * 60
+    transcript_retry_backoff_cap_seconds: float = 6 * 60 * 60
     transcript_block_pause_base_seconds: float = 30 * 60
-    transcript_block_pause_cap_seconds: float = 24 * 60 * 60
+    transcript_block_pause_cap_seconds: float = 6 * 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -258,6 +262,15 @@ async def _wire_youtube(
         api,
         DailyQuota(database, limit=config.youtube_daily_quota_limit),
         clock=SystemClock(),
+        gate=YouTubeApiGate(
+            database,
+            config=YouTubeApiGateConfig(
+                pause_base=timedelta(
+                    seconds=config.youtube_api_gate_pause_base_seconds
+                ),
+                pause_cap=timedelta(seconds=config.youtube_api_gate_pause_cap_seconds),
+            ),
+        ),
     )
     # The on-demand fetch path always needs a provider; prefer the explicitly
     # configured one (captions in production), else reuse the upstream fake when it
@@ -282,6 +295,10 @@ async def _wire_youtube(
             backfill_pages=config.youtube_sync_backfill_pages,
             page_size=config.youtube_sync_page_size,
             cutoff_date=config.youtube_likes_cutoff_date,
+            # Gate the startup pass on the periodic cadence: a restart within one
+            # interval of the last run (this or a prior process) skips re-syncing,
+            # so iterating on the host doesn't re-spend the daily YouTube budget.
+            min_interval=timedelta(seconds=config.youtube_sync_interval_seconds),
         ),
         event_publisher=event_publisher,
     )
@@ -310,7 +327,9 @@ async def _wire_youtube(
     # The likes sync only runs against a real upstream client; the in-memory fake
     # is a read-only seam with nothing to pull.
     if config.youtube_api is not None and config.youtube_sync_enabled:
-        _ = await sync.sync(logger=logger)
+        # Non-eager: only sync at boot if the gate window has elapsed, so repeated
+        # restarts during development don't each trigger a full pass.
+        _ = await sync.maybe_sync(logger=logger)
         tasks.append(
             asyncio.create_task(
                 sync.sync_forever(

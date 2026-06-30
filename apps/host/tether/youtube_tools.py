@@ -13,7 +13,7 @@ and whether the result was served live or from cache (story 71).
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.routing import Route
 
@@ -26,8 +26,13 @@ from tether.youtube import (
     SearchResult,
     TranscriptResult,
     YouTubeSource,
+    derive_ingest_state,
 )
 from tether.youtube_routes import YouTubeVideoRead
+
+# Assistant-facing browse/search default page size. Caps how many rows a single
+# tool call can pour into the model's context (the corpus can hold thousands).
+_DEFAULT_LIST_LIMIT = 50
 
 
 class BrowseYouTubeParams(BaseModel):
@@ -35,12 +40,14 @@ class BrowseYouTubeParams(BaseModel):
 
     topic: str | None = None
     source: YouTubeSource | None = None
+    limit: PositiveInt = _DEFAULT_LIST_LIMIT
 
 
 class SearchYouTubeParams(BaseModel):
     """Params for keyword Search across saved content and transcript text."""
 
     q: str
+    limit: PositiveInt = _DEFAULT_LIST_LIMIT
 
 
 class FetchYouTubeTranscriptParams(BaseModel):
@@ -66,14 +73,28 @@ def _tool_logger(request: Request) -> Logger:
     return get_request_logger(request)
 
 
+def _compact_video(video: IngestedVideo[Fetched]) -> dict[str, object]:
+    """A transcript-free list row for the model.
+
+    Browse/search lists are bounded for context, so they carry only what's
+    needed to pick a video — never the transcript or long description (the model
+    calls `fetch_youtube_transcript` for a specific `video_id` when it needs the
+    text, and `search_youtube` already matches transcripts server-side)."""
+    return {
+        "video_id": video.video_id,
+        "title": video.title,
+        "channel": video.channel,
+        "topic": video.topic,
+        "source": video.source,
+        "state": derive_ingest_state(video),
+    }
+
+
 def _ok_videos(result: BrowseResult | SearchResult) -> ToolEnvelope:
-    """Envelope a video collection with the call's quota + cache metadata."""
+    """Envelope a compact video collection with the call's quota + cache."""
     return ToolEnvelope(
         success=True,
-        result=[
-            YouTubeVideoRead.from_video(video).model_dump(mode="json")
-            for video in result.videos
-        ],
+        result=[_compact_video(video) for video in result.videos],
         quota=result.quota,
         cache=result.cache,
     )
@@ -103,7 +124,10 @@ def _ok_video(video: IngestedVideo[Fetched]) -> ToolEnvelope:
 async def _browse(request: Request, params: BrowseYouTubeParams) -> ToolEnvelope:
     """Browse ingested videos, optionally filtered by topic and source."""
     result = await request.app.state.youtube_service.browse(
-        topic=params.topic, source=params.source, logger=_tool_logger(request)
+        topic=params.topic,
+        source=params.source,
+        limit=params.limit,
+        logger=_tool_logger(request),
     )
     return _ok_videos(result)
 
@@ -111,7 +135,7 @@ async def _browse(request: Request, params: BrowseYouTubeParams) -> ToolEnvelope
 async def _search(request: Request, params: SearchYouTubeParams) -> ToolEnvelope:
     """Keyword Search across saved content and transcript text."""
     result = await request.app.state.youtube_service.search(
-        params.q, logger=_tool_logger(request)
+        params.q, limit=params.limit, logger=_tool_logger(request)
     )
     return _ok_videos(result)
 

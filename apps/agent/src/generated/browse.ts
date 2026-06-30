@@ -11,6 +11,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const browseParameters = Type.Object({
   state: StringEnum(["loose", "tethered"] as const),
+  limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
 });
 
 export type BrowseParams = Static<typeof browseParameters>;

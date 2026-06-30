@@ -431,15 +431,24 @@ class TriggerService:
         await self.event_publisher.publish(InvalidateEvent(keys=["triggers"]))
         return trigger
 
-    async def list_triggers(self, *, logger: Logger) -> list[ScheduledTrigger[Fetched]]:
-        """List live (non-deleted) triggers, soonest next fire first."""
+    async def list_triggers(
+        self, *, limit: int | None = None, logger: Logger
+    ) -> list[ScheduledTrigger[Fetched]]:
+        """List live (non-deleted) triggers, soonest next fire first.
+
+        `limit` caps the rows returned (`None` is unbounded); assistant-facing
+        callers pass a bound so a crowded schedule can't flood the model.
+        """
         _debug(logger, "Listing Scheduled triggers")
+        query = (
+            select(ScheduledTrigger)
+            .where(ScheduledTrigger.deleted_at.is_null())
+            .order_by(ScheduledTrigger.next_fire_at.asc())
+        )
+        if limit is not None:
+            query = query.limit(limit)
         async with self.database.transaction() as tx:
-            triggers = await tx.fetch_all(
-                select(ScheduledTrigger)
-                .where(ScheduledTrigger.deleted_at.is_null())
-                .order_by(ScheduledTrigger.next_fire_at.asc())
-            )
+            triggers = await tx.fetch_all(query)
         _debug(logger, "Scheduled trigger list completed", result_count=len(triggers))
         return triggers
 

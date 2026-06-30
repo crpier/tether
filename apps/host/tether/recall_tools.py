@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pydantic import UUID7, BaseModel, NonNegativeInt
+from pydantic import UUID7, BaseModel, NonNegativeInt, PositiveInt
 from starlette.requests import Request
 from starlette.routing import Route
 
@@ -44,11 +44,13 @@ class AnswerRecallPromptParams(BaseModel):
 
 
 class ListDueRecallPromptsParams(BaseModel):
-    """Params for listing outstanding recall prompts.
+    """Params for listing outstanding recall prompts, capped at `limit`.
 
-    The due list is computed over the whole live schedule, so it takes no inputs
-    beyond the session identity the gate already requires.
+    The due list is computed over the whole live schedule; `limit` bounds how
+    many soonest-due prompts come back so a large backlog can't flood the model.
     """
+
+    limit: PositiveInt = 50
 
 
 def _tool_logger(request: Request) -> Logger:
@@ -76,11 +78,11 @@ async def _start_recall(request: Request, params: StartRecallParams) -> ToolEnve
 
 
 async def _list_due_prompts(
-    request: Request, _params: ListDueRecallPromptsParams
+    request: Request, params: ListDueRecallPromptsParams
 ) -> ToolEnvelope:
     """List the recall prompts currently owed a review."""
     due = await request.app.state.recall_service.list_due_prompts(
-        datetime.now(UTC), logger=_tool_logger(request)
+        datetime.now(UTC), limit=params.limit, logger=_tool_logger(request)
     )
     return ToolEnvelope(
         success=True,

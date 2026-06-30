@@ -50,7 +50,9 @@ class CreateTriggerParams(BaseModel):
 
 
 class ListTriggersParams(BaseModel):
-    """Params for listing live triggers; the listing takes no inputs."""
+    """Params for listing live triggers, capped at `limit` (soonest first)."""
+
+    limit: PositiveInt = 50
 
 
 class DeleteTriggerParams(BaseModel):
@@ -123,10 +125,10 @@ async def _create_trigger(
     return _ok_trigger(trigger)
 
 
-async def _list_triggers(request: Request, _params: ListTriggersParams) -> ToolEnvelope:
+async def _list_triggers(request: Request, params: ListTriggersParams) -> ToolEnvelope:
     """List live Scheduled triggers."""
     triggers = await request.app.state.trigger_service.list_triggers(
-        logger=_tool_logger(request)
+        limit=params.limit, logger=_tool_logger(request)
     )
     return _ok_triggers(triggers)
 

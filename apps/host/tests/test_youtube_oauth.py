@@ -32,6 +32,7 @@ from snektest import (
 from tether.youtube import (
     DailyQuota,
     YouTubeApiClient,
+    YouTubeQuotaExceededError,
     create_youtube_schema,
 )
 from tether.youtube_oauth import (
@@ -97,6 +98,45 @@ class FakeResource:
     # captions provider is exercised in `test_youtube_captions.py`.
     def captions(self) -> Any:
         return self.captions_collection
+
+
+class _FakeResp:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+
+class FakeHttpError(Exception):
+    """Stand-in for `googleapiclient.errors.HttpError`.
+
+    Carries an HTTP status on `.resp.status` and a message whose text embeds the
+    API's machine `reason` — exactly the two surfaces the adapter's quota
+    detection keys on (status 403 + `quotaExceeded` in `str(error)`), mirroring
+    the real error without importing the Google client libraries.
+    """
+
+    def __init__(self, status: int, reason: str) -> None:
+        super().__init__(f"<HttpError {status} ...; Details: reason {reason!r}>")
+        self.resp = _FakeResp(status)
+
+
+class _RaisingListRequest:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def execute(self) -> dict[str, Any]:
+        raise self._error
+
+
+class RaisingCollection(FakeCollection):
+    """A resource collection whose built `list` request raises on `execute`."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(())
+        self._error = error
+
+    def list(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return _RaisingListRequest(self._error)
 
 
 def channels_response(likes_playlist_id: str | None) -> dict[str, Any]:
@@ -200,6 +240,48 @@ async def likes_playlist_is_resolved_only_once() -> None:
     _ = await api.list_liked_page(page_token="p2", page_size=50)
 
     assert_eq(len(resource.channels_collection.calls), 1)
+
+
+@test()
+async def list_liked_page_translates_google_quota_to_domain_signal() -> None:
+    """A real `403 quotaExceeded` becomes the typed quota signal the sync handles.
+
+    The local `DailyQuota` guard models Google's budget to pre-empt it, but the
+    two diverge (fresh data volume, project usage spent elsewhere), so Google can
+    still 403 the channel-resolution call. That untranslated `HttpError` used to
+    escape `YouTubeSyncService.sync` and crash the lifespan on startup.
+    """
+    resource = FakeResource()
+    resource.channels_collection = RaisingCollection(
+        FakeHttpError(403, "quotaExceeded")
+    )
+    api = OAuthYouTubeApi(resource)
+
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await api.list_liked_page(page_token=None, page_size=50)
+
+
+@test()
+async def fetch_video_metadata_translates_google_quota_to_domain_signal() -> None:
+    """The batched detail call surfaces a quota 403 as the typed quota signal too."""
+    resource = FakeResource()
+    resource.videos_collection = RaisingCollection(FakeHttpError(403, "quotaExceeded"))
+    # Seed the playlist id so the call goes straight to videos.list.
+    api = OAuthYouTubeApi(resource, likes_playlist_id="LL")
+
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await api.fetch_video_metadata(["v1"])
+
+
+@test()
+async def list_liked_page_does_not_swallow_non_quota_forbidden() -> None:
+    """A 403 that is not a quota exhaustion is left untranslated to surface loudly."""
+    resource = FakeResource()
+    resource.channels_collection = RaisingCollection(FakeHttpError(403, "forbidden"))
+    api = OAuthYouTubeApi(resource)
+
+    with assert_raises(FakeHttpError):
+        _ = await api.list_liked_page(page_token=None, page_size=50)
 
 
 # --- Adapter: batched metadata ----------------------------------------------

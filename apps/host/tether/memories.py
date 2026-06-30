@@ -390,6 +390,7 @@ class MemoryService:
         self,
         state: MemoryState,
         *,
+        limit: int | None = None,
         logger: Logger,
     ) -> list[Memory[Fetched]]:
         """Filter-only Search backing the human review UI (`GET /memories?state=`).
@@ -398,7 +399,9 @@ class MemoryService:
         bound by the tethered-only invariant — `loose` deliberately returns the
         review queue. Soft-deleted Memories are always excluded. `loose` is
         newest-first (fresh captures reviewed while context is warm); `tethered`
-        is ordered by `tethered_at` desc (most recently trusted first)."""
+        is ordered by `tethered_at` desc (most recently trusted first). `limit`
+        caps the rows returned (`None` is unbounded for the review UI; the
+        assistant-facing tool passes a bound to protect the model's context)."""
         _debug(logger, "Browsing Memories by state", state=state)
         live = select(Memory).where(Memory.deleted_at.is_null())
         match state:
@@ -410,6 +413,8 @@ class MemoryService:
                 browse = live.where(Memory.tethered_at.is_not_null()).order_by(
                     Memory.tethered_at.desc()
                 )
+        if limit is not None:
+            browse = browse.limit(limit)
         async with self.database.transaction() as tx:
             memories = await tx.fetch_all(browse)
         _debug(

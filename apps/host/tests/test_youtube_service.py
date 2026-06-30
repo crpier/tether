@@ -33,9 +33,13 @@ from tether.youtube import (
     EmptyYouTubeSearchQueryError,
     IngestedVideo,
     InMemoryYouTubeApi,
+    LikedPage,
     RawYouTubeVideo,
     TranscriptUnavailableError,
+    YouTubeApi,
     YouTubeApiClient,
+    YouTubeApiGate,
+    YouTubeApiGateConfig,
     YouTubeQuotaExceededError,
     YouTubeService,
     YouTubeSyncConfig,
@@ -379,6 +383,73 @@ async def sync_marks_last_run_from_the_injected_clock() -> None:
 
 
 @test()
+async def maybe_sync_runs_when_no_prior_run() -> None:
+    """With a gate configured but no last-run stamped, the first pass runs."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    config = YouTubeSyncConfig(min_interval=timedelta(seconds=300))
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+
+    report = await env.sync.maybe_sync(logger=test_logger())
+
+    assert_is_not_none(report)
+    assert_eq(api.list_calls, 1)
+
+
+@test()
+async def maybe_sync_skips_within_min_interval() -> None:
+    """A restart inside the gate window does not call upstream again.
+
+    This is the dev-loop protection: repeatedly booting the host must not burn
+    quota when the last sync (by this or a prior process) is recent.
+    """
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    config = YouTubeSyncConfig(min_interval=timedelta(seconds=300))
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+    _ = await env.sync.sync(logger=test_logger())
+    calls_after_first = api.list_calls
+
+    clock.advance(timedelta(seconds=120))
+    report = await env.sync.maybe_sync(logger=test_logger())
+
+    assert_is_none(report)
+    assert_eq(api.list_calls, calls_after_first)
+
+
+@test()
+async def maybe_sync_runs_after_min_interval_elapsed() -> None:
+    """Once the gate window has passed, the next pass runs again."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    config = YouTubeSyncConfig(min_interval=timedelta(seconds=300))
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+    _ = await env.sync.sync(logger=test_logger())
+    calls_after_first = api.list_calls
+
+    clock.advance(timedelta(seconds=301))
+    report = await env.sync.maybe_sync(logger=test_logger())
+
+    assert_is_not_none(report)
+    assert_eq(api.list_calls, calls_after_first + 1)
+
+
+@test()
+async def maybe_sync_always_runs_without_a_gate() -> None:
+    """With no `min_interval` configured, the gate is off and every pass runs."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api, clock=clock))
+    _ = await env.sync.sync(logger=test_logger())
+    calls_after_first = api.list_calls
+
+    report = await env.sync.maybe_sync(logger=test_logger())
+
+    assert_is_not_none(report)
+    assert_eq(api.list_calls, calls_after_first + 1)
+
+
+@test()
 async def quota_exhaustion_during_enrich_does_not_count_pulled() -> None:
     """A page whose metadata fetch is blocked by quota is not counted as pulled."""
     clock = FakeClock(datetime(2026, 6, 1, tzinfo=UTC))
@@ -675,6 +746,199 @@ async def sync_stops_on_quota_exhaustion_without_raising() -> None:
         row.video_id for row in (await env.service.browse(logger=test_logger())).videos
     }
     assert_eq(found, {"v1", "v2"})
+
+
+# --- YouTubeApiGate: global Data API backoff ---
+
+
+_GATE_NOW = datetime(2026, 6, 1, tzinfo=UTC)
+
+
+def gate_config() -> YouTubeApiGateConfig:
+    """A 15-minute base / 6-hour cap gate, matching the production defaults."""
+    return YouTubeApiGateConfig(
+        pause_base=timedelta(minutes=15), pause_cap=timedelta(hours=6)
+    )
+
+
+async def gate_db() -> Database:
+    """A fresh schema-initialised database for a standalone gate."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    return db
+
+
+class QuotaBlockingApi(YouTubeApi):
+    """A `YouTubeApi` double that 403s on its first `fail_times` list calls.
+
+    Stands in for the live Data API returning `quotaExceeded` despite local budget,
+    so the gate's escalation/reset can be driven through `YouTubeApiClient`.
+    """
+
+    def __init__(self, *, fail_times: int) -> None:
+        self._remaining: int = fail_times
+        self.list_calls: int = 0
+
+    async def list_liked_page(
+        self, *, page_token: str | None, page_size: int
+    ) -> LikedPage:
+        _ = (page_token, page_size)
+        self.list_calls += 1
+        if self._remaining > 0:
+            self._remaining -= 1
+            raise YouTubeQuotaExceededError("live 403 quotaExceeded")
+        return LikedPage(videos=[], next_page_token=None)
+
+    async def fetch_video_metadata(
+        self, video_ids: object
+    ) -> dict[str, RawYouTubeVideo]:
+        _ = video_ids
+        return {}
+
+
+@test()
+async def api_gate_is_open_when_unpaused() -> None:
+    """A fresh gate lets calls through without raising."""
+    db = await gate_db()
+    gate = YouTubeApiGate(db, config=gate_config())
+
+    await gate.ensure_open(now=_GATE_NOW)
+
+    await db.close()
+
+
+@test()
+async def api_gate_pauses_then_reopens_when_cooldown_elapses() -> None:
+    """A quota error pauses for the base interval, reopening once it elapses."""
+    db = await gate_db()
+    gate = YouTubeApiGate(db, config=gate_config())
+
+    paused_until = await gate.record_quota_error(now=_GATE_NOW)
+
+    assert_eq(paused_until, _GATE_NOW + timedelta(minutes=15))
+    with assert_raises(YouTubeQuotaExceededError):
+        await gate.ensure_open(now=_GATE_NOW + timedelta(minutes=14))
+    await gate.ensure_open(now=_GATE_NOW + timedelta(minutes=16))
+    await db.close()
+
+
+@test()
+async def api_gate_escalates_exponentially_capped_at_six_hours() -> None:
+    """Consecutive quota errors double the cooldown, clamped to six hours."""
+    db = await gate_db()
+    gate = YouTubeApiGate(db, config=gate_config())
+
+    cooldowns = [
+        (await gate.record_quota_error(now=_GATE_NOW)) - _GATE_NOW for _ in range(7)
+    ]
+
+    assert_eq(
+        cooldowns,
+        [
+            timedelta(minutes=15),
+            timedelta(minutes=30),
+            timedelta(minutes=60),
+            timedelta(minutes=120),
+            timedelta(minutes=240),
+            timedelta(hours=6),
+            timedelta(hours=6),
+        ],
+    )
+    await db.close()
+
+
+@test()
+async def api_gate_retry_after_hint_floors_the_cooldown() -> None:
+    """A provider retry-after longer than the computed cooldown wins."""
+    db = await gate_db()
+    gate = YouTubeApiGate(db, config=gate_config())
+
+    paused_until = await gate.record_quota_error(
+        now=_GATE_NOW, retry_after=timedelta(hours=2)
+    )
+
+    assert_eq(paused_until, _GATE_NOW + timedelta(hours=2))
+    await db.close()
+
+
+@test()
+async def api_gate_success_clears_pause_and_resets_streak() -> None:
+    """A clean call clears the pause, so the next error starts from the base."""
+    db = await gate_db()
+    gate = YouTubeApiGate(db, config=gate_config())
+    _ = await gate.record_quota_error(now=_GATE_NOW)
+    _ = await gate.record_quota_error(now=_GATE_NOW)
+
+    await gate.record_success()
+
+    await gate.ensure_open(now=_GATE_NOW)
+    reset = await gate.record_quota_error(now=_GATE_NOW)
+    assert_eq(reset - _GATE_NOW, timedelta(minutes=15))
+    await db.close()
+
+
+@test()
+async def api_gate_pause_persists_across_instances() -> None:
+    """A standing pause survives a restart (a fresh gate over the same db)."""
+    db = await gate_db()
+    await YouTubeApiGate(db, config=gate_config()).record_quota_error(now=_GATE_NOW)
+
+    reopened = YouTubeApiGate(db, config=gate_config())
+
+    with assert_raises(YouTubeQuotaExceededError):
+        await reopened.ensure_open(now=_GATE_NOW + timedelta(minutes=10))
+    await db.close()
+
+
+@test()
+async def client_live_quota_error_pauses_every_call() -> None:
+    """A live 403 escalates the gate, so later calls short-circuit before YouTube."""
+    db = await gate_db()
+    clock = FakeClock(_GATE_NOW)
+    api = QuotaBlockingApi(fail_times=99)
+    client = YouTubeApiClient(
+        api,
+        DailyQuota(db, limit=1000),
+        clock=clock,
+        gate=YouTubeApiGate(db, config=gate_config()),
+    )
+
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await client.list_liked_page(page_token=None, page_size=2)
+
+    # The live call happened exactly once; the gate now closed, so the next list
+    # and the (shared) transcript spend both raise before reaching upstream.
+    assert_eq(api.list_calls, 1)
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await client.list_liked_page(page_token=None, page_size=2)
+    assert_eq(api.list_calls, 1)
+    with assert_raises(YouTubeQuotaExceededError):
+        await client.charge_transcript()
+    await db.close()
+
+
+@test()
+async def client_clears_gate_after_a_recovered_call() -> None:
+    """Once the cooldown elapses, a successful call reopens the gate for all spend."""
+    db = await gate_db()
+    clock = FakeClock(_GATE_NOW)
+    api = QuotaBlockingApi(fail_times=1)
+    client = YouTubeApiClient(
+        api,
+        DailyQuota(db, limit=1000),
+        clock=clock,
+        gate=YouTubeApiGate(db, config=gate_config()),
+    )
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await client.list_liked_page(page_token=None, page_size=2)
+
+    clock.advance(timedelta(minutes=16))
+    page = await client.list_liked_page(page_token=None, page_size=2)
+
+    assert_eq(page.next_page_token, None)
+    # The gate is clear: the shared transcript spend now passes too.
+    await client.charge_transcript()
+    await db.close()
 
 
 @test()

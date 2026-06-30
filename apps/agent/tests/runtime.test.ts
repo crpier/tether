@@ -110,13 +110,71 @@ describe("executeTetherTool", () => {
       url: "/internal/tools/capture",
     });
     expect(result).toEqual({
-      content: [{ type: "text", text: "capture succeeded" }],
+      content: [{ type: "text", text: JSON.stringify({ id: "memory-1" }) }],
       details: {
         provenance: { kind: "manual" },
         quota: null,
         result: { id: "memory-1" },
       },
     });
+  });
+
+  test("serializes a list result into model-visible content", async () => {
+    const videos = [
+      { video_id: "v1", title: "First" },
+      { video_id: "v2", title: "Second" },
+    ];
+    const { baseUrl } = await withToolServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: null,
+          provenance: null,
+          quota: null,
+          result: videos,
+          success: true,
+        }),
+      );
+    });
+
+    const result = await executeTetherTool(
+      { endpoint: "/internal/tools/browse_youtube", name: "browse_youtube" },
+      {},
+      undefined,
+      config(baseUrl),
+    );
+
+    expect(result.content).toEqual([
+      { type: "text", text: JSON.stringify(videos) },
+    ]);
+    expect(result.details.result).toEqual(videos);
+  });
+
+  test("keeps the succeeded text when a tool returns a null result", async () => {
+    const { baseUrl } = await withToolServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: null,
+          provenance: null,
+          quota: null,
+          result: null,
+          success: true,
+        }),
+      );
+    });
+
+    const result = await executeTetherTool(
+      { endpoint: "/internal/tools/delete_trigger", name: "delete_trigger" },
+      { trigger_id: "t1" },
+      undefined,
+      config(baseUrl),
+    );
+
+    expect(result.content).toEqual([
+      { type: "text", text: "delete_trigger succeeded" },
+    ]);
+    expect(result.details.result).toBeNull();
   });
 
   test("throws when a tool envelope reports failure", async () => {

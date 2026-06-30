@@ -107,9 +107,13 @@ class LoggedMemoryService:
         """Search through the wrapped service with logging context."""
         return await self.service.search(query, limit=limit, logger=self.logger)
 
-    async def browse_by_state(self, state: MemoryState) -> list[Memory[Fetched]]:
+    async def browse_by_state(
+        self, state: MemoryState, limit: int | None = None
+    ) -> list[Memory[Fetched]]:
         """Browse through the wrapped service with logging context."""
-        return await self.service.browse_by_state(state, logger=self.logger)
+        return await self.service.browse_by_state(
+            state, limit=limit, logger=self.logger
+        )
 
     async def tether(self, memory: Memory[Fetched]) -> Memory[Fetched]:
         """Tether through the wrapped service with logging context."""
@@ -1106,6 +1110,18 @@ async def loose_queue_returns_loose_memories() -> None:
     found = [hit.id for hit in await service.browse_by_state("loose")]
 
     assert_in(loose.id, found)
+
+
+@test()
+async def loose_queue_caps_rows_at_the_limit() -> None:
+    """`limit` bounds the review queue so the assistant tool can't over-fetch."""
+    service = await load_fixture(memory_service())
+    for n in range(3):
+        _ = await service.capture(f"loose memory {n}")
+
+    found = await service.browse_by_state("loose", limit=2)
+
+    assert_eq(len(found), 2)
 
 
 @test()

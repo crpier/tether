@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from tether.youtube import (
     FetchedTranscript,
@@ -39,6 +39,7 @@ from tether.youtube import (
     TranscriptSegment,
     TranscriptTransientError,
     TranscriptUnavailableError,
+    YouTubeQuotaExceededError,
 )
 
 YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
@@ -57,6 +58,8 @@ no explicit likes playlist."""
 
 _MAX_IDS_PER_CALL = 50
 """The YouTube Data API `videos.list` per-call id maximum."""
+
+_T = TypeVar("_T")
 
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
 """Empty default for `fetch`'s `paused_sources`, hoisted off the parameter list so
@@ -407,7 +410,7 @@ class OAuthYouTubeApi:
     ) -> LikedPage:
         """Return one page of the liked-videos playlist and the next-page cursor."""
         playlist_id = await self._resolve_likes_playlist()
-        payload = await asyncio.to_thread(
+        payload = await self._read(
             self._list_playlist_items, playlist_id, page_token, page_size
         )
         items = payload.get("items", [])
@@ -438,7 +441,7 @@ class OAuthYouTubeApi:
         result: dict[str, RawYouTubeVideo] = {}
         for start in range(0, len(ids), _MAX_IDS_PER_CALL):
             chunk = ids[start : start + _MAX_IDS_PER_CALL]
-            payload = await asyncio.to_thread(self._list_videos, chunk)
+            payload = await self._read(self._list_videos, chunk)
             for item in payload.get("items", []):
                 if not isinstance(item, dict):
                     continue
@@ -450,9 +453,25 @@ class OAuthYouTubeApi:
     async def _resolve_likes_playlist(self) -> str:
         if self._likes_playlist_id is not None:
             return self._likes_playlist_id
-        resolved = await asyncio.to_thread(self._fetch_likes_playlist_id)
+        resolved = await self._read(self._fetch_likes_playlist_id)
         self._likes_playlist_id = resolved
         return resolved
+
+    @staticmethod
+    async def _read(func: Callable[..., _T], /, *args: object) -> _T:
+        """Run a blocking Data API call off-thread, translating a quota 403.
+
+        A `quotaExceeded` failure on any of the three list calls becomes the
+        domain `YouTubeQuotaExceededError` so the sync stops gracefully; every
+        other error propagates unchanged to surface loudly.
+        """
+        try:
+            return await asyncio.to_thread(func, *args)
+        except Exception as error:
+            quota = _as_quota_error(error)
+            if quota is not None:
+                raise quota from error
+            raise
 
     def _fetch_likes_playlist_id(self) -> str:
         response = (
@@ -622,6 +641,22 @@ def _http_status(error: Exception) -> int | None:
         return status
     code = getattr(error, "status_code", None)
     return code if isinstance(code, int) else None
+
+
+def _as_quota_error(error: Exception) -> YouTubeQuotaExceededError | None:
+    """Map Google's `403 quotaExceeded` onto the domain quota signal, else None.
+
+    The local `DailyQuota` guard models Google's budget to pre-empt it, but the
+    two diverge (a fresh data volume resets the local counter; the project's real
+    budget may be spent by usage elsewhere), so the Data API can still 403 with
+    `quotaExceeded`. Surfacing that as the typed signal lets `YouTubeSyncService`
+    stop gracefully for the day instead of letting an untranslated `HttpError`
+    escape the startup sync and crash the lifespan. The machine `reason` appears
+    in the real `HttpError`'s `str()`, which is the cross-version handle here.
+    """
+    if _http_status(error) == _HTTP_FORBIDDEN and "quotaExceeded" in str(error):
+        return YouTubeQuotaExceededError(str(error))
+    return None
 
 
 _HTTP_NOT_FOUND = 404

@@ -260,6 +260,26 @@ async def list_orders_by_next_fire_and_hides_deleted() -> None:
 
 
 @test()
+async def list_caps_rows_at_the_limit() -> None:
+    """`limit` bounds the listing to the soonest-firing triggers."""
+    service = await load_fixture(trigger_service())
+    now = datetime(2030, 1, 1, tzinfo=UTC)
+    first = await make_trigger(
+        service, once("a", datetime(2030, 1, 2, tzinfo=UTC)), now=now
+    )
+    second = await make_trigger(
+        service, once("b", datetime(2030, 1, 3, tzinfo=UTC)), now=now
+    )
+    _ = await make_trigger(
+        service, once("c", datetime(2030, 1, 4, tzinfo=UTC)), now=now
+    )
+
+    listed = await service.list_triggers(limit=2, logger=LOGGER)
+
+    assert_eq([t.id for t in listed], [first.id, second.id])
+
+
+@test()
 async def update_replaces_the_definition_and_rearms() -> None:
     """Updating re-materialises the schedule and clears scheduler state."""
     service = await load_fixture(trigger_service())

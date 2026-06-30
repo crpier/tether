@@ -173,6 +173,7 @@ class BrowseParams(BaseModel):
     """Params for the review queue (`loose`) / corpus browse (`tethered`)."""
 
     state: MemoryState
+    limit: PositiveInt = 50
 
 
 class SearchParams(BaseModel):
@@ -438,7 +439,7 @@ async def _capture(request: Request, params: CaptureParams) -> ToolEnvelope:
 async def _browse(request: Request, params: BrowseParams) -> ToolEnvelope:
     """Filter the review queue (`loose`) or browse the corpus (`tethered`)."""
     memories = await request.app.state.memory_service.browse_by_state(
-        params.state, logger=_tool_logger(request)
+        params.state, limit=params.limit, logger=_tool_logger(request)
     )
     return _ok_memories(memories)
 
