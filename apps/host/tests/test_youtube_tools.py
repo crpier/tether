@@ -136,11 +136,41 @@ def browse_rows_are_compact_and_omit_the_transcript() -> None:
 
     row = envelope["result"][0]
     assert_not_in("transcript", row)
+    # This video has no description, so the optional field is absent.
     assert_not_in("description", row)
     assert_eq(
         set(row),
         {"video_id", "title", "channel", "topic", "source", "state"},
     )
+
+
+@test()
+def list_rows_carry_a_truncated_description() -> None:
+    """A row exposes a truncated description so the list self-disambiguates.
+
+    Near-duplicate titles can be told apart from the list alone, without a
+    transcript fetch or a reworded re-search.
+    """
+    long_description = "word " * 200  # ~1000 chars, well over the preview cap.
+    api = InMemoryYouTubeApi(
+        liked=[video("v1", description=long_description)],
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call(client, "browse_youtube")
+
+    description = envelope["result"][0]["description"]
+    assert_eq(description.endswith("…"), True)
+    assert_eq(len(description) <= 201, True)
+
+
+@test()
+def list_rows_omit_the_description_when_blank() -> None:
+    """An empty description leaves the optional field off the row entirely."""
+    api = InMemoryYouTubeApi(liked=[video("v1", description="   ")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call(client, "browse_youtube")
+
+    assert_not_in("description", envelope["result"][0])
 
 
 @test()

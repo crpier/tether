@@ -360,7 +360,7 @@
       "name": "search_youtube",
       "params_model": "SearchYouTubeParams",
       "schema": {
-        "description": "Params for keyword Search across saved content and transcript text.",
+        "description": "Search saved videos by title, description, and transcript text in one pass.\n\nEach result row already carries a description (and, for transcript matches, a\nsnippet), so a single query is usually enough \u2014 prefer reading the rows over\nre-searching with reworded terms.",
         "properties": {
           "q": {
             "title": "Q",

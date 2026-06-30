@@ -22,9 +22,9 @@ export const search_youtubeTool: ToolDefinition<
   name: "search_youtube",
   label: "SearchYoutube",
   description:
-    "Params for keyword Search across saved content and transcript text.",
+    "Search saved videos by title, description, and transcript text in one pass.\n\nEach result row already carries a description (and, for transcript matches, a\nsnippet), so a single query is usually enough — prefer reading the rows over\nre-searching with reworded terms.",
   promptSnippet:
-    "Params for keyword Search across saved content and transcript text.",
+    "Search saved videos by title, description, and transcript text in one pass.\n\nEach result row already carries a description (and, for transcript matches, a\nsnippet), so a single query is usually enough — prefer reading the rows over\nre-searching with reworded terms.",
   parameters: search_youtubeParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(
