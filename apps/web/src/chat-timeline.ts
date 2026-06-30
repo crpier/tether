@@ -36,7 +36,14 @@ export type TimelineRow =
       // trace. Live reasoning stays expanded (`done: false`) while generating.
       done: boolean;
     }
-  | { kind: "tool"; id: string; toolName: string; status: "running" | "done" };
+  | {
+      kind: "tool";
+      id: string;
+      toolName: string;
+      status: "running" | "done";
+      args: unknown;
+      result: unknown;
+    };
 
 type LiveRow =
   | {
@@ -59,6 +66,8 @@ type LiveRow =
       toolId: string | null;
       toolName: string;
       status: "running" | "done";
+      args: unknown;
+      result: unknown;
     };
 
 export interface LiveTurn {
@@ -166,6 +175,8 @@ function startTool(turn: LiveTurn, frame: ChatFrame): LiveTurn {
       toolId: frame.tool_id ?? null,
       toolName: frame.tool_name ?? "tool",
       status: "running",
+      args: frame.tool_args ?? null,
+      result: null,
     },
   ];
   return { ...turn, counter, rows };
@@ -201,6 +212,7 @@ function endTool(turn: LiveTurn, frame: ChatFrame): LiveTurn {
     ...tool,
     status: "done",
     toolName: frame.tool_name ?? tool.toolName,
+    result: frame.tool_result ?? tool.result,
   };
   return { ...turn, rows };
 }
@@ -290,6 +302,8 @@ export function deriveRows(
         id: row.id,
         toolName: row.toolName,
         status: row.status,
+        args: row.args,
+        result: row.result,
       });
       continue;
     }

@@ -34,6 +34,11 @@ from tether.youtube_routes import YouTubeVideoRead
 # tool call can pour into the model's context (the corpus can hold thousands).
 _DEFAULT_LIST_LIMIT = 50
 
+# How much of a video's description a list row carries. Enough to disambiguate
+# similar titles (the corpus has many near-duplicates) without pouring full
+# descriptions — which can run to thousands of chars — into the model's context.
+_DESCRIPTION_PREVIEW_CHARS = 200
+
 
 class BrowseYouTubeParams(BaseModel):
     """Params for a topic/source-filtered browse of ingested videos."""
@@ -44,7 +49,11 @@ class BrowseYouTubeParams(BaseModel):
 
 
 class SearchYouTubeParams(BaseModel):
-    """Params for keyword Search across saved content and transcript text."""
+    """Search saved videos by title, description, and transcript text in one pass.
+
+    Each result row already carries a description (and, for transcript matches, a
+    snippet), so a single query is usually enough — prefer reading the rows over
+    re-searching with reworded terms."""
 
     q: str
     limit: PositiveInt = _DEFAULT_LIST_LIMIT
@@ -73,14 +82,32 @@ def _tool_logger(request: Request) -> Logger:
     return get_request_logger(request)
 
 
-def _compact_video(video: IngestedVideo[Fetched]) -> dict[str, object]:
+def _description_preview(description: str) -> str | None:
+    """A truncated description for a list row, or None when there's nothing to show.
+
+    Capped at `_DESCRIPTION_PREVIEW_CHARS` with an ellipsis marker so the model
+    can tell near-duplicate titles apart from the list alone."""
+    text = description.strip()
+    if not text:
+        return None
+    if len(text) <= _DESCRIPTION_PREVIEW_CHARS:
+        return text
+    return text[:_DESCRIPTION_PREVIEW_CHARS].rstrip() + "…"
+
+
+def _compact_video(
+    video: IngestedVideo[Fetched], *, snippet: str | None = None
+) -> dict[str, object]:
     """A transcript-free list row for the model.
 
     Browse/search lists are bounded for context, so they carry only what's
-    needed to pick a video — never the transcript or long description (the model
-    calls `fetch_youtube_transcript` for a specific `video_id` when it needs the
-    text, and `search_youtube` already matches transcripts server-side)."""
-    return {
+    needed to pick a video — never the full transcript (the model calls
+    `fetch_youtube_transcript` for a specific `video_id` when it needs the text).
+    The truncated `description` makes the list self-disambiguating, so the model
+    can pick (or rule out) a video without a transcript fetch or a re-search.
+    Semantic search additionally attaches `snippet`: the best-matching transcript
+    excerpt, so the model can tell similar candidates apart without a fetch."""
+    row: dict[str, object] = {
         "video_id": video.video_id,
         "title": video.title,
         "channel": video.channel,
@@ -88,13 +115,23 @@ def _compact_video(video: IngestedVideo[Fetched]) -> dict[str, object]:
         "source": video.source,
         "state": derive_ingest_state(video),
     }
+    description = _description_preview(video.description)
+    if description is not None:
+        row["description"] = description
+    if snippet is not None:
+        row["snippet"] = snippet
+    return row
 
 
 def _ok_videos(result: BrowseResult | SearchResult) -> ToolEnvelope:
     """Envelope a compact video collection with the call's quota + cache."""
+    snippets = result.snippets if isinstance(result, SearchResult) else {}
     return ToolEnvelope(
         success=True,
-        result=[_compact_video(video) for video in result.videos],
+        result=[
+            _compact_video(video, snippet=snippets.get(video.video_id))
+            for video in result.videos
+        ],
         quota=result.quota,
         cache=result.cache,
     )

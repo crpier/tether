@@ -237,6 +237,30 @@ function toolText(row: Extract<TimelineRow, { kind: "tool" }>): string {
     : `used ${row.toolName}`;
 }
 
+// Render a tool's args/result for the transcript. Strings pass through; objects
+// pretty-print as JSON. Empty objects and nullish values collapse to "" so the
+// caller can hide the block entirely rather than show a bare `{}`.
+function formatToolDetail(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  ) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
 // Elapsed-time label that ticks via a text node mutation rather than a signal,
 // so a running turn never re-renders the whole transcript once a second.
 function WorkingIndicator(props: { startedAt: number }) {
@@ -281,23 +305,44 @@ function MessageRow(props: { row: TimelineRow }) {
   return (
     <Switch>
       <Match when={props.row.kind === "tool" && props.row}>
-        {(tool) => (
-          <article
-            aria-label="Tool activity"
-            class="text-muted-foreground mx-auto flex items-center gap-2 py-0.5 text-xs italic"
-          >
-            <Show
-              fallback={<span aria-hidden="true">✓</span>}
-              when={tool().status === "running"}
+        {(tool) => {
+          const args = () => formatToolDetail(tool().args);
+          const result = () => formatToolDetail(tool().result);
+          return (
+            <article
+              aria-label="Tool activity"
+              class="bg-muted/50 text-muted-foreground mr-auto max-w-[80%] rounded-lg px-3 py-2 text-xs"
             >
-              <span
-                aria-hidden="true"
-                class="border-muted-foreground/40 border-t-muted-foreground inline-block size-3 animate-spin rounded-full border-2"
-              />
-            </Show>
-            <span>{toolText(tool())}</span>
-          </article>
-        )}
+              <div class="flex items-center gap-2">
+                <Show
+                  fallback={<span aria-hidden="true">✓</span>}
+                  when={tool().status === "running"}
+                >
+                  <span
+                    aria-hidden="true"
+                    class="border-muted-foreground/40 border-t-muted-foreground inline-block size-3 animate-spin rounded-full border-2"
+                  />
+                </Show>
+                <strong class={bubbleLabelClass}>{toolText(tool())}</strong>
+              </div>
+              <Show when={args().length > 0}>
+                <pre class="bg-background/40 mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
+                  {args()}
+                </pre>
+              </Show>
+              <Show when={result().length > 0}>
+                <details class="mt-1.5">
+                  <summary class="cursor-pointer select-none opacity-80">
+                    result
+                  </summary>
+                  <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
+                    {result()}
+                  </pre>
+                </details>
+              </Show>
+            </article>
+          );
+        }}
       </Match>
       <Match when={props.row.kind === "reasoning" && props.row}>
         {(reasoning) => {

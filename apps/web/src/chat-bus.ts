@@ -9,6 +9,8 @@ export type ChatFrame =
       seq?: number;
       tool_name?: string | null;
       tool_id?: string | null;
+      tool_args?: unknown;
+      tool_result?: unknown;
       content_index?: number | null;
     }
   | { type: "invalidate"; keys: string[] }

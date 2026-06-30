@@ -127,6 +127,30 @@ describe("chat-timeline seam", () => {
     ]);
   });
 
+  test("carries tool args from start and result from end into the row", () => {
+    const turn = run([
+      chat({
+        event: "tool_start",
+        tool_name: "search",
+        tool_id: "t1",
+        tool_args: { q: "needle", limit: 5 },
+      }),
+      chat({
+        event: "tool_end",
+        tool_name: "search",
+        tool_id: "t1",
+        tool_result: { kind: "collection", hits: 3 },
+      }),
+    ]);
+    const tool = deriveRows([], turn).find((row) => row.kind === "tool");
+    expect(tool).toMatchObject({
+      toolName: "search",
+      status: "done",
+      args: { q: "needle", limit: 5 },
+      result: { kind: "collection", hits: 3 },
+    });
+  });
+
   test("error frame stops generation and records detail", () => {
     const turn = run([chat({ event: "error", detail: "boom" })]);
     expect(turn.generating).toBe(false);

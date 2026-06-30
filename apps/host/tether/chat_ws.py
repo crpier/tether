@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
@@ -20,8 +23,51 @@ from tether.pi_runtime import PiRuntimeError
 
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
+_LOCALTIME_PATH = Path("/etc/localtime")
+_ZONEINFO_MARKER = "zoneinfo/"
 
 type InboundType = Literal["prompt", "abort"]
+
+
+def _local_timezone_name(now: datetime) -> str:
+    """Best-effort IANA name for the host's local zone, falling back to offset.
+
+    pi injects only the date into its system prompt, but daily/weekly triggers
+    want an IANA zone, so surface one when the host can determine it — the `TZ`
+    env var or the `/etc/localtime` symlink target — and degrade to the numeric
+    UTC offset otherwise. `now` must be timezone-aware so the fallback resolves.
+    """
+    env_zone = os.environ.get("TZ")
+    if env_zone:
+        return env_zone
+    try:
+        if _LOCALTIME_PATH.is_symlink():
+            target = str(_LOCALTIME_PATH.readlink())
+            index = target.rfind(_ZONEINFO_MARKER)
+            if index != -1:
+                return target[index + len(_ZONEINFO_MARKER) :]
+    except OSError:
+        pass
+    return now.strftime("%z") or "UTC"
+
+
+def _prompt_with_time_context(
+    content: str, *, now: datetime, timezone_name: str
+) -> str:
+    """Prefix a user turn with the host's wall-clock time for the agent only.
+
+    pi's system prompt carries `Current date: YYYY-MM-DD` with no time, so the
+    agent cannot resolve relative scheduling ("in 3 minutes", "tomorrow 9am")
+    and stalls asking the user for the current time. This preamble is sent to
+    pi only; the persisted user message and the trace keep the clean text.
+    """
+    stamp = now.isoformat(timespec="seconds")
+    note = (
+        f"[Tether note — the current time is {stamp} ({timezone_name}). "
+        'Resolve relative times like "in 3 minutes" or "tomorrow at 9am" '
+        "against it. This note is system-generated; do not mention it.]"
+    )
+    return f"{note}\n\n{content}"
 
 
 class InboundFrame(BaseModel):
@@ -244,9 +290,10 @@ async def _forward_tool_start(
 ) -> None:
     """Remember tool args and forward tool-start events."""
     tool_call_id = event.get("toolCallId")
+    args = event.get("args")
+    tool_args: dict[str, Any] = args if isinstance(args, dict) else {}
     if isinstance(tool_call_id, str):
-        args = event.get("args")
-        pending_tool_args[tool_call_id] = args if isinstance(args, dict) else {}
+        pending_tool_args[tool_call_id] = tool_args
     await websocket.send_json(
         {
             "type": "chat",
@@ -254,6 +301,7 @@ async def _forward_tool_start(
             "event": "tool_start",
             "tool_name": event.get("toolName"),
             "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
+            "tool_args": tool_args,
         }
     )
 
@@ -268,6 +316,7 @@ async def _settle_tool_end(
     """Persist tool completion envelopes and forward tool-end events."""
     tool_call_id = event.get("toolCallId")
     tool_name = event.get("toolName")
+    tool_result = _json_object(event.get("result"))
     if isinstance(tool_call_id, str) and isinstance(tool_name, str):
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
@@ -277,7 +326,7 @@ async def _settle_tool_end(
                 role="tool",
                 tool_args=pending_tool_args.pop(tool_call_id, {}),
                 tool_name=tool_name,
-                tool_result=_json_object(event.get("result")),
+                tool_result=tool_result,
             )
         )
     await websocket.send_json(
@@ -287,6 +336,7 @@ async def _settle_tool_end(
             "event": "tool_end",
             "tool_name": tool_name,
             "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
+            "tool_result": tool_result,
         }
     )
 
@@ -429,7 +479,13 @@ async def _run_prompt(
             # Drop any events left in the shared queue by a prior turn that was
             # aborted or cut off by a disconnect, so this prompt streams clean.
             _ = runtime.drain_events()
-            prompt_response = await runtime.client.request("prompt", message=content)
+            # pi only knows the date; stamp the wall-clock time onto the turn so
+            # the agent can resolve relative scheduling without asking for it.
+            now = datetime.now().astimezone()
+            pi_message = _prompt_with_time_context(
+                content, now=now, timezone_name=_local_timezone_name(now)
+            )
+            prompt_response = await runtime.client.request("prompt", message=pi_message)
             if prompt_response.get("success") is not True:
                 failure_detail = _prompt_failure_detail(prompt_response)
                 termination, run_error = "error", failure_detail
