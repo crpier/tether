@@ -436,9 +436,7 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
 
     Keyed by the upstream `video_id`. Absence means *pending*; a row carries the
     state-machine status, the attempt count, the next-attempt time (for backed-off
-    retries that survive restarts), and the last error for observability. This is
-    the substrate the later fallback-provider slice extends with provider-level
-    pause/backoff.
+    retries that survive restarts), and the last error for observability.
     """
 
     video_id: YouTubeTranscriptState.Col[str] = Text(primary_key=True)
@@ -1440,6 +1438,7 @@ class YouTubeService:
         if attempt.outcome == "transient":
             message = f"transcript fetch for {video_id} failed transiently"
             raise TranscriptTransientError(message)
+        # The `done` outcome always carries the stored video and its text.
         assert attempt.video is not None and attempt.text is not None
         _info(logger, "YouTube transcript fetched", video_id=video_id)
         return TranscriptResult(
@@ -1566,7 +1565,7 @@ def _youtube_migrations() -> dict[str, str]:
         '"key" TEXT PRIMARY KEY NOT NULL, "value" TEXT NOT NULL'
         ") STRICT"
     )
-    # Per-video transcript state machine (background transcript worker, #83).
+    # Per-video transcript state machine for the background transcript worker.
     migrations["008_create_you_tube_transcript_state"] = (
         'CREATE TABLE "you_tube_transcript_state" ('
         '"video_id" TEXT PRIMARY KEY NOT NULL, '
