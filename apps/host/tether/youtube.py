@@ -54,6 +54,7 @@ from snekql.sqlite import (
     update,
 )
 
+from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
@@ -771,7 +772,8 @@ class DailyQuota:
     async def spend(self, units: int, *, now: datetime) -> None:
         """Consume `units` on today's budget, or raise if it cannot cover them."""
         day = self._day(now)
-        async with self.database.transaction() as tx:
+
+        async def _spend(tx: Transaction) -> None:
             row = await self._row(tx, day)
             used = row.used if row is not None else 0
             if used + units > self.limit:
@@ -788,6 +790,8 @@ class DailyQuota:
                     .set(YouTubeQuotaDaily.used.to(used + units))
                     .where(YouTubeQuotaDaily.day.eq(day))
                 )
+
+        await run_in_transaction(self.database, _spend)
 
     async def _row(
         self, tx: Transaction, day: str
@@ -1262,15 +1266,18 @@ class YouTubeSyncService:
         details = await self.client.fetch_video_metadata(
             [raw.video_id for raw in videos]
         )
-        upserted = 0
-        async with self.database.transaction() as tx:
+
+        async def _mirror(tx: Transaction) -> int:
+            upserted = 0
             for raw in videos:
                 enriched = details.get(raw.video_id)
                 if enriched is None:
                     continue
                 await self._upsert(tx, enriched)
                 upserted += 1
-        return upserted
+            return upserted
+
+        return await run_in_transaction(self.database, _mirror)
 
     async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> None:
         await upsert_ingested_video(tx, raw)
@@ -1299,7 +1306,7 @@ async def _state_get(database: Database, key: str) -> str | None:
 
 
 async def _state_set(database: Database, key: str, value: str) -> None:
-    async with database.transaction() as tx:
+    async def _set(tx: Transaction) -> None:
         existing = await tx.fetch_one_or_none(
             select(YouTubeSyncState).where(YouTubeSyncState.key.eq(key))
         )
@@ -1311,6 +1318,8 @@ async def _state_set(database: Database, key: str, value: str) -> None:
                 .set(YouTubeSyncState.value.to(value))
                 .where(YouTubeSyncState.key.eq(key))
             )
+
+    await run_in_transaction(database, _set)
 
 
 # --- Per-video transcript state machine + the shared fetch/persist path --------
@@ -1502,7 +1511,8 @@ async def _store_transcript(
     database: Database, video_id: str, text: str
 ) -> IngestedVideo[Fetched]:
     """Persist a fetched transcript onto its video and mark the state done."""
-    async with database.transaction() as tx:
+
+    async def _store(tx: Transaction) -> IngestedVideo[Fetched] | None:
         existing = await _transcript_state(tx, video_id)
         attempts = existing.attempts if existing is not None else 0
         _ = await tx.execute(
@@ -1521,9 +1531,11 @@ async def _store_transcript(
                 last_error=None,
             ),
         )
-        updated = await tx.fetch_one_or_none(
+        return await tx.fetch_one_or_none(
             select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
         )
+
+    updated = await run_in_transaction(database, _store)
     if updated is None:
         raise YouTubeVideoNotFoundError(video_id)
     return updated
@@ -1533,7 +1545,8 @@ async def _mark_terminal(
     database: Database, video_id: str, *, error: str, purge: bool
 ) -> None:
     """Mark a video's transcript terminal; optionally purge it from ingestion."""
-    async with database.transaction() as tx:
+
+    async def _mark(tx: Transaction) -> None:
         existing = await _transcript_state(tx, video_id)
         attempts = existing.attempts if existing is not None else 0
         await _write_transcript_state(
@@ -1555,6 +1568,8 @@ async def _mark_terminal(
                 .where(IngestedVideo.ignored_at.is_null())
             )
 
+    await run_in_transaction(database, _mark)
+
 
 async def _record_retry(
     database: Database,
@@ -1565,7 +1580,8 @@ async def _record_retry(
     error: str,
 ) -> None:
     """Increment a video's attempt count and schedule a backed-off retry."""
-    async with database.transaction() as tx:
+
+    async def _retry(tx: Transaction) -> None:
         existing = await _transcript_state(tx, video_id)
         attempts = (existing.attempts if existing is not None else 0) + 1
         await _write_transcript_state(
@@ -1578,6 +1594,8 @@ async def _record_retry(
                 last_error=error,
             ),
         )
+
+    await run_in_transaction(database, _retry)
 
 
 class TranscriptSyncService:
@@ -1984,7 +2002,8 @@ class YouTubeService:
     async def ignore(self, video_id: str, *, logger: Logger) -> IngestedVideo[Fetched]:
         """Purge a video from ingestion so browse/search no longer surface it."""
         _debug(logger, "Ignoring YouTube video", video_id=video_id)
-        async with self.database.transaction() as tx:
+
+        async def _ignore(tx: Transaction) -> IngestedVideo[Fetched]:
             _ = await self._fetch(tx, video_id)
             _ = await tx.execute(
                 update(IngestedVideo)
@@ -1993,7 +2012,9 @@ class YouTubeService:
                 .where(IngestedVideo.video_id.eq(video_id))
                 .where(IngestedVideo.ignored_at.is_null())
             )
-            video = await self._fetch(tx, video_id)
+            return await self._fetch(tx, video_id)
+
+        video = await run_in_transaction(self.database, _ignore)
         _info(logger, "YouTube video ignored", video_id=video_id)
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return video
@@ -2001,7 +2022,8 @@ class YouTubeService:
     async def retry(self, video_id: str, *, logger: Logger) -> IngestedVideo[Fetched]:
         """Un-ignore a previously purged video, returning it to ingestion."""
         _debug(logger, "Retrying YouTube video", video_id=video_id)
-        async with self.database.transaction() as tx:
+
+        async def _retry(tx: Transaction) -> IngestedVideo[Fetched]:
             _ = await self._fetch(tx, video_id)
             _ = await tx.execute(
                 update(IngestedVideo)
@@ -2009,7 +2031,9 @@ class YouTubeService:
                 .set(IngestedVideo.updated_at.to(CurrentTimestamp))
                 .where(IngestedVideo.video_id.eq(video_id))
             )
-            video = await self._fetch(tx, video_id)
+            return await self._fetch(tx, video_id)
+
+        video = await run_in_transaction(self.database, _retry)
         _info(logger, "YouTube video retried", video_id=video_id)
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return video

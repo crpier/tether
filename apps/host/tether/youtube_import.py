@@ -47,6 +47,7 @@ from snekql.sqlite import (
     update,
 )
 
+from tether.db_retry import run_in_transaction
 from tether.logging import Logger
 from tether.youtube import (
     IngestedVideo,
@@ -314,13 +315,30 @@ async def import_backup(
     # writes nothing) classifies transcripts exactly as a real run would.
     planned_ids: set[str] = set()
 
-    async with database.transaction() as tx:
+    async def _import(tx: Transaction) -> tuple[int, int, int, int, int, int]:
         inserted, updated, likes_skipped = await _import_likes(
             tx, reader, dry_run=dry_run, planned_ids=planned_ids
         )
         orphans, transcripts_imported, transcript_skipped = await _import_transcripts(
             tx, reader, dry_run=dry_run, planned_ids=planned_ids
         )
+        return (
+            inserted,
+            updated,
+            likes_skipped,
+            orphans,
+            transcripts_imported,
+            transcript_skipped,
+        )
+
+    (
+        inserted,
+        updated,
+        likes_skipped,
+        orphans,
+        transcripts_imported,
+        transcript_skipped,
+    ) = await run_in_transaction(database, _import)
 
     report = ImportReport(
         videos_inserted=inserted,

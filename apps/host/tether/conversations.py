@@ -17,6 +17,7 @@ from snekql.sqlite import (
     Model,
     Pending,
     Text,
+    Transaction,
     insert,
     select,
     update,
@@ -26,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from tether.db_retry import run_in_transaction
 from tether.model_selection import (
     AgentModelCatalog,
     AgentModelConfig,
@@ -160,7 +162,8 @@ class ConversationService:
 
     async def list_conversations(self) -> list[Conversation[Fetched]]:
         """Return all conversations, creating the v1 default on first access."""
-        async with self.database.transaction() as tx:
+
+        async def _list(tx: Transaction) -> list[Conversation[Fetched]]:
             conversations = await tx.fetch_all(
                 select(Conversation).all().order_by(Conversation.created_at.asc())
             )
@@ -172,6 +175,8 @@ class ConversationService:
                 ).returning()
             )
             return [conversation]
+
+        return await run_in_transaction(self.database, _list)
 
     async def fetch_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
         """Return one conversation or raise when the id is unknown."""
@@ -192,15 +197,20 @@ class ConversationService:
         model = self.model_catalog.resolve(selected_model)
         if model is None:
             raise ModelNotAllowedError(selected_model)
-        async with self.database.transaction() as tx:
+
+        async def _set_selected_model(
+            tx: Transaction,
+        ) -> Conversation[Fetched] | None:
             _ = await tx.execute(
                 update(Conversation)
                 .set(Conversation.selected_model.to(model.id))
                 .where(Conversation.id.eq(conversation_id))
             )
-            conversation = await tx.fetch_one_or_none(
+            return await tx.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
+
+        conversation = await run_in_transaction(self.database, _set_selected_model)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation, model
@@ -221,7 +231,8 @@ class ConversationService:
 
     async def append_message(self, draft: MessageDraft) -> Message[Fetched]:
         """Append one settled transcript row with a monotonic per-thread sequence."""
-        async with self.database.transaction() as tx:
+
+        async def _append(tx: Transaction) -> Message[Fetched]:
             conversation = await tx.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(draft.conversation_id))
             )
@@ -259,6 +270,8 @@ class ConversationService:
                     )
                 ).returning()
             )
+
+        return await run_in_transaction(self.database, _append)
 
 
 async def create_conversation_schema(database: Database) -> None:

@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from snekql.sqlite import select, update
 
+from tether.db_retry import run_in_transaction
 from tether.embeddings import vector_from_bytes, vector_to_bytes
 from tether.memories import Memory
 from tether.search_index import SearchDocument
@@ -224,8 +225,11 @@ class SearchReconciler:
             vector = vector_from_bytes(memory.embedding)
         else:
             vector = (await self.embedder.embed_documents([memory.content]))[0]
-            async with self.database.transaction() as tx:
+
+            async def _index(tx: Transaction) -> None:
                 await self._store_embedding(tx, memory.id, memory.version, vector)
+
+            await run_in_transaction(self.database, _index)
         await self.index.upsert(
             [SearchDocument(id=memory.id, content=memory.content, vector=vector)]
         )
@@ -245,12 +249,15 @@ class SearchReconciler:
         vectors = await self.embedder.embed_documents(
             [memory.content for memory in owed]
         )
-        fresh: dict[UUID, Vector] = {}
-        async with self.database.transaction() as tx:
+
+        async def _embed(tx: Transaction) -> dict[UUID, Vector]:
+            fresh: dict[UUID, Vector] = {}
             for memory, vector in zip(owed, vectors, strict=True):
                 await self._store_embedding(tx, memory.id, memory.version, vector)
                 fresh[memory.id] = vector
-        return fresh
+            return fresh
+
+        return await run_in_transaction(self.database, _embed)
 
     async def _drop_orphans(self, desired: Sequence[Memory[Fetched]]) -> int:
         """Remove index entries with no live Memory behind them."""

@@ -36,6 +36,7 @@ from snekql.sqlite import (
 )
 from yaml import safe_dump, safe_load
 
+from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
@@ -300,8 +301,9 @@ class MemoryService:
             attributes={"memory.content_length": len(normalised_content)},
         ) as span:
             _debug(logger, "Capturing Memory", content_length=len(normalised_content))
-            async with self.database.transaction() as tx:
-                memory = await tx.execute(
+
+            async def _capture(tx: Transaction) -> Memory[Fetched]:
+                return await tx.execute(
                     insert(
                         Memory(
                             content=normalised_content,
@@ -309,6 +311,8 @@ class MemoryService:
                         )
                     ).returning()
                 )
+
+            memory = await run_in_transaction(self.database, _capture)
             span.set_attribute("memory.id", str(memory.id))
             span.set_attribute("memory.version", memory.version)
             _info(
@@ -450,7 +454,8 @@ class MemoryService:
                 memory_id=str(memory.id),
                 observed_version=memory.version,
             )
-            async with self.database.transaction() as tx:
+
+            async def _tether(tx: Transaction) -> Memory[Fetched]:
                 matched_rows = await tx.execute(
                     update(Memory)
                     .set(Memory.tethered_at.to(CurrentTimestamp))
@@ -486,6 +491,9 @@ class MemoryService:
                         )
                         msg = f"Tried to update memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                         raise MemoryConflictError(msg)
+                return fresh_memory
+
+            fresh_memory = await run_in_transaction(self.database, _tether)
             await self._try_set_projection(fresh_memory, logger=logger)
             await self._try_index(fresh_memory, logger=logger)
             span.set_attribute("memory.version", fresh_memory.version)
@@ -522,7 +530,8 @@ class MemoryService:
             observed_version=memory.version,
             content_length=len(normalised_content),
         )
-        async with self.database.transaction() as tx:
+
+        async def _edit_content(tx: Transaction) -> Memory[Fetched]:
             matched_rows = await tx.execute(
                 update(Memory)
                 .set(Memory.content.to(normalised_content))
@@ -546,6 +555,9 @@ class MemoryService:
                 )
                 msg = f"Tried to edit memory {memory.id} with version {memory.version} but had version {fresh_memory.version}"
                 raise MemoryConflictError(msg)
+            return fresh_memory
+
+        fresh_memory = await run_in_transaction(self.database, _edit_content)
 
         # An invariant is that loose memories don't have projections, and loose
         # memories aren't indexed — so both derived artifacts refresh only when
@@ -584,7 +596,8 @@ class MemoryService:
             memory_id=str(memory.id),
             observed_version=memory.version,
         )
-        async with self.database.transaction() as tx:
+
+        async def _delete(tx: Transaction) -> Memory[Fetched]:
             # TODO: reduce number of queries by using the return value of the `execute` method
             rows_matched = await tx.execute(
                 update(Memory)
@@ -611,7 +624,9 @@ class MemoryService:
                 )
                 msg = f"Memory {memory.id} is already deleted"
                 raise MemoryConflictError(msg)
+            return deleted_memory
 
+        deleted_memory = await run_in_transaction(self.database, _delete)
         await self._try_remove_projection(memory.id, logger=logger)
         await self._try_deindex(deleted_memory.id, logger=logger)
         _info(
