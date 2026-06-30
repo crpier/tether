@@ -17,8 +17,15 @@ from starlette.testclient import TestClient
 
 from tether import server
 from tether.logging import QUIET_LOGGERS, SILENCED_LOGGERS
-from tether.server import AppConfig, HostSettings, create_app_from_environment, serve
+from tether.server import (
+    AppConfig,
+    HostSettings,
+    _build_supadata_provider,
+    create_app_from_environment,
+    serve,
+)
 from tether.telemetry import TelemetryExporter, TelemetrySettings
+from tether.transcript_supadata import SupadataTranscriptProvider
 
 
 class CapturedStdout(StringIO):
@@ -367,3 +374,38 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
     assert_eq(response.status_code, 200)
     assert_true(database_exists)
     assert_in("Request completed", log_events)
+
+
+def _supadata_settings(*, enabled: bool, api_key: str) -> HostSettings:
+    """HostSettings with the always-required secrets plus the Supadata gating."""
+    return HostSettings(
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        supadata_enabled=enabled,
+        supadata_api_key=api_key,
+    )
+
+
+@test()
+def supadata_is_omitted_when_the_flag_is_off() -> None:
+    """A configured key with the flag off keeps Supadata out of the chain (no spend)."""
+    provider = _build_supadata_provider(
+        _supadata_settings(enabled=False, api_key="sk-secret")
+    )
+    assert_true(provider is None)
+
+
+@test()
+def supadata_is_omitted_when_the_key_is_absent() -> None:
+    """The flag on but no key is still a no-op — paid transcription needs credentials."""
+    provider = _build_supadata_provider(_supadata_settings(enabled=True, api_key=""))
+    assert_true(provider is None)
+
+
+@test()
+def supadata_is_built_when_key_and_flag_are_both_set() -> None:
+    """Key + flag together build the Supadata provider for the fallback chain."""
+    provider = _build_supadata_provider(
+        _supadata_settings(enabled=True, api_key="sk-secret")
+    )
+    assert_true(isinstance(provider, SupadataTranscriptProvider))
