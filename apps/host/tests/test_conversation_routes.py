@@ -669,8 +669,8 @@ def websocket_reports_agent_timeout_to_browser() -> None:
 
 
 @test()
-def websocket_keeps_reasoning_out_of_persisted_answer() -> None:
-    """Thinking deltas are forwarded but never merged into the saved answer."""
+def websocket_persists_reasoning_as_its_own_row_before_the_answer() -> None:
+    """Thinking deltas settle into a reasoning row, never merged into the answer."""
     fake_runtime = FakeRuntime(
         [
             {"type": "message_start", "message": {"role": "assistant"}},
@@ -723,7 +723,14 @@ def websocket_keeps_reasoning_out_of_persisted_answer() -> None:
         response = client.get(f"/api/conversations/{conversation_id}/messages")
 
     messages = response.json()
-    assert_eq(messages[1]["content"], "answer")
+    assert_eq(
+        [(message["role"], message["content"]) for message in messages],
+        [
+            ("user", "Think then answer"),
+            ("reasoning", "secret reasoning"),
+            ("assistant", "answer"),
+        ],
+    )
     forwarded = [frame.get("event") for frame in frames]
     assert_in("thinking_delta", forwarded)
     assert_in("text_delta", forwarded)

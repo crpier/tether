@@ -35,7 +35,7 @@ from tether.model_selection import (
 )
 from tether.openapi import EndpointRoute, endpoint
 
-type MessageRole = Literal["user", "assistant", "tool"]
+type MessageRole = Literal["user", "assistant", "tool", "reasoning"]
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 )
