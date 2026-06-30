@@ -916,3 +916,54 @@ def websocket_persists_tool_call_rows() -> None:
     assert_eq(messages[1]["tool_args"], {"content": "tool memory"})
     assert_eq(messages[1]["tool_result"], {"details": {"result": {"id": "memory-id"}}})
     assert_eq(messages[1]["pi_message_id"], "call-capture")
+
+
+@test()
+def websocket_tool_frames_carry_args_and_result() -> None:
+    """Streamed tool frames surface the call input and result for the UI."""
+    fake_runtime = FakeRuntime(
+        [
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "call-capture",
+                "toolName": "capture",
+                "args": {"content": "tool memory"},
+            },
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "call-capture",
+                "toolName": "capture",
+                "result": {"details": {"result": {"id": "memory-id"}}},
+                "isError": False,
+            },
+            {"type": "agent_end"},
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        frames: list[dict[str, Any]] = []
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Use a tool",
+                }
+            )
+            while True:
+                frame = cast("dict[str, Any]", websocket.receive_json())
+                frames.append(frame)
+                if frame.get("event") == "agent_end":
+                    break
+
+    by_event = {frame.get("event"): frame for frame in frames}
+    assert_eq(by_event["tool_start"]["tool_args"], {"content": "tool memory"})
+    assert_eq(
+        by_event["tool_end"]["tool_result"],
+        {"details": {"result": {"id": "memory-id"}}},
+    )

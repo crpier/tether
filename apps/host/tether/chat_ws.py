@@ -205,9 +205,10 @@ async def _forward_tool_start(
 ) -> None:
     """Remember tool args and forward tool-start events."""
     tool_call_id = event.get("toolCallId")
+    args = event.get("args")
+    tool_args: dict[str, Any] = args if isinstance(args, dict) else {}
     if isinstance(tool_call_id, str):
-        args = event.get("args")
-        pending_tool_args[tool_call_id] = args if isinstance(args, dict) else {}
+        pending_tool_args[tool_call_id] = tool_args
     await websocket.send_json(
         {
             "type": "chat",
@@ -215,6 +216,7 @@ async def _forward_tool_start(
             "event": "tool_start",
             "tool_name": event.get("toolName"),
             "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
+            "tool_args": tool_args,
         }
     )
 
@@ -229,6 +231,7 @@ async def _settle_tool_end(
     """Persist tool completion envelopes and forward tool-end events."""
     tool_call_id = event.get("toolCallId")
     tool_name = event.get("toolName")
+    tool_result = _json_object(event.get("result"))
     if isinstance(tool_call_id, str) and isinstance(tool_name, str):
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
@@ -238,7 +241,7 @@ async def _settle_tool_end(
                 role="tool",
                 tool_args=pending_tool_args.pop(tool_call_id, {}),
                 tool_name=tool_name,
-                tool_result=_json_object(event.get("result")),
+                tool_result=tool_result,
             )
         )
     await websocket.send_json(
@@ -248,6 +251,7 @@ async def _settle_tool_end(
             "event": "tool_end",
             "tool_name": tool_name,
             "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
+            "tool_result": tool_result,
         }
     )
 
