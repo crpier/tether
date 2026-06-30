@@ -11,7 +11,7 @@ import secrets
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -88,6 +88,10 @@ from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
     DailyQuota,
     InMemoryYouTubeApi,
+    NullTranscriptProvider,
+    TranscriptProvider,
+    TranscriptSyncConfig,
+    TranscriptSyncService,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeService,
@@ -95,7 +99,11 @@ from tether.youtube import (
     YouTubeSyncService,
     create_youtube_schema,
 )
-from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
+from tether.youtube_oauth import (
+    CaptionsTranscriptProvider,
+    OAuthConfig,
+    OAuthYouTubeApi,
+)
 from tether.youtube_tools import internal_youtube_tool_routes
 
 
@@ -128,6 +136,12 @@ class AppConfig:
     youtube_sync_backfill_pages: int = 1
     youtube_sync_page_size: int = 50
     youtube_likes_cutoff_date: date | None = None
+    transcript_provider: TranscriptProvider | None = None
+    transcript_sync_enabled: bool = True
+    transcript_sync_interval_seconds: float = 5 * 60
+    transcript_sync_recent_window: int = 50
+    transcript_retry_backoff_base_seconds: float = 10 * 60
+    transcript_retry_backoff_cap_seconds: float = 12 * 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -200,22 +214,36 @@ async def _wire_youtube(
     event_publisher: EventHub,
     logger: Logger,
 ) -> list[asyncio.Task[None]]:
-    """Wire the read-only YouTube service + background sync onto `app.state`.
+    """Wire the YouTube service + likes/transcript background workers onto state.
 
-    Both share one budgeted client over the configured upstream `YouTubeApi`
-    (the in-memory fake when none is configured); the sync owns all upstream
-    traffic while the service reads only the local ingested corpus. When a real
-    client is configured, an idempotent boot pass primes the corpus and the
-    returned task is the periodic sync loop; otherwise no sync runs.
+    All three share one budgeted client over the configured upstream `YouTubeApi`
+    (the in-memory fake when none is configured); the likes sync owns liked-list
+    traffic, the transcript worker drains transcripts through the
+    `TranscriptProvider`, and the service reads only the local ingested corpus.
+    Each worker runs an idempotent boot pass plus a periodic loop only when its
+    real upstream is configured (a likes client / a transcript provider); the
+    returned tasks are those loops. Otherwise no background traffic runs.
     """
     tracer = cast("Telemetry", app.state.telemetry).tracer
+    api = config.youtube_api or InMemoryYouTubeApi()
     client = YouTubeApiClient(
-        config.youtube_api or InMemoryYouTubeApi(),
+        api,
         DailyQuota(database, limit=config.youtube_daily_quota_limit),
         clock=SystemClock(),
     )
+    # The on-demand fetch path always needs a provider; prefer the explicitly
+    # configured one (captions in production), else reuse the upstream fake when it
+    # doubles as a `TranscriptProvider` (the in-memory test double), else a null
+    # provider that reports every video unavailable.
+    provider = config.transcript_provider or (
+        api if isinstance(api, TranscriptProvider) else NullTranscriptProvider()
+    )
     app.state.youtube_service = YouTubeService(
-        database=database, client=client, event_publisher=event_publisher, tracer=tracer
+        database=database,
+        client=client,
+        provider=provider,
+        event_publisher=event_publisher,
+        tracer=tracer,
     )
     sync = YouTubeSyncService(
         database=database,
@@ -230,16 +258,46 @@ async def _wire_youtube(
         event_publisher=event_publisher,
     )
     app.state.youtube_sync = sync
-    if config.youtube_api is None or not config.youtube_sync_enabled:
-        return []
-    _ = await sync.sync(logger=logger)
-    return [
-        asyncio.create_task(
-            sync.sync_forever(
-                interval_seconds=config.youtube_sync_interval_seconds, logger=logger
+    transcript_sync = TranscriptSyncService(
+        database=database,
+        client=client,
+        provider=provider,
+        config=TranscriptSyncConfig(
+            recent_window=config.transcript_sync_recent_window,
+            backoff_base=timedelta(
+                seconds=config.transcript_retry_backoff_base_seconds
+            ),
+            backoff_cap=timedelta(seconds=config.transcript_retry_backoff_cap_seconds),
+        ),
+        event_publisher=event_publisher,
+    )
+    app.state.transcript_sync = transcript_sync
+    tasks: list[asyncio.Task[None]] = []
+    # The likes sync only runs against a real upstream client; the in-memory fake
+    # is a read-only seam with nothing to pull.
+    if config.youtube_api is not None and config.youtube_sync_enabled:
+        _ = await sync.sync(logger=logger)
+        tasks.append(
+            asyncio.create_task(
+                sync.sync_forever(
+                    interval_seconds=config.youtube_sync_interval_seconds, logger=logger
+                )
             )
         )
-    ]
+    # The transcript worker auto-runs only for an explicitly configured provider
+    # (captions in production). The fake-derived provider still serves on-demand
+    # fetches but does not start a background drain in tests.
+    if config.transcript_provider is not None and config.transcript_sync_enabled:
+        _ = await transcript_sync.sync(logger=logger)
+        tasks.append(
+            asyncio.create_task(
+                transcript_sync.sync_forever(
+                    interval_seconds=config.transcript_sync_interval_seconds,
+                    logger=logger,
+                )
+            )
+        )
+    return tasks
 
 
 def _build_scheduler(
@@ -641,12 +699,29 @@ def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
     """
     if not settings.youtube_token_path.exists():
         return None
-    return OAuthYouTubeApi.from_config(
-        OAuthConfig(
-            token_path=settings.youtube_token_path,
-            client_secret_path=settings.youtube_client_secret_path,
-            no_browser=settings.youtube_oauth_no_browser,
-        )
+    return OAuthYouTubeApi.from_config(_youtube_oauth_config(settings))
+
+
+def build_configured_transcript_provider(
+    settings: HostSettings,
+) -> TranscriptProvider | None:
+    """Build the captions provider when a YouTube token has been authorized.
+
+    Shares the OAuth config (and the caption scope validated on load) with the
+    liked-list adapter. With no token, returns `None` so the on-demand path falls
+    back to a null provider and the background transcript worker stays off.
+    """
+    if not settings.youtube_token_path.exists():
+        return None
+    return CaptionsTranscriptProvider.from_config(_youtube_oauth_config(settings))
+
+
+def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
+    """Build the shared OAuth config for the YouTube adapters."""
+    return OAuthConfig(
+        token_path=settings.youtube_token_path,
+        client_secret_path=settings.youtube_client_secret_path,
+        no_browser=settings.youtube_oauth_no_browser,
     )
 
 
@@ -670,6 +745,7 @@ def create_app_from_environment() -> Starlette:
             session_secret=settings.session_secret,
             web_dist=settings.web_dist,
             youtube_api=build_configured_youtube_api(settings),
+            transcript_provider=build_configured_transcript_provider(settings),
         ),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,

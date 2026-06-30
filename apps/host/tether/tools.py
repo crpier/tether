@@ -72,6 +72,7 @@ from tether.youtube import (
     CacheMeta,
     EmptyYouTubeSearchQueryError,
     QuotaMeta,
+    TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeQuotaExceededError,
     YouTubeVideoNotFoundError,
@@ -80,7 +81,9 @@ from tether.youtube import (
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
 """Header carrying the per-process credential injected into pi at spawn."""
 
-type ToolErrorCode = Literal["invalid_input", "not_found", "conflict", "quota_exceeded"]
+type ToolErrorCode = Literal[
+    "invalid_input", "not_found", "conflict", "quota_exceeded", "upstream_error"
+]
 
 
 class SessionRegistry:
@@ -389,6 +392,8 @@ class ToolEndpoint:
             return _fail("conflict", str(error))
         except YouTubeQuotaExceededError as error:
             return _fail("quota_exceeded", str(error))
+        except TranscriptTransientError as error:
+            return _fail("upstream_error", str(error))
         except (
             EmptySearchQueryError,
             EmptyBucketSearchQueryError,

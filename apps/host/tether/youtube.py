@@ -33,7 +33,7 @@ import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 from uuid import uuid7
 
@@ -93,7 +93,29 @@ class YouTubeQuotaExceededError(Exception):
 
 
 class TranscriptUnavailableError(Exception):
-    """Raised when the upstream API has no transcript for a video."""
+    """Raised when a provider has no transcript for a video (permanent).
+
+    The *unavailable* outcome of the `TranscriptProvider` port: the video has no
+    usable captions and never will, so the worker marks it terminal and stops
+    retrying. Expected to be common with the captions-only first provider.
+    """
+
+
+class TranscriptExcludedError(Exception):
+    """Raised when a video can never be transcribed by this provider (permanent).
+
+    The *excluded* outcome: members-only, region-blocked, or otherwise barred
+    content. The worker marks it terminal *and* purges it from active ingestion
+    so it stops churning browse/search alongside the worker.
+    """
+
+
+class TranscriptTransientError(Exception):
+    """Raised on a retryable transcript failure (rate limit, 5xx, network).
+
+    The *transient* outcome: the worker increments the attempt count and schedules
+    an exponentially backed-off retry rather than giving up.
+    """
 
 
 class EmptyYouTubeSearchQueryError(Exception):
@@ -177,8 +199,9 @@ class YouTubeApi(Protocol):
     A structural interface (any object with these coroutines satisfies it), so
     tests inject `InMemoryYouTubeApi` and production injects a live OAuth client
     without a shared base class. The sync drives `list_liked_page` to control
-    exactly how much it pulls per run, enriches via `fetch_video_metadata`, and
-    pulls transcripts on demand.
+    exactly how much it pulls per run and enriches via `fetch_video_metadata`.
+    Transcripts are a separate concern, fetched through the `TranscriptProvider`
+    port rather than this list/metadata surface.
     """
 
     async def list_liked_page(
@@ -193,22 +216,20 @@ class YouTubeApi(Protocol):
         """Return full metadata for each given video id, keyed by id."""
         ...
 
-    async def fetch_transcript(self, video_id: str) -> str:
-        """Return a video's transcript text, or raise `TranscriptUnavailableError`."""
-        ...
-
 
 class InMemoryYouTubeApi(YouTubeApi):
-    """A seedable in-memory `YouTubeApi`: the concrete source and the test fake.
+    """A seedable in-memory `YouTubeApi` + `TranscriptProvider` test double.
 
     Seeded with an ordered liked list (newest first), it serves fixed-size pages
     with synthetic cursors and counts its calls so tests can prove ingestion
     stays within budget. `fetch_video_metadata` returns the same seeded objects,
-    standing in for the live detail call.
+    standing in for the live detail call. It also satisfies `TranscriptProvider`
+    via `fetch`, returning a seeded transcript or signalling unavailability — so
+    one fake backs both the list/metadata surface and the transcript port.
 
     >>> import asyncio
     >>> api = InMemoryYouTubeApi(transcripts={"v1": "hello"})
-    >>> asyncio.run(api.fetch_transcript("v1"))
+    >>> asyncio.run(api.fetch("v1")).text
     'hello'
     """
 
@@ -249,12 +270,71 @@ class InMemoryYouTubeApi(YouTubeApi):
         self.metadata_calls += 1
         return {vid: self._by_id[vid] for vid in video_ids if vid in self._by_id}
 
-    async def fetch_transcript(self, video_id: str) -> str:
+    async def fetch(self, video_id: str) -> FetchedTranscript:
+        """Return a seeded transcript or raise `TranscriptUnavailableError`."""
         self.transcript_calls += 1
         try:
-            return self._transcripts[video_id]
+            text = self._transcripts[video_id]
         except KeyError as error:
             raise TranscriptUnavailableError(video_id) from error
+        return FetchedTranscript(text=text, segments=(), source="in_memory")
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptSegment:
+    """One timed line of a transcript: its start offset and text.
+
+    >>> TranscriptSegment(start_seconds=1.5, text="hello").text
+    'hello'
+    """
+
+    start_seconds: float
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedTranscript:
+    """A transcript a provider produced: the joined text, its timed segments, and
+    a provider/source tag for provenance.
+
+    >>> FetchedTranscript(text="hi", segments=(), source="captions").source
+    'captions'
+    """
+
+    text: str
+    segments: tuple[TranscriptSegment, ...]
+    source: str
+
+
+@runtime_checkable
+class TranscriptProvider(Protocol):
+    """The one new seam: fetch a video's transcript or signal why it cannot.
+
+    Given a video id, `fetch` returns a `FetchedTranscript` or raises exactly one
+    typed unavailability signal — `TranscriptUnavailableError` (no captions,
+    permanent), `TranscriptExcludedError` (members-only / not transcribable,
+    permanent), or `TranscriptTransientError` (retryable). Distinct categories are
+    distinct exceptions so the worker's state machine is complete before flakier
+    providers arrive: later providers (third-party fallbacks) slot in behind this
+    port without touching the worker.
+    """
+
+    async def fetch(self, video_id: str) -> FetchedTranscript:
+        """Return the video's transcript, or raise a typed unavailability signal."""
+        ...
+
+
+class NullTranscriptProvider(TranscriptProvider):
+    """A provider that reports every video as unavailable.
+
+    The default when no captions/OAuth-backed provider is configured: on-demand
+    fetch surfaces a clean "unavailable" rather than crashing, and the background
+    worker never runs (the wiring only starts it for a real provider).
+    """
+
+    async def fetch(self, video_id: str) -> FetchedTranscript:
+        """Always signal absence — there is no configured transcript source."""
+        raise TranscriptUnavailableError(video_id)
 
 
 class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
@@ -342,6 +422,39 @@ class YouTubeSyncState[S = Pending](Model[S, "YouTubeSyncState[Fetched]"]):
     value: YouTubeSyncState.Col[str] = Text(nullable=False)
 
 
+type TranscriptStatus = Literal["done", "retry", "terminal"]
+"""The persisted per-video transcript state.
+
+A video with no row is *pending* (eligible to fetch); ``done`` once its transcript
+is stored, ``retry`` while transient failures back off, ``terminal`` once a
+permanent outcome (unavailable / excluded) means it must never be tried again.
+"""
+
+
+class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetched]"]):
+    """Durable per-video transcript bookkeeping for the background worker.
+
+    Keyed by the upstream `video_id`. Absence means *pending*; a row carries the
+    state-machine status, the attempt count, the next-attempt time (for backed-off
+    retries that survive restarts), and the last error for observability. This is
+    the substrate the later fallback-provider slice extends with provider-level
+    pause/backoff.
+    """
+
+    video_id: YouTubeTranscriptState.Col[str] = Text(primary_key=True)
+    status: YouTubeTranscriptState.Col[TranscriptStatus] = Text(nullable=False)
+    attempts: YouTubeTranscriptState.Col[int] = Integer(default=0)
+    next_attempt_at: YouTubeTranscriptState.Col[str | None] = Text(
+        default=None, nullable=True
+    )
+    """When the next retry becomes due, as an ISO-8601 UTC string; null unless
+    `status` is ``retry``."""
+    last_error: YouTubeTranscriptState.Col[str | None] = Text(
+        default=None, nullable=True
+    )
+    updated_at: YouTubeTranscriptState.GenCol[datetime] = Text(default=CurrentTimestamp)
+
+
 _BACKFILL_CURSOR_KEY = "likes_backfill_next_page_token"
 _LIKES_LAST_RUN_KEY = "likes_last_run_at"
 
@@ -403,6 +516,49 @@ class YouTubeSyncConfig:
     backfill_pages: int = 1
     page_size: int = 50
     cutoff_date: date | None = None
+
+
+type TranscriptOutcome = Literal["done", "unavailable", "excluded", "transient"]
+"""How one transcript fetch attempt resolved (the worker tallies these)."""
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptAttempt:
+    """The result of fetching + persisting one video's transcript.
+
+    `video` and `text` are present only on a ``done`` outcome; the three failure
+    outcomes carry just the classification, which both the worker (continue) and
+    the on-demand path (translate to an error) act on.
+    """
+
+    outcome: TranscriptOutcome
+    video: IngestedVideo[Fetched] | None = None
+    text: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptSyncConfig:
+    """Tunables for the background transcript worker (gentle on quota).
+
+    `recent_window` caps how many of the newest still-untranscribed videos one
+    pass considers; `backoff_base`/`backoff_cap` bound the exponential retry delay
+    a transient failure schedules.
+    """
+
+    recent_window: int = 50
+    backoff_base: timedelta = timedelta(minutes=10)
+    backoff_cap: timedelta = timedelta(hours=12)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptSyncReport:
+    """The outcome of one transcript worker pass."""
+
+    fetched: int
+    unavailable: int
+    excluded: int
+    retried: int
+    quota_exhausted: bool
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -479,8 +635,12 @@ class YouTubeApiClient:
     """
 
     # Per-call quota cost. The Data API charges one unit for each of
-    # playlistItems.list, videos.list and a transcript fetch, so all are 1.
+    # playlistItems.list and videos.list, so both are 1.
     _CALL_COST: ClassVar[int] = 1
+    # A transcript fetch (captions.list + captions.download) is charged as one
+    # budgeted unit here; the worker and on-demand path both spend it before
+    # calling the provider, so an exhausted budget never reaches the provider.
+    _TRANSCRIPT_COST: ClassVar[int] = 1
 
     def __init__(
         self,
@@ -523,10 +683,13 @@ class YouTubeApiClient:
         await self._quota.spend(self._CALL_COST, now=self._clock.now())
         return await self._api.fetch_video_metadata(video_ids)
 
-    async def fetch_transcript(self, video_id: str) -> str:
-        """Fetch a transcript, spending one guarded transcript unit."""
-        await self._quota.spend(self._CALL_COST, now=self._clock.now())
-        return await self._api.fetch_transcript(video_id)
+    async def charge_transcript(self) -> None:
+        """Spend one guarded transcript unit, or raise if the day is exhausted.
+
+        The transcript text itself comes from the `TranscriptProvider`; this only
+        guards the budget so a depleted day stops before the provider is called.
+        """
+        await self._quota.spend(self._TRANSCRIPT_COST, now=self._clock.now())
 
 
 def _json_or_none(values: Sequence[str] | Mapping[str, str]) -> str | None:
@@ -826,13 +989,337 @@ async def _state_set(database: Database, key: str, value: str) -> None:
             )
 
 
+# --- Per-video transcript state machine + the shared fetch/persist path --------
+
+
+async def _transcript_state(
+    tx: Transaction, video_id: str
+) -> YouTubeTranscriptState[Fetched] | None:
+    """Return a video's persisted transcript state row, or None when pending."""
+    return await tx.fetch_one_or_none(
+        select(YouTubeTranscriptState).where(
+            YouTubeTranscriptState.video_id.eq(video_id)
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _StateWrite:
+    """The mutable fields of one transcript-state transition."""
+
+    status: TranscriptStatus
+    attempts: int
+    next_attempt_at: str | None
+    last_error: str | None
+
+
+async def _write_transcript_state(
+    tx: Transaction, video_id: str, fields: _StateWrite
+) -> None:
+    """Insert or refresh a video's transcript-state row in place."""
+    existing = await _transcript_state(tx, video_id)
+    if existing is None:
+        _ = await tx.execute(
+            insert(
+                YouTubeTranscriptState(
+                    video_id=video_id,
+                    status=fields.status,
+                    attempts=fields.attempts,
+                    next_attempt_at=fields.next_attempt_at,
+                    last_error=fields.last_error,
+                )
+            )
+        )
+        return
+    _ = await tx.execute(
+        update(YouTubeTranscriptState)
+        .set(YouTubeTranscriptState.status.to(fields.status))
+        .set(YouTubeTranscriptState.attempts.to(fields.attempts))
+        .set(YouTubeTranscriptState.next_attempt_at.to(fields.next_attempt_at))
+        .set(YouTubeTranscriptState.last_error.to(fields.last_error))
+        .set(YouTubeTranscriptState.updated_at.to(CurrentTimestamp))
+        .where(YouTubeTranscriptState.video_id.eq(video_id))
+    )
+
+
+def _next_attempt_at(now: datetime, attempts: int, config: TranscriptSyncConfig) -> str:
+    """Return the ISO time of the next retry: `base * 2**(attempts-1)`, capped.
+
+    `attempts` is the post-increment count (>= 1), so the first retry waits one
+    base interval and each subsequent one doubles up to the cap.
+    """
+    exponent = max(0, attempts - 1)
+    delay = min(config.backoff_base * (2**exponent), config.backoff_cap)
+    return (now + delay).isoformat()
+
+
+@dataclass(frozen=True, slots=True)
+class _TranscriptFetchContext:
+    """The collaborators one transcript fetch+persist needs, bundled.
+
+    Built once by the worker and inline by the on-demand path, so both drive the
+    same provider and persistence with the same retry/backoff config.
+    """
+
+    database: Database
+    provider: TranscriptProvider
+    config: TranscriptSyncConfig
+    event_publisher: EventPublisher
+
+
+async def _fetch_and_store_transcript(
+    context: _TranscriptFetchContext, *, video_id: str, now: datetime
+) -> TranscriptAttempt:
+    """Run one provider fetch for a video and persist the resulting state.
+
+    The single code path shared by the background worker and the on-demand fetch:
+    the caller charges the budget first, then this calls the provider and maps the
+    outcome onto storage. Success stores the transcript and marks the state
+    ``done``; *unavailable* marks terminal; *excluded* marks terminal and purges
+    the video from active ingestion; *transient* increments attempts and schedules
+    a backed-off retry. It never raises for the three failure categories — it
+    returns a typed `TranscriptAttempt` the caller acts on.
+    """
+    database = context.database
+    try:
+        fetched = await context.provider.fetch(video_id)
+    except TranscriptUnavailableError as error:
+        await _mark_terminal(database, video_id, error=str(error), purge=False)
+        return TranscriptAttempt(outcome="unavailable")
+    except TranscriptExcludedError as error:
+        await _mark_terminal(database, video_id, error=str(error), purge=True)
+        return TranscriptAttempt(outcome="excluded")
+    except TranscriptTransientError as error:
+        await _record_retry(
+            database, video_id, now=now, config=context.config, error=str(error)
+        )
+        return TranscriptAttempt(outcome="transient")
+    updated = await _store_transcript(database, video_id, fetched.text)
+    await context.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
+    return TranscriptAttempt(outcome="done", video=updated, text=fetched.text)
+
+
+async def _store_transcript(
+    database: Database, video_id: str, text: str
+) -> IngestedVideo[Fetched]:
+    """Persist a fetched transcript onto its video and mark the state done."""
+    async with database.transaction() as tx:
+        existing = await _transcript_state(tx, video_id)
+        attempts = existing.attempts if existing is not None else 0
+        _ = await tx.execute(
+            update(IngestedVideo)
+            .set(IngestedVideo.transcript.to(text))
+            .set(IngestedVideo.updated_at.to(CurrentTimestamp))
+            .where(IngestedVideo.video_id.eq(video_id))
+        )
+        await _write_transcript_state(
+            tx,
+            video_id,
+            _StateWrite(
+                status="done",
+                attempts=attempts,
+                next_attempt_at=None,
+                last_error=None,
+            ),
+        )
+        updated = await tx.fetch_one_or_none(
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
+        )
+    if updated is None:
+        raise YouTubeVideoNotFoundError(video_id)
+    return updated
+
+
+async def _mark_terminal(
+    database: Database, video_id: str, *, error: str, purge: bool
+) -> None:
+    """Mark a video's transcript terminal; optionally purge it from ingestion."""
+    async with database.transaction() as tx:
+        existing = await _transcript_state(tx, video_id)
+        attempts = existing.attempts if existing is not None else 0
+        await _write_transcript_state(
+            tx,
+            video_id,
+            _StateWrite(
+                status="terminal",
+                attempts=attempts,
+                next_attempt_at=None,
+                last_error=error,
+            ),
+        )
+        if purge:
+            _ = await tx.execute(
+                update(IngestedVideo)
+                .set(IngestedVideo.ignored_at.to(CurrentTimestamp))
+                .set(IngestedVideo.updated_at.to(CurrentTimestamp))
+                .where(IngestedVideo.video_id.eq(video_id))
+                .where(IngestedVideo.ignored_at.is_null())
+            )
+
+
+async def _record_retry(
+    database: Database,
+    video_id: str,
+    *,
+    now: datetime,
+    config: TranscriptSyncConfig,
+    error: str,
+) -> None:
+    """Increment a video's attempt count and schedule a backed-off retry."""
+    async with database.transaction() as tx:
+        existing = await _transcript_state(tx, video_id)
+        attempts = (existing.attempts if existing is not None else 0) + 1
+        await _write_transcript_state(
+            tx,
+            video_id,
+            _StateWrite(
+                status="retry",
+                attempts=attempts,
+                next_attempt_at=_next_attempt_at(now, attempts, config),
+                last_error=error,
+            ),
+        )
+
+
+class TranscriptSyncService:
+    """Background transcript fetching, reconciler-shaped like the likes sync.
+
+    An idempotent `sync` pass (run at startup and on a periodic loop) walks the
+    newest videos still lacking a transcript — skipping ones whose per-video state
+    is terminal or whose backed-off retry is not yet due — and fetches each through
+    the shared `TranscriptProvider` path within the daily budget, newest-liked
+    first. It stops for the day the moment the budget is exhausted, resuming next
+    pass. The per-video state machine (`YouTubeTranscriptState`) makes retries and
+    terminal classifications durable across restarts.
+    """
+
+    def __init__(
+        self,
+        database: Database,
+        client: YouTubeApiClient,
+        provider: TranscriptProvider,
+        *,
+        config: TranscriptSyncConfig | None = None,
+        event_publisher: EventPublisher | None = None,
+    ) -> None:
+        self.database: Database = database
+        self.client: YouTubeApiClient = client
+        self.provider: TranscriptProvider = provider
+        self.config: TranscriptSyncConfig = config or TranscriptSyncConfig()
+        self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
+
+    @property
+    def _context(self) -> _TranscriptFetchContext:
+        return _TranscriptFetchContext(
+            database=self.database,
+            provider=self.provider,
+            config=self.config,
+            event_publisher=self.event_publisher,
+        )
+
+    async def sync(self, *, logger: Logger) -> TranscriptSyncReport:
+        """Run one pass: fetch transcripts for eligible videos within budget."""
+        fetched = 0
+        unavailable = 0
+        excluded = 0
+        retried = 0
+        quota_exhausted = False
+        _debug(logger, "Transcript sync starting")
+        context = self._context
+        candidates = await self._eligible(self.client.now())
+        for video in candidates:
+            try:
+                await self.client.charge_transcript()
+            except YouTubeQuotaExceededError as error:
+                quota_exhausted = True
+                _debug(logger, "Transcript sync stopped on quota", error=str(error))
+                break
+            attempt = await _fetch_and_store_transcript(
+                context, video_id=video.video_id, now=self.client.now()
+            )
+            if attempt.outcome == "done":
+                fetched += 1
+            elif attempt.outcome == "unavailable":
+                unavailable += 1
+            elif attempt.outcome == "excluded":
+                excluded += 1
+            else:
+                retried += 1
+        remaining = await self._pending_count(self.client.now())
+        _info(
+            logger,
+            "Transcript sync completed",
+            fetched=fetched,
+            unavailable=unavailable,
+            excluded=excluded,
+            retried=retried,
+            quota_exhausted=quota_exhausted,
+            remaining=remaining,
+        )
+        return TranscriptSyncReport(
+            fetched=fetched,
+            unavailable=unavailable,
+            excluded=excluded,
+            retried=retried,
+            quota_exhausted=quota_exhausted,
+        )
+
+    async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
+        """Run transcript sync passes on the given interval until cancelled."""
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                _ = await self.sync(logger=logger)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Transcript sync pass failed")
+
+    def _eligible_query(self, now: datetime):  # noqa: ANN202 (snekql query type is internal)
+        """Build the select for videos eligible for a transcript fetch.
+
+        Active, still-untranscribed videos whose state is neither terminal nor a
+        not-yet-due retry, newest-liked first. Terminal and not-due rows are
+        excluded in SQL (not just sliced out in Python) so the recent window never
+        fills with permanently-failed videos and starves the backlog.
+        """
+        blocked = select(YouTubeTranscriptState.video_id).where(
+            YouTubeTranscriptState.status.eq("terminal")
+            | (
+                YouTubeTranscriptState.status.eq("retry")
+                & YouTubeTranscriptState.next_attempt_at.gt(now.isoformat())
+            )
+        )
+        return (
+            select(IngestedVideo)
+            .where(IngestedVideo.transcript.is_null())
+            .where(IngestedVideo.ignored_at.is_null())
+            .where(IngestedVideo.video_id.not_in_subquery(blocked))
+        )
+
+    async def _eligible(self, now: datetime) -> list[IngestedVideo[Fetched]]:
+        query = (
+            self._eligible_query(now)
+            .order_by(IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc())
+            .limit(self.config.recent_window)
+        )
+        async with self.database.transaction() as tx:
+            return await tx.fetch_all(query)
+
+    async def _pending_count(self, now: datetime) -> int:
+        """Count active videos still owed a transcript (excluding terminal)."""
+        async with self.database.transaction() as tx:
+            rows = await tx.fetch_all(self._eligible_query(now))
+        return len(rows)
+
+
 class YouTubeService:
     """Capability surface for the local YouTube ingested corpus.
 
     Browse and Search read only `IngestedVideo` (instant, no quota). Transcript
-    fetch is the one capability that still calls upstream — guarded by the daily
-    budget and short-circuited once a transcript is stored. Each mutation owns
-    its transaction.
+    fetch is the one capability that still calls upstream — through the
+    `TranscriptProvider` port, guarded by the daily budget and short-circuited
+    once a transcript is stored. Each mutation owns its transaction.
     """
 
     def __init__(
@@ -840,11 +1327,14 @@ class YouTubeService:
         database: Database,
         client: YouTubeApiClient,
         tracer: Tracer,
+        *,
+        provider: TranscriptProvider | None = None,
         event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
         self.client: YouTubeApiClient = client
         self.tracer: Tracer = tracer
+        self.provider: TranscriptProvider = provider or NullTranscriptProvider()
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
 
     async def browse(
@@ -917,8 +1407,12 @@ class YouTubeService:
         """Fetch and persist a transcript for an ingested video.
 
         The video must already be ingested (sync runs first). A stored transcript
-        short-circuits with no upstream call; otherwise the fetch is guarded by
-        the daily budget and the text is stored so Search can match it.
+        short-circuits with no provider call; otherwise the budget is charged and
+        the fetch runs through the same `TranscriptProvider` port and persistence
+        the background worker uses, so manual and background fetches share one
+        code path. The three failure outcomes surface as typed errors:
+        unavailable/excluded -> `TranscriptUnavailableError`, transient ->
+        `TranscriptTransientError`.
         """
         _debug(logger, "Fetching YouTube transcript", video_id=video_id)
         video = await self.get_video(video_id)
@@ -929,20 +1423,28 @@ class YouTubeService:
                 cache=CacheMeta(hit=True, source="cache"),
                 quota=await self.client.snapshot(),
             )
-        text = await self.client.fetch_transcript(video_id)
-        async with self.database.transaction() as tx:
-            _ = await tx.execute(
-                update(IngestedVideo)
-                .set(IngestedVideo.transcript.to(text))
-                .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(video_id))
-            )
-            updated = await self._fetch(tx, video_id)
+        # Spend before calling the provider: a depleted budget raises here
+        # (translated to 429 at the boundary) and never reaches the provider.
+        await self.client.charge_transcript()
+        context = _TranscriptFetchContext(
+            database=self.database,
+            provider=self.provider,
+            config=TranscriptSyncConfig(),
+            event_publisher=self.event_publisher,
+        )
+        attempt = await _fetch_and_store_transcript(
+            context, video_id=video_id, now=self.client.now()
+        )
+        if attempt.outcome in ("unavailable", "excluded"):
+            raise TranscriptUnavailableError(video_id)
+        if attempt.outcome == "transient":
+            message = f"transcript fetch for {video_id} failed transiently"
+            raise TranscriptTransientError(message)
+        assert attempt.video is not None and attempt.text is not None
         _info(logger, "YouTube transcript fetched", video_id=video_id)
-        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return TranscriptResult(
-            video=updated,
-            transcript=text,
+            video=attempt.video,
+            transcript=attempt.text,
             cache=CacheMeta(hit=False, source="live"),
             quota=await self.client.snapshot(),
         )
@@ -1062,6 +1564,17 @@ def _youtube_migrations() -> dict[str, str]:
     migrations["007_create_you_tube_sync_state"] = (
         'CREATE TABLE "you_tube_sync_state" ('
         '"key" TEXT PRIMARY KEY NOT NULL, "value" TEXT NOT NULL'
+        ") STRICT"
+    )
+    # Per-video transcript state machine (background transcript worker, #83).
+    migrations["008_create_you_tube_transcript_state"] = (
+        'CREATE TABLE "you_tube_transcript_state" ('
+        '"video_id" TEXT PRIMARY KEY NOT NULL, '
+        '"status" TEXT NOT NULL, '
+        '"attempts" INTEGER, '
+        '"next_attempt_at" TEXT, '
+        '"last_error" TEXT, '
+        "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
         ") STRICT"
     )
     return migrations
