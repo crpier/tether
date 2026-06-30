@@ -14,7 +14,13 @@ from starlette.testclient import TestClient
 
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
-from tether.youtube import InMemoryYouTubeApi, RawYouTubeVideo
+from tether.youtube import (
+    FetchedTranscript,
+    InMemoryYouTubeApi,
+    RawYouTubeVideo,
+    TranscriptBlockedError,
+    TranscriptProvider,
+)
 
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
@@ -39,7 +45,11 @@ def video(
 
 
 def make_client(
-    root: Path, api: InMemoryYouTubeApi, *, quota_limit: int = 1000
+    root: Path,
+    api: InMemoryYouTubeApi,
+    *,
+    quota_limit: int = 1000,
+    provider: TranscriptProvider | None = None,
 ) -> TestClient:
     """A test app whose YouTube service is backed by the given in-memory API."""
     return TestClient(
@@ -51,6 +61,8 @@ def make_client(
                 session_secret=SESSION_SECRET,
                 youtube_api=api,
                 youtube_daily_quota_limit=quota_limit,
+                transcript_provider=provider,
+                transcript_sync_enabled=False,
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
@@ -154,6 +166,29 @@ def post_transcript_for_unknown_video_is_404() -> None:
         response = client.post("/api/youtube/v1/transcript")
 
     assert_eq(response.status_code, 404)
+
+
+@test()
+def post_transcript_when_provider_blocked_is_503() -> None:
+    """A provider IP-block surfaces as 503 (retry later), not an unhandled 500."""
+
+    class BlockedProvider(TranscriptProvider):
+        async def fetch(
+            self, video_id: str, *, skip_blockable: bool = False
+        ) -> FetchedTranscript:
+            _ = skip_blockable
+            raise TranscriptBlockedError(f"blocked fetching {video_id}")
+
+    api = InMemoryYouTubeApi(liked=[video("v1", title="Talk")])
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, provider=BlockedProvider()) as client,
+    ):
+        login(client)
+        _ = client.get("/api/youtube")
+        response = client.post("/api/youtube/v1/transcript")
+
+    assert_eq(response.status_code, 503)
 
 
 @test()

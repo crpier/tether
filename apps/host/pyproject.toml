@@ -41,6 +41,7 @@ dev = [
 youtube = [
     "google-api-python-client>=2.0.0",
     "google-auth-oauthlib>=1.0.0",
+    "youtube-transcript-api>=1.2.0",
 ]
 
 [tool.uv.sources]
@@ -79,8 +80,11 @@ ignore = [
 "tests/**" = [
   "ARG001",  # Allow unused function arguments. Stub route handlers in tests take Starlette request/body params they sometimes ignore.
   "ARG002",  # Allow unused method arguments. Test doubles implement Protocols whose signatures include params (e.g. `logger`) the stub ignores.
+  "EM101",   # Allow string literals directly in raises. Test doubles raise stand-in errors inline.
+  "EM102",   # Allow f-string literals directly in raises. Test doubles raise stand-in errors inline.
   "FBT003",  # Allow boolean positional values in function calls. This is useful for assert_* function.
   "N802",    # Don't force function names to be snake_case. Useful e.g. when writing tests for classes.
+  "N818",    # Allow non-Error-suffixed exception names. Stand-in exceptions must mirror external library class names so name-based classification is exercised.
   "N999",    # Don't force module names to be snake_case. Useful e.g. when writing tests for classes.
   "PLR2004", # Allow magic numbers.
   "RUF029",  # Allow async functions without async features.
@@ -94,6 +98,7 @@ ignore = [
   "S608",    # Allow string building with SQL.
   "SLF001",  # Allow private member access.
   "T100",    # Allow breakpoints in tests (we have some tests that really check breakopints).
+  "TRY003",  # Allow long messages on stand-in exceptions raised inline in test doubles.
 ]
 
 [tool.pyright]
