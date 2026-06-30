@@ -39,6 +39,11 @@ from tether.youtube import (
 
 _SOURCE = "youtube_transcript_api"
 
+
+class TranscriptLibraryUnavailableError(Exception):
+    """The optional `youtube-transcript-api` dependency is not installed."""
+
+
 # The library's exception class *names* (matched across the MRO so subclasses
 # count) mapped onto the typed `TranscriptProvider` outcomes. Names rather than
 # imported types so classification is unit-testable against stand-in exceptions
@@ -129,10 +134,10 @@ def _parse_retry_after(error: Exception) -> timedelta | None:
     if not isinstance(headers, Mapping):
         return None
     mapping = cast("Mapping[str, object]", headers)
-    raw = mapping.get("Retry-After")
-    if raw is None:
-        raw = mapping.get("retry-after")
-    return _retry_after_to_timedelta(raw)
+    retry_after_header = mapping.get("Retry-After")
+    if retry_after_header is None:
+        retry_after_header = mapping.get("retry-after")
+    return _retry_after_to_timedelta(retry_after_header)
 
 
 def _classify_library_error(video_id: str, error: Exception) -> Exception:
@@ -201,7 +206,7 @@ def _default_library_fetcher(languages: tuple[str, ...]) -> Callable[[str], Any]
             "youtube-transcript-api is not installed; install the 'youtube' "
             "dependency group to enable the transcript fallback provider"
         )
-        raise RuntimeError(message) from error
+        raise TranscriptLibraryUnavailableError(message) from error
     api = module.YouTubeTranscriptApi()
 
     def _fetch(video_id: str) -> Any:

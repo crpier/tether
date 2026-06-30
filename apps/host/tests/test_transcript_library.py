@@ -132,45 +132,41 @@ def missing_retry_after_is_none() -> None:
 
 
 @test()
-def classify_maps_each_error_category() -> None:
-    """Each library error maps to its typed `TranscriptProvider` signal."""
+def classify_maps_request_blocked_to_blocked_with_retry_after() -> None:
+    """An IP block maps to the blocked outcome carrying its retry-after hint."""
     blocked = RequestBlocked("blocked")
     blocked.response = FakeResponse({"Retry-After": "300"})  # type: ignore[attr-defined]
     classified = _classify_library_error("v1", blocked)
-    assert_eq(isinstance(classified, TranscriptBlockedError), True)
-    assert_eq(
-        classified.retry_after
-        if isinstance(classified, TranscriptBlockedError)
-        else None,
-        timedelta(seconds=300),
-    )
-    assert_eq(
-        isinstance(
-            _classify_library_error("v1", TranscriptsDisabled("x")),
-            TranscriptUnavailableError,
-        ),
-        True,
-    )
-    assert_eq(
-        isinstance(
-            _classify_library_error("v1", NoTranscriptFound("x")),
-            TranscriptUnavailableError,
-        ),
-        True,
-    )
-    assert_eq(
-        isinstance(
-            _classify_library_error("v1", AgeRestricted("x")), TranscriptExcludedError
-        ),
-        True,
-    )
-    assert_eq(
-        isinstance(
-            _classify_library_error("v1", YouTubeRequestFailed("x")),
-            TranscriptTransientError,
-        ),
-        True,
-    )
+    assert isinstance(classified, TranscriptBlockedError)
+    assert_eq(classified.retry_after, timedelta(seconds=300))
+
+
+@test()
+def classify_maps_transcripts_disabled_to_unavailable() -> None:
+    """Captions-disabled maps to the unavailable outcome."""
+    classified = _classify_library_error("v1", TranscriptsDisabled("x"))
+    assert_eq(isinstance(classified, TranscriptUnavailableError), True)
+
+
+@test()
+def classify_maps_no_transcript_found_to_unavailable() -> None:
+    """No transcript in the requested languages maps to the unavailable outcome."""
+    classified = _classify_library_error("v1", NoTranscriptFound("x"))
+    assert_eq(isinstance(classified, TranscriptUnavailableError), True)
+
+
+@test()
+def classify_maps_age_restricted_to_excluded() -> None:
+    """An age-restricted video maps to the excluded outcome."""
+    classified = _classify_library_error("v1", AgeRestricted("x"))
+    assert_eq(isinstance(classified, TranscriptExcludedError), True)
+
+
+@test()
+def classify_maps_request_failed_to_transient() -> None:
+    """A generic transport failure maps to the transient outcome."""
+    classified = _classify_library_error("v1", YouTubeRequestFailed("x"))
+    assert_eq(isinstance(classified, TranscriptTransientError), True)
 
 
 # --- Snippet parsing --------------------------------------------------------
