@@ -672,6 +672,37 @@ class SyncReport:
 
 
 @dataclass(frozen=True, slots=True)
+class TranscriptProviderPause:
+    """A blockable transcript source currently inside its IP-block cooldown."""
+
+    source: str
+    paused_until: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class YouTubeSyncStatus:
+    """A snapshot of the background ingestion's progress and health.
+
+    The four counts partition the active corpus: every active video is either
+    already transcribed (``transcripts_done``), still owed one
+    (``transcripts_pending``), or permanently without one
+    (``transcripts_unavailable``); their sum is ``videos_total``. `last_synced_at`
+    is when the likes sync last ran, `quota` the day's budget, and the two pause
+    fields explain a stall (a live Data API block, or a per-source transcript
+    provider block).
+    """
+
+    videos_total: int
+    transcripts_done: int
+    transcripts_pending: int
+    transcripts_unavailable: int
+    last_synced_at: datetime | None
+    quota: QuotaMeta
+    api_paused_until: datetime | None
+    transcript_providers_paused: list[TranscriptProviderPause]
+
+
+@dataclass(frozen=True, slots=True)
 class YouTubeSyncConfig:
     """Tunables for one ingestion sync pass.
 
@@ -898,6 +929,17 @@ class YouTubeApiGate:
         await _state_set(self._database, _API_GATE_STREAK_KEY, str(streak))
         return paused_until
 
+    async def paused_until(self, *, now: datetime) -> datetime | None:
+        """The instant the global pause lifts, or None when the gate is open.
+
+        Read-only; the status surface uses it to report *why* a sync is stalled
+        without itself touching the upstream API.
+        """
+        paused_until, _ = await self._load()
+        if paused_until is not None and paused_until > now:
+            return paused_until
+        return None
+
     async def _load(self) -> tuple[datetime | None, int]:
         """Read the persisted `(paused_until, streak)`, defaulting to open/0."""
         raw_until = await _state_get(self._database, _API_GATE_PAUSED_UNTIL_KEY)
@@ -951,6 +993,10 @@ class YouTubeApiClient:
     async def snapshot(self) -> QuotaMeta:
         """Report the day's remaining budget without spending."""
         return await self._quota.snapshot(now=self._clock.now())
+
+    async def api_paused_until(self, *, now: datetime) -> datetime | None:
+        """When the shared Data API gate's pause lifts, or None while it is open."""
+        return await self._gate.paused_until(now=now)
 
     async def list_liked_page(
         self, *, page_token: str | None, page_size: int
@@ -1931,6 +1977,68 @@ class YouTubeService:
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
         )
+
+    async def sync_status(self, *, logger: Logger) -> YouTubeSyncStatus:
+        """Summarise the background ingestion's progress and health (local only).
+
+        Reads the local corpus and bookkeeping — never upstream — so the UI can
+        poll it cheaply: how many videos are ingested, the transcript backlog,
+        when the likes sync last ran, the day's quota, and any active pause (a
+        live Data API block or a per-source transcript provider block) that
+        explains why progress has stalled.
+        """
+        with self.tracer.start_as_current_span("YouTubeService.sync_status"):
+            now = self.client.now()
+            terminal_ids = select(YouTubeTranscriptState.video_id).where(
+                YouTubeTranscriptState.status.eq("terminal")
+            )
+            async with self.database.transaction() as tx:
+                active = await tx.fetch_all(
+                    select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
+                )
+                untranscribed = await tx.fetch_all(
+                    select(IngestedVideo)
+                    .where(IngestedVideo.ignored_at.is_null())
+                    .where(IngestedVideo.transcript.is_null())
+                )
+                # Pending excludes the permanently-failed (terminal) videos, so the
+                # remainder of the untranscribed set is the unavailable count.
+                pending = await tx.fetch_all(
+                    select(IngestedVideo)
+                    .where(IngestedVideo.ignored_at.is_null())
+                    .where(IngestedVideo.transcript.is_null())
+                    .where(IngestedVideo.video_id.not_in_subquery(terminal_ids))
+                )
+            total = len(active)
+            owed = len(untranscribed)
+            pending_count = len(pending)
+            raw_last_run = await _state_get(self.database, _LIKES_LAST_RUN_KEY)
+            api_paused_until = await self.client.api_paused_until(now=now)
+            pauses = await _load_all_provider_pauses(self.database)
+        providers_paused = [
+            TranscriptProviderPause(source=source, paused_until=pause.paused_until)
+            for source, pause in sorted(pauses.items())
+            if pause.is_paused(now) and pause.paused_until is not None
+        ]
+        status = YouTubeSyncStatus(
+            videos_total=total,
+            transcripts_done=total - owed,
+            transcripts_pending=pending_count,
+            transcripts_unavailable=owed - pending_count,
+            last_synced_at=datetime.fromisoformat(raw_last_run)
+            if raw_last_run
+            else None,
+            quota=await self.client.snapshot(),
+            api_paused_until=api_paused_until,
+            transcript_providers_paused=providers_paused,
+        )
+        _debug(
+            logger,
+            "YouTube sync status computed",
+            videos_total=total,
+            transcripts_pending=pending_count,
+        )
+        return status
 
     async def search(
         self, query: str, *, limit: int | None = None, logger: Logger

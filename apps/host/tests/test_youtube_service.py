@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database, Fetched, insert, select
+from snekql.sqlite import Config, Database, Fetched, Pending, insert, select
 from snektest import (
     assert_eq,
     assert_in,
@@ -44,6 +44,7 @@ from tether.youtube import (
     YouTubeService,
     YouTubeSyncConfig,
     YouTubeSyncService,
+    YouTubeTranscriptState,
     YouTubeVideoNotFoundError,
     _state_get,
     create_youtube_schema,
@@ -939,6 +940,79 @@ async def client_clears_gate_after_a_recovered_call() -> None:
     # The gate is clear: the shared transcript spend now passes too.
     await client.charge_transcript()
     await db.close()
+
+
+def _ingested(
+    video_id: str,
+    *,
+    transcript: str | None = None,
+    ignored_at: datetime | None = None,
+) -> IngestedVideo[Pending]:
+    """Build an ingested-video row for direct insertion in status tests."""
+    return IngestedVideo(
+        video_id=video_id,
+        source="liked",
+        title="t",
+        channel="c",
+        topic="python",
+        description="",
+        transcript=transcript,
+        ignored_at=ignored_at,
+    )
+
+
+@test()
+async def sync_status_partitions_the_corpus_by_transcript_state() -> None:
+    """Status counts active videos, splitting them into done/pending/unavailable."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi(), daily_limit=50))
+    async with env.db.transaction() as tx:
+        _ = await tx.execute(insert(_ingested("done", transcript="hello")))
+        _ = await tx.execute(insert(_ingested("pending")))
+        _ = await tx.execute(insert(_ingested("terminal")))
+        # An ignored video is out of the corpus and not counted at all.
+        _ = await tx.execute(
+            insert(_ingested("ignored", ignored_at=datetime(2026, 1, 1, tzinfo=UTC)))
+        )
+        # `terminal` will never get a transcript -> unavailable, not pending.
+        _ = await tx.execute(
+            insert(YouTubeTranscriptState(video_id="terminal", status="terminal"))
+        )
+
+    status = await env.service.sync_status(logger=test_logger())
+
+    assert_eq(status.videos_total, 3)
+    assert_eq(status.transcripts_done, 1)
+    assert_eq(status.transcripts_pending, 1)
+    assert_eq(status.transcripts_unavailable, 1)
+
+
+@test()
+async def sync_status_reports_last_run_quota_and_no_pauses_by_default() -> None:
+    """A clean sync stamps last-run, exposes the day's quota, and is unpaused."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api, daily_limit=10))
+    _ = await env.sync.sync(logger=test_logger())
+
+    status = await env.service.sync_status(logger=test_logger())
+
+    assert_is_not_none(status.last_synced_at)
+    assert_eq(status.quota.limit, 10)
+    # One hot page: one list unit + one metadata unit.
+    assert_eq(status.quota.used, 2)
+    assert_is_none(status.api_paused_until)
+    assert_eq(status.transcript_providers_paused, [])
+
+
+@test()
+async def sync_status_is_empty_before_any_sync() -> None:
+    """With no corpus and no run, status reports zeroes and a null last-run."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+
+    status = await env.service.sync_status(logger=test_logger())
+
+    assert_eq(status.videos_total, 0)
+    assert_eq(status.transcripts_pending, 0)
+    assert_is_none(status.last_synced_at)
 
 
 @test()

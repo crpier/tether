@@ -229,6 +229,42 @@ def post_ignore_unknown_video_is_404() -> None:
 
 
 @test()
+def get_youtube_status_reports_sync_progress() -> None:
+    """`GET /api/youtube/status` summarises ingested videos, quota, and pauses.
+
+    The boot sync mirrors the seeded liked videos; with no transcript provider
+    every video is still owed a transcript, so it is pending (not unavailable),
+    and nothing is paused.
+    """
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        login(client)
+        response = client.get("/api/youtube/status")
+
+    assert_eq(response.status_code, 200)
+    body = response.json()
+    assert_eq(body["videos_total"], 2)
+    assert_eq(body["transcripts_pending"], 2)
+    assert_eq(body["transcripts_done"], 0)
+    assert_eq(body["transcripts_unavailable"], 0)
+    # The boot sync ran, so last-run is stamped and the day's spend is reported.
+    assert body["last_synced_at"] is not None
+    assert_eq(body["quota"]["used"], 2)
+    assert_eq(body["api_paused_until"], None)
+    assert_eq(body["transcript_providers_paused"], [])
+
+
+@test()
+def get_youtube_status_requires_authentication() -> None:
+    """The status surface is gated behind the app session like the rest."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        response = client.get("/api/youtube/status")
+
+    assert_eq(response.status_code, 401)
+
+
+@test()
 def get_youtube_requires_authentication() -> None:
     """The browser YouTube surface is gated behind the app session."""
     api = InMemoryYouTubeApi(liked=[video("v1")])

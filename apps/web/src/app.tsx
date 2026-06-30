@@ -48,6 +48,7 @@ import type {
   TimelineRow,
 } from "./chat-timeline";
 import { MessageContent } from "./components/message-content";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   TextField,
@@ -75,6 +76,7 @@ const queryKeys = {
   recall: ["recall"] as const,
   session: ["session"] as const,
   triggers: ["triggers"] as const,
+  youtube: ["youtube"] as const,
 };
 
 function invalidateNamedKey(queryClient: QueryClient, key: string): void {
@@ -767,6 +769,112 @@ function recallFeedback(outcome: AnswerOutcome): string {
   return "Correct — see you next round.";
 }
 
+function formatSyncTimestamp(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  const elapsedMs = Date.now() - when.getTime();
+  const minutes = Math.round(elapsedMs / 60_000);
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 60) {
+    return `${String(minutes)}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${String(hours)}h ago`;
+  }
+  return when.toLocaleDateString();
+}
+
+function formatUntil(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  return when.toLocaleString();
+}
+
+function YouTubeSyncPanel(props: { api: TetherApi }) {
+  const statusQuery = createQuery(() => ({
+    queryFn: () => props.api.getYouTubeSyncStatus(),
+    queryKey: queryKeys.youtube,
+    // Sync completions push a "youtube" invalidate over the chat socket, but
+    // poll too so quota/pause clocks stay fresh without a sync event.
+    refetchInterval: 60_000,
+  }));
+
+  return (
+    <section aria-label="YouTube sync" class={panelClass}>
+      <h2 class="mb-3 text-sm font-semibold">YouTube sync</h2>
+      <Switch>
+        <Match when={statusQuery.isLoading}>
+          <p class="text-muted-foreground text-sm">Loading…</p>
+        </Match>
+        <Match when={statusQuery.isError}>
+          <p class="text-destructive text-sm" role="alert">
+            Could not load sync status
+          </p>
+        </Match>
+        <Match when={statusQuery.data}>
+          {(status) => (
+            <div class="space-y-3 text-sm">
+              <div class="flex items-baseline justify-between">
+                <span class="text-muted-foreground text-xs">Videos</span>
+                <span class="font-medium">{status().videos_total}</span>
+              </div>
+              <div class="space-y-1">
+                <span class="text-muted-foreground text-xs">Transcripts</span>
+                <div class="flex flex-wrap gap-1">
+                  <Badge variant="secondary">
+                    {`${String(status().transcripts_done)} done`}
+                  </Badge>
+                  <Badge variant="outline">
+                    {`${String(status().transcripts_pending)} pending`}
+                  </Badge>
+                  <Show when={status().transcripts_unavailable > 0}>
+                    <Badge variant="outline">
+                      {`${String(status().transcripts_unavailable)} unavailable`}
+                    </Badge>
+                  </Show>
+                </div>
+              </div>
+              <div class="flex items-baseline justify-between">
+                <span class="text-muted-foreground text-xs">Last synced</span>
+                <span>
+                  {status().last_synced_at
+                    ? formatSyncTimestamp(status().last_synced_at ?? "")
+                    : "never"}
+                </span>
+              </div>
+              <div class="flex items-baseline justify-between">
+                <span class="text-muted-foreground text-xs">Daily quota</span>
+                <span>{`${String(status().quota.used)} / ${String(status().quota.limit)}`}</span>
+              </div>
+              <Show when={status().api_paused_until}>
+                {(until) => (
+                  <p class="text-destructive text-xs" role="status">
+                    {`API paused until ${formatUntil(until())}`}
+                  </p>
+                )}
+              </Show>
+              <For each={status().transcript_providers_paused}>
+                {(pause) => (
+                  <p class="text-destructive text-xs" role="status">
+                    {`${pause.source} paused until ${formatUntil(pause.paused_until)}`}
+                  </p>
+                )}
+              </For>
+            </div>
+          )}
+        </Match>
+      </Switch>
+    </section>
+  );
+}
+
 function RecallPanel(props: { api: TetherApi }) {
   const queryClient = useQueryClient();
   const promptsQuery = createQuery(() => ({
@@ -1188,6 +1296,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
         </div>
         <aside class="flex min-h-0 flex-col gap-4 overflow-y-auto">
           <NotificationsPanel notifications={notifications()} />
+          <YouTubeSyncPanel api={props.api} />
           <RecallPanel api={props.api} />
           <TriggersPanel api={props.api} />
           <PushControl api={props.api} />
