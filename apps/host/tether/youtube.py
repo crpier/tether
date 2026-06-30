@@ -572,6 +572,63 @@ def _new_ingested_video(raw: RawYouTubeVideo) -> IngestedVideo[Pending]:
     )
 
 
+async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
+    """Insert or refresh an ingested video from a raw liked video by `video_id`.
+
+    A new id is inserted fresh; an existing one has its metadata overwritten in
+    place. Either way the local-only columns — `transcript` and `ignored_at` —
+    are left untouched, so a sync (or the backup import) never clobbers a fetched
+    transcript or resurrects a video the user purged. Shared by the background
+    sync and the active-workbench backup importer so both mirror likes the same
+    way.
+    """
+    existing = await tx.fetch_one_or_none(
+        select(IngestedVideo).where(IngestedVideo.video_id.eq(raw.video_id))
+    )
+    if existing is None:
+        _ = await tx.execute(insert(_new_ingested_video(raw)))
+        return
+    _ = await tx.execute(
+        update(IngestedVideo)
+        .set(IngestedVideo.source.to("liked"))
+        .set(IngestedVideo.title.to(raw.title))
+        .set(IngestedVideo.channel.to(raw.channel))
+        .set(IngestedVideo.topic.to(raw.topic))
+        .set(IngestedVideo.description.to(raw.description))
+        .set(IngestedVideo.channel_id.to(raw.channel_id))
+        .set(IngestedVideo.liked_at.to(raw.liked_at))
+        .set(IngestedVideo.video_published_at.to(raw.video_published_at))
+        .set(IngestedVideo.duration_seconds.to(raw.duration_seconds))
+        .set(IngestedVideo.category_id.to(raw.category_id))
+        .set(IngestedVideo.default_language.to(raw.default_language))
+        .set(IngestedVideo.default_audio_language.to(raw.default_audio_language))
+        .set(
+            IngestedVideo.caption_available.to(
+                _bool_to_int(value=raw.caption_available)
+            )
+        )
+        .set(IngestedVideo.privacy_status.to(raw.privacy_status))
+        .set(
+            IngestedVideo.licensed_content.to(_bool_to_int(value=raw.licensed_content))
+        )
+        .set(IngestedVideo.made_for_kids.to(_bool_to_int(value=raw.made_for_kids)))
+        .set(IngestedVideo.live_broadcast_content.to(raw.live_broadcast_content))
+        .set(IngestedVideo.definition.to(raw.definition))
+        .set(IngestedVideo.dimension.to(raw.dimension))
+        .set(IngestedVideo.statistics_view_count.to(raw.statistics_view_count))
+        .set(IngestedVideo.statistics_like_count.to(raw.statistics_like_count))
+        .set(IngestedVideo.statistics_comment_count.to(raw.statistics_comment_count))
+        .set(IngestedVideo.statistics_fetched_at.to(raw.statistics_fetched_at))
+        .set(
+            IngestedVideo.topic_categories_json.to(_json_or_none(raw.topic_categories))
+        )
+        .set(IngestedVideo.tags_json.to(_json_or_none(raw.tags)))
+        .set(IngestedVideo.thumbnails_json.to(_json_or_none(raw.thumbnails)))
+        .set(IngestedVideo.updated_at.to(CurrentTimestamp))
+        .where(IngestedVideo.video_id.eq(raw.video_id))
+    )
+
+
 class YouTubeSyncService:
     """Background ingestion: pull liked videos a page at a time into the cache.
 
@@ -729,57 +786,7 @@ class YouTubeSyncService:
         return upserted
 
     async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> None:
-        existing = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(raw.video_id))
-        )
-        if existing is None:
-            _ = await tx.execute(insert(_new_ingested_video(raw)))
-            return
-        _ = await tx.execute(
-            update(IngestedVideo)
-            .set(IngestedVideo.source.to("liked"))
-            .set(IngestedVideo.title.to(raw.title))
-            .set(IngestedVideo.channel.to(raw.channel))
-            .set(IngestedVideo.topic.to(raw.topic))
-            .set(IngestedVideo.description.to(raw.description))
-            .set(IngestedVideo.channel_id.to(raw.channel_id))
-            .set(IngestedVideo.liked_at.to(raw.liked_at))
-            .set(IngestedVideo.video_published_at.to(raw.video_published_at))
-            .set(IngestedVideo.duration_seconds.to(raw.duration_seconds))
-            .set(IngestedVideo.category_id.to(raw.category_id))
-            .set(IngestedVideo.default_language.to(raw.default_language))
-            .set(IngestedVideo.default_audio_language.to(raw.default_audio_language))
-            .set(
-                IngestedVideo.caption_available.to(
-                    _bool_to_int(value=raw.caption_available)
-                )
-            )
-            .set(IngestedVideo.privacy_status.to(raw.privacy_status))
-            .set(
-                IngestedVideo.licensed_content.to(
-                    _bool_to_int(value=raw.licensed_content)
-                )
-            )
-            .set(IngestedVideo.made_for_kids.to(_bool_to_int(value=raw.made_for_kids)))
-            .set(IngestedVideo.live_broadcast_content.to(raw.live_broadcast_content))
-            .set(IngestedVideo.definition.to(raw.definition))
-            .set(IngestedVideo.dimension.to(raw.dimension))
-            .set(IngestedVideo.statistics_view_count.to(raw.statistics_view_count))
-            .set(IngestedVideo.statistics_like_count.to(raw.statistics_like_count))
-            .set(
-                IngestedVideo.statistics_comment_count.to(raw.statistics_comment_count)
-            )
-            .set(IngestedVideo.statistics_fetched_at.to(raw.statistics_fetched_at))
-            .set(
-                IngestedVideo.topic_categories_json.to(
-                    _json_or_none(raw.topic_categories)
-                )
-            )
-            .set(IngestedVideo.tags_json.to(_json_or_none(raw.tags)))
-            .set(IngestedVideo.thumbnails_json.to(_json_or_none(raw.thumbnails)))
-            .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-            .where(IngestedVideo.video_id.eq(raw.video_id))
-        )
+        await upsert_ingested_video(tx, raw)
 
     async def _load_cursor(self) -> str | None:
         value = await _state_get(self.database, _BACKFILL_CURSOR_KEY)

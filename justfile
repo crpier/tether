@@ -17,6 +17,12 @@ web:
 youtube-auth:
     uv run --group youtube python -m tether.youtube_auth
 
+# one-shot import of an active-workbench backup (likes + transcripts) into Tether
+# never calls YouTube; idempotent; pass --dry-run to preview counts without writing
+# e.g. just youtube-import-backup ~/active-workbench/state.db
+youtube-import-backup *args:
+    uv run python -m tether.youtube_import_backup {{args}}
+
 # sync/install all deps
 install:
     uv sync
