@@ -7,9 +7,13 @@ import type { ChatFrame } from "./chat-bus";
 
 export type ChatRole = "user" | "assistant" | "tool";
 
+// Settled rows can also carry persisted reasoning, which renders as its own
+// collapsible row rather than a chat bubble.
+export type StoredRole = ChatRole | "reasoning";
+
 export interface StoredMessage {
   id: string;
-  role: ChatRole;
+  role: StoredRole;
   content: string;
   toolName?: string | null;
 }
@@ -23,7 +27,15 @@ export type TimelineRow =
       toolName: string | null;
       streaming: boolean;
     }
-  | { kind: "reasoning"; id: string; text: string; streaming: boolean }
+  | {
+      kind: "reasoning";
+      id: string;
+      text: string;
+      streaming: boolean;
+      // True once the producing turn has finished: the cue to compact the
+      // trace. Live reasoning stays expanded (`done: false`) while generating.
+      done: boolean;
+    }
   | {
       kind: "tool";
       id: string;
@@ -254,14 +266,25 @@ export function deriveRows(
   stored: readonly StoredMessage[],
   turn: LiveTurn,
 ): TimelineRow[] {
-  const rows: TimelineRow[] = stored.map((message) => ({
-    kind: "message",
-    id: message.id,
-    role: message.role,
-    text: message.content,
-    toolName: message.toolName ?? null,
-    streaming: false,
-  }));
+  const rows: TimelineRow[] = stored.map((message) =>
+    message.role === "reasoning"
+      ? {
+          kind: "reasoning",
+          id: message.id,
+          text: message.content,
+          streaming: false,
+          // Settled history is always a finished turn, so it renders compact.
+          done: true,
+        }
+      : {
+          kind: "message",
+          id: message.id,
+          role: message.role,
+          text: message.content,
+          toolName: message.toolName ?? null,
+          streaming: false,
+        },
+  );
   if (turn.userText !== null) {
     rows.push({
       kind: "message",
@@ -293,6 +316,8 @@ export function deriveRows(
         id: row.id,
         text: row.text,
         streaming: row.streaming,
+        // Stay expanded for the duration of the turn; compact once it ends.
+        done: !turn.generating,
       });
       continue;
     }

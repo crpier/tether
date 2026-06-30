@@ -656,7 +656,8 @@
         "enum": [
           "user",
           "assistant",
-          "tool"
+          "tool",
+          "reasoning"
         ],
         "type": "string"
       },

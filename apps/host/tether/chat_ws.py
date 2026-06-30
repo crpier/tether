@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
@@ -20,8 +23,51 @@ from tether.pi_runtime import PiRuntimeError
 
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
+_LOCALTIME_PATH = Path("/etc/localtime")
+_ZONEINFO_MARKER = "zoneinfo/"
 
 type InboundType = Literal["prompt", "abort"]
+
+
+def _local_timezone_name(now: datetime) -> str:
+    """Best-effort IANA name for the host's local zone, falling back to offset.
+
+    pi injects only the date into its system prompt, but daily/weekly triggers
+    want an IANA zone, so surface one when the host can determine it — the `TZ`
+    env var or the `/etc/localtime` symlink target — and degrade to the numeric
+    UTC offset otherwise. `now` must be timezone-aware so the fallback resolves.
+    """
+    env_zone = os.environ.get("TZ")
+    if env_zone:
+        return env_zone
+    try:
+        if _LOCALTIME_PATH.is_symlink():
+            target = str(_LOCALTIME_PATH.readlink())
+            index = target.rfind(_ZONEINFO_MARKER)
+            if index != -1:
+                return target[index + len(_ZONEINFO_MARKER) :]
+    except OSError:
+        pass
+    return now.strftime("%z") or "UTC"
+
+
+def _prompt_with_time_context(
+    content: str, *, now: datetime, timezone_name: str
+) -> str:
+    """Prefix a user turn with the host's wall-clock time for the agent only.
+
+    pi's system prompt carries `Current date: YYYY-MM-DD` with no time, so the
+    agent cannot resolve relative scheduling ("in 3 minutes", "tomorrow 9am")
+    and stalls asking the user for the current time. This preamble is sent to
+    pi only; the persisted user message and the trace keep the clean text.
+    """
+    stamp = now.isoformat(timespec="seconds")
+    note = (
+        f"[Tether note — the current time is {stamp} ({timezone_name}). "
+        'Resolve relative times like "in 3 minutes" or "tomorrow at 9am" '
+        "against it. This note is system-generated; do not mention it.]"
+    )
+    return f"{note}\n\n{content}"
 
 
 class InboundFrame(BaseModel):
@@ -87,6 +133,30 @@ def _message_text(message: object) -> str:
     return "".join(chunks)
 
 
+def _message_reasoning(message: object) -> str:
+    """Extract thinking-block text from a pi message content array.
+
+    Mirrors `_message_text` for the `thinking` channel. Encrypted/redacted
+    reasoning (codex) carries no plaintext `thinking`, so it yields the empty
+    string and is simply not persisted.
+    """
+    if not isinstance(message, dict):
+        return ""
+    message_data = cast("dict[str, Any]", message)
+    content = message_data.get("content")
+    if not isinstance(content, list):
+        return ""
+    content_items = cast("list[object]", content)
+    chunks: list[str] = []
+    for raw_item in content_items:
+        if not isinstance(raw_item, dict):
+            continue
+        item = cast("dict[str, Any]", raw_item)
+        if item.get("type") == "thinking" and isinstance(item.get("thinking"), str):
+            chunks.append(cast("str", item["thinking"]))
+    return "".join(chunks)
+
+
 def _prompt_failure_detail(response: dict[str, object]) -> str:
     """Render pi's failed prompt response for the browser."""
     for key in ("error", "detail", "message"):
@@ -140,19 +210,22 @@ async def _forward_message_update(
     conversation_id: UUID,
     event: dict[str, Any],
     streamed_text: list[str],
+    streamed_reasoning: list[str],
 ) -> None:
-    """Forward assistant stream deltas, keeping reasoning out of the answer."""
+    """Forward assistant stream deltas into their separate persisted channels."""
     assistant_event = event.get("assistantMessageEvent")
     if not isinstance(assistant_event, dict):
         return
     assistant_event_data = cast("dict[str, Any]", assistant_event)
     sub_type = assistant_event_data.get("type")
-    # Only the text channel feeds the persisted answer. Some providers stream
-    # plaintext `thinking_delta` reasoning (codex encrypts it, so the leak is
-    # masked there) — merging it into `streamed_text` would corrupt the saved
-    # assistant message, so persistence is gated on the text sub-type.
+    # Text and reasoning settle into distinct transcript rows, so they are
+    # accumulated separately and never merged. Encrypted reasoning (codex) is
+    # masked on the wire, so its `thinking_delta` carries no plaintext and the
+    # reasoning row is simply skipped.
     if sub_type == "text_delta":
         streamed_text.append(_delta_text(assistant_event_data))
+    elif sub_type == "thinking_delta":
+        streamed_reasoning.append(_delta_text(assistant_event_data))
     await websocket.send_json(
         {
             "type": "chat",
@@ -170,14 +243,26 @@ async def _settle_message_end(
     conversation_id: UUID,
     event: dict[str, Any],
     streamed_text: list[str],
+    streamed_reasoning: list[str],
 ) -> None:
-    """Persist assistant text once pi settles a message."""
+    """Persist the settled reasoning and answer rows once pi closes a message."""
     message = event.get("message")
     if not isinstance(message, dict):
         return
     message_data = cast("dict[str, Any]", message)
     if message_data.get("role") != "assistant":
         return
+    # Persist reasoning ahead of the answer so the transcript keeps "thinking
+    # then reply" order under the monotonic per-thread sequence.
+    reasoning = _message_reasoning(message_data) or "".join(streamed_reasoning)
+    if reasoning:
+        _ = await websocket.app.state.conversation_service.append_message(
+            MessageDraft(
+                content=reasoning,
+                conversation_id=conversation_id,
+                role="reasoning",
+            )
+        )
     content = _message_text(message_data) or "".join(streamed_text)
     if content:
         _ = await websocket.app.state.conversation_service.append_message(
@@ -269,11 +354,13 @@ async def _stream_runtime(
     """Forward pi events and persist settled assistant messages."""
     pending_tool_args: dict[str, dict[str, Any]] = {}
     streamed_text: list[str] = []
+    streamed_reasoning: list[str] = []
     while True:
         event = await runtime.next_event(wait_seconds=_AGENT_EVENT_TIMEOUT_SECONDS)
         match event.get("type"):
             case "message_start":
                 streamed_text.clear()
+                streamed_reasoning.clear()
                 if (
                     recorder is not None
                     and session_id is not None
@@ -289,6 +376,7 @@ async def _stream_runtime(
                     conversation_id=conversation_id,
                     event=event,
                     streamed_text=streamed_text,
+                    streamed_reasoning=streamed_reasoning,
                 )
             case "message_end":
                 await _settle_message_end(
@@ -296,8 +384,10 @@ async def _stream_runtime(
                     conversation_id=conversation_id,
                     event=event,
                     streamed_text=streamed_text,
+                    streamed_reasoning=streamed_reasoning,
                 )
                 streamed_text.clear()
+                streamed_reasoning.clear()
             case "tool_execution_start":
                 await _forward_tool_start(
                     websocket,
@@ -391,7 +481,13 @@ async def _run_prompt(
             # Drop any events left in the shared queue by a prior turn that was
             # aborted or cut off by a disconnect, so this prompt streams clean.
             _ = runtime.drain_events()
-            prompt_response = await runtime.client.request("prompt", message=content)
+            # pi only knows the date; stamp the wall-clock time onto the turn so
+            # the agent can resolve relative scheduling without asking for it.
+            now = datetime.now().astimezone()
+            pi_message = _prompt_with_time_context(
+                content, now=now, timezone_name=_local_timezone_name(now)
+            )
+            prompt_response = await runtime.client.request("prompt", message=pi_message)
             if prompt_response.get("success") is not True:
                 failure_detail = _prompt_failure_detail(prompt_response)
                 termination, run_error = "error", failure_detail

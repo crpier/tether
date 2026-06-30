@@ -1598,7 +1598,7 @@ export interface components {
       } | null;
     };
     /** @enum {string} */
-    MessageRole: "user" | "assistant" | "tool";
+    MessageRole: "user" | "assistant" | "tool" | "reasoning";
     /**
      * ModelListRead
      * @description HTTP response containing the curated allowlist and global default.

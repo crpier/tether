@@ -347,17 +347,40 @@ function MessageRow(props: { row: TimelineRow }) {
         }}
       </Match>
       <Match when={props.row.kind === "reasoning" && props.row}>
-        {(reasoning) => (
-          <article
-            aria-label="Tether reasoning"
-            class="bg-muted/50 text-muted-foreground mr-auto max-w-[80%] rounded-lg px-3 py-2 text-xs"
-          >
-            <strong class={bubbleLabelClass}>Thinking</strong>
-            <p class="mt-1 whitespace-pre-wrap break-words">
-              {reasoning().text}
-            </p>
-          </article>
-        )}
+        {(reasoning) => {
+          // Expanded while the turn runs; auto-compacts to a toggle once it is
+          // done. Tracking `done` (not `streaming`) keeps the trace open while
+          // the answer streams, and lets the user re-expand a finished trace.
+          const [open, setOpen] = createSignal(!reasoning().done);
+          createEffect(() => {
+            setOpen(!reasoning().done);
+          });
+          return (
+            <article
+              aria-label="Tether reasoning"
+              class="bg-muted/50 text-muted-foreground mr-auto max-w-[80%] rounded-lg px-3 py-2 text-xs"
+            >
+              <button
+                type="button"
+                aria-expanded={open()}
+                class="flex w-full items-center gap-1 text-left"
+                onClick={() => {
+                  setOpen((value) => !value);
+                }}
+              >
+                <span aria-hidden="true" class="text-[0.6rem]">
+                  {open() ? "▾" : "▸"}
+                </span>
+                <strong class={bubbleLabelClass}>Thinking</strong>
+              </button>
+              <Show when={open()}>
+                <p class="mt-1 whitespace-pre-wrap break-words">
+                  {reasoning().text}
+                </p>
+              </Show>
+            </article>
+          );
+        }}
       </Match>
       <Match when={props.row.kind === "message" && props.row}>
         {(message) => (
