@@ -7,8 +7,8 @@ control flow directly against a real in-memory `Database` — the transaction
 boundary is what's under test, not any particular table.
 """
 
-import sqlite3
 from collections.abc import AsyncGenerator
+from sqlite3 import IntegrityError, OperationalError
 
 from snekql.sqlite import (
     Config,
@@ -19,24 +19,31 @@ from snekql.sqlite import (
 )
 from snektest import assert_eq, assert_raises, fixture, load_fixture, test
 
-from tether.db_retry import run_in_transaction
+from tether.db_retry import _MAX_ATTEMPTS, run_in_transaction
 
 
-class StubMemoryError(MemoryError):
+class _DomainError(Exception):
     """A non-database error a transaction body might raise, for contrast."""
 
 
 def _locked_database_error() -> ExecutionError:
     """Build the exact exception shape snekql raises for SQLite lock contention."""
     error = ExecutionError("write failed", sql="INSERT", params=())
-    error.__cause__ = sqlite3.OperationalError("database is locked")
+    error.__cause__ = OperationalError("database is locked")
     return error
 
 
 def _other_operational_error() -> ExecutionError:
     """A database failure that is not lock contention, so it must not retry."""
     error = ExecutionError("write failed", sql="INSERT", params=())
-    error.__cause__ = sqlite3.OperationalError("no such table: widgets")
+    error.__cause__ = OperationalError("no such table: widgets")
+    return error
+
+
+def _constraint_violation_error() -> ExecutionError:
+    """A constraint failure: surfaces as IntegrityError, so it must not retry."""
+    error = ExecutionError("write failed", sql="INSERT", params=())
+    error.__cause__ = IntegrityError("UNIQUE constraint failed: widgets.id")
     return error
 
 
@@ -97,7 +104,7 @@ async def persistent_lock_contention_eventually_raises() -> None:
 
     with assert_raises(ExecutionError):
         _ = await run_in_transaction(db, _body)
-    assert_eq(len(attempts) > 1, True)
+    assert_eq(len(attempts), _MAX_ATTEMPTS)
 
 
 @test()
@@ -117,6 +124,22 @@ async def non_lock_database_errors_are_not_retried() -> None:
 
 
 @test()
+async def constraint_violations_are_not_retried() -> None:
+    """A constraint failure is a real error, not contention, so it propagates."""
+    db = await load_fixture(database())
+    attempts: list[None] = []
+
+    async def _body(tx: Transaction) -> str:
+        del tx
+        attempts.append(None)
+        raise _constraint_violation_error()
+
+    with assert_raises(ExecutionError):
+        _ = await run_in_transaction(db, _body)
+    assert_eq(len(attempts), 1)
+
+
+@test()
 async def non_database_errors_are_not_retried() -> None:
     """Domain errors a body raises on purpose (e.g. not-found) propagate as-is."""
     db = await load_fixture(database())
@@ -125,9 +148,9 @@ async def non_database_errors_are_not_retried() -> None:
     async def _body(tx: Transaction) -> str:
         del tx
         attempts.append(None)
-        raise StubMemoryError("not a database error")
+        raise _DomainError("not a database error")
 
-    with assert_raises(StubMemoryError):
+    with assert_raises(_DomainError):
         _ = await run_in_transaction(db, _body)
     assert_eq(len(attempts), 1)
 
