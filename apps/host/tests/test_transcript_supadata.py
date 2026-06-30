@@ -1,0 +1,234 @@
+"""Unit tests for the Supadata `TranscriptProvider` — offline, never spending.
+
+The Supadata HTTP layer is faked by `FakeSupadataTransport` (scripted `submit` /
+`poll` responses), so the provider's submit/poll/extract logic is exercised
+against fixture payloads without a network call or an API key. A fake `sleep`
+makes the bounded async-job polling resolve instantly. Covered: a direct hit
+(string and timed-cue content, tagged with the Supadata source), no-transcript ->
+*unavailable*, a 404 -> *unavailable*, a 429 / quota body -> *blocked* with its
+retry-after and source, the async job model (pending then complete), a failed
+job -> *unavailable*, an over-budget poll -> *transient*, and the transport's
+key/`Retry-After` handling. The flag/key gating is asserted against the server
+wiring helper.
+"""
+
+from __future__ import annotations
+
+from datetime import timedelta
+
+from snektest import assert_eq, assert_is_none, assert_raises, test
+
+from tether.transcript_supadata import (
+    HttpSupadataTransport,
+    SupadataConfig,
+    SupadataConfigurationError,
+    SupadataResponse,
+    SupadataTranscriptProvider,
+    _retry_after_seconds,
+)
+from tether.youtube import (
+    TranscriptBlockedError,
+    TranscriptTransientError,
+    TranscriptUnavailableError,
+)
+
+
+class FakeSupadataTransport:
+    """A scripted `SupadataTransport`: queued `submit` / `poll` responses.
+
+    Each call pops the next scripted response (the last repeats), so a test can
+    script "submit hands back a job, the first poll is pending, the second
+    completes" without any HTTP.
+    """
+
+    def __init__(
+        self,
+        *,
+        submit: list[SupadataResponse],
+        poll: list[SupadataResponse] | None = None,
+    ) -> None:
+        self._submit: list[SupadataResponse] = list(submit)
+        self._poll: list[SupadataResponse] = list(poll or [])
+        self.submit_calls: int = 0
+        self.poll_calls: int = 0
+
+    async def submit(self, video_id: str) -> SupadataResponse:
+        _ = video_id
+        self.submit_calls += 1
+        return self._submit.pop(0) if len(self._submit) > 1 else self._submit[0]
+
+    async def poll(self, job_id: str) -> SupadataResponse:
+        _ = job_id
+        self.poll_calls += 1
+        return self._poll.pop(0) if len(self._poll) > 1 else self._poll[0]
+
+
+async def _no_sleep(seconds: float) -> None:
+    """A `sleep` stand-in so the bounded poll loop resolves without real waiting."""
+    _ = seconds
+
+
+def _provider(
+    transport: FakeSupadataTransport, *, max_poll_attempts: int = 5
+) -> SupadataTranscriptProvider:
+    config = SupadataConfig(
+        poll_interval=timedelta(seconds=0), max_poll_attempts=max_poll_attempts
+    )
+    return SupadataTranscriptProvider(transport, config=config, sleep=_no_sleep)
+
+
+@test()
+async def direct_hit_with_timed_cues_returns_segments_tagged_supadata() -> None:
+    """A 200 with timed `content` cues yields joined text + segments tagged supadata."""
+    payload = {
+        "content": [
+            {"text": "hello", "offset": 0},
+            {"text": "world", "offset": 1500},
+            {"text": "   ", "offset": 2000},
+        ]
+    }
+    transport = FakeSupadataTransport(submit=[SupadataResponse(200, payload)])
+
+    result = await _provider(transport).fetch("v1")
+
+    assert_eq(result.text, "hello world")
+    assert_eq(result.source, "supadata")
+    assert_eq(len(result.segments), 2)
+    assert_eq(result.segments[1].start_seconds, 1.5)
+    # A direct hit needs no polling.
+    assert_eq(transport.poll_calls, 0)
+
+
+@test()
+async def direct_hit_with_string_content_returns_text() -> None:
+    """A 200 with plain-string `content` yields the text and no segments."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(200, {"content": "a plain transcript"})]
+    )
+
+    result = await _provider(transport).fetch("v1")
+
+    assert_eq(result.text, "a plain transcript")
+    assert_eq(result.segments, ())
+
+
+@test()
+async def empty_content_is_unavailable() -> None:
+    """A 200 carrying no usable content maps to *unavailable*."""
+    transport = FakeSupadataTransport(submit=[SupadataResponse(200, {"content": ""})])
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def not_found_is_unavailable() -> None:
+    """A 404 maps to *unavailable* (Supadata has no transcript for the video)."""
+    transport = FakeSupadataTransport(submit=[SupadataResponse(404, {})])
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def rate_limit_is_blocked_with_retry_after_and_source() -> None:
+    """A 429 maps to *blocked*, carrying its retry-after hint and the supadata source."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(429, {}, retry_after=timedelta(minutes=5))]
+    )
+
+    with assert_raises(TranscriptBlockedError) as caught:
+        _ = await _provider(transport).fetch("v1")
+    assert_eq(caught.exception.source, "supadata")
+    assert_eq(caught.exception.retry_after, timedelta(minutes=5))
+
+
+@test()
+async def quota_error_body_is_blocked() -> None:
+    """A non-429 body whose error names a limit/quota still maps to *blocked*."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(403, {"error": "monthly quota exceeded"})]
+    )
+
+    with assert_raises(TranscriptBlockedError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def server_error_is_transient() -> None:
+    """A 5xx with no rate-limit/unavailable signal maps to *transient* (retryable)."""
+    transport = FakeSupadataTransport(submit=[SupadataResponse(500, {})])
+
+    with assert_raises(TranscriptTransientError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def async_job_pending_then_complete_resolves() -> None:
+    """A submit handing back a job id is polled until complete, then stored."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(202, {"jobId": "job-1"})],
+        poll=[
+            SupadataResponse(200, {"status": "active"}),
+            SupadataResponse(200, {"status": "completed", "content": "done body"}),
+        ],
+    )
+
+    result = await _provider(transport).fetch("v1")
+
+    assert_eq(result.text, "done body")
+    assert_eq(result.source, "supadata")
+    assert_eq(transport.poll_calls, 2)
+
+
+@test()
+async def async_job_failed_is_unavailable() -> None:
+    """A job that reports `failed` maps to *unavailable*."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(202, {"jobId": "job-1"})],
+        poll=[SupadataResponse(200, {"status": "failed", "error": "boom"})],
+    )
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def async_job_over_poll_budget_is_transient() -> None:
+    """A job still pending after `max_poll_attempts` maps to *transient* (retry later)."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(202, {"jobId": "job-1"})],
+        poll=[SupadataResponse(200, {"status": "active"})],
+    )
+
+    with assert_raises(TranscriptTransientError):
+        _ = await _provider(transport, max_poll_attempts=3).fetch("v1")
+    assert_eq(transport.poll_calls, 3)
+
+
+@test()
+async def rate_limit_while_polling_is_blocked() -> None:
+    """A 429 returned mid-poll maps to *blocked* with the supadata source."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(202, {"jobId": "job-1"})],
+        poll=[SupadataResponse(429, {}, retry_after=timedelta(minutes=1))],
+    )
+
+    with assert_raises(TranscriptBlockedError) as caught:
+        _ = await _provider(transport).fetch("v1")
+    assert_eq(caught.exception.source, "supadata")
+
+
+@test()
+def http_transport_requires_an_api_key() -> None:
+    """Building the production transport without a key fails loudly (no silent no-op)."""
+    with assert_raises(SupadataConfigurationError):
+        _ = HttpSupadataTransport("")
+
+
+@test()
+def retry_after_parses_delta_seconds_only() -> None:
+    """A numeric `Retry-After` parses; a missing or non-numeric one is None."""
+    assert_eq(_retry_after_seconds({"Retry-After": "30"}), timedelta(seconds=30))
+    assert_is_none(_retry_after_seconds({}))
+    assert_is_none(_retry_after_seconds({"Retry-After": "soon"}))

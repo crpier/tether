@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.youtube import (
+    _NO_PAUSED_SOURCES,
     FetchedTranscript,
     InMemoryYouTubeApi,
     RawYouTubeVideo,
@@ -173,10 +174,12 @@ def post_transcript_when_provider_blocked_is_503() -> None:
     """A provider IP-block surfaces as 503 (retry later), not an unhandled 500."""
 
     class BlockedProvider(TranscriptProvider):
+        source: str = "fake"
+
         async def fetch(
-            self, video_id: str, *, skip_blockable: bool = False
+            self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
         ) -> FetchedTranscript:
-            _ = skip_blockable
+            _ = paused_sources
             raise TranscriptBlockedError(f"blocked fetching {video_id}")
 
     api = InMemoryYouTubeApi(liked=[video("v1", title="Talk")])

@@ -33,6 +33,7 @@ from snektest import (
 
 from tether.logging import Logger
 from tether.youtube import (
+    _NO_PAUSED_SOURCES,
     DailyQuota,
     FetchedTranscript,
     IngestedVideo,
@@ -96,6 +97,8 @@ class FakeTranscriptProvider:
     stops calling a terminal/not-due video.
     """
 
+    source: str = "fake"
+
     def __init__(self, scripts: dict[str, list[Outcome]]) -> None:
         self._scripts: dict[str, list[Outcome]] = {
             key: list(value) for key, value in scripts.items()
@@ -103,9 +106,9 @@ class FakeTranscriptProvider:
         self.calls: dict[str, int] = {}
 
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
-        _ = skip_blockable  # this fake has no blockable source to skip
+        _ = paused_sources  # this fake has no blockable source to skip
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:

@@ -63,6 +63,10 @@ type YouTubeSource = Literal["liked", "watch_later"]
 type IngestState = Literal["active", "ignored"]
 """Whether an ingested video is live in browse/search or purged from it."""
 
+# The empty default for `TranscriptProvider.fetch`'s `paused_sources`, hoisted to a
+# module constant so the value is not constructed in a parameter default expression.
+_NO_PAUSED_SOURCES: frozenset[str] = frozenset()
+
 
 class Clock(Protocol):
     """A source of the current instant, injectable for controlled-clock tests."""
@@ -128,13 +132,25 @@ class TranscriptBlockedError(Exception):
     per-video, so an IP block does not get the host throttled into failing every
     fetch. `retry_after` carries any provider-supplied cooldown hint; the worker
     raises its escalating backoff to at least this when present.
+
+    `source` names the blockable provider whose limit tripped (e.g.
+    ``"youtube_transcript_api"`` or ``"supadata"``) so the worker pauses *that*
+    provider's source independently. Leaf providers leave it ``None`` and the
+    composite stamps the offending fallback's source as it propagates the error; a
+    ``None`` source on a composite-raised block means "every blockable fallback was
+    already paused and skipped" (a deferral, not a fresh block to escalate).
     """
 
     def __init__(
-        self, message: str = "", *, retry_after: timedelta | None = None
+        self,
+        message: str = "",
+        *,
+        retry_after: timedelta | None = None,
+        source: str | None = None,
     ) -> None:
         super().__init__(message)
         self.retry_after: timedelta | None = retry_after
+        self.source: str | None = source
 
 
 class EmptyYouTubeSearchQueryError(Exception):
@@ -272,6 +288,8 @@ class InMemoryYouTubeApi(YouTubeApi):
         self.metadata_calls: int = 0
         self.transcript_calls: int = 0
 
+    source: str = "in_memory"
+
     async def list_liked_page(
         self, *, page_token: str | None, page_size: int
     ) -> LikedPage:
@@ -290,10 +308,10 @@ class InMemoryYouTubeApi(YouTubeApi):
         return {vid: self._by_id[vid] for vid in video_ids if vid in self._by_id}
 
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
         """Return a seeded transcript or raise `TranscriptUnavailableError`."""
-        _ = skip_blockable  # the in-memory fake has no blockable source to skip
+        _ = paused_sources  # the in-memory fake has no blockable source to skip
         self.transcript_calls += 1
         try:
             text = self._transcripts[video_id]
@@ -341,14 +359,22 @@ class TranscriptProvider(Protocol):
     machine is complete: fallback providers (third-party libraries, Supadata) slot
     in behind this port without touching the worker.
 
-    `skip_blockable` is the worker's pause hook: while the provider is globally
-    paused (after an IP block) the worker passes ``True`` so a composite provider
-    skips its blockable sources and runs only the safe ones (e.g. the captions
-    API). Providers with no blockable source ignore it.
+    `source` is the provenance tag a provider stamps onto the transcripts it
+    produces (e.g. ``"youtube_captions"``, ``"youtube_transcript_api"``,
+    ``"supadata"``); the composite uses it to skip a specific paused fallback and
+    the worker uses it to key each blockable source's independent pause.
+
+    `paused_sources` is the worker's pause hook: the set of blockable provider
+    sources currently in cooldown. A composite provider skips any fallback whose
+    `source` is in the set and runs only the reachable ones (e.g. the captions API,
+    or Supadata while the free library is paused). Leaf providers ignore it.
     """
 
+    source: str
+    """The provenance tag this provider stamps onto the transcripts it produces."""
+
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
         """Return the video's transcript, or raise a typed unavailability signal."""
         ...
@@ -362,11 +388,13 @@ class NullTranscriptProvider(TranscriptProvider):
     worker never runs (the wiring only starts it for a real provider).
     """
 
+    source: str = "null"
+
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
         """Always signal absence — there is no configured transcript source."""
-        _ = skip_blockable  # nothing blockable to skip
+        _ = paused_sources  # nothing blockable to skip
         raise TranscriptUnavailableError(video_id)
 
 
@@ -375,18 +403,22 @@ class FallbackTranscriptProvider(TranscriptProvider):
 
     The `primary` (the higher-quality captions API) is tried first and is never
     blockable; on its *unavailable* outcome each `fallbacks` provider (the wider
-    but IP-block-prone library, later Supadata) is tried in order until one yields
-    a transcript. Any *excluded*, *transient*, or *blocked* outcome surfaces
-    immediately — only *unavailable* falls through — so the worker still sees the
-    single best outcome. A video is *unavailable* (terminal) only when the primary
-    **and** every fallback report unavailable.
+    but IP-block-prone library, then the paid Supadata last resort) is tried in
+    order until one yields a transcript. Any *excluded*, *transient*, or *blocked*
+    outcome surfaces immediately — only *unavailable* falls through — so the worker
+    still sees the single best outcome. A video is *unavailable* (terminal) only
+    when the primary **and** every fallback report unavailable.
 
-    `skip_blockable` is the worker's global-pause hook: when ``True`` the fallbacks
-    (which can trip an IP block) are skipped and only the primary runs. If the
-    primary then has nothing but blockable fallbacks were skipped, the composite
-    raises `TranscriptBlockedError` (with no `retry_after`) rather than
-    *unavailable*, so the worker leaves the video pending for after the cooldown
-    instead of marking it terminal on a source it never tried.
+    `paused_sources` is the worker's pause hook: a fallback whose `source` is in
+    the set is skipped (its provider is in cooldown). The remaining reachable
+    fallbacks still run, so while the free library is paused Supadata is still
+    tried, and vice versa. A real block from a reached fallback propagates
+    immediately, stamped with that fallback's `source` so the worker pauses the
+    right provider. If every *remaining* source is unavailable but at least one
+    blockable fallback was skipped, the composite raises `TranscriptBlockedError`
+    with `source=None` (a deferral) rather than *unavailable*, so the worker keeps
+    the video pending for after the cooldown instead of marking it terminal on a
+    source it never tried.
     """
 
     def __init__(
@@ -398,26 +430,42 @@ class FallbackTranscriptProvider(TranscriptProvider):
         self._primary: TranscriptProvider = primary
         self._fallbacks: tuple[TranscriptProvider, ...] = tuple(fallbacks)
 
+    @property
+    def source(self) -> str:
+        """The composite's own tag is the primary's — sub-providers stamp their own."""
+        return self._primary.source
+
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
-        """Try the primary, then each fallback, surfacing the best outcome."""
+        """Try the primary, then each reachable fallback, surfacing the best outcome."""
         last_unavailable: TranscriptUnavailableError | None = None
         try:
-            return await self._primary.fetch(video_id, skip_blockable=skip_blockable)
+            return await self._primary.fetch(video_id, paused_sources=paused_sources)
         except TranscriptUnavailableError as error:
             last_unavailable = error
-        # The primary had nothing. While paused, skip the blockable fallbacks and
-        # signal *blocked* (not *unavailable*) so the worker keeps the video pending
-        # for after the cooldown rather than going terminal on an untried source.
-        if skip_blockable and self._fallbacks:
-            message = f"provider paused; skipped blockable fallbacks for {video_id}"
-            raise TranscriptBlockedError(message)
+        # The primary had nothing. Try each fallback in order, skipping any whose
+        # source is in cooldown. A real block propagates, stamped with the source
+        # that raised it so the worker pauses that provider specifically.
+        skipped_paused = False
         for fallback in self._fallbacks:
+            if fallback.source in paused_sources:
+                skipped_paused = True
+                continue
             try:
-                return await fallback.fetch(video_id, skip_blockable=skip_blockable)
+                return await fallback.fetch(video_id, paused_sources=paused_sources)
             except TranscriptUnavailableError as error:
                 last_unavailable = error
+            except TranscriptBlockedError as error:
+                if error.source is None:
+                    error.source = fallback.source
+                raise
+        # Every reachable source was unavailable. If a paused fallback was skipped,
+        # defer (a source-less *blocked*) so the video stays pending for the
+        # cooldown rather than going terminal on a source we never tried.
+        if skipped_paused:
+            message = f"provider paused; skipped blockable fallbacks for {video_id}"
+            raise TranscriptBlockedError(message)
         raise last_unavailable or TranscriptUnavailableError(video_id)
 
 
@@ -539,11 +587,21 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
 
 _BACKFILL_CURSOR_KEY = "likes_backfill_next_page_token"
 _LIKES_LAST_RUN_KEY = "likes_last_run_at"
-# Provider-level transcript pause, persisted in the sync-state store so it
-# survives restarts: the instant the blockable source may be tried again, and the
-# consecutive-IP-block streak the cooldown escalates with.
-_TRANSCRIPT_PAUSED_UNTIL_KEY = "transcript_provider_paused_until"
-_TRANSCRIPT_BLOCK_STREAK_KEY = "transcript_provider_block_streak"
+# Provider-level transcript pause, persisted per blockable source in the sync-state
+# store so it survives restarts: the instant that source may be tried again, and
+# the consecutive-block streak its cooldown escalates with. Each blockable source
+# (the free `youtube_transcript_api` library, the paid Supadata) pauses
+# independently, so its key carries the source suffix.
+_TRANSCRIPT_PAUSED_UNTIL_PREFIX = "transcript_provider_paused_until:"
+_TRANSCRIPT_BLOCK_STREAK_PREFIX = "transcript_provider_block_streak:"
+
+
+def _paused_until_key(source: str) -> str:
+    return f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}{source}"
+
+
+def _block_streak_key(source: str) -> str:
+    return f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}{source}"
 
 
 def derive_ingest_state(video: IngestedVideo[Fetched]) -> IngestState:
@@ -619,13 +677,17 @@ class TranscriptAttempt:
     outcomes carry just the classification, which both the worker (continue) and
     the on-demand path (translate to an error) act on. A ``blocked`` outcome leaves
     the per-video state untouched (it is a provider-level signal) and carries any
-    `retry_after` hint the provider supplied for the global pause.
+    `retry_after` hint plus the `source` whose limit tripped, so the worker pauses
+    that provider's source independently. A ``blocked`` with `source` ``None`` is a
+    deferral (the composite skipped an already-paused fallback) — nothing to
+    escalate.
     """
 
     outcome: TranscriptOutcome
     video: IngestedVideo[Fetched] | None = None
     text: str | None = None
     retry_after: timedelta | None = None
+    source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1165,13 +1227,39 @@ class _ProviderPauseState:
         return self.paused_until is not None and self.paused_until > now
 
 
-async def _load_provider_pause(database: Database) -> _ProviderPauseState:
-    """Read the persisted provider pause (defaulting to not-paused, streak 0)."""
-    raw_until = await _state_get(database, _TRANSCRIPT_PAUSED_UNTIL_KEY)
-    raw_streak = await _state_get(database, _TRANSCRIPT_BLOCK_STREAK_KEY)
+async def _load_provider_pause(database: Database, source: str) -> _ProviderPauseState:
+    """Read one source's persisted pause (defaulting to not-paused, streak 0)."""
+    raw_until = await _state_get(database, _paused_until_key(source))
+    raw_streak = await _state_get(database, _block_streak_key(source))
     paused_until = datetime.fromisoformat(raw_until) if raw_until else None
     streak = int(raw_streak) if raw_streak else 0
     return _ProviderPauseState(paused_until=paused_until, streak=streak)
+
+
+async def _load_all_provider_pauses(
+    database: Database,
+) -> dict[str, _ProviderPauseState]:
+    """Read every blockable source's persisted pause, keyed by source.
+
+    Discovers sources from the persisted keys themselves (rather than a hardcoded
+    list) so any provider that has ever blocked is reconstructed without the worker
+    needing to know the chain's composition.
+    """
+    async with database.transaction() as tx:
+        until_rows = await tx.fetch_all(
+            select(YouTubeSyncState).where(
+                YouTubeSyncState.key.like(f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}%")
+            )
+        )
+        streak_rows = await tx.fetch_all(
+            select(YouTubeSyncState).where(
+                YouTubeSyncState.key.like(f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}%")
+            )
+        )
+    sources = {
+        row.key.removeprefix(_TRANSCRIPT_PAUSED_UNTIL_PREFIX) for row in until_rows
+    } | {row.key.removeprefix(_TRANSCRIPT_BLOCK_STREAK_PREFIX) for row in streak_rows}
+    return {source: await _load_provider_pause(database, source) for source in sources}
 
 
 def _block_cooldown(
@@ -1205,7 +1293,7 @@ async def _fetch_and_store_transcript(
     *,
     video_id: str,
     now: datetime,
-    skip_blockable: bool = False,
+    paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
 ) -> TranscriptAttempt:
     """Run one provider fetch for a video and persist the resulting state.
 
@@ -1219,12 +1307,12 @@ async def _fetch_and_store_transcript(
     carries any retry-after hint back. It never raises for the four failure
     categories — it returns a typed `TranscriptAttempt` the caller acts on.
 
-    `skip_blockable` is forwarded to the provider so the worker can run only the
-    non-blockable sources while the provider is globally paused.
+    `paused_sources` is forwarded to the provider so the worker can run only the
+    reachable sources while some blockable provider is in cooldown.
     """
     database = context.database
     try:
-        fetched = await context.provider.fetch(video_id, skip_blockable=skip_blockable)
+        fetched = await context.provider.fetch(video_id, paused_sources=paused_sources)
     except TranscriptUnavailableError as error:
         await _mark_terminal(database, video_id, error=str(error), purge=False)
         return TranscriptAttempt(outcome="unavailable")
@@ -1232,7 +1320,9 @@ async def _fetch_and_store_transcript(
         await _mark_terminal(database, video_id, error=str(error), purge=True)
         return TranscriptAttempt(outcome="excluded")
     except TranscriptBlockedError as error:
-        return TranscriptAttempt(outcome="blocked", retry_after=error.retry_after)
+        return TranscriptAttempt(
+            outcome="blocked", retry_after=error.retry_after, source=error.source
+        )
     except TranscriptTransientError as error:
         await _record_retry(
             database, video_id, now=now, config=context.config, error=str(error)
@@ -1364,10 +1454,12 @@ class TranscriptSyncService:
     async def sync(self, *, logger: Logger) -> TranscriptSyncReport:
         """Run one pass: fetch transcripts for eligible videos within budget.
 
-        Honors the persisted provider-level pause: while the blockable source is in
-        its cooldown the pass still fetches captions-API transcripts but tells the
-        provider to skip the blockable fallback. An IP block trips (or escalates)
-        the global pause; a clean fetch while not paused clears the streak.
+        Honors each blockable source's persisted pause independently: while a
+        source (the free library, Supadata) is in its cooldown the pass still runs
+        the reachable sources (captions, plus any other unpaused fallback) but tells
+        the provider to skip the paused one. A fresh block trips (or escalates) that
+        source's own pause; a clean fetch while a source was reachable clears that
+        source's streak.
         """
         fetched = 0
         unavailable = 0
@@ -1377,11 +1469,14 @@ class TranscriptSyncService:
         quota_exhausted = False
         _debug(logger, "Transcript sync starting")
         context = self._context
-        pause = await _load_provider_pause(self.database)
-        if pause.is_paused(self.client.now()):
+        pauses = await _load_all_provider_pauses(self.database)
+        paused_sources = self._paused_sources(pauses, self.client.now())
+        for source in paused_sources:
+            pause = pauses[source]
             _info(
                 logger,
-                "Transcript provider paused; skipping blockable fallback",
+                "Transcript provider paused; skipping source",
+                source=source,
                 paused_until=pause.paused_until.isoformat()
                 if pause.paused_until is not None
                 else None,
@@ -1396,38 +1491,41 @@ class TranscriptSyncService:
                 _debug(logger, "Transcript sync stopped on quota", error=str(error))
                 break
             now = self.client.now()
-            skip_blockable = pause.is_paused(now)
             attempt = await _fetch_and_store_transcript(
                 context,
                 video_id=video.video_id,
                 now=now,
-                skip_blockable=skip_blockable,
+                paused_sources=paused_sources,
             )
             if attempt.outcome == "done":
                 fetched += 1
-                # A clean fetch while the blockable source was reachable means the
-                # block (if any) has cleared, so reset the escalation streak.
-                if not skip_blockable and pause.streak > 0:
-                    pause = _ProviderPauseState(paused_until=None, streak=0)
-                    await self._save_provider_pause(pause)
+                # A clean fetch means every reachable source was healthy this pass,
+                # so reset the escalation streak of each unpaused blocked source.
+                await self._reset_reachable_streaks(pauses, paused_sources)
             elif attempt.outcome == "unavailable":
                 unavailable += 1
             elif attempt.outcome == "excluded":
                 excluded += 1
             elif attempt.outcome == "blocked":
                 blocked += 1
-                if not skip_blockable:
-                    # A fresh IP block from the blockable source: escalate the
-                    # global pause and skip the fallback for the rest of the pass.
-                    pause = await self._trip_pause(
-                        now, pause, attempt.retry_after, logger=logger
+                source = attempt.source
+                if source is not None and source not in paused_sources:
+                    # A fresh block from a reachable source: escalate that source's
+                    # own pause and skip it for the rest of the pass.
+                    pauses[source] = await self._trip_pause(
+                        source,
+                        now,
+                        pauses.get(source),
+                        attempt.retry_after,
+                        logger=logger,
                     )
-                # else: we were already paused and only skipped the fallback, so
-                # the video stays pending for after the cooldown — nothing to do.
+                    paused_sources = paused_sources | {source}
+                # else: a deferral (composite skipped an already-paused fallback) or
+                # an already-paused source, so the video stays pending — nothing to do.
             else:
                 retried += 1
+        paused = self._paused_sources(pauses, self.client.now())
         remaining = await self._pending_count(self.client.now())
-        paused = pause.is_paused(self.client.now())
         _info(
             logger,
             "Transcript sync completed",
@@ -1436,7 +1534,8 @@ class TranscriptSyncService:
             excluded=excluded,
             retried=retried,
             blocked=blocked,
-            paused=paused,
+            paused=bool(paused),
+            paused_sources=sorted(paused),
             quota_exhausted=quota_exhausted,
             remaining=remaining,
         )
@@ -1447,25 +1546,48 @@ class TranscriptSyncService:
             retried=retried,
             quota_exhausted=quota_exhausted,
             blocked=blocked,
-            paused=paused,
+            paused=bool(paused),
         )
+
+    @staticmethod
+    def _paused_sources(
+        pauses: Mapping[str, _ProviderPauseState], now: datetime
+    ) -> frozenset[str]:
+        """The set of sources still in their cooldown at `now`."""
+        return frozenset(
+            source for source, pause in pauses.items() if pause.is_paused(now)
+        )
+
+    async def _reset_reachable_streaks(
+        self,
+        pauses: dict[str, _ProviderPauseState],
+        paused_sources: frozenset[str],
+    ) -> None:
+        """Clear the streak of each unpaused source that had one (its block cleared)."""
+        for source, pause in list(pauses.items()):
+            if source not in paused_sources and pause.streak > 0:
+                cleared = _ProviderPauseState(paused_until=None, streak=0)
+                pauses[source] = cleared
+                await self._save_provider_pause(source, cleared)
 
     async def _trip_pause(
         self,
+        source: str,
         now: datetime,
-        pause: _ProviderPauseState,
+        pause: _ProviderPauseState | None,
         retry_after: timedelta | None,
         *,
         logger: Logger,
     ) -> _ProviderPauseState:
-        """Escalate the global pause one block, persist it, and return the new state."""
-        streak = pause.streak + 1
+        """Escalate a source's pause one block, persist it, and return the new state."""
+        streak = (pause.streak if pause is not None else 0) + 1
         cooldown = _block_cooldown(streak, retry_after, self.config)
         tripped = _ProviderPauseState(paused_until=now + cooldown, streak=streak)
-        await self._save_provider_pause(tripped)
+        await self._save_provider_pause(source, tripped)
         _info(
             logger,
-            "Transcript provider IP-blocked; pausing fallback",
+            "Transcript provider blocked; pausing source",
+            source=source,
             streak=streak,
             cooldown_seconds=cooldown.total_seconds(),
             paused_until=tripped.paused_until.isoformat()
@@ -1477,14 +1599,16 @@ class TranscriptSyncService:
         )
         return tripped
 
-    async def _save_provider_pause(self, pause: _ProviderPauseState) -> None:
-        """Persist the provider pause so it survives restarts."""
+    async def _save_provider_pause(
+        self, source: str, pause: _ProviderPauseState
+    ) -> None:
+        """Persist one source's pause so it survives restarts."""
         await _state_set(
             self.database,
-            _TRANSCRIPT_PAUSED_UNTIL_KEY,
+            _paused_until_key(source),
             pause.paused_until.isoformat() if pause.paused_until is not None else "",
         )
-        await _state_set(self.database, _TRANSCRIPT_BLOCK_STREAK_KEY, str(pause.streak))
+        await _state_set(self.database, _block_streak_key(source), str(pause.streak))
 
     async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
         """Run transcript sync passes on the given interval until cancelled."""

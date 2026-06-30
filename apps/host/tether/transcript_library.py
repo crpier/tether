@@ -39,6 +39,10 @@ from tether.youtube import (
 
 _SOURCE = "youtube_transcript_api"
 
+# Empty default for `fetch`'s `paused_sources`, hoisted off the parameter list so it
+# is not constructed in a default expression (pyright `reportCallInDefaultInitializer`).
+_NO_PAUSED_SOURCES: frozenset[str] = frozenset()
+
 
 class TranscriptLibraryUnavailableError(Exception):
     """The optional `youtube-transcript-api` dependency is not installed."""
@@ -226,6 +230,8 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
     worker and on-demand path charge the daily budget before calling `fetch`.
     """
 
+    source: str = _SOURCE
+
     def __init__(
         self,
         fetcher: Callable[[str], Iterable[Any]] | None = None,
@@ -241,14 +247,14 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
         return self._fetcher
 
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
         """Fetch a transcript via the library, or raise a typed signal.
 
-        This *is* the blockable source, so `skip_blockable` does not apply here —
-        the composite provider is what skips it while the worker is paused.
+        This *is* a blockable source, so `paused_sources` does not apply here — the
+        composite provider is what skips it while its pause is in effect.
         """
-        _ = skip_blockable
+        _ = paused_sources
         fetcher = self._ensure_fetcher()
         try:
             raw = await asyncio.to_thread(fetcher, video_id)

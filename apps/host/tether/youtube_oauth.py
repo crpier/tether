@@ -59,6 +59,10 @@ no explicit likes playlist."""
 _MAX_IDS_PER_CALL = 50
 """The YouTube Data API `videos.list` per-call id maximum."""
 
+_NO_PAUSED_SOURCES: frozenset[str] = frozenset()
+"""Empty default for `fetch`'s `paused_sources`, hoisted off the parameter list so
+it is not constructed in a default expression (`reportCallInDefaultInitializer`)."""
+
 _GOOGLE_INSTALL_HINT = (
     "Google client libraries are not installed. Install them with "
     "`uv pip install google-api-python-client google-auth-oauthlib` "
@@ -652,6 +656,8 @@ class CaptionsTranscriptProvider(TranscriptProvider):
     calling `fetch`.
     """
 
+    source: str = "youtube_captions"
+
     def __init__(self, resource: _YouTubeResource) -> None:
         self._resource: _YouTubeResource = resource
 
@@ -670,12 +676,12 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         return cls(resource)
 
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
         """Fetch and parse the best caption track, or raise a typed signal."""
         # The captions API is never blockable, so the worker's pause hook is a
         # no-op here; the composite provider is what skips its blockable sources.
-        _ = skip_blockable
+        _ = paused_sources
         items = await asyncio.to_thread(self._list_captions, video_id)
         track_id = _select_caption_track(items)
         if track_id is None:

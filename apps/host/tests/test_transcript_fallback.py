@@ -3,14 +3,15 @@
 Two layers, both fake-driven and offline:
 
 * `FallbackTranscriptProvider` unit tests prove the captions-first, fall-through-
-  on-unavailable composition and the `skip_blockable` pause hook directly.
+  on-unavailable composition and the per-source `paused_sources` pause hook
+  directly (skip a paused source, run an unpaused one, stamp blocks with a source).
 * Worker tests drive `TranscriptSyncService` against a real in-memory SQLite
-  database and a *real* `FallbackTranscriptProvider` composed of two fake sources
-  (a non-blockable "captions" primary and a blockable "library" fallback). They
-  assert the external behaviour the issue calls for: fall-through coverage,
-  both-unavailable terminality, the global IP-block pause (escalating, retry-after-
-  honoring, restart-surviving, streak-resetting), and that captions keep flowing
-  while the library is paused.
+  database and a *real* `FallbackTranscriptProvider` composed of fake sources
+  (a non-blockable "captions" primary plus blockable "library"/"supadata"
+  fallbacks). They assert the external behaviour the issue calls for: fall-through
+  coverage, all-unavailable terminality, the per-source block pause (escalating,
+  retry-after-honoring, restart-surviving, streak-resetting), and that an unpaused
+  source keeps flowing while another is paused.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from snektest import (
 
 from tether.logging import Logger
 from tether.youtube import (
+    _NO_PAUSED_SOURCES,
     DailyQuota,
     FallbackTranscriptProvider,
     FetchedTranscript,
@@ -93,8 +95,9 @@ type Outcome = Ok | Blocked | str
 class FakeSource(TranscriptProvider):
     """A `TranscriptProvider` scripted per video, last outcome repeating.
 
-    Records call counts and the `skip_blockable` flag it was passed so tests can
-    prove the composite skipped (or ran) it.
+    Its `source` is its `name`, so the composite skips it by source and stamps its
+    blocks with it. Records call counts so tests can prove the composite skipped (or
+    ran) it.
     """
 
     def __init__(self, scripts: dict[str, list[Outcome]], *, name: str) -> None:
@@ -104,10 +107,14 @@ class FakeSource(TranscriptProvider):
         self.name: str = name
         self.calls: dict[str, int] = {}
 
+    @property
+    def source(self) -> str:
+        return self.name
+
     async def fetch(
-        self, video_id: str, *, skip_blockable: bool = False
+        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:
-        _ = skip_blockable
+        _ = paused_sources
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
@@ -177,29 +184,57 @@ async def composite_surfaces_excluded_without_fallback() -> None:
 
 
 @test()
-async def composite_skips_blockable_when_paused() -> None:
-    """`skip_blockable` runs only the primary and defers via a blocked signal."""
+async def composite_skips_paused_source_and_defers() -> None:
+    """A paused fallback is skipped and the composite defers via a blocked signal."""
     primary = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
     with assert_raises(TranscriptBlockedError):
-        _ = await composite.fetch("v1", skip_blockable=True)
-    # The blockable fallback was never consulted while paused.
+        _ = await composite.fetch("v1", paused_sources=frozenset({"library"}))
+    # The paused fallback was never consulted.
+    assert_eq(library.calls.get("v1"), None)
+
+
+@test()
+async def composite_runs_an_unpaused_source_while_another_is_paused() -> None:
+    """A later fallback still runs when only an earlier one is paused (Supadata covers)."""
+    primary = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Ok("library")]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
+    composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
+
+    result = await composite.fetch("v1", paused_sources=frozenset({"library"}))
+
+    assert_eq(result.text, "supadata")
+    assert_eq(result.source, "supadata")
+    # The paused library was skipped; the unpaused supadata served it.
     assert_eq(library.calls.get("v1"), None)
 
 
 @test()
 async def composite_primary_still_runs_when_paused() -> None:
-    """A captions hit is returned even while the blockable fallback is skipped."""
+    """A captions hit is returned even while a blockable fallback is skipped."""
     primary = FakeSource({"v1": [Ok("captions")]}, name="captions")
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    result = await composite.fetch("v1", skip_blockable=True)
+    result = await composite.fetch("v1", paused_sources=frozenset({"library"}))
 
     assert_eq(result.text, "captions")
     assert_eq(library.calls.get("v1"), None)
+
+
+@test()
+async def composite_stamps_block_with_the_fallback_source() -> None:
+    """A fallback's block propagates carrying that fallback's source for the worker."""
+    primary = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Blocked()]}, name="library")
+    composite = FallbackTranscriptProvider(primary, fallbacks=[library])
+
+    with assert_raises(TranscriptBlockedError) as caught:
+        _ = await composite.fetch("v1")
+    assert_eq(caught.exception.source, "library")
 
 
 # --- Worker integration over the real composite -----------------------------
@@ -334,7 +369,7 @@ async def a_block_pauses_the_provider_and_increments_the_streak() -> None:
 
     assert_eq(report.blocked, 1)
     assert_eq(report.paused, True)
-    pause = await _load_provider_pause(env.db)
+    pause = await _load_provider_pause(env.db, source="library")
     assert_eq(pause.streak, 1)
     # base = 10 minutes for the first block, in the future relative to now.
     assert_eq(pause.paused_until, env.clock.now() + timedelta(minutes=10))
@@ -379,7 +414,7 @@ async def the_pause_escalates_across_consecutive_blocks() -> None:
     await seed(env.db, "v1", liked_at=LATER)
 
     _ = await env.worker.sync(logger=test_logger())
-    first = await _load_provider_pause(env.db)
+    first = await _load_provider_pause(env.db, source="library")
     assert_eq(first.streak, 1)
     # base = 10 minutes for the first block.
     assert_eq(first.paused_until, env.clock.now() + timedelta(minutes=10))
@@ -387,7 +422,7 @@ async def the_pause_escalates_across_consecutive_blocks() -> None:
     # Wait out the first cooldown, then block again.
     env.clock.advance(timedelta(minutes=11))
     _ = await env.worker.sync(logger=test_logger())
-    second = await _load_provider_pause(env.db)
+    second = await _load_provider_pause(env.db, source="library")
     assert_eq(second.streak, 2)
     # base * 2**(2-1) = 20 minutes for the second consecutive block.
     assert_eq(second.paused_until, env.clock.now() + timedelta(minutes=20))
@@ -405,7 +440,7 @@ async def the_pause_honors_a_retry_after_hint() -> None:
 
     _ = await env.worker.sync(logger=test_logger())
 
-    pause = await _load_provider_pause(env.db)
+    pause = await _load_provider_pause(env.db, source="library")
     # First block's exponential cooldown is 10 minutes, but the 2h hint is honored.
     assert_eq(pause.paused_until, env.clock.now() + timedelta(hours=2))
 
@@ -453,13 +488,13 @@ async def a_clean_success_resets_the_streak() -> None:
     await seed(env.db, "v1", liked_at=LATER)
 
     _ = await env.worker.sync(logger=test_logger())
-    assert_eq((await _load_provider_pause(env.db)).streak, 1)
+    assert_eq((await _load_provider_pause(env.db, source="library")).streak, 1)
 
     env.clock.advance(timedelta(minutes=11))
     _ = await env.worker.sync(logger=test_logger())
 
     assert_eq(await transcript_of(env.db, "v1"), "eventually")
-    cleared = await _load_provider_pause(env.db)
+    cleared = await _load_provider_pause(env.db, source="library")
     assert_eq(cleared.streak, 0)
     assert_is_none(cleared.paused_until)
 
@@ -476,8 +511,151 @@ async def a_per_video_transient_does_not_trip_the_global_pause() -> None:
 
     assert_eq(report.retried, 1)
     assert_eq(report.paused, False)
-    pause = await _load_provider_pause(env.db)
+    pause = await _load_provider_pause(env.db, source="library")
     assert_eq(pause.streak, 0)
     assert_is_none(pause.paused_until)
     persisted = await state_of(env.db, "v1")
     assert_eq(persisted.status if persisted is not None else None, "retry")
+
+
+# --- Worker integration with a paid Supadata fallback in the chain -----------
+
+
+@dataclass
+class Env3:
+    """A worker over a real composite of captions -> library -> supadata sources."""
+
+    worker: TranscriptSyncService
+    db: Database
+    client: YouTubeApiClient
+    captions: FakeSource
+    library: FakeSource
+    supadata: FakeSource
+    clock: FakeClock
+    config: TranscriptSyncConfig
+
+
+@fixture
+async def make_env3(
+    captions: FakeSource,
+    library: FakeSource,
+    supadata: FakeSource,
+) -> AsyncGenerator[Env3]:
+    """A worker over `FallbackTranscriptProvider(captions, [library, supadata])`."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    client = YouTubeApiClient(
+        InMemoryYouTubeApi(), DailyQuota(db, limit=1000), clock=clock
+    )
+    config = TranscriptSyncConfig(
+        block_pause_base=timedelta(minutes=10),
+        block_pause_cap=timedelta(hours=4),
+    )
+    provider = FallbackTranscriptProvider(captions, fallbacks=[library, supadata])
+    worker = TranscriptSyncService(
+        database=db, client=client, provider=provider, config=config
+    )
+    yield Env3(
+        worker=worker,
+        db=db,
+        client=client,
+        captions=captions,
+        library=library,
+        supadata=supadata,
+        clock=clock,
+        config=config,
+    )
+    await db.close()
+
+
+@test()
+async def supadata_covers_what_the_free_sources_miss() -> None:
+    """When captions and the library have nothing, Supadata's transcript is stored, tagged."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata body")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 1)
+    assert_eq(await transcript_of(env.db, "v1"), "supadata body")
+    persisted = await state_of(env.db, "v1")
+    assert_eq(persisted.status if persisted is not None else None, "done")
+
+
+@test()
+async def terminal_requires_supadata_to_also_be_unavailable() -> None:
+    """A video goes terminal only when captions, library, and Supadata all have nothing."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
+    supadata = FakeSource({"v1": [UNAVAILABLE]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.unavailable, 1)
+    # Every configured source was consulted before giving up.
+    assert_eq(env.supadata.calls.get("v1"), 1)
+    persisted = await state_of(env.db, "v1")
+    assert_eq(persisted.status if persisted is not None else None, "terminal")
+
+
+@test()
+async def a_supadata_rate_limit_pauses_only_supadata() -> None:
+    """A Supadata block pauses Supadata while the free library keeps serving videos."""
+    # v_supa trips the Supadata pause (captions + library miss it, Supadata blocks);
+    # v_lib is then served by the library in the same pass, proving the library is
+    # not caught up in Supadata's pause.
+    captions = FakeSource(
+        {"v_supa": [UNAVAILABLE], "v_lib": [UNAVAILABLE]}, name="captions"
+    )
+    library = FakeSource(
+        {"v_supa": [UNAVAILABLE], "v_lib": [Ok("library body")]}, name="library"
+    )
+    supadata = FakeSource({"v_supa": [Blocked()]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v_supa", liked_at=LATER)
+    await seed(env.db, "v_lib", liked_at=EARLIER)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.paused, True)
+    # Supadata is paused; the library still served the other video.
+    assert_eq(await transcript_of(env.db, "v_lib"), "library body")
+    supadata_pause = await _load_provider_pause(env.db, source="supadata")
+    assert_eq(supadata_pause.streak, 1)
+    assert_eq(supadata_pause.paused_until, env.clock.now() + timedelta(minutes=10))
+    # The library never tripped a pause of its own.
+    library_pause = await _load_provider_pause(env.db, source="library")
+    assert_eq(library_pause.streak, 0)
+    assert_is_none(library_pause.paused_until)
+    # The Supadata-blocked video stays pending for after the cooldown.
+    assert_is_none(await transcript_of(env.db, "v_supa"))
+
+
+@test()
+async def supadata_is_skipped_while_paused_then_runs_after_cooldown() -> None:
+    """While Supadata is paused it is skipped; once the cooldown elapses it runs again."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
+    # Supadata blocks first, then (after the cooldown) yields a transcript.
+    supadata = FakeSource({"v1": [Blocked(), Ok("eventually")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER)
+
+    _ = await env.worker.sync(logger=test_logger())
+    # Paused: the video is still pending and not terminal.
+    assert_is_none(await transcript_of(env.db, "v1"))
+    assert_is_none(await state_of(env.db, "v1"))
+
+    env.clock.advance(timedelta(minutes=11))
+    _ = await env.worker.sync(logger=test_logger())
+
+    assert_eq(await transcript_of(env.db, "v1"), "eventually")
+    cleared = await _load_provider_pause(env.db, source="supadata")
+    assert_eq(cleared.streak, 0)
+    assert_is_none(cleared.paused_until)
