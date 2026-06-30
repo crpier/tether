@@ -413,6 +413,144 @@ describe("Tether SPA", () => {
     expect(await screen.findByText("Hi there")).toBeInTheDocument();
   });
 
+  test("renders streamed answers as markdown", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "format please" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "message_start",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "**bold** word",
+      event: "text_delta",
+      type: "chat",
+    });
+
+    const strong = await screen.findByText("bold");
+    expect(strong.tagName).toBe("STRONG");
+  });
+
+  test("shows inline tool activity transitioning to done", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "use a tool" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_start",
+      tool_id: "t1",
+      tool_name: "search",
+      type: "chat",
+    });
+    expect(await screen.findByText("using search…")).toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_end",
+      tool_id: "t1",
+      tool_name: "search",
+      type: "chat",
+    });
+    expect(await screen.findByText("used search")).toBeInTheDocument();
+  });
+
+  test("shows a working indicator until the first token arrives", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "think" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "message_start",
+      type: "chat",
+    });
+
+    expect(await screen.findByLabelText("Tether working")).toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "done",
+      event: "text_delta",
+      type: "chat",
+    });
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Tether working")).not.toBeInTheDocument();
+    });
+  });
+
+  test("keeps reasoning in a separate row from the answer", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "reason" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "message_start",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "pondering",
+      event: "thinking_delta",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "the answer",
+      event: "text_delta",
+      type: "chat",
+    });
+
+    const reasoning = await screen.findByLabelText("Tether reasoning");
+    expect(within(reasoning).getByText("pondering")).toBeInTheDocument();
+    expect(screen.getByText("the answer")).toBeInTheDocument();
+  });
+
+  test("error frames show a dismissible banner", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    bus.emit({
+      conversation_id: conversation.id,
+      detail: "No API key for provider",
+      event: "error",
+      type: "chat",
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(
+      within(alert).getByText("No API key for provider"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(alert).getByRole("button", { name: "Dismiss error" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.queryByText("No API key for provider"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   test("Enter sends the prompt", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);

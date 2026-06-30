@@ -55,6 +55,8 @@ app_password="dev"
 echo "Starting host on $host_url"
 TETHER_DATABASE_PATH="$runtime_dir/tether.sqlite3" \
 TETHER_KB_ROOT="$runtime_dir/kb" \
+TETHER_YOUTUBE_TOKEN_PATH="$runtime_dir/youtube-oauth-token.json" \
+TETHER_YOUTUBE_CLIENT_SECRET_PATH="$runtime_dir/youtube-client-secret.json" \
 TETHER_HOST=127.0.0.1 \
 TETHER_PORT="$host_port" \
 TETHER_RELOAD=false \

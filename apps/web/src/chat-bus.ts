@@ -8,6 +8,8 @@ export type ChatFrame =
       message_id?: string;
       seq?: number;
       tool_name?: string | null;
+      tool_id?: string | null;
+      content_index?: number | null;
     }
   | { type: "invalidate"; keys: string[] }
   | {
@@ -17,10 +19,16 @@ export type ChatFrame =
       body: string;
     };
 
+export type ConnectionStatus = "connecting" | "open" | "closed";
+
 export interface ChatBusHandlers {
   onDisconnect(): void;
   onFrame(frame: ChatFrame): void;
+  onStatus?(status: ConnectionStatus): void;
 }
+
+const INITIAL_RETRY_MS = 500;
+const MAX_RETRY_MS = 16_000;
 
 export interface ChatBus {
   abort(conversationId: string): void;
@@ -49,6 +57,8 @@ function parseFrame(data: string): ChatFrame | null {
 export const createBrowserChatBus: CreateChatBus = (handlers) => {
   let closed = false;
   let socket: WebSocket | undefined;
+  let retryDelay = INITIAL_RETRY_MS;
+  let retryTimer: number | undefined;
   const queuedFrames: string[] = [];
 
   const sendSerialized = (serialized: string) => {
@@ -60,8 +70,12 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
   };
 
   const connect = () => {
+    handlers.onStatus?.("connecting");
     socket = new WebSocket("/ws");
     socket.addEventListener("open", () => {
+      // A clean open resets the backoff, so the next disconnect retries fast.
+      retryDelay = INITIAL_RETRY_MS;
+      handlers.onStatus?.("open");
       while (queuedFrames.length > 0 && socket?.readyState === WebSocket.OPEN) {
         const serialized = queuedFrames.shift();
         if (serialized !== undefined) {
@@ -82,8 +96,13 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
       if (closed) {
         return;
       }
+      handlers.onStatus?.("closed");
       handlers.onDisconnect();
-      window.setTimeout(connect, 1_000);
+      // Exponential backoff capped at MAX_RETRY_MS so a server that stays down
+      // does not get hammered once a second forever.
+      const delay = retryDelay;
+      retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+      retryTimer = window.setTimeout(connect, delay);
     });
   };
 
@@ -97,6 +116,9 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
     },
     close() {
       closed = true;
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer);
+      }
       socket?.close();
     },
     sendPrompt(conversationId, content) {
