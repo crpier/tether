@@ -31,7 +31,7 @@ from structlog.typing import EventDict, WrappedLogger
 type Logger = structlog.stdlib.BoundLogger
 
 
-QUIET_LOGGERS = ("watchfiles.main", "uvicorn", "uvicorn.error")
+QUIET_LOGGERS = ("watchfiles.main", "uvicorn", "uvicorn.error", "aiosqlite", "snekql")
 """Server loggers that share the root handler but emit warnings only.
 
 The `uvicorn`/`uvicorn.error` pair is quieted rather than silenced: `serve()`
@@ -43,7 +43,12 @@ exit 3) with nothing in the logs. They must stay quiet *and* propagate: the
 parent `uvicorn` keeps `propagate=True` so a child `uvicorn.error` record can
 reach the structlog root handler instead of stdlib's last-resort stderr sink.
 At WARNING the routine INFO lifecycle chatter ("Application startup complete.")
-stays suppressed while genuine failures surface through structlog."""
+stays suppressed while genuine failures surface through structlog.
+
+`aiosqlite` and `snekql` are quieted for a different reason: at DEBUG they emit
+a line per cursor/commit/SQL statement (and child loggers `snekql.runtime`,
+`snekql.sqlite.pool` inherit the parent level), which drowns the app's own DEBUG
+logs. WARNING keeps their genuine errors while dropping the per-query noise."""
 
 SILENCED_LOGGERS = ("uvicorn.access",)
 """Uvicorn loggers that are fully disabled because uvicorn owns its formatting."""

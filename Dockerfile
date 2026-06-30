@@ -47,7 +47,7 @@ WORKDIR /app/apps/host
 # `snektest` path source is never needed in the image.
 COPY apps/host/pyproject.toml apps/host/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    uv sync --frozen --no-dev --group youtube --no-install-project
 
 # Lay out the three apps in the layout the editable install + `_repo_root()`
 # expect, then install the host package itself (editable, so `import tether`
@@ -57,7 +57,7 @@ COPY apps/host/ /app/apps/host/
 COPY --from=agent-deps /app/apps/agent/ /app/apps/agent/
 COPY --from=web-build /app/apps/web/dist/ /app/apps/web/dist/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --group youtube
 
 # Production defaults; secrets and HTTPS-dependent toggles come from the
 # environment / compose (.env). Paths point at the mounted volumes.

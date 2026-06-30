@@ -215,6 +215,17 @@ async def start_recall_creates_a_loose_memory_with_due_prompts() -> None:
 
 
 @test()
+async def list_due_prompts_caps_rows_at_the_limit() -> None:
+    """`limit` bounds the due list to the soonest-due prompts."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(two_prompts())))
+    _ = await fixture.start()
+
+    due = await fixture.service.list_due_prompts(NOW, limit=1, logger=LOGGER)
+
+    assert_eq(len(due), 1)
+
+
+@test()
 async def start_recall_rejects_a_source_already_under_study() -> None:
     """A source becomes a study item at most once."""
     fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))

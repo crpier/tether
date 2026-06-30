@@ -141,18 +141,25 @@ async def _forward_message_update(
     event: dict[str, Any],
     streamed_text: list[str],
 ) -> None:
-    """Forward assistant stream deltas."""
+    """Forward assistant stream deltas, keeping reasoning out of the answer."""
     assistant_event = event.get("assistantMessageEvent")
     if not isinstance(assistant_event, dict):
         return
     assistant_event_data = cast("dict[str, Any]", assistant_event)
-    streamed_text.append(_delta_text(assistant_event_data))
+    sub_type = assistant_event_data.get("type")
+    # Only the text channel feeds the persisted answer. Some providers stream
+    # plaintext `thinking_delta` reasoning (codex encrypts it, so the leak is
+    # masked there) — merging it into `streamed_text` would corrupt the saved
+    # assistant message, so persistence is gated on the text sub-type.
+    if sub_type == "text_delta":
+        streamed_text.append(_delta_text(assistant_event_data))
     await websocket.send_json(
         {
             "type": "chat",
             "conversation_id": str(conversation_id),
-            "event": assistant_event_data.get("type", "message_update"),
+            "event": sub_type or "message_update",
             "delta": assistant_event_data.get("delta"),
+            "content_index": assistant_event_data.get("contentIndex"),
         }
     )
 
@@ -207,6 +214,7 @@ async def _forward_tool_start(
             "conversation_id": str(conversation_id),
             "event": "tool_start",
             "tool_name": event.get("toolName"),
+            "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
         }
     )
 
@@ -239,6 +247,7 @@ async def _settle_tool_end(
             "conversation_id": str(conversation_id),
             "event": "tool_end",
             "tool_name": tool_name,
+            "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
         }
     )
 
@@ -373,6 +382,9 @@ async def _run_prompt(
                     conversation
                 )
             )
+            # Drop any events left in the shared queue by a prior turn that was
+            # aborted or cut off by a disconnect, so this prompt streams clean.
+            _ = runtime.drain_events()
             prompt_response = await runtime.client.request("prompt", message=content)
             if prompt_response.get("success") is not True:
                 failure_detail = _prompt_failure_detail(prompt_response)
@@ -397,9 +409,18 @@ async def _run_prompt(
             conversation_id=conversation_id,
             detail=str(error),
         )
-    except TimeoutError as error:
-        termination, run_error = "timeout", str(error)
-        raise
+    except TimeoutError:
+        # pi went silent past the agent-event timeout. Tell the browser so it
+        # can leave the generating state instead of hanging on "Stop" forever.
+        detail = (
+            f"agent timed out (no response in {int(_AGENT_EVENT_TIMEOUT_SECONDS)}s)"
+        )
+        termination, run_error = "timeout", detail
+        await _send_error(
+            websocket,
+            conversation_id=conversation_id,
+            detail=detail,
+        )
     except asyncio.CancelledError:
         termination, run_error = "aborted", "generation cancelled"
         raise

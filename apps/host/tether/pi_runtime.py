@@ -155,6 +155,23 @@ class PiRpcClient:
         await self._write_command({"id": request_id, "type": command_type, **fields})
         return await self._pending[request_id]
 
+    def drain_events(self) -> int:
+        """Discard every queued protocol event, returning the count dropped.
+
+        The stdout reader fills `events` autonomously, so a turn that was
+        aborted or cut off by a browser disconnect leaves its trailing deltas
+        and `agent_end` sitting in the queue. Draining before the next prompt
+        keeps stale events from poisoning the next turn's stream.
+        """
+        dropped = 0
+        while True:
+            try:
+                _ = self.events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            dropped += 1
+        return dropped
+
     async def close(self) -> None:
         """Stop the reader task and fail unresolved requests."""
         if self._closed:
@@ -291,6 +308,10 @@ class PiRuntime:
             return False
         response = await self.client.request("get_state")
         return response.get("success") is True
+
+    def drain_events(self) -> int:
+        """Discard pending events left over from a previous turn."""
+        return self.client.drain_events()
 
     async def next_event(
         self, event_type: str | None = None, *, wait_seconds: float = 5.0

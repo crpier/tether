@@ -12,6 +12,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 const browse_youtubeParameters = Type.Object({
   topic: Type.Optional(Type.String()),
   source: Type.Optional(StringEnum(["liked", "watch_later"] as const)),
+  limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
 });
 
 export type BrowseYouTubeParams = Static<typeof browse_youtubeParameters>;

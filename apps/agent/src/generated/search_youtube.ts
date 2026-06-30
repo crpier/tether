@@ -10,6 +10,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const search_youtubeParameters = Type.Object({
   q: Type.String(),
+  limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
 });
 
 export type SearchYouTubeParams = Static<typeof search_youtubeParameters>;

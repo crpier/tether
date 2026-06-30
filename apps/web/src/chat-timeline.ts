@@ -1,0 +1,306 @@
+// Normalization seam: turn raw pi chat frames into an ordered, typed timeline
+// for the current in-flight turn. The UI renders from these rows instead of
+// parsing wire payloads, so transport and rendering can change independently.
+// Mirrors t3code's session-logic seam, scoped to Tether's single live turn.
+
+import type { ChatFrame } from "./chat-bus";
+
+export type ChatRole = "user" | "assistant" | "tool";
+
+export interface StoredMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  toolName?: string | null;
+}
+
+export type TimelineRow =
+  | {
+      kind: "message";
+      id: string;
+      role: ChatRole;
+      text: string;
+      toolName: string | null;
+      streaming: boolean;
+    }
+  | { kind: "reasoning"; id: string; text: string; streaming: boolean }
+  | { kind: "tool"; id: string; toolName: string; status: "running" | "done" };
+
+type LiveRow =
+  | {
+      kind: "assistant";
+      id: string;
+      messageIndex: number;
+      text: string;
+      streaming: boolean;
+    }
+  | {
+      kind: "reasoning";
+      id: string;
+      messageIndex: number;
+      text: string;
+      streaming: boolean;
+    }
+  | {
+      kind: "tool";
+      id: string;
+      toolId: string | null;
+      toolName: string;
+      status: "running" | "done";
+    };
+
+export interface LiveTurn {
+  generating: boolean;
+  stopped: boolean;
+  startedAt: number | null;
+  endedAt: number | null;
+  error: string | null;
+  userText: string | null;
+  messageIndex: number;
+  counter: number;
+  rows: LiveRow[];
+}
+
+export function emptyTurn(): LiveTurn {
+  return {
+    generating: false,
+    stopped: false,
+    startedAt: null,
+    endedAt: null,
+    error: null,
+    userText: null,
+    messageIndex: -1,
+    counter: 0,
+    rows: [],
+  };
+}
+
+// Begin a fresh turn from a user prompt: optimistic user bubble plus a clean
+// slate for streamed segments. Errors and the "stopped" flag reset so a retry
+// after a failure does not inherit the previous turn's banners.
+export function startTurn(text: string, now: number): LiveTurn {
+  return {
+    ...emptyTurn(),
+    generating: true,
+    startedAt: now,
+    userText: text,
+  };
+}
+
+function deltaText(delta: unknown): string {
+  if (typeof delta === "string") {
+    return delta;
+  }
+  if (typeof delta === "object" && delta !== null && "text" in delta) {
+    const text = (delta as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  }
+  return "";
+}
+
+function mintId(turn: LiveTurn): { id: string; counter: number } {
+  const counter = turn.counter + 1;
+  return { id: `live-${counter.toString()}`, counter };
+}
+
+function upsertStreamRow(
+  turn: LiveTurn,
+  kind: "assistant" | "reasoning",
+  delta: string,
+): LiveTurn {
+  const rows = [...turn.rows];
+  const index = rows.findIndex(
+    (row) => row.kind === kind && row.messageIndex === turn.messageIndex,
+  );
+  if (index >= 0) {
+    const existing = rows[index] as Extract<
+      LiveRow,
+      { kind: "assistant" | "reasoning" }
+    >;
+    rows[index] = { ...existing, text: existing.text + delta, streaming: true };
+    return { ...turn, rows };
+  }
+  const { id, counter } = mintId(turn);
+  rows.push({
+    kind,
+    id,
+    messageIndex: Math.max(turn.messageIndex, 0),
+    text: delta,
+    streaming: true,
+  });
+  return { ...turn, counter, rows };
+}
+
+function settleStreamRows(turn: LiveTurn): LiveTurn {
+  const rows = turn.rows.map((row) =>
+    (row.kind === "assistant" || row.kind === "reasoning") &&
+    row.messageIndex === turn.messageIndex
+      ? { ...row, streaming: false }
+      : row,
+  );
+  return { ...turn, rows };
+}
+
+function startTool(turn: LiveTurn, frame: ChatFrame): LiveTurn {
+  if (frame.type !== "chat") {
+    return turn;
+  }
+  const { id, counter } = mintId(turn);
+  const rows: LiveRow[] = [
+    ...turn.rows,
+    {
+      kind: "tool",
+      id,
+      toolId: frame.tool_id ?? null,
+      toolName: frame.tool_name ?? "tool",
+      status: "running",
+    },
+  ];
+  return { ...turn, counter, rows };
+}
+
+function endTool(turn: LiveTurn, frame: ChatFrame): LiveTurn {
+  if (frame.type !== "chat") {
+    return turn;
+  }
+  const rows = [...turn.rows];
+  // Prefer matching by the host-provided tool id; fall back to the most recent
+  // still-running tool so a missing id never strands a spinner.
+  let index = -1;
+  if (frame.tool_id != null) {
+    index = rows.findIndex(
+      (row) => row.kind === "tool" && row.toolId === frame.tool_id,
+    );
+  }
+  if (index < 0) {
+    for (let cursor = rows.length - 1; cursor >= 0; cursor -= 1) {
+      const row = rows[cursor];
+      if (row.kind === "tool" && row.status === "running") {
+        index = cursor;
+        break;
+      }
+    }
+  }
+  if (index < 0) {
+    return turn;
+  }
+  const tool = rows[index] as Extract<LiveRow, { kind: "tool" }>;
+  rows[index] = {
+    ...tool,
+    status: "done",
+    toolName: frame.tool_name ?? tool.toolName,
+  };
+  return { ...turn, rows };
+}
+
+// Fold one wire frame into the live turn. Pure: returns a new turn so callers
+// can store it in a signal and let fine-grained reactivity diff the rows.
+export function reduceFrame(
+  turn: LiveTurn,
+  frame: ChatFrame,
+  now: number,
+): LiveTurn {
+  if (frame.type !== "chat") {
+    return turn;
+  }
+  switch (frame.event) {
+    case "message_start":
+      return { ...turn, messageIndex: turn.messageIndex + 1 };
+    case "text_start":
+    case "text_delta":
+      return upsertStreamRow(turn, "assistant", deltaText(frame.delta));
+    case "thinking_start":
+    case "thinking_delta":
+      return upsertStreamRow(turn, "reasoning", deltaText(frame.delta));
+    case "text_end":
+    case "thinking_end":
+    case "message_end":
+      return settleStreamRows(turn);
+    case "tool_start":
+      return startTool(turn, frame);
+    case "tool_end":
+      return endTool(turn, frame);
+    case "error":
+      return {
+        ...turn,
+        generating: false,
+        error: frame.detail ?? "Chat error",
+        endedAt: now,
+      };
+    case "abort_ack":
+      return { ...turn, generating: false, stopped: true, endedAt: now };
+    case "agent_end":
+      return { ...turn, generating: false, endedAt: now };
+    default:
+      return turn;
+  }
+}
+
+// Merge settled history with the live turn into a flat render list. Stored rows
+// come first; the optimistic user bubble and streamed segments follow in order.
+export function deriveRows(
+  stored: readonly StoredMessage[],
+  turn: LiveTurn,
+): TimelineRow[] {
+  const rows: TimelineRow[] = stored.map((message) => ({
+    kind: "message",
+    id: message.id,
+    role: message.role,
+    text: message.content,
+    toolName: message.toolName ?? null,
+    streaming: false,
+  }));
+  if (turn.userText !== null) {
+    rows.push({
+      kind: "message",
+      id: "live-user",
+      role: "user",
+      text: turn.userText,
+      toolName: null,
+      streaming: false,
+    });
+  }
+  for (const row of turn.rows) {
+    if (row.kind === "tool") {
+      rows.push({
+        kind: "tool",
+        id: row.id,
+        toolName: row.toolName,
+        status: row.status,
+      });
+      continue;
+    }
+    if (row.text.length === 0 && !row.streaming) {
+      continue;
+    }
+    if (row.kind === "reasoning") {
+      rows.push({
+        kind: "reasoning",
+        id: row.id,
+        text: row.text,
+        streaming: row.streaming,
+      });
+      continue;
+    }
+    rows.push({
+      kind: "message",
+      id: row.id,
+      role: "assistant",
+      text: row.text,
+      toolName: null,
+      streaming: row.streaming,
+    });
+  }
+  return rows;
+}
+
+// True once a turn is running but has produced no visible assistant text yet —
+// the cue for a "working…" indicator instead of an empty bubble.
+export function isAwaitingFirstToken(turn: LiveTurn): boolean {
+  if (!turn.generating) {
+    return false;
+  }
+  return !turn.rows.some(
+    (row) => row.kind === "assistant" && row.text.length > 0,
+  );
+}

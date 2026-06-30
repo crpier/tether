@@ -87,12 +87,20 @@ export async function executeTetherTool(
     throw new Error(envelopeErrorMessage(envelope));
   }
 
+  const result = envelope.result ?? null;
+  // `content` is what the model sees; `details` is for logs/UI only. Surface the
+  // result so the model can actually use it. Action tools (delete/complete)
+  // return a null result — keep the terse success text for those. Payloads are
+  // bounded host-side (limits + transcript-free reps) so this stays small.
+  const text =
+    result === null ? `${tool.name} succeeded` : JSON.stringify(result);
+
   return {
-    content: [{ type: "text", text: `${tool.name} succeeded` }],
+    content: [{ type: "text", text }],
     details: {
       provenance: envelope.provenance ?? null,
       quota: envelope.quota ?? null,
-      result: envelope.result ?? null,
+      result,
     },
   };
 }

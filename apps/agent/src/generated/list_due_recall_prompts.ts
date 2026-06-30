@@ -8,7 +8,9 @@ import type {
 import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
-const list_due_recall_promptsParameters = Type.Object({});
+const list_due_recall_promptsParameters = Type.Object({
+  limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
+});
 
 export type ListDueRecallPromptsParams = Static<
   typeof list_due_recall_promptsParameters
@@ -21,9 +23,9 @@ export const list_due_recall_promptsTool: ToolDefinition<
   name: "list_due_recall_prompts",
   label: "ListDueRecallPrompts",
   description:
-    "Params for listing outstanding recall prompts.\n\nThe due list is computed over the whole live schedule, so it takes no inputs\nbeyond the session identity the gate already requires.",
+    "Params for listing outstanding recall prompts, capped at `limit`.\n\nThe due list is computed over the whole live schedule; `limit` bounds how\nmany soonest-due prompts come back so a large backlog can't flood the model.",
   promptSnippet:
-    "Params for listing outstanding recall prompts.\n\nThe due list is computed over the whole live schedule, so it takes no inputs\nbeyond the session identity the gate already requires.",
+    "Params for listing outstanding recall prompts, capped at `limit`.\n\nThe due list is computed over the whole live schedule; `limit` bounds how\nmany soonest-due prompts come back so a large backlog can't flood the model.",
   parameters: list_due_recall_promptsParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

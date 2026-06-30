@@ -37,6 +37,12 @@
         "properties": {
           "state": {
             "$ref": "#/$defs/MemoryState"
+          },
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
           }
         },
         "required": ["state"],
@@ -337,6 +343,12 @@
               }
             ],
             "default": null
+          },
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
           }
         },
         "title": "BrowseYouTubeParams",
@@ -353,6 +365,12 @@
           "q": {
             "title": "Q",
             "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
           }
         },
         "required": ["q"],
@@ -498,8 +516,15 @@
       "name": "list_triggers",
       "params_model": "ListTriggersParams",
       "schema": {
-        "description": "Params for listing live triggers; the listing takes no inputs.",
-        "properties": {},
+        "description": "Params for listing live triggers, capped at `limit` (soonest first).",
+        "properties": {
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
         "title": "ListTriggersParams",
         "type": "object"
       }
@@ -549,8 +574,15 @@
       "name": "list_due_recall_prompts",
       "params_model": "ListDueRecallPromptsParams",
       "schema": {
-        "description": "Params for listing outstanding recall prompts.\n\nThe due list is computed over the whole live schedule, so it takes no inputs\nbeyond the session identity the gate already requires.",
-        "properties": {},
+        "description": "Params for listing outstanding recall prompts, capped at `limit`.\n\nThe due list is computed over the whole live schedule; `limit` bounds how\nmany soonest-due prompts come back so a large backlog can't flood the model.",
+        "properties": {
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
         "title": "ListDueRecallPromptsParams",
         "type": "object"
       }

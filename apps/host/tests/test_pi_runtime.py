@@ -159,6 +159,29 @@ async def client_buffers_partial_records_and_splits_only_on_lf() -> None:
 
 
 @test()
+async def client_drain_events_discards_pending_events() -> None:
+    """Leftover events from a prior turn are dropped before the next prompt."""
+    reader = ControlledByteReader()
+    writer = MemoryByteWriter()
+    client = PiRpcClient(reader=reader, writer=writer)
+    await client.start()
+
+    for index in range(3):
+        await reader.feed(
+            json.dumps({"type": "agent_end", "n": index}).encode() + b"\n"
+        )
+    # Wait until all three stale events have been queued by the reader.
+    while client.events.qsize() < 3:  # noqa: ASYNC110 - poll the background reader.
+        await asyncio.sleep(0)
+
+    dropped = client.drain_events()
+    await client.close()
+
+    assert_eq(dropped, 3)
+    assert_true(client.events.empty())
+
+
+@test()
 async def client_correlates_out_of_order_responses_by_id() -> None:
     """Concurrent RPC commands resolve with the response carrying their id."""
     reader = ControlledByteReader()

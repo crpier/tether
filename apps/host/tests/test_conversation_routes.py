@@ -42,6 +42,10 @@ class FakeRuntime:
         self.client: FakePiClient = FakePiClient()
         self._events: list[dict[str, Any]] = events
 
+    def drain_events(self) -> int:
+        """Match the production runtime's per-prompt queue hygiene hook."""
+        return 0
+
     async def next_event(
         self, event_type: str | None = None, *, wait_seconds: float = 5.0
     ) -> dict[str, Any]:
@@ -69,6 +73,10 @@ class FailingPromptRuntime:
     def __init__(self) -> None:
         self.client: FailingPromptClient = FailingPromptClient()
 
+    def drain_events(self) -> int:
+        """Match the production runtime's per-prompt queue hygiene hook."""
+        return 0
+
     async def next_event(
         self, event_type: str | None = None, *, wait_seconds: float = 5.0
     ) -> dict[str, Any]:
@@ -85,6 +93,10 @@ class BlockingRuntime:
     def __init__(self) -> None:
         self.client: FakePiClient = FakePiClient()
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    def drain_events(self) -> int:
+        """Match the production runtime's per-prompt queue hygiene hook."""
+        return 0
 
     async def next_event(
         self, event_type: str | None = None, *, wait_seconds: float = 5.0
@@ -112,6 +124,47 @@ class FakeRuntimeRegistry:
 
     async def shutdown_all(self) -> None:
         """Match the production registry shutdown hook."""
+
+
+class OrderedRuntime:
+    """Runtime double that records drain/prompt ordering in one log."""
+
+    def __init__(self, events: list[dict[str, Any]]) -> None:
+        self.client: FakePiClient = FakePiClient()
+        self._events: list[dict[str, Any]] = events
+
+    def drain_events(self) -> int:
+        """Log the per-prompt drain into the shared command log."""
+        self.client.commands.append("drain")
+        return 0
+
+    async def next_event(
+        self, event_type: str | None = None, *, wait_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        """Return the next queued event."""
+        _ = event_type
+        _ = wait_seconds
+        return self._events.pop(0)
+
+
+class TimeoutRuntime:
+    """Runtime double whose generation never produces an event."""
+
+    def __init__(self) -> None:
+        self.client: FakePiClient = FakePiClient()
+
+    def drain_events(self) -> int:
+        """Match the production runtime's per-prompt queue hygiene hook."""
+        return 0
+
+    async def next_event(
+        self, event_type: str | None = None, *, wait_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        """Simulate pi going silent past the agent-event timeout."""
+        _ = event_type
+        _ = wait_seconds
+        message = "agent event timed out"
+        raise TimeoutError(message)
 
 
 def make_client(root: Path) -> TestClient:
@@ -562,6 +615,118 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
         ],
     )
     assert_eq(messages[1]["content"], "streamed answer")
+
+
+@test()
+def websocket_drains_stale_events_before_prompt() -> None:
+    """Each prompt drains leftover events before driving pi (queue hygiene)."""
+    runtime = OrderedRuntime([{"type": "agent_end"}])
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello",
+                }
+            )
+            while websocket.receive_json().get("event") != "agent_end":
+                pass
+
+    assert_eq(runtime.client.commands[:2], ["drain", "prompt"])
+
+
+@test()
+def websocket_reports_agent_timeout_to_browser() -> None:
+    """A silent pi past the agent-event timeout surfaces an error frame."""
+    runtime = TimeoutRuntime()
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello",
+                }
+            )
+            _ = websocket.receive_json()
+            frame = websocket.receive_json()
+
+    assert_eq(frame["event"], "error")
+    assert_in("timed out", frame["detail"])
+
+
+@test()
+def websocket_keeps_reasoning_out_of_persisted_answer() -> None:
+    """Thinking deltas are forwarded but never merged into the saved answer."""
+    fake_runtime = FakeRuntime(
+        [
+            {"type": "message_start", "message": {"role": "assistant"}},
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_start", "contentIndex": 0},
+            },
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_delta",
+                    "delta": {"text": "secret reasoning"},
+                    "contentIndex": 0,
+                },
+            },
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": {"text": "answer"},
+                    "contentIndex": 1,
+                },
+            },
+            {"type": "message_end", "message": {"role": "assistant"}},
+            {"type": "agent_end"},
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Think then answer",
+                }
+            )
+            frames: list[dict[str, object]] = []
+            while True:
+                frame = cast("dict[str, object]", websocket.receive_json())
+                frames.append(frame)
+                if frame.get("event") == "agent_end":
+                    break
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    messages = response.json()
+    assert_eq(messages[1]["content"], "answer")
+    forwarded = [frame.get("event") for frame in frames]
+    assert_in("thinking_delta", forwarded)
+    assert_in("text_delta", forwarded)
 
 
 @test()

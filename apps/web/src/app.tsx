@@ -6,12 +6,15 @@ import {
 } from "@tanstack/solid-query";
 import {
   For,
+  Match,
   Show,
+  Switch,
   createEffect,
   createMemo,
   createSignal,
   onCleanup,
   onMount,
+  untrack,
 } from "solid-js";
 import type { JSX } from "solid-js";
 
@@ -20,13 +23,31 @@ import type {
   AnswerOutcome,
   Conversation,
   CreateTrigger,
-  Message,
   TetherApi,
   TriggerActionKind,
   TriggerRecurrence,
 } from "./api";
 import { createBrowserChatBus } from "./chat-bus";
-import type { ChatBus, ChatFrame, CreateChatBus } from "./chat-bus";
+import type {
+  ChatBus,
+  ChatFrame,
+  ConnectionStatus,
+  CreateChatBus,
+} from "./chat-bus";
+import {
+  deriveRows,
+  emptyTurn,
+  isAwaitingFirstToken,
+  reduceFrame,
+  startTurn,
+} from "./chat-timeline";
+import type {
+  ChatRole,
+  LiveTurn,
+  StoredMessage,
+  TimelineRow,
+} from "./chat-timeline";
+import { MessageContent } from "./components/message-content";
 import { Button } from "@/components/ui/button";
 import {
   TextField,
@@ -56,24 +77,6 @@ const queryKeys = {
   triggers: ["triggers"] as const,
 };
 
-interface DisplayMessage {
-  content: string;
-  id: string;
-  role: Message["role"];
-  toolName?: string | null;
-}
-
-function deltaText(delta: unknown): string {
-  if (typeof delta === "string") {
-    return delta;
-  }
-  if (typeof delta === "object" && delta !== null && "text" in delta) {
-    const text = (delta as { text?: unknown }).text;
-    return typeof text === "string" ? text : "";
-  }
-  return "";
-}
-
 function invalidateNamedKey(queryClient: QueryClient, key: string): void {
   if (key === "messages") {
     void queryClient.invalidateQueries({ queryKey: ["messages"] });
@@ -84,8 +87,8 @@ function invalidateNamedKey(queryClient: QueryClient, key: string): void {
   void queryClient.refetchQueries({ queryKey: [key] });
 }
 
-function messageLabel(message: DisplayMessage): string {
-  switch (message.role) {
+function messageLabel(role: ChatRole): string {
+  switch (role) {
     case "assistant":
       return "Tether";
     case "tool":
@@ -95,14 +98,7 @@ function messageLabel(message: DisplayMessage): string {
   }
 }
 
-function messageText(message: DisplayMessage): string {
-  if (message.role === "tool") {
-    return `used ${message.toolName ?? message.content}`;
-  }
-  return message.content;
-}
-
-function bubbleClass(role: Message["role"]): string {
+function bubbleClass(role: ChatRole): string {
   const base = "flex flex-col gap-1 rounded-lg text-sm";
   switch (role) {
     case "user":
@@ -235,35 +231,185 @@ function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
   );
 }
 
-function MessageRows(props: {
-  messages: DisplayMessage[];
-  streamText: string;
-}) {
+function toolText(row: Extract<TimelineRow, { kind: "tool" }>): string {
+  return row.status === "running"
+    ? `using ${row.toolName}…`
+    : `used ${row.toolName}`;
+}
+
+// Elapsed-time label that ticks via a text node mutation rather than a signal,
+// so a running turn never re-renders the whole transcript once a second.
+function WorkingIndicator(props: { startedAt: number }) {
+  let label: HTMLSpanElement | undefined;
+  const render = () => {
+    if (label) {
+      const seconds = Math.max(
+        0,
+        Math.round((Date.now() - props.startedAt) / 1000),
+      );
+      label.textContent = `${seconds.toString()}s`;
+    }
+  };
+  onMount(() => {
+    render();
+    const handle = window.setInterval(render, 1000);
+    onCleanup(() => {
+      window.clearInterval(handle);
+    });
+  });
   return (
-    <section
-      aria-label="Chat transcript"
-      class="bg-card flex-1 space-y-3 overflow-y-auto rounded-xl border p-4 shadow-sm"
-    >
-      <For each={props.messages}>
-        {(message) => (
+    <article aria-label="Tether working" class={bubbleClass("assistant")}>
+      <strong class={bubbleLabelClass}>Tether</strong>
+      <p class="text-muted-foreground flex items-center gap-2 text-sm">
+        <span
+          aria-hidden="true"
+          class="bg-muted-foreground/70 inline-block size-2 animate-pulse rounded-full"
+        />
+        <span>Working</span>
+        <span
+          ref={(element) => {
+            label = element;
+          }}
+          class="tabular-nums opacity-70"
+        />
+      </p>
+    </article>
+  );
+}
+
+function MessageRow(props: { row: TimelineRow }) {
+  return (
+    <Switch>
+      <Match when={props.row.kind === "tool" && props.row}>
+        {(tool) => (
           <article
-            aria-label={`${messageLabel(message)} message`}
-            class={bubbleClass(message.role)}
+            aria-label="Tool activity"
+            class="text-muted-foreground mx-auto flex items-center gap-2 py-0.5 text-xs italic"
           >
-            <strong class={bubbleLabelClass}>{messageLabel(message)}</strong>
-            <p class="whitespace-pre-wrap break-words">
-              {messageText(message)}
+            <Show
+              fallback={<span aria-hidden="true">✓</span>}
+              when={tool().status === "running"}
+            >
+              <span
+                aria-hidden="true"
+                class="border-muted-foreground/40 border-t-muted-foreground inline-block size-3 animate-spin rounded-full border-2"
+              />
+            </Show>
+            <span>{toolText(tool())}</span>
+          </article>
+        )}
+      </Match>
+      <Match when={props.row.kind === "reasoning" && props.row}>
+        {(reasoning) => (
+          <article
+            aria-label="Tether reasoning"
+            class="bg-muted/50 text-muted-foreground mr-auto max-w-[80%] rounded-lg px-3 py-2 text-xs"
+          >
+            <strong class={bubbleLabelClass}>Thinking</strong>
+            <p class="mt-1 whitespace-pre-wrap break-words">
+              {reasoning().text}
             </p>
           </article>
         )}
-      </For>
-      <Show when={props.streamText.length > 0}>
-        <article aria-label="Tether message" class={bubbleClass("assistant")}>
-          <strong class={bubbleLabelClass}>Tether</strong>
-          <p class="whitespace-pre-wrap break-words">{props.streamText}</p>
-        </article>
+      </Match>
+      <Match when={props.row.kind === "message" && props.row}>
+        {(message) => (
+          <article
+            aria-label={`${messageLabel(message().role)} message`}
+            class={bubbleClass(message().role)}
+          >
+            <strong class={bubbleLabelClass}>
+              {messageLabel(message().role)}
+            </strong>
+            <Show
+              fallback={
+                <p class="whitespace-pre-wrap break-words">
+                  {message().role === "tool"
+                    ? `used ${message().toolName ?? message().text}`
+                    : message().text}
+                </p>
+              }
+              when={message().role === "assistant"}
+            >
+              <MessageContent text={message().text} />
+            </Show>
+          </article>
+        )}
+      </Match>
+    </Switch>
+  );
+}
+
+function MessageRows(props: {
+  rows: TimelineRow[];
+  working: boolean;
+  startedAt: number | null;
+  stopped: boolean;
+}) {
+  let viewport: HTMLElement | undefined;
+  const [following, setFollowing] = createSignal(true);
+
+  const atBottom = () => {
+    if (!viewport) {
+      return true;
+    }
+    return (
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48
+    );
+  };
+  const scrollToEnd = () => {
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+  };
+
+  // Follow the stream while the user sits at the bottom; the moment they scroll
+  // up we stop yanking them back and offer an explicit jump affordance instead.
+  createEffect(() => {
+    void props.rows;
+    void props.working;
+    if (following()) {
+      queueMicrotask(scrollToEnd);
+    }
+  });
+
+  return (
+    <div class="relative flex min-h-0 flex-1 flex-col">
+      <section
+        ref={(element) => {
+          viewport = element;
+        }}
+        aria-label="Chat transcript"
+        class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-4 shadow-sm"
+        onScroll={() => {
+          setFollowing(atBottom());
+        }}
+      >
+        <For each={props.rows}>{(row) => <MessageRow row={row} />}</For>
+        <Show when={props.working && props.startedAt !== null}>
+          <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
+        </Show>
+        <Show when={props.stopped}>
+          <p class="text-muted-foreground mx-auto py-1 text-xs">
+            Generation stopped.
+          </p>
+        </Show>
+      </section>
+      <Show when={!following()}>
+        <Button
+          class="absolute bottom-3 left-1/2 -translate-x-1/2 shadow"
+          onClick={() => {
+            setFollowing(true);
+            scrollToEnd();
+          }}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          Jump to latest ↓
+        </Button>
       </Show>
-    </section>
+    </div>
   );
 }
 
@@ -732,16 +878,11 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   const [bus, setBus] = createSignal<ChatBus | undefined>();
   const [draft, setDraft] = createSignal("");
   const [error, setError] = createSignal<string | undefined>();
-  const [generating, setGenerating] = createSignal(false);
-  const [optimisticMessages, setOptimisticMessages] = createSignal<
-    DisplayMessage[]
-  >([]);
-  const [streamText, setStreamText] = createSignal("");
-  const [liveToolMessages, setLiveToolMessages] = createSignal<
-    DisplayMessage[]
-  >([]);
+  const [connection, setConnection] = createSignal<ConnectionStatus>("open");
+  const [turn, setTurn] = createSignal<LiveTurn>(emptyTurn());
   const [messagesRefresh, setMessagesRefresh] = createSignal(0);
   const [notifications, setNotifications] = createSignal<NotifyItem[]>([]);
+  const generating = createMemo(() => turn().generating);
 
   const conversationsQuery = createQuery(() => ({
     queryFn: () => props.api.listConversations(),
@@ -760,24 +901,30 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
       messagesRefresh(),
     ] as const,
   }));
-  const displayMessages = createMemo<DisplayMessage[]>(() => [
-    ...(messagesQuery.data ?? []).map((message) => ({
-      content: message.content,
+  const storedMessages = createMemo<StoredMessage[]>(() =>
+    (messagesQuery.data ?? []).map((message) => ({
       id: message.id,
       role: message.role,
+      content: message.content,
       toolName: message.tool_name,
     })),
-    ...optimisticMessages(),
-    ...liveToolMessages(),
-  ]);
+  );
+  const rows = createMemo(() => deriveRows(storedMessages(), turn()));
+  const working = createMemo(() => isAwaitingFirstToken(turn()));
 
+  // Clear the live turn once settled history catches up. Tracks only the stored
+  // messages so a refetch after `agent_end` retires the streamed rows without
+  // an effect loop, while a mid-stream invalidation (generating) is ignored.
   createEffect(() => {
-    const storedMessages = messagesQuery.data;
-    if (storedMessages !== undefined) {
-      setOptimisticMessages([]);
-      setLiveToolMessages([]);
-      setStreamText("");
+    const stored = messagesQuery.data;
+    if (stored === undefined) {
+      return;
     }
+    untrack(() => {
+      if (!turn().generating) {
+        setTurn(emptyTurn());
+      }
+    });
   });
 
   const rehydrate = () => {
@@ -815,42 +962,14 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
     ) {
       return;
     }
-    switch (frame.event) {
-      case "abort_ack":
-        setGenerating(false);
-        break;
-      case "agent_end":
-        setGenerating(false);
-        rehydrate();
-        break;
-      case "error":
-        setError(frame.detail ?? "Chat error");
-        setGenerating(false);
-        break;
-      case "message_end":
-        rehydrate();
-        break;
-      case "message_start":
-        setStreamText("");
-        break;
-      case "tool_end":
-        setLiveToolMessages((messages) => [
-          ...messages,
-          {
-            content: frame.tool_name ?? "tool",
-            id: `tool-${messages.length.toString()}`,
-            role: "tool",
-            toolName: frame.tool_name,
-          },
-        ]);
-        rehydrate();
-        break;
-      default: {
-        const nextDelta = deltaText(frame.delta);
-        if (nextDelta.length > 0) {
-          setStreamText((text) => `${text}${nextDelta}`);
-        }
-      }
+    setTurn((current) => reduceFrame(current, frame, Date.now()));
+    if (frame.event === "error") {
+      setError(frame.detail ?? "Chat error");
+    }
+    // Settle from authoritative storage only when the turn finishes; per-event
+    // refetching caused the flicker the seam now avoids.
+    if (frame.event === "agent_end" || frame.event === "error") {
+      rehydrate();
     }
   };
 
@@ -858,6 +977,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
     const chatBus = props.createChatBus({
       onDisconnect: rehydrate,
       onFrame: handleFrame,
+      onStatus: setConnection,
     });
     setBus(chatBus);
     onCleanup(() => {
@@ -872,16 +992,8 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
       return;
     }
     setDraft("");
-    setGenerating(true);
     setError(undefined);
-    setOptimisticMessages((messages) => [
-      ...messages,
-      {
-        content,
-        id: `optimistic-${Date.now().toString()}`,
-        role: "user",
-      },
-    ]);
+    setTurn(startTurn(content, Date.now()));
     bus()?.sendPrompt(id, content);
   };
 
@@ -939,11 +1051,40 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
       </header>
       <div class="mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)_22rem] gap-5 overflow-hidden p-5">
         <div class="flex min-h-0 flex-col gap-3">
+          <Show when={connection() !== "open"}>
+            <p
+              class="bg-muted text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+              role="status"
+            >
+              <span
+                aria-hidden="true"
+                class="bg-amber-500 inline-block size-2 animate-pulse rounded-full"
+              />
+              {connection() === "connecting"
+                ? "Reconnecting to Tether…"
+                : "Disconnected — retrying…"}
+            </p>
+          </Show>
           <Show when={error()}>
             {(message) => (
-              <p class="text-destructive text-sm" role="alert">
-                {message()}
-              </p>
+              <div
+                class="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
+                role="alert"
+              >
+                <p class="line-clamp-3 flex-1" title={message()}>
+                  {message()}
+                </p>
+                <button
+                  aria-label="Dismiss error"
+                  class="shrink-0 opacity-70 hover:opacity-100"
+                  onClick={() => {
+                    setError(undefined);
+                  }}
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
             )}
           </Show>
           <Show
@@ -951,8 +1092,10 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
             when={!conversationsQuery.isLoading && conversation() !== undefined}
           >
             <MessageRows
-              messages={displayMessages()}
-              streamText={streamText()}
+              rows={rows()}
+              startedAt={turn().startedAt}
+              stopped={turn().stopped}
+              working={working()}
             />
             <form class="space-y-2" onSubmit={onSubmit}>
               <TextField onChange={setDraft} value={draft()}>

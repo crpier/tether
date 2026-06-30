@@ -8,7 +8,9 @@ import type {
 import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
-const list_triggersParameters = Type.Object({});
+const list_triggersParameters = Type.Object({
+  limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
+});
 
 export type ListTriggersParams = Static<typeof list_triggersParameters>;
 
@@ -18,9 +20,10 @@ export const list_triggersTool: ToolDefinition<
 > = {
   name: "list_triggers",
   label: "ListTriggers",
-  description: "Params for listing live triggers; the listing takes no inputs.",
+  description:
+    "Params for listing live triggers, capped at `limit` (soonest first).",
   promptSnippet:
-    "Params for listing live triggers; the listing takes no inputs.",
+    "Params for listing live triggers, capped at `limit` (soonest first).",
   parameters: list_triggersParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

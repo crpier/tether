@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar, Literal, Protocol, runtime_checkable
@@ -587,6 +587,12 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
 
 _BACKFILL_CURSOR_KEY = "likes_backfill_next_page_token"
 _LIKES_LAST_RUN_KEY = "likes_last_run_at"
+# The shared, global Data API backoff gate, persisted so a live quota block
+# survives restarts: the instant any Data API call may be tried again, and the
+# consecutive-error streak its cooldown escalates with. One pair of keys gates
+# every live call (the metadata sync and the transcript budget alike).
+_API_GATE_PAUSED_UNTIL_KEY = "youtube_api_paused_until"
+_API_GATE_STREAK_KEY = "youtube_api_block_streak"
 # Provider-level transcript pause, persisted per blockable source in the sync-state
 # store so it survives restarts: the instant that source may be tried again, and
 # the consecutive-block streak its cooldown escalates with. Each blockable source
@@ -661,6 +667,10 @@ class YouTubeSyncConfig:
     backfill_pages: int = 1
     page_size: int = 50
     cutoff_date: date | None = None
+    min_interval: timedelta | None = None
+    """When set, `maybe_sync` skips a pass if the persisted last-run is newer than
+    this — so app restarts within the window don't re-spend quota. `None` (the
+    default) disables the gate, so every `maybe_sync` runs."""
 
 
 type TranscriptOutcome = Literal[
@@ -704,9 +714,9 @@ class TranscriptSyncConfig:
 
     recent_window: int = 50
     backoff_base: timedelta = timedelta(minutes=10)
-    backoff_cap: timedelta = timedelta(hours=12)
+    backoff_cap: timedelta = timedelta(hours=6)
     block_pause_base: timedelta = timedelta(minutes=30)
-    block_pause_cap: timedelta = timedelta(hours=24)
+    block_pause_cap: timedelta = timedelta(hours=6)
 
 
 @dataclass(frozen=True, slots=True)
@@ -787,12 +797,103 @@ class DailyQuota:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class YouTubeApiGateConfig:
+    """Bounds for the shared YouTube Data API backoff gate.
+
+    A live `403 quotaExceeded` (or other rate signal mapped to the quota error)
+    escalates a *global* pause that gates every Data API call — the metadata sync
+    and the transcript budget alike. The cooldown grows exponentially in the
+    consecutive-error streak, clamped to `pause_cap`, and is raised to any
+    upstream-supplied retry-after hint. Capped at six hours so a throttled host
+    stops hammering an already-exhausted quota (which is what keeps it from
+    refreshing) without parking ingestion for a whole day.
+    """
+
+    pause_base: timedelta = timedelta(minutes=15)
+    pause_cap: timedelta = timedelta(hours=6)
+
+
+class YouTubeApiGate:
+    """A persisted, global exponential backoff in front of live Data API calls.
+
+    `DailyQuota` models Google's budget to pre-empt it, but the live API can still
+    return `403 quotaExceeded` (clock skew, or budget spent from elsewhere). Blindly
+    retrying then hammers an already-spent quota and can keep it from refreshing.
+    This gate reacts to that signal: a live quota error pauses *all* Data API calls
+    for an escalating cooldown (capped at six hours), and the first clean call clears
+    it. Because the pause is checked *before* the upstream call, a paused gate never
+    reaches YouTube.
+    """
+
+    def __init__(
+        self,
+        database: Database,
+        *,
+        config: YouTubeApiGateConfig | None = None,
+    ) -> None:
+        self._database: Database = database
+        self._config: YouTubeApiGateConfig = config or YouTubeApiGateConfig()
+
+    async def ensure_open(self, *, now: datetime) -> None:
+        """Raise `YouTubeQuotaExceededError` while the global pause is in effect."""
+        paused_until, streak = await self._load()
+        if paused_until is not None and paused_until > now:
+            when = paused_until.isoformat()
+            message = f"YouTube API paused until {when} (quota-error streak {streak})"
+            raise YouTubeQuotaExceededError(message)
+
+    async def record_success(self) -> None:
+        """Clear any standing pause and reset the streak after a clean live call.
+
+        Read-only in the steady state: only writes when there is prior pause/streak
+        to clear, so the common success path stays cheap.
+        """
+        raw_until = await _state_get(self._database, _API_GATE_PAUSED_UNTIL_KEY)
+        raw_streak = await _state_get(self._database, _API_GATE_STREAK_KEY)
+        if not raw_until and not raw_streak:
+            return
+        await _state_set(self._database, _API_GATE_PAUSED_UNTIL_KEY, "")
+        await _state_set(self._database, _API_GATE_STREAK_KEY, "0")
+
+    async def record_quota_error(
+        self, *, now: datetime, retry_after: timedelta | None = None
+    ) -> datetime:
+        """Escalate the global pause after a live quota error; return `paused_until`.
+
+        The cooldown is `pause_base * 2**(streak-1)` clamped to `pause_cap`, then
+        raised to any provider-supplied `retry_after` hint.
+        """
+        _, prior_streak = await self._load()
+        streak = prior_streak + 1
+        exponent = max(0, streak - 1)
+        cooldown = min(self._config.pause_base * (2**exponent), self._config.pause_cap)
+        if retry_after is not None and retry_after > cooldown:
+            cooldown = retry_after
+        paused_until = now + cooldown
+        await _state_set(
+            self._database, _API_GATE_PAUSED_UNTIL_KEY, paused_until.isoformat()
+        )
+        await _state_set(self._database, _API_GATE_STREAK_KEY, str(streak))
+        return paused_until
+
+    async def _load(self) -> tuple[datetime | None, int]:
+        """Read the persisted `(paused_until, streak)`, defaulting to open/0."""
+        raw_until = await _state_get(self._database, _API_GATE_PAUSED_UNTIL_KEY)
+        raw_streak = await _state_get(self._database, _API_GATE_STREAK_KEY)
+        paused_until = datetime.fromisoformat(raw_until) if raw_until else None
+        streak = int(raw_streak) if raw_streak else 0
+        return paused_until, streak
+
+
 class YouTubeApiClient:
     """The persisted-budget guard in front of a paginated `YouTubeApi`.
 
     Every live call spends from the `DailyQuota` (raising once the day is
-    depleted, before calling out); each method returns the data plus the day's
-    `QuotaMeta`, which the tool/REST seams put on the envelope.
+    depleted, before calling out) and passes through the shared `YouTubeApiGate`
+    (raising while a live quota block is in its global cooldown, before calling
+    out); each method returns the data plus the day's `QuotaMeta`, which the
+    tool/REST seams put on the envelope.
     """
 
     # Per-call quota cost. The Data API charges one unit for each of
@@ -809,10 +910,14 @@ class YouTubeApiClient:
         quota: DailyQuota,
         *,
         clock: Clock | None = None,
+        gate: YouTubeApiGate | None = None,
     ) -> None:
         self._api: YouTubeApi = api
         self._quota: DailyQuota = quota
         self._clock: Clock = clock or SystemClock()
+        # One gate guards every live call, so a quota block tripped by the metadata
+        # sync also pauses transcript spend (and vice versa).
+        self._gate: YouTubeApiGate = gate or YouTubeApiGate(quota.database)
 
     def now(self) -> datetime:
         """Return the current instant from the shared clock.
@@ -830,9 +935,12 @@ class YouTubeApiClient:
         self, *, page_token: str | None, page_size: int
     ) -> LikedPage:
         """Pull one liked-videos page, spending one guarded list unit."""
-        await self._quota.spend(self._CALL_COST, now=self._clock.now())
-        return await self._api.list_liked_page(
-            page_token=page_token, page_size=page_size
+        now = self._clock.now()
+        await self._gate.ensure_open(now=now)
+        await self._quota.spend(self._CALL_COST, now=now)
+        return await self._guarded(
+            self._api.list_liked_page(page_token=page_token, page_size=page_size),
+            now=now,
         )
 
     async def fetch_video_metadata(
@@ -841,16 +949,38 @@ class YouTubeApiClient:
         """Fetch batched metadata for the given ids, spending one guarded unit."""
         if not video_ids:
             return {}
-        await self._quota.spend(self._CALL_COST, now=self._clock.now())
-        return await self._api.fetch_video_metadata(video_ids)
+        now = self._clock.now()
+        await self._gate.ensure_open(now=now)
+        await self._quota.spend(self._CALL_COST, now=now)
+        return await self._guarded(self._api.fetch_video_metadata(video_ids), now=now)
 
     async def charge_transcript(self) -> None:
         """Spend one guarded transcript unit, or raise if the day is exhausted.
 
         The transcript text itself comes from the `TranscriptProvider`; this only
         guards the budget so a depleted day stops before the provider is called.
+        Passes through the shared gate, so a live quota block (tripped by the
+        metadata sync) pauses transcript spend too.
         """
-        await self._quota.spend(self._TRANSCRIPT_COST, now=self._clock.now())
+        now = self._clock.now()
+        await self._gate.ensure_open(now=now)
+        await self._quota.spend(self._TRANSCRIPT_COST, now=now)
+
+    async def _guarded[T](self, call: Awaitable[T], *, now: datetime) -> T:
+        """Run a live upstream call, escalating the gate on a quota error.
+
+        A `YouTubeQuotaExceededError` from the upstream call is a *live* block (the
+        Data API 403'd despite our local budget): escalate the global pause and
+        re-raise. Any clean call clears a standing pause. The local-budget spend
+        runs before this, so its own quota error never reaches here to escalate.
+        """
+        try:
+            result = await call
+        except YouTubeQuotaExceededError:
+            _ = await self._gate.record_quota_error(now=now)
+            raise
+        await self._gate.record_success()
+        return result
 
 
 def _json_or_none(values: Sequence[str] | Mapping[str, str]) -> str | None:
@@ -981,7 +1111,40 @@ class YouTubeSyncService:
         self.backfill_pages: int = max(0, resolved.backfill_pages)
         self.page_size: int = max(1, resolved.page_size)
         self.cutoff_date: date | None = resolved.cutoff_date
+        self.min_interval: timedelta | None = resolved.min_interval
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
+
+    async def maybe_sync(self, *, logger: Logger) -> SyncReport | None:
+        """Run a sync pass only if the gate window has elapsed since the last run.
+
+        The startup path calls this rather than `sync` so app restarts within
+        `min_interval` don't re-spend the YouTube budget. With no `min_interval`
+        configured the gate is off and this always syncs. Returns the pass's
+        report, or None when the pass was skipped.
+        """
+        elapsed = await self._interval_elapsed()
+        if not elapsed:
+            _debug(logger, "YouTube sync skipped: within min-interval gate")
+            return None
+        return await self.sync(logger=logger)
+
+    async def _interval_elapsed(self) -> bool:
+        """True if no gate is set, no prior run is recorded, or it is stale."""
+        if self.min_interval is None:
+            return True
+        raw_last_run = await _state_get(self.database, _LIKES_LAST_RUN_KEY)
+        if not raw_last_run:
+            return True
+        try:
+            last_run = datetime.fromisoformat(raw_last_run)
+        except ValueError:
+            return True
+        last_run = (
+            last_run.replace(tzinfo=UTC)
+            if last_run.tzinfo is None
+            else last_run.astimezone(UTC)
+        )
+        return self.client.now() - last_run >= self.min_interval
 
     async def sync(self, *, logger: Logger) -> SyncReport:
         """Run one idempotent ingestion pass: hot pages then backfill pages."""
@@ -1698,12 +1861,15 @@ class YouTubeService:
         *,
         topic: str | None = None,
         source: YouTubeSource | None = None,
+        limit: int | None = None,
         logger: Logger,
     ) -> BrowseResult:
         """List active ingested videos from the local corpus, newest-liked-first.
 
         Reads only local state — the background sync is what refreshes the
-        corpus, so a browse never calls upstream and costs no quota.
+        corpus, so a browse never calls upstream and costs no quota. `limit`
+        caps the rows returned (`None` is unbounded); assistant-facing callers
+        pass a bound so a large corpus can't flood the model's context.
         """
         with self.tracer.start_as_current_span("YouTubeService.browse"):
             _debug(logger, "Browsing YouTube ingestion", topic=topic, source=source)
@@ -1712,12 +1878,13 @@ class YouTubeService:
                 query = query.where(IngestedVideo.source.eq(source))
             if topic is not None:
                 query = query.where(IngestedVideo.topic.like(topic))
+            query = query.order_by(
+                IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
+            )
+            if limit is not None:
+                query = query.limit(limit)
             async with self.database.transaction() as tx:
-                videos = await tx.fetch_all(
-                    query.order_by(
-                        IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
-                    )
-                )
+                videos = await tx.fetch_all(query)
         _debug(logger, "YouTube browse completed", result_count=len(videos))
         return BrowseResult(
             videos=videos,
@@ -1725,11 +1892,15 @@ class YouTubeService:
             quota=await self.client.snapshot(),
         )
 
-    async def search(self, query: str, *, logger: Logger) -> SearchResult:
+    async def search(
+        self, query: str, *, limit: int | None = None, logger: Logger
+    ) -> SearchResult:
         """Keyword Search across saved content and transcript text (local only).
 
         Each whitespace term is matched case-insensitively against the title,
-        description, or transcript and AND-ed; only active videos match.
+        description, or transcript and AND-ed; only active videos match. `limit`
+        caps the rows returned (`None` is unbounded) to keep assistant-facing
+        results within the model's context.
         """
         terms = query.split()
         if not terms:
@@ -1744,12 +1915,13 @@ class YouTubeService:
                 | IngestedVideo.description.like(pattern)
                 | IngestedVideo.transcript.like(pattern)
             )
+        statement = statement.order_by(
+            IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
         async with self.database.transaction() as tx:
-            videos = await tx.fetch_all(
-                statement.order_by(
-                    IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
-                )
-            )
+            videos = await tx.fetch_all(statement)
         _debug(logger, "YouTube search completed", result_count=len(videos))
         return SearchResult(
             videos=videos,

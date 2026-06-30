@@ -598,13 +598,15 @@ class RecallService:
             )
 
     async def list_due_prompts(
-        self, now: datetime, *, logger: Logger
+        self, now: datetime, *, limit: int | None = None, logger: Logger
     ) -> list[DuePrompt]:
         """List prompts owed a review now, across still-studying items.
 
         This is the pull-based recall surface: the outstanding prompts are those
         whose `due_at` has arrived on a study item that has not yet completed,
-        soonest-due first.
+        soonest-due first. `limit` caps the rows returned (`None` is unbounded);
+        eligibility is filtered after the query, so the cap is applied last to
+        keep the soonest-due prompts.
         """
         _debug(logger, "Listing due recall prompts")
         async with self.database.transaction() as tx:
@@ -624,6 +626,8 @@ class RecallService:
             for prompt in prompts
             if prompt.study_item_id in items_by_id
         ]
+        if limit is not None:
+            due = due[:limit]
         _debug(logger, "Due recall prompts listed", result_count=len(due))
         return due
 

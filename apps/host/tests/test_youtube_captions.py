@@ -15,7 +15,6 @@ from typing import Any
 from snektest import assert_eq, assert_raises, test
 
 from tether.youtube import (
-    TranscriptExcludedError,
     TranscriptTransientError,
     TranscriptUnavailableError,
 )
@@ -186,11 +185,27 @@ async def fetch_maps_404_to_unavailable() -> None:
 
 
 @test()
-async def fetch_maps_403_to_excluded() -> None:
-    """A 403 (members-only / caption access disabled) is permanently excluded."""
+async def fetch_maps_403_to_unavailable() -> None:
+    """A 403 is unavailable-from-this-provider, not a purge-triggering exclusion.
+
+    The captions Data API is owner-only, so it 403s for nearly every liked
+    (third-party) video. That means "this provider can't serve it", which is the
+    *unavailable* outcome so the composite falls through to the library/Supadata
+    fallbacks — not *excluded*, which would mark the video terminal and purge it
+    from ingestion before any fallback is ever tried.
+    """
     captions = FakeCaptions(list_error=FakeHttpError(403))
 
-    with assert_raises(TranscriptExcludedError):
+    with assert_raises(TranscriptUnavailableError):
+        _ = await provider(captions).fetch("v1")
+
+
+@test()
+async def fetch_maps_401_to_transient() -> None:
+    """A 401 (expired/invalid credentials) is retryable, never a permanent purge."""
+    captions = FakeCaptions(list_error=FakeHttpError(401))
+
+    with assert_raises(TranscriptTransientError):
         _ = await provider(captions).fetch("v1")
 
 
