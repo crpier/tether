@@ -133,6 +133,30 @@ def _message_text(message: object) -> str:
     return "".join(chunks)
 
 
+def _message_reasoning(message: object) -> str:
+    """Extract thinking-block text from a pi message content array.
+
+    Mirrors `_message_text` for the `thinking` channel. Encrypted/redacted
+    reasoning (codex) carries no plaintext `thinking`, so it yields the empty
+    string and is simply not persisted.
+    """
+    if not isinstance(message, dict):
+        return ""
+    message_data = cast("dict[str, Any]", message)
+    content = message_data.get("content")
+    if not isinstance(content, list):
+        return ""
+    content_items = cast("list[object]", content)
+    chunks: list[str] = []
+    for raw_item in content_items:
+        if not isinstance(raw_item, dict):
+            continue
+        item = cast("dict[str, Any]", raw_item)
+        if item.get("type") == "thinking" and isinstance(item.get("thinking"), str):
+            chunks.append(cast("str", item["thinking"]))
+    return "".join(chunks)
+
+
 def _prompt_failure_detail(response: dict[str, object]) -> str:
     """Render pi's failed prompt response for the browser."""
     for key in ("error", "detail", "message"):
@@ -186,19 +210,22 @@ async def _forward_message_update(
     conversation_id: UUID,
     event: dict[str, Any],
     streamed_text: list[str],
+    streamed_reasoning: list[str],
 ) -> None:
-    """Forward assistant stream deltas, keeping reasoning out of the answer."""
+    """Forward assistant stream deltas into their separate persisted channels."""
     assistant_event = event.get("assistantMessageEvent")
     if not isinstance(assistant_event, dict):
         return
     assistant_event_data = cast("dict[str, Any]", assistant_event)
     sub_type = assistant_event_data.get("type")
-    # Only the text channel feeds the persisted answer. Some providers stream
-    # plaintext `thinking_delta` reasoning (codex encrypts it, so the leak is
-    # masked there) — merging it into `streamed_text` would corrupt the saved
-    # assistant message, so persistence is gated on the text sub-type.
+    # Text and reasoning settle into distinct transcript rows, so they are
+    # accumulated separately and never merged. Encrypted reasoning (codex) is
+    # masked on the wire, so its `thinking_delta` carries no plaintext and the
+    # reasoning row is simply skipped.
     if sub_type == "text_delta":
         streamed_text.append(_delta_text(assistant_event_data))
+    elif sub_type == "thinking_delta":
+        streamed_reasoning.append(_delta_text(assistant_event_data))
     await websocket.send_json(
         {
             "type": "chat",
@@ -216,14 +243,26 @@ async def _settle_message_end(
     conversation_id: UUID,
     event: dict[str, Any],
     streamed_text: list[str],
+    streamed_reasoning: list[str],
 ) -> None:
-    """Persist assistant text once pi settles a message."""
+    """Persist the settled reasoning and answer rows once pi closes a message."""
     message = event.get("message")
     if not isinstance(message, dict):
         return
     message_data = cast("dict[str, Any]", message)
     if message_data.get("role") != "assistant":
         return
+    # Persist reasoning ahead of the answer so the transcript keeps "thinking
+    # then reply" order under the monotonic per-thread sequence.
+    reasoning = _message_reasoning(message_data) or "".join(streamed_reasoning)
+    if reasoning:
+        _ = await websocket.app.state.conversation_service.append_message(
+            MessageDraft(
+                content=reasoning,
+                conversation_id=conversation_id,
+                role="reasoning",
+            )
+        )
     content = _message_text(message_data) or "".join(streamed_text)
     if content:
         _ = await websocket.app.state.conversation_service.append_message(
@@ -252,7 +291,9 @@ async def _forward_tool_start(
     """Remember tool args and forward tool-start events."""
     tool_call_id = event.get("toolCallId")
     args = event.get("args")
-    tool_args: dict[str, Any] = args if isinstance(args, dict) else {}
+    tool_args: dict[str, Any] = (
+        cast("dict[str, Any]", args) if isinstance(args, dict) else {}
+    )
     if isinstance(tool_call_id, str):
         pending_tool_args[tool_call_id] = tool_args
     await websocket.send_json(
@@ -313,11 +354,13 @@ async def _stream_runtime(
     """Forward pi events and persist settled assistant messages."""
     pending_tool_args: dict[str, dict[str, Any]] = {}
     streamed_text: list[str] = []
+    streamed_reasoning: list[str] = []
     while True:
         event = await runtime.next_event(wait_seconds=_AGENT_EVENT_TIMEOUT_SECONDS)
         match event.get("type"):
             case "message_start":
                 streamed_text.clear()
+                streamed_reasoning.clear()
                 if (
                     recorder is not None
                     and session_id is not None
@@ -333,6 +376,7 @@ async def _stream_runtime(
                     conversation_id=conversation_id,
                     event=event,
                     streamed_text=streamed_text,
+                    streamed_reasoning=streamed_reasoning,
                 )
             case "message_end":
                 await _settle_message_end(
@@ -340,8 +384,10 @@ async def _stream_runtime(
                     conversation_id=conversation_id,
                     event=event,
                     streamed_text=streamed_text,
+                    streamed_reasoning=streamed_reasoning,
                 )
                 streamed_text.clear()
+                streamed_reasoning.clear()
             case "tool_execution_start":
                 await _forward_tool_start(
                     websocket,

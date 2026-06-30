@@ -64,6 +64,39 @@ describe("chat-timeline seam", () => {
     expect(assistant).toMatchObject({ text: "answer" });
   });
 
+  test("live reasoning stays expanded while generating, compacts when done", () => {
+    const turn = run([
+      chat({ event: "message_start" }),
+      chat({ event: "thinking_delta", delta: { text: "mulling" } }),
+    ]);
+    const streaming = deriveRows([], turn).find(
+      (row) => row.kind === "reasoning",
+    );
+    expect(streaming).toMatchObject({ text: "mulling", done: false });
+
+    const finished = run([chat({ event: "agent_end" })], turn);
+    const compacted = deriveRows([], finished).find(
+      (row) => row.kind === "reasoning",
+    );
+    expect(compacted).toMatchObject({ text: "mulling", done: true });
+  });
+
+  test("stored reasoning history renders as a compacted reasoning row", () => {
+    const rows = deriveRows(
+      [{ id: "r1", role: "reasoning", content: "earlier thought" }],
+      emptyTurn(),
+    );
+    expect(rows).toEqual([
+      {
+        kind: "reasoning",
+        id: "r1",
+        text: "earlier thought",
+        streaming: false,
+        done: true,
+      },
+    ]);
+  });
+
   test("renders reasoning, tool, then answer in arrival order", () => {
     const turn = run([
       chat({ event: "message_start" }),
