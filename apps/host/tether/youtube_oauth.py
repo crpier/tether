@@ -669,8 +669,13 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         )
         return cls(resource)
 
-    async def fetch(self, video_id: str) -> FetchedTranscript:
+    async def fetch(
+        self, video_id: str, *, skip_blockable: bool = False
+    ) -> FetchedTranscript:
         """Fetch and parse the best caption track, or raise a typed signal."""
+        # The captions API is never blockable, so the worker's pause hook is a
+        # no-op here; the composite provider is what skips its blockable sources.
+        _ = skip_blockable
         items = await asyncio.to_thread(self._list_captions, video_id)
         track_id = _select_caption_track(items)
         if track_id is None:

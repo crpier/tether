@@ -102,7 +102,10 @@ class FakeTranscriptProvider:
         }
         self.calls: dict[str, int] = {}
 
-    async def fetch(self, video_id: str) -> FetchedTranscript:
+    async def fetch(
+        self, video_id: str, *, skip_blockable: bool = False
+    ) -> FetchedTranscript:
+        _ = skip_blockable  # this fake has no blockable source to skip
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:

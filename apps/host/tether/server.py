@@ -81,12 +81,14 @@ from tether.telemetry import (
 )
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
+from tether.transcript_library import YouTubeTranscriptApiProvider
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
 from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
     DailyQuota,
+    FallbackTranscriptProvider,
     InMemoryYouTubeApi,
     NullTranscriptProvider,
     TranscriptProvider,
@@ -142,6 +144,8 @@ class AppConfig:
     transcript_sync_recent_window: int = 50
     transcript_retry_backoff_base_seconds: float = 10 * 60
     transcript_retry_backoff_cap_seconds: float = 12 * 60 * 60
+    transcript_block_pause_base_seconds: float = 30 * 60
+    transcript_block_pause_cap_seconds: float = 24 * 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -178,6 +182,10 @@ class HostSettings(BaseSettings):
     youtube_token_path: Path = Path(".tether/youtube-oauth-token.json")
     youtube_client_secret_path: Path = Path(".tether/youtube-client-secret.json")
     youtube_oauth_no_browser: bool = False
+    transcript_library_enabled: bool = True
+    """Whether to compose the `youtube-transcript-api` fallback behind the captions
+    provider. Enabled by default; set `TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` to
+    run captions-only (e.g. if the host IP keeps getting blocked)."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -268,6 +276,12 @@ async def _wire_youtube(
                 seconds=config.transcript_retry_backoff_base_seconds
             ),
             backoff_cap=timedelta(seconds=config.transcript_retry_backoff_cap_seconds),
+            block_pause_base=timedelta(
+                seconds=config.transcript_block_pause_base_seconds
+            ),
+            block_pause_cap=timedelta(
+                seconds=config.transcript_block_pause_cap_seconds
+            ),
         ),
         event_publisher=event_publisher,
     )
@@ -705,15 +719,24 @@ def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
 def build_configured_transcript_provider(
     settings: HostSettings,
 ) -> TranscriptProvider | None:
-    """Build the captions provider when a YouTube token has been authorized.
+    """Build the transcript provider when a YouTube token has been authorized.
 
-    Shares the OAuth config (and the caption scope validated on load) with the
-    liked-list adapter. With no token, returns `None` so the on-demand path falls
-    back to a null provider and the background transcript worker stays off.
+    The captions API (OAuth-backed, sharing the liked-list adapter's config and
+    validated caption scope) is the primary. Unless disabled, the wider but
+    IP-block-prone `youtube-transcript-api` library is composed *behind* it via
+    `FallbackTranscriptProvider`, so the cheaper, higher-quality captions source
+    wins when available and the library only fills the gaps. With no token, returns
+    `None` so the on-demand path falls back to a null provider and the background
+    transcript worker stays off.
     """
     if not settings.youtube_token_path.exists():
         return None
-    return CaptionsTranscriptProvider.from_config(_youtube_oauth_config(settings))
+    captions = CaptionsTranscriptProvider.from_config(_youtube_oauth_config(settings))
+    if not settings.transcript_library_enabled:
+        return captions
+    return FallbackTranscriptProvider(
+        captions, fallbacks=[YouTubeTranscriptApiProvider()]
+    )
 
 
 def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
