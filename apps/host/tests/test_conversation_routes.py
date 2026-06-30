@@ -1,16 +1,19 @@
 """REST behavior tests for host-owned conversations and transcript."""
 
 import asyncio
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 from uuid import UUID
 
-from snektest import assert_eq, assert_in, assert_len, test
+from snektest import assert_eq, assert_in, assert_len, assert_true, test
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tether.chat_ws import _local_timezone_name, _prompt_with_time_context
 from tether.conversations import MessageDraft
 from tether.model_selection import AgentModelConfig
 from tether.server import AppConfig, create_app
@@ -497,6 +500,71 @@ def websocket_prompt_persists_user_message() -> None:
     assert_eq(response.json()[0]["role"], "user")
     assert_eq(response.json()[0]["content"], "Hello from ws")
     assert_eq(response.json()[0]["seq"], 1)
+
+
+@test()
+def prompt_time_context_carries_clock_and_zone() -> None:
+    """The preamble stamps an ISO time + zone and keeps the user's text intact."""
+    now = datetime(2026, 7, 1, 18, 23, 5, tzinfo=UTC)
+    augmented = _prompt_with_time_context(
+        "remind me in 3 minutes", now=now, timezone_name="America/New_York"
+    )
+
+    assert_in("2026-07-01T18:23:05+00:00", augmented)
+    assert_in("America/New_York", augmented)
+    assert_true(augmented.endswith("remind me in 3 minutes"))
+
+
+@test()
+def local_timezone_name_prefers_tz_env() -> None:
+    """An exported `TZ` wins over the /etc/localtime probe."""
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Bucharest"
+    try:
+        name = _local_timezone_name(datetime(2026, 7, 1, tzinfo=UTC))
+    finally:
+        if previous is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = previous
+
+    assert_eq(name, "Europe/Bucharest")
+
+
+@test()
+def websocket_prompt_sends_time_context_to_pi_not_history() -> None:
+    """pi receives the clock preamble; the stored user row stays clean."""
+    fake_runtime = FakeRuntime([{"type": "agent_end"}])
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "remind me in 3 minutes",
+                }
+            )
+            while websocket.receive_json().get("event") != "agent_end":
+                pass
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    prompt_fields = [
+        fields
+        for command, fields in fake_runtime.client.requests
+        if command == "prompt"
+    ]
+    assert_len(prompt_fields, 1)
+    pi_message = cast("str", prompt_fields[0]["message"])
+    assert_in("Tether note", pi_message)
+    assert_true(pi_message.endswith("remind me in 3 minutes"))
+    assert_eq(response.json()[0]["content"], "remind me in 3 minutes")
 
 
 @test()
