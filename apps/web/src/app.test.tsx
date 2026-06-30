@@ -466,6 +466,36 @@ describe("Tether SPA", () => {
     expect(await screen.findByText("used search")).toBeInTheDocument();
   });
 
+  test("surfaces tool call args and result inline", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "use a tool" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_start",
+      tool_args: { q: "needle", limit: 5 },
+      tool_id: "t1",
+      tool_name: "search",
+      type: "chat",
+    });
+    expect(await screen.findByText(/"needle"/)).toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_end",
+      tool_id: "t1",
+      tool_name: "search",
+      tool_result: { kind: "collection" },
+      type: "chat",
+    });
+    expect(await screen.findByText(/"collection"/)).toBeInTheDocument();
+  });
+
   test("shows a working indicator until the first token arrives", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
