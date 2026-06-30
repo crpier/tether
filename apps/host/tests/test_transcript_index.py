@@ -84,6 +84,29 @@ async def multiple_chunks_can_share_one_video_id() -> None:
 
 
 @test()
+async def a_quoted_phrase_query_does_not_crash_the_search() -> None:
+    """A model-issued phrase query (quoted terms) must resolve, not error.
+
+    LanceDB phrase queries need an FTS index built with token positions; without
+    them the search raises `position is not found but required for phrase
+    queries`. The index opts into positions so quoted queries are valid.
+    """
+    async with TemporaryDirectory() as tmp:
+        index = await TranscriptIndex.open(
+            index_dir=Path(tmp) / "index", vector_dim=_DIM
+        )
+        await index.upsert(
+            [_doc("vid1", "a terminal agent written in rust", [1.0, 0.0, 0.0, 0.0])]
+        )
+
+        hits = await index.search(
+            text='"terminal agent"', vector=[1.0, 0.0, 0.0, 0.0], limit=5
+        )
+
+        assert_in("vid1", {hit.video_id for hit in hits})
+
+
+@test()
 async def candidates_carry_a_relevance_score() -> None:
     async with TemporaryDirectory() as tmp:
         index = await TranscriptIndex.open(

@@ -129,7 +129,15 @@ class SearchIndex:
     async def _create_table(connection: AsyncConnection, vector_dim: int) -> AsyncTable:
         table = await connection.create_table(_TABLE, schema=_schema(vector_dim))
         # FTS index built once on the empty table; later rows are flat-scanned.
-        await table.create_index(_CONTENT_COLUMN, config=FTS())
+        # `with_position` stores token offsets so phrase queries (quoted terms,
+        # which the model emits freely) resolve instead of raising "position is
+        # not found but required for phrase queries".
+        await table.create_index(
+            _CONTENT_COLUMN,
+            # lancedb ships no py.typed, so pyright can't see FTS's dataclass
+            # fields and reads its init as no-arg; the kwarg is valid at runtime.
+            config=FTS(with_position=True),  # pyright: ignore[reportCallIssue]
+        )
         return table
 
     @staticmethod
