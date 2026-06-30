@@ -1,6 +1,6 @@
 """The paid, flag-gated last-resort `TranscriptProvider` backed by Supadata.
 
-Captions (#83) and the free `youtube-transcript-api` library (#84) cover most
+The captions provider and the free `youtube-transcript-api` library cover most
 liked videos, but some yield nothing — the library gets IP-blocked for long
 stretches, and a few videos are not covered by either free source. Supadata is an
 HTTP transcript API (with an API key, billed per call) tried *last* so the few
@@ -14,10 +14,10 @@ structural change to the worker. Two pieces of resilience matter:
 * It is gated — composed into the chain only when an API key is configured *and*
   the feature flag is on (see `tether.server`), so the default install never spends
   and stays offline-friendly.
-* It reuses #84's provider-pause pattern with its own ``"supadata"`` source key: a
-  Supadata rate limit maps to the *blocked* outcome (carrying any retry-after
-  hint), so hitting Supadata's limits pauses *only* Supadata while the free
-  providers keep working.
+* It reuses the per-source provider-pause pattern with its own ``"supadata"``
+  source key: a Supadata rate limit maps to the *blocked* outcome (carrying any
+  retry-after hint), so hitting Supadata's limits pauses *only* Supadata while the
+  free providers keep working.
 
 Supadata serves long videos via an async job model (submit returns a `jobId`,
 poll it to completion), so `fetch` submits, then polls at a bounded interval up to
@@ -47,11 +47,16 @@ from tether.youtube import (
 )
 
 _SOURCE = "supadata"
+"""The provenance tag stamped onto Supadata transcripts and its pause-state key."""
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
+"""The empty default for `fetch`'s `paused_sources` — Supadata is a leaf source."""
 
 _HTTP_TOO_MANY_REQUESTS = 429
+"""Supadata's rate-limit / quota status — the *blocked* outcome."""
 _HTTP_NOT_FOUND = 404
+"""Supadata's "no transcript for this video" status — the *unavailable* outcome."""
 _HTTP_CLIENT_ERROR_FLOOR = 400
+"""Any status at or above this is an error response to classify, not a transcript."""
 
 # Supadata async-job terminal states (`GET /v1/transcript/{jobId}` -> `status`); any
 # other status (active, queued, starting, ...) is still pending and keeps polling.
@@ -99,9 +104,13 @@ class SupadataConfig:
     """Tunables for the Supadata provider's HTTP and async-poll behaviour."""
 
     base_url: str = "https://api.supadata.ai/v1"
+    """Supadata API root the transport issues its requests against."""
     timeout: timedelta = timedelta(seconds=30)
+    """Per-request HTTP timeout for both submit and poll."""
     poll_interval: timedelta = timedelta(seconds=2)
+    """How long to wait between polls of an in-flight async transcript job."""
     max_poll_attempts: int = 10
+    """Poll budget for an async job; exhausting it is *transient*, not a hang."""
 
 
 def _is_rate_limited(response: SupadataResponse) -> bool:

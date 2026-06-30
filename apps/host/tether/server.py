@@ -199,9 +199,13 @@ class HostSettings(BaseSettings):
     """Supadata API key. Empty (the default) keeps Supadata out of the chain
     entirely, so the default install never spends and stays offline-friendly."""
     supadata_base_url: str = "https://api.supadata.ai/v1"
+    """Supadata API root the provider's HTTP transport issues requests against."""
     supadata_timeout_seconds: float = 30.0
+    """Per-request HTTP timeout for Supadata submit and poll calls."""
     supadata_poll_interval_seconds: float = 2.0
+    """Delay between polls of an in-flight async Supadata transcript job."""
     supadata_max_poll_attempts: int = 10
+    """Poll budget for a Supadata async job before the attempt is treated as transient."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"

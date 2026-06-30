@@ -1330,7 +1330,9 @@ async def _fetch_and_store_transcript(
         return TranscriptAttempt(outcome="transient")
     updated = await _store_transcript(database, video_id, fetched.text)
     await context.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
-    return TranscriptAttempt(outcome="done", video=updated, text=fetched.text)
+    return TranscriptAttempt(
+        outcome="done", video=updated, text=fetched.text, source=fetched.source
+    )
 
 
 async def _store_transcript(
@@ -1499,6 +1501,14 @@ class TranscriptSyncService:
             )
             if attempt.outcome == "done":
                 fetched += 1
+                # Name the source that produced it so transcript provenance (and
+                # which paid/free source was billed) is visible in the logs.
+                _info(
+                    logger,
+                    "Transcript fetched",
+                    video_id=video.video_id,
+                    source=attempt.source,
+                )
                 # A clean fetch means every reachable source was healthy this pass,
                 # so reset the escalation streak of each unpaused blocked source.
                 await self._reset_reachable_streaks(pauses, paused_sources)
