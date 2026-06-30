@@ -76,6 +76,26 @@ async def lexical_match_is_returned() -> None:
 
 
 @test()
+async def a_quoted_phrase_query_does_not_crash_the_search() -> None:
+    """A phrase query (quoted terms) must resolve, not error.
+
+    LanceDB phrase queries need an FTS index built with token positions; without
+    them the search raises `position is not found but required for phrase
+    queries`. The index opts into positions so quoted queries are valid.
+    """
+    async with TemporaryDirectory() as tmp:
+        index = await SearchIndex.open(index_dir=Path(tmp) / "index", vector_dim=_DIM)
+        target = _doc("dentist appointment tuesday", [1.0, 0.0, 0.0, 0.0])
+        await index.upsert([target])
+
+        results = await index.search(
+            text='"dentist appointment"', vector=[1.0, 0.0, 0.0, 0.0], limit=5
+        )
+
+        assert_in(target.id, _ids(results))
+
+
+@test()
 async def both_retrieval_arms_feed_the_reranker() -> None:
     """Hybrid fuses a lexical-only hit and a vector-only hit.
 

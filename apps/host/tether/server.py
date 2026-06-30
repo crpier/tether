@@ -81,7 +81,10 @@ from tether.telemetry import (
 )
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
+from tether.transcript_index import TranscriptIndex
 from tether.transcript_library import YouTubeTranscriptApiProvider
+from tether.transcript_reconciler import TranscriptReconciler
+from tether.transcript_search import TranscriptSearchService
 from tether.transcript_supadata import (
     HttpSupadataTransport,
     SupadataConfig,
@@ -244,7 +247,7 @@ async def _wire_youtube(
     config: AppConfig,
     database: Database,
     event_publisher: EventHub,
-    logger: Logger,
+    transcript_search: TranscriptSearchService | None = None,
 ) -> list[asyncio.Task[None]]:
     """Wire the YouTube service + likes/transcript background workers onto state.
 
@@ -256,6 +259,7 @@ async def _wire_youtube(
     real upstream is configured (a likes client / a transcript provider); the
     returned tasks are those loops. Otherwise no background traffic runs.
     """
+    logger = cast("Logger", app.state.logger)
     tracer = cast("Telemetry", app.state.telemetry).tracer
     api = config.youtube_api or InMemoryYouTubeApi()
     client = YouTubeApiClient(
@@ -279,13 +283,17 @@ async def _wire_youtube(
     provider = config.transcript_provider or (
         api if isinstance(api, InMemoryYouTubeApi) else NullTranscriptProvider()
     )
-    app.state.youtube_service = YouTubeService(
+    youtube_service = YouTubeService(
         database=database,
         client=client,
         provider=provider,
         event_publisher=event_publisher,
         tracer=tracer,
     )
+    # Late-bind the optional semantic-search collaborator (None when search is
+    # disabled, leaving the lexical LIKE fallback in place).
+    youtube_service.transcript_search = transcript_search
+    app.state.youtube_service = youtube_service
     sync = YouTubeSyncService(
         database=database,
         client=client,
@@ -480,6 +488,64 @@ async def _build_search(
     return searcher, reconciler
 
 
+async def _build_transcript_search(
+    *,
+    database: Database,
+    embedder: Embedder | None,
+    index_dir: Path,
+) -> tuple[TranscriptSearchService | None, TranscriptReconciler | None]:
+    """Wire semantic transcript search when an embedder is supplied, else disable.
+
+    Opens the transcript-chunk index and returns the searcher `YouTubeService`
+    uses alongside the reconciler the lifespan drives on a periodic pass. Unlike
+    the Memory index there is no boot reconcile — a cold pass re-embeds the whole
+    transcript corpus and would block startup, so the periodic loop fills it. With
+    no embedder returns `(None, None)`: the index is never opened, search falls
+    back to the lexical `LIKE` path, and no model loads."""
+    if embedder is None:
+        return None, None
+    index = await TranscriptIndex.open(
+        index_dir=index_dir, vector_dim=embedder.vector_dim
+    )
+    reconciler = TranscriptReconciler(database=database, index=index, embedder=embedder)
+    searcher = TranscriptSearchService(embedder=embedder, index=index)
+    return searcher, reconciler
+
+
+def _reconcile_loop_tasks(
+    *,
+    search_reconciler: SearchReconciler | None,
+    transcript_reconciler: TranscriptReconciler | None,
+    interval_seconds: float,
+    logger: Logger,
+) -> list[asyncio.Task[None]]:
+    """Periodic reconcile loops for the wired search indexes.
+
+    Each loop is the correctness backstop for its index — sweeping orphans and
+    running `optimize()` while the host is up. The Memory loop complements its
+    boot reconcile; the transcript loop has no boot pass, so it is what fills the
+    transcript index shortly after startup. Either is absent when its index was
+    not wired (no embedder)."""
+    tasks: list[asyncio.Task[None]] = []
+    if search_reconciler is not None:
+        tasks.append(
+            asyncio.create_task(
+                search_reconciler.reconcile_forever(
+                    interval_seconds=interval_seconds, logger=logger
+                )
+            )
+        )
+    if transcript_reconciler is not None:
+        tasks.append(
+            asyncio.create_task(
+                transcript_reconciler.reconcile_forever(
+                    interval_seconds=interval_seconds, logger=logger
+                )
+            )
+        )
+    return tasks
+
+
 def _lifespan(
     *,
     config: AppConfig,
@@ -540,6 +606,14 @@ def _lifespan(
                 index_dir=configured_kb_root / "index",
                 logger=app_logger,
             )
+            (
+                transcript_searcher,
+                transcript_reconciler,
+            ) = await _build_transcript_search(
+                database=db,
+                embedder=embedder,
+                index_dir=configured_kb_root / "transcript-index",
+            )
             memory_service = MemoryService(
                 database=db,
                 event_publisher=event_hub,
@@ -561,7 +635,7 @@ def _lifespan(
                 config=config,
                 database=db,
                 event_publisher=event_hub,
-                logger=app_logger,
+                transcript_search=transcript_searcher,
             )
             app.state.recall_service = _build_recall_service(
                 app,
@@ -610,19 +684,16 @@ def _lifespan(
                 asyncio.create_task(runtime_registry.reap_idle_forever()),
                 asyncio.create_task(scheduler.run_forever()),
             ]
-            # The boot reconcile above primes the index; this periodic pass is the
-            # correctness backstop the best-effort latency hooks lean on — it
-            # sweeps orphans and runs optimize() while the host is up, not only at
-            # boot. Started only when search is wired (an embedder was supplied).
-            if search_reconciler is not None:
-                background_tasks.append(
-                    asyncio.create_task(
-                        search_reconciler.reconcile_forever(
-                            interval_seconds=config.search_reconcile_seconds,
-                            logger=app_logger,
-                        )
-                    )
+            # The periodic search-index reconcile loops (Memory + transcript), each
+            # started only when its index was wired (an embedder was supplied).
+            background_tasks.extend(
+                _reconcile_loop_tasks(
+                    search_reconciler=search_reconciler,
+                    transcript_reconciler=transcript_reconciler,
+                    interval_seconds=config.search_reconcile_seconds,
+                    logger=app_logger,
                 )
+            )
             # The YouTube ingestion sync loop (empty unless a real client is
             # configured) joins the cancelled-on-shutdown background tasks.
             background_tasks.extend(youtube_tasks)
