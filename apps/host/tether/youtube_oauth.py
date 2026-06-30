@@ -31,7 +31,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, cast, runtime_checkable
 
-from tether.youtube import LikedPage, RawYouTubeVideo, TranscriptUnavailableError
+from tether.youtube import (
+    FetchedTranscript,
+    LikedPage,
+    RawYouTubeVideo,
+    TranscriptExcludedError,
+    TranscriptProvider,
+    TranscriptSegment,
+    TranscriptTransientError,
+    TranscriptUnavailableError,
+)
 
 YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 """Read access to the user's account, including the liked-videos playlist."""
@@ -111,11 +120,31 @@ class _ListRequest(Protocol):
         ...
 
 
+class _DownloadRequest(Protocol):
+    """A built caption-download request whose `execute()` returns the raw track."""
+
+    def execute(self) -> bytes | str:
+        """Run the download synchronously and return the encoded caption track."""
+        ...
+
+
 class _ResourceCollection(Protocol):
     """A Data API resource collection (e.g. `playlistItems`) exposing `list`."""
 
     def list(self, **kwargs: Any) -> _ListRequest:
         """Build a list request for this collection with the given parameters."""
+        ...
+
+
+class _CaptionsCollection(Protocol):
+    """The `captions` collection, exposing both `list` and `download`."""
+
+    def list(self, **kwargs: Any) -> _ListRequest:
+        """Build a caption-track list request for a video."""
+        ...
+
+    def download(self, **kwargs: Any) -> _DownloadRequest:
+        """Build a caption-track download request for one track id."""
         ...
 
 
@@ -132,6 +161,10 @@ class _YouTubeResource(Protocol):
 
     def videos(self) -> _ResourceCollection:
         """The `videos` collection."""
+        ...
+
+    def captions(self) -> _CaptionsCollection:
+        """The `captions` collection (track list + SRT download)."""
         ...
 
 
@@ -411,10 +444,6 @@ class OAuthYouTubeApi:
                     result[raw.video_id] = raw
         return result
 
-    async def fetch_transcript(self, video_id: str) -> str:
-        """Transcripts land later; the seam method always reports absence."""
-        raise TranscriptUnavailableError(video_id)
-
     async def _resolve_likes_playlist(self) -> str:
         if self._likes_playlist_id is not None:
             return self._likes_playlist_id
@@ -510,6 +539,180 @@ class OAuthYouTubeApi:
             tags=_string_tuple(snippet.get("tags")),
             thumbnails=_thumbnails(snippet.get("thumbnails")),
         )
+
+
+_CAPTION_SRT_FORMAT = "srt"
+"""The download format the captions provider requests and parses."""
+
+
+def _srt_seconds(timestamp: str) -> float:
+    """Parse an SRT `HH:MM:SS,mmm` timestamp into whole+fractional seconds."""
+    hours, minutes, seconds = timestamp.strip().replace(",", ".").split(":")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def parse_srt_transcript(srt: str) -> tuple[str, tuple[TranscriptSegment, ...]]:
+    """Parse an SRT caption payload into joined text plus timed segments.
+
+    Blocks are separated by blank lines; each carries an index line, a
+    `start --> end` timing line, and one or more text lines. Cues with no parsable
+    timing or no text are skipped. The joined text is what keyword Search matches.
+
+    >>> text, segments = parse_srt_transcript(
+    ...     "1\\n00:00:01,000 --> 00:00:02,000\\nhello\\n"
+    ... )
+    >>> text
+    'hello'
+    >>> segments[0].start_seconds
+    1.0
+    """
+    segments: list[TranscriptSegment] = []
+    blocks = [
+        block for block in srt.replace("\r\n", "\n").split("\n\n") if block.strip()
+    ]
+    for block in blocks:
+        lines = [line for line in block.splitlines() if line.strip()]
+        timing_index = next(
+            (index for index, line in enumerate(lines) if "-->" in line), None
+        )
+        if timing_index is None:
+            continue
+        start_raw = lines[timing_index].split("-->", 1)[0]
+        try:
+            start = _srt_seconds(start_raw)
+        except ValueError, IndexError:
+            continue
+        text = " ".join(lines[timing_index + 1 :]).strip()
+        if text:
+            segments.append(TranscriptSegment(start_seconds=start, text=text))
+    joined = " ".join(segment.text for segment in segments)
+    return joined, tuple(segments)
+
+
+def _select_caption_track(items: Sequence[Mapping[str, object]]) -> str | None:
+    """Pick the best caption track id: prefer a human (non-ASR) track, else first.
+
+    Returns None when there are no usable tracks, which the provider maps to the
+    *unavailable* outcome.
+    """
+    tracks: list[tuple[str, str]] = []
+    for item in items:
+        track_id = _str_or_none(item.get("id"))
+        if track_id is None:
+            continue
+        snippet = _section(item, "snippet")
+        track_kind = (_str_or_none(snippet.get("trackKind")) or "").lower()
+        tracks.append((track_id, track_kind))
+    if not tracks:
+        return None
+    for track_id, track_kind in tracks:
+        if track_kind != "asr":
+            return track_id
+    return tracks[0][0]
+
+
+def _http_status(error: Exception) -> int | None:
+    """Best-effort HTTP status from a Google client error, across versions."""
+    response = getattr(error, "resp", None)
+    status = getattr(response, "status", None)
+    if isinstance(status, int):
+        return status
+    code = getattr(error, "status_code", None)
+    return code if isinstance(code, int) else None
+
+
+_HTTP_NOT_FOUND = 404
+_HTTP_FORBIDDEN = (401, 403)
+
+
+def _classify_caption_error(video_id: str, error: Exception) -> Exception:
+    """Map a caption API failure onto a typed `TranscriptProvider` signal.
+
+    A 404 (no such captions) is *unavailable*; a 401/403 (members-only, owner has
+    disabled third-party caption access) is *excluded* and permanent; everything
+    else — rate limits, 5xx, transport errors — is *transient* and retryable.
+    """
+    status = _http_status(error)
+    if status == _HTTP_NOT_FOUND:
+        return TranscriptUnavailableError(video_id)
+    if status in _HTTP_FORBIDDEN:
+        return TranscriptExcludedError(video_id)
+    return TranscriptTransientError(f"caption fetch for {video_id} failed: {error}")
+
+
+class CaptionsTranscriptProvider(TranscriptProvider):
+    """The first `TranscriptProvider`: the OAuth-backed YouTube captions API.
+
+    Lists a video's caption tracks, prefers a human-authored (non-ASR) track over
+    an auto-generated one, downloads the chosen track as SRT, and parses it into
+    transcript text plus timed segments. No tracks or an empty download is the
+    *unavailable* outcome; a forbidden response is *excluded*; transport/5xx/rate
+    errors are *transient*. Blocking Data API calls run in a worker thread. It
+    holds no budget — the worker and on-demand path charge the daily budget before
+    calling `fetch`.
+    """
+
+    def __init__(self, resource: _YouTubeResource) -> None:
+        self._resource: _YouTubeResource = resource
+
+    @classmethod
+    def from_config(cls, config: OAuthConfig) -> CaptionsTranscriptProvider:
+        """Build the production provider: load credentials, build the client.
+
+        Reuses the same credentials (including the `youtube.force-ssl` caption
+        scope validated on load) and discovery build as the liked-list adapter.
+        """
+        credentials = load_credentials(config)
+        build = _default_discovery_build()
+        resource = build(
+            "youtube", "v3", credentials=credentials, cache_discovery=False
+        )
+        return cls(resource)
+
+    async def fetch(self, video_id: str) -> FetchedTranscript:
+        """Fetch and parse the best caption track, or raise a typed signal."""
+        items = await asyncio.to_thread(self._list_captions, video_id)
+        track_id = _select_caption_track(items)
+        if track_id is None:
+            raise TranscriptUnavailableError(video_id)
+        payload = await asyncio.to_thread(self._download_caption, video_id, track_id)
+        text, segments = parse_srt_transcript(payload)
+        if not text:
+            raise TranscriptUnavailableError(video_id)
+        return FetchedTranscript(
+            text=text, segments=segments, source="youtube_captions"
+        )
+
+    def _list_captions(self, video_id: str) -> list[Mapping[str, object]]:
+        try:
+            response = (
+                self._resource.captions()
+                .list(part="snippet", videoId=video_id)
+                .execute()
+            )
+        except Exception as error:
+            raise _classify_caption_error(video_id, error) from error
+        items = response.get("items", [])
+        if not isinstance(items, list):
+            return []
+        return [
+            cast("Mapping[str, object]", item)
+            for item in cast("list[object]", items)
+            if isinstance(item, dict)
+        ]
+
+    def _download_caption(self, video_id: str, track_id: str) -> str:
+        try:
+            raw = (
+                self._resource.captions()
+                .download(id=track_id, tfmt=_CAPTION_SRT_FORMAT)
+                .execute()
+            )
+        except Exception as error:
+            raise _classify_caption_error(video_id, error) from error
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace")
+        return raw
 
 
 class _InstalledAppFlow(Protocol):

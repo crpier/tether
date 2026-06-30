@@ -114,7 +114,9 @@ async def make_env(
     await create_youtube_schema(db)
     quota = DailyQuota(db, limit=daily_limit)
     client = YouTubeApiClient(api, quota, clock=clock)
-    service = YouTubeService(database=db, client=client, tracer=noop_tracer())
+    service = YouTubeService(
+        database=db, client=client, provider=api, tracer=noop_tracer()
+    )
     sync = YouTubeSyncService(
         database=db, client=client, tracer=noop_tracer(), config=config
     )

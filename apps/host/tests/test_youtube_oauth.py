@@ -31,7 +31,6 @@ from snektest import (
 
 from tether.youtube import (
     DailyQuota,
-    TranscriptUnavailableError,
     YouTubeApiClient,
     create_youtube_schema,
 )
@@ -77,10 +76,12 @@ class FakeResource:
         channels: Sequence[dict[str, Any]] = (),
         playlist_items: Sequence[dict[str, Any]] = (),
         videos: Sequence[dict[str, Any]] = (),
+        captions: Sequence[dict[str, Any]] = (),
     ) -> None:
         self.channels_collection = FakeCollection(channels)
         self.playlist_items_collection = FakeCollection(playlist_items)
         self.videos_collection = FakeCollection(videos)
+        self.captions_collection = FakeCollection(captions)
 
     def channels(self) -> FakeCollection:
         return self.channels_collection
@@ -90,6 +91,12 @@ class FakeResource:
 
     def videos(self) -> FakeCollection:
         return self.videos_collection
+
+    # Typed `Any` so the resource satisfies `_YouTubeResource.captions` without
+    # the OAuth adapter tests needing a download-capable captions collection; the
+    # captions provider is exercised in `test_youtube_captions.py`.
+    def captions(self) -> Any:
+        return self.captions_collection
 
 
 def channels_response(likes_playlist_id: str | None) -> dict[str, Any]:
@@ -322,15 +329,6 @@ async def fetch_video_metadata_empty_makes_no_call() -> None:
 
     assert_eq(metadata, {})
     assert_eq(len(resource.videos_collection.calls), 0)
-
-
-@test()
-async def fetch_transcript_reports_unavailable() -> None:
-    """Transcripts land later; the seam method reports absence."""
-    api = OAuthYouTubeApi(FakeResource())
-
-    with assert_raises(TranscriptUnavailableError):
-        _ = await api.fetch_transcript("v1")
 
 
 # --- Adapter under the budgeted client --------------------------------------

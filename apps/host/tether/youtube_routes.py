@@ -32,6 +32,7 @@ from tether.youtube import (
     QuotaMeta,
     SearchResult,
     TranscriptResult,
+    TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeQuotaExceededError,
     YouTubeSource,
@@ -168,8 +169,9 @@ def _translate_domain_errors(
 ) -> Callable[..., Awaitable[Response]]:
     """Map YouTube ingestion failures onto HTTP status codes at the boundary.
 
-    Absence (an unknown video, or no upstream transcript) is a 404; a blank
-    keyword query is a 400; a depleted quota budget is a 429.
+    Absence (an unknown video, or a permanently unavailable/excluded transcript)
+    is a 404; a blank keyword query is a 400; a depleted quota budget is a 429; a
+    transient transcript failure is a 503 (retry later).
     """
 
     @functools.wraps(handler)
@@ -182,6 +184,8 @@ def _translate_domain_errors(
             return JSONResponse({"detail": str(error)}, status_code=400)
         except YouTubeQuotaExceededError as error:
             return JSONResponse({"detail": str(error)}, status_code=429)
+        except TranscriptTransientError as error:
+            return JSONResponse({"detail": str(error)}, status_code=503)
 
     return translated
 
