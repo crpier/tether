@@ -11,6 +11,62 @@ host:
 web:
     pnpm -C apps/web dev
 
+# local dev loop: host (auto-reload) + web (Vite HMR) together. Ctrl-C stops both.
+# This is the fast iteration path — open http://127.0.0.1:3000 (the Vite server,
+# which proxies /api + /ws to the host). Do NOT iterate via `docker compose
+# --build`; that rebuilds the prod image every change. See docs/development.md.
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "web → http://127.0.0.1:3000  (open this)   host → http://127.0.0.1:8000"
+    TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
+        uv run python -m tether &
+    host_pid=$!
+    pnpm -C apps/web dev &
+    web_pid=$!
+    trap 'kill "$host_pid" "$web_pid" 2>/dev/null || true' EXIT INT TERM
+    # return as soon as either process exits; the trap tears the other down
+    wait -n
+
+# one-time local setup: write .env with generated secrets + create the pi-agent
+# dir. Idempotent — refuses to clobber an existing .env. Run `just pi-auth` next.
+bootstrap:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f .env ]; then
+      echo ".env already exists; leaving it untouched" >&2
+    else
+      cp .env.example .env
+      uv run python - <<'PY'
+    import secrets
+    from pathlib import Path
+
+    path = Path(".env")
+    text = path.read_text()
+    text = text.replace("TETHER_APP_PASSWORD=change-me", f"TETHER_APP_PASSWORD={secrets.token_urlsafe(32)}")
+    text = text.replace("TETHER_SESSION_SECRET=change-me", f"TETHER_SESSION_SECRET={secrets.token_urlsafe(32)}")
+    path.write_text(text)
+    print("wrote .env with generated TETHER_APP_PASSWORD / TETHER_SESSION_SECRET")
+    PY
+    fi
+    dir="${TETHER_PI_AGENT_DIR:-$HOME/.local/share/tether/pi-agent}"
+    mkdir -p "$dir"
+    chmod 700 "$dir"
+    echo "pi-agent dir: $dir"
+    echo "next: just pi-auth   (log in to your model provider)"
+
+# one-time pi provider login (Codex / OpenCode Go). Writes auth.json into the
+# pi-agent dir the app reads/mounts. Interactive: run e.g. `/login openai-codex`,
+# then exit. Mirrors `just youtube-auth`. Needs agent deps (`just install`).
+pi-auth:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="${TETHER_PI_AGENT_DIR:-$HOME/.local/share/tether/pi-agent}"
+    mkdir -p "$dir"
+    chmod 700 "$dir"
+    echo "Launching pi against $dir. Run e.g. /login openai-codex, then exit."
+    PI_CODING_AGENT_DIR="$dir" apps/agent/node_modules/.bin/pi
+
 # one-time YouTube OAuth bootstrap (caches a token, prints recent liked titles)
 # set TETHER_YOUTUBE_OAUTH_NO_BROWSER=1 to print the URL instead of opening a browser
 # --group youtube ensures the optional Google client libraries are installed first
@@ -101,6 +157,7 @@ validate-env env_file=".env":
     set -euo pipefail
     test -f "{{env_file}}" || (echo "missing {{env_file}}; copy .env.example to .env" >&2; exit 1)
     TETHER_ENV_FILE="{{env_file}}" uv run python - <<'PY'
+    import json
     import os
     import sys
     from pathlib import Path
@@ -135,6 +192,18 @@ validate-env env_file=".env":
     pi_agent_dir = os.path.expandvars(os.path.expanduser(pi_agent_dir))
     if not Path(pi_agent_dir).is_absolute():
         errors.append("TETHER_PI_AGENT_DIR must resolve to an absolute path")
+
+    auth_path = Path(pi_agent_dir) / "auth.json"
+    if not auth_path.exists():
+        print(
+            f"warning: pi auth not bootstrapped: {auth_path} missing (run `just pi-auth`)",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            json.loads(auth_path.read_text("utf-8"))
+        except Exception as exc:
+            errors.append(f"pi auth at {auth_path} is not valid JSON: {exc}")
 
     if errors:
         for error in errors:
@@ -173,3 +242,37 @@ deploy-local: app-start
 # stop the local compose stack (keeps the data + model-cache volumes)
 deploy-local-down:
     docker compose down
+
+# follow the host container logs, rendered readable (the container emits JSON).
+# Pass a run_id to follow one chat turn end-to-end: `just logs <run_id>`. The
+# run_id is stamped on every host log line servicing that turn (see chat_ws).
+# Requires `jq`; falls back to raw lines without it. (Native `just dev` already
+# prints colorized logs to the terminal — this is for the docker path.)
+logs run_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pipe() {
+      if command -v jq >/dev/null 2>&1; then
+        jq -rR 'fromjson? as $o | if $o == null then . else
+          "\($o.timestamp // "") \(($o.level // "info") | ascii_upcase) \($o.logger // "") \($o.event // .)"
+          + (if ($o.run_id // null) then "  [run \($o.run_id)]" else "" end) end'
+      else
+        cat
+      fi
+    }
+    if [ -n "{{run_id}}" ]; then
+      docker compose logs -f --no-log-prefix host | grep --line-buffered -- "{{run_id}}" | pipe
+    else
+      docker compose logs -f --no-log-prefix host | pipe
+    fi
+
+# install a laptop-authorized YouTube token into the running container's data
+# volume. The box can't run the browser OAuth flow, so authorize locally first
+# with `just youtube-auth`, then run this and restart the host. See docs/deploy.md.
+youtube-token-install token=".tether/youtube-oauth-token.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -f "{{token}}" || { echo "no token at {{token}}; run `just youtube-auth` first" >&2; exit 1; }
+    docker compose exec -T host mkdir -p /data/youtube
+    docker compose cp "{{token}}" host:/data/youtube/token.json
+    echo "installed at /data/youtube/token.json; pick it up with: docker compose restart host"

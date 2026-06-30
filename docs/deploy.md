@@ -8,6 +8,11 @@ host serves the SPA, the REST `/api`, and the `/ws` WebSocket on one port.
 The same `compose.yaml` runs **locally over HTTP** and **on a VM behind Tailscale
 HTTPS** — only the environment differs.
 
+> **Developing, not deploying?** Don't iterate through `docker compose
+> up --build` — it rebuilds the whole image on every change. Use the native
+> host + web loop (`just dev`) instead; see [development.md](./development.md).
+> The local-run section below is for verifying the *production image* end to end.
+
 ## What's in the image
 
 - Built from the repo root `Dockerfile` (three stages: build the SPA, install the
@@ -18,6 +23,9 @@ HTTPS** — only the environment differs.
 - `snekql` comes from PyPI; no editable/sibling source is needed to build.
 
 ## Local run (verify the whole stack on your machine)
+
+This builds and boots the production image — use it to confirm a deploy works,
+not to iterate. For the fast dev loop use `just dev` ([development.md](./development.md)).
 
 1. Copy the env template and fill it in:
    ```sh
@@ -112,6 +120,45 @@ docker tag tether-host:<previous-short-sha> tether-host:latest
 docker compose up -d
 ```
 The `data` volume is untouched by either, so the source of truth survives both.
+
+## YouTube ingestion
+
+Optional. The container can't run the browser OAuth flow, so the token is
+**authorized on a laptop and installed into the data volume** — where pi's silent
+refresh writes back to a path that survives redeploys (`compose.yaml` sets
+`TETHER_YOUTUBE_TOKEN_PATH=/data/youtube/token.json`).
+
+1. On your laptop, install the Google clients and authorize once:
+   ```sh
+   uv sync --group youtube
+   # place a Desktop-app OAuth client JSON at .tether/youtube-client-secret.json
+   just youtube-auth          # opens a browser, caches .tether/youtube-oauth-token.json
+   ```
+2. Install the token into the running container's data volume and restart:
+   ```sh
+   just youtube-token-install            # docker compose cp into /data/youtube/token.json
+   docker compose restart host
+   ```
+   (If you also want the client-secret in the volume — needed so an *expired*
+   token can be re-minted in place — copy it too:
+   `docker compose cp .tether/youtube-client-secret.json host:/data/youtube/client-secret.json`.)
+
+Once the token is present the background ingestion sync activates on the next
+host start. With no token, ingestion runs the in-memory fake and the sync stays
+off — the rest of Tether is unaffected.
+
+## Logs
+
+The container emits structured JSON to stdout (captured by Docker). Render it
+readable and optionally follow a single chat turn end to end by its `run_id`:
+
+```sh
+just logs              # all host logs, pretty-printed (needs jq)
+just logs <run_id>     # only the lines servicing that turn
+```
+
+`run_id` is stamped on every host log line driving a chat prompt. Raw access is
+`docker compose logs -f host`.
 
 ## Notes
 

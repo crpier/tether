@@ -35,7 +35,6 @@ from tether.youtube import (
     FetchedTranscript,
     LikedPage,
     RawYouTubeVideo,
-    TranscriptExcludedError,
     TranscriptProvider,
     TranscriptSegment,
     TranscriptTransientError,
@@ -626,21 +625,29 @@ def _http_status(error: Exception) -> int | None:
 
 
 _HTTP_NOT_FOUND = 404
-_HTTP_FORBIDDEN = (401, 403)
+_HTTP_UNAUTHORIZED = 401
+_HTTP_FORBIDDEN = 403
 
 
 def _classify_caption_error(video_id: str, error: Exception) -> Exception:
     """Map a caption API failure onto a typed `TranscriptProvider` signal.
 
-    A 404 (no such captions) is *unavailable*; a 401/403 (members-only, owner has
-    disabled third-party caption access) is *excluded* and permanent; everything
-    else — rate limits, 5xx, transport errors — is *transient* and retryable.
+    A 404 (no such captions) and a 403 are both *unavailable*: the captions Data
+    API is owner-only, so it 403s for nearly every liked (third-party) video. That
+    is "this provider can't serve it", not a global property of the video — so it
+    must fall through to the library/Supadata fallbacks rather than raise the
+    *excluded* outcome, which would mark the video terminal and purge it from
+    ingestion before any fallback runs. A 401 (expired/invalid credentials) is
+    *transient* and retryable; everything else — rate limits, 5xx, transport
+    errors — is *transient* too.
     """
     status = _http_status(error)
-    if status == _HTTP_NOT_FOUND:
+    if status in (_HTTP_NOT_FOUND, _HTTP_FORBIDDEN):
         return TranscriptUnavailableError(video_id)
-    if status in _HTTP_FORBIDDEN:
-        return TranscriptExcludedError(video_id)
+    if status == _HTTP_UNAUTHORIZED:
+        return TranscriptTransientError(
+            f"caption fetch for {video_id} unauthorized (credentials): {error}"
+        )
     return TranscriptTransientError(f"caption fetch for {video_id} failed: {error}")
 
 
@@ -649,8 +656,9 @@ class CaptionsTranscriptProvider(TranscriptProvider):
 
     Lists a video's caption tracks, prefers a human-authored (non-ASR) track over
     an auto-generated one, downloads the chosen track as SRT, and parses it into
-    transcript text plus timed segments. No tracks or an empty download is the
-    *unavailable* outcome; a forbidden response is *excluded*; transport/5xx/rate
+    transcript text plus timed segments. No tracks, an empty download, or a 403
+    (the owner-only API refusing a third-party video) is the *unavailable* outcome
+    so the composite falls through to the fallbacks; a 401 and transport/5xx/rate
     errors are *transient*. Blocking Data API calls run in a worker thread. It
     holds no budget — the worker and on-demand path charge the daily budget before
     calling `fetch`.
