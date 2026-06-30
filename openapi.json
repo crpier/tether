@@ -948,6 +948,26 @@
         "title": "TetherRequest",
         "type": "object"
       },
+      "TranscriptProviderPauseRead": {
+        "description": "HTTP representation of a transcript source paused by an IP block.",
+        "properties": {
+          "paused_until": {
+            "format": "date-time",
+            "title": "Paused Until",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "paused_until"
+        ],
+        "title": "TranscriptProviderPauseRead",
+        "type": "object"
+      },
       "TriggerActionKind": {
         "enum": [
           "message",
@@ -1183,6 +1203,73 @@
           "watch_later"
         ],
         "type": "string"
+      },
+      "YouTubeSyncStatusRead": {
+        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n... )\n>>> read.videos_total\n3",
+        "properties": {
+          "api_paused_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Paused Until"
+          },
+          "last_synced_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced At"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/QuotaMeta"
+          },
+          "transcript_providers_paused": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptProviderPauseRead"
+            },
+            "title": "Transcript Providers Paused",
+            "type": "array"
+          },
+          "transcripts_done": {
+            "title": "Transcripts Done",
+            "type": "integer"
+          },
+          "transcripts_pending": {
+            "title": "Transcripts Pending",
+            "type": "integer"
+          },
+          "transcripts_unavailable": {
+            "title": "Transcripts Unavailable",
+            "type": "integer"
+          },
+          "videos_total": {
+            "title": "Videos Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "videos_total",
+          "transcripts_done",
+          "transcripts_pending",
+          "transcripts_unavailable",
+          "last_synced_at",
+          "quota",
+          "api_paused_until",
+          "transcript_providers_paused"
+        ],
+        "title": "YouTubeSyncStatusRead",
+        "type": "object"
       },
       "YouTubeTranscriptResponse": {
         "description": "A fetched transcript: the updated video, its text, and quota + cache.",
@@ -2241,6 +2328,23 @@
           }
         },
         "summary": "Keyword Search across saved content and transcript text."
+      }
+    },
+    "/api/youtube/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeSyncStatusRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Report the background ingestion's progress and health (local read only)."
       }
     },
     "/api/youtube/{video_id}/ignore": {

@@ -14,6 +14,7 @@ export type TriggerRecurrence = components["schemas"]["TriggerRecurrence"];
 export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
 export type DuePrompt = components["schemas"]["DuePromptRead"];
 export type AnswerOutcome = components["schemas"]["AnswerOutcomeRead"];
+export type YouTubeSyncStatus = components["schemas"]["YouTubeSyncStatusRead"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -32,6 +33,7 @@ export interface TetherApi {
   getPushStatus(endpoint: string): Promise<PushStatus>;
   subscribePush(endpoint: string, p256dh: string, auth: string): Promise<void>;
   unsubscribePush(endpoint: string): Promise<PushStatus>;
+  getYouTubeSyncStatus(): Promise<YouTubeSyncStatus>;
   listDueRecallPrompts(): Promise<DuePrompt[]>;
   answerRecallPrompt(
     promptId: string,
@@ -130,6 +132,10 @@ export function createRestApi(
         "/api/push/subscriptions",
         { body: { endpoint } },
       );
+      return requireData(data, response);
+    },
+    async getYouTubeSyncStatus() {
+      const { data, response } = await client.GET("/api/youtube/status");
       return requireData(data, response);
     },
     async listDueRecallPrompts() {

@@ -1099,6 +1099,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/youtube/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Report the background ingestion's progress and health (local read only). */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["YouTubeSyncStatusRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/youtube/{video_id}/ignore": {
     parameters: {
       query?: never;
@@ -1730,6 +1766,19 @@ export interface components {
       /** Version */
       version: number;
     };
+    /**
+     * TranscriptProviderPauseRead
+     * @description HTTP representation of a transcript source paused by an IP block.
+     */
+    TranscriptProviderPauseRead: {
+      /**
+       * Paused Until
+       * Format: date-time
+       */
+      paused_until: string;
+      /** Source */
+      source: string;
+    };
     /** @enum {string} */
     TriggerActionKind: "message" | "prompt";
     /**
@@ -1823,6 +1872,40 @@ export interface components {
     };
     /** @enum {string} */
     YouTubeSource: "liked" | "watch_later";
+    /**
+     * YouTubeSyncStatusRead
+     * @description HTTP snapshot of the background ingestion's progress and health.
+     *
+     *     >>> read = YouTubeSyncStatusRead(
+     *     ...     videos_total=3,
+     *     ...     transcripts_done=1,
+     *     ...     transcripts_pending=1,
+     *     ...     transcripts_unavailable=1,
+     *     ...     last_synced_at=None,
+     *     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
+     *     ...     api_paused_until=None,
+     *     ...     transcript_providers_paused=[],
+     *     ... )
+     *     >>> read.videos_total
+     *     3
+     */
+    YouTubeSyncStatusRead: {
+      /** Api Paused Until */
+      api_paused_until: string | null;
+      /** Last Synced At */
+      last_synced_at: string | null;
+      quota: components["schemas"]["QuotaMeta"];
+      /** Transcript Providers Paused */
+      transcript_providers_paused: components["schemas"]["TranscriptProviderPauseRead"][];
+      /** Transcripts Done */
+      transcripts_done: number;
+      /** Transcripts Pending */
+      transcripts_pending: number;
+      /** Transcripts Unavailable */
+      transcripts_unavailable: number;
+      /** Videos Total */
+      videos_total: number;
+    };
     /**
      * YouTubeTranscriptResponse
      * @description A fetched transcript: the updated video, its text, and quota + cache.

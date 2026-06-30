@@ -19,6 +19,7 @@ import type {
   PushStatus,
   TetherApi,
   Trigger,
+  YouTubeSyncStatus,
 } from "./api";
 import type {
   ChatBus,
@@ -232,6 +233,19 @@ class FakeApi implements TetherApi {
     this.unsubscribeCalls.push(endpoint);
     this.pushSubscribed = false;
     return Promise.resolve({ count: 0, subscribed: false });
+  }
+
+  getYouTubeSyncStatus(): Promise<YouTubeSyncStatus> {
+    return Promise.resolve({
+      api_paused_until: null,
+      last_synced_at: null,
+      quota: { limit: 10000, remaining: 10000, used: 0 },
+      transcript_providers_paused: [],
+      transcripts_done: 0,
+      transcripts_pending: 0,
+      transcripts_unavailable: 0,
+      videos_total: 0,
+    });
   }
 
   listDueRecallPrompts(): Promise<DuePrompt[]> {

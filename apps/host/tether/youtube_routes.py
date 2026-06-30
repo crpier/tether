@@ -37,6 +37,7 @@ from tether.youtube import (
     TranscriptUnavailableError,
     YouTubeQuotaExceededError,
     YouTubeSource,
+    YouTubeSyncStatus,
     YouTubeVideoNotFoundError,
     derive_ingest_state,
 )
@@ -155,6 +156,59 @@ class YouTubeTranscriptResponse(BaseModel):
         )
 
 
+class TranscriptProviderPauseRead(BaseModel):
+    """HTTP representation of a transcript source paused by an IP block."""
+
+    source: str
+    paused_until: datetime
+
+
+class YouTubeSyncStatusRead(BaseModel):
+    """HTTP snapshot of the background ingestion's progress and health.
+
+    >>> read = YouTubeSyncStatusRead(
+    ...     videos_total=3,
+    ...     transcripts_done=1,
+    ...     transcripts_pending=1,
+    ...     transcripts_unavailable=1,
+    ...     last_synced_at=None,
+    ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
+    ...     api_paused_until=None,
+    ...     transcript_providers_paused=[],
+    ... )
+    >>> read.videos_total
+    3
+    """
+
+    videos_total: int
+    transcripts_done: int
+    transcripts_pending: int
+    transcripts_unavailable: int
+    last_synced_at: datetime | None
+    quota: QuotaMeta
+    api_paused_until: datetime | None
+    transcript_providers_paused: list[TranscriptProviderPauseRead]
+
+    @classmethod
+    def from_status(cls, status: YouTubeSyncStatus) -> YouTubeSyncStatusRead:
+        """Render a service sync-status snapshot as its HTTP representation."""
+        return cls(
+            videos_total=status.videos_total,
+            transcripts_done=status.transcripts_done,
+            transcripts_pending=status.transcripts_pending,
+            transcripts_unavailable=status.transcripts_unavailable,
+            last_synced_at=status.last_synced_at,
+            quota=status.quota,
+            api_paused_until=status.api_paused_until,
+            transcript_providers_paused=[
+                TranscriptProviderPauseRead(
+                    source=pause.source, paused_until=pause.paused_until
+                )
+                for pause in status.transcript_providers_paused
+            ],
+        )
+
+
 def _request_logger(request: Request) -> Logger:
     """Return the request logging context installed by middleware."""
     return get_request_logger(request)
@@ -202,6 +256,17 @@ async def browse_youtube(request: Request, query: BrowseYouTubeQuery) -> Respons
     )
     return JSONResponse(
         YouTubeVideoListResponse.from_result(result).model_dump(mode="json")
+    )
+
+
+@endpoint(response=YouTubeSyncStatusRead)
+async def youtube_sync_status(request: Request) -> Response:
+    """Report the background ingestion's progress and health (local read only)."""
+    status = await request.app.state.youtube_service.sync_status(
+        logger=_request_logger(request),
+    )
+    return JSONResponse(
+        YouTubeSyncStatusRead.from_status(status).model_dump(mode="json")
     )
 
 
@@ -257,6 +322,7 @@ async def retry_youtube_video(request: Request) -> Response:
 # path wins.
 youtube_routes: list[Route] = [
     EndpointRoute("/api/youtube", browse_youtube, methods=["GET"]),
+    EndpointRoute("/api/youtube/status", youtube_sync_status, methods=["GET"]),
     EndpointRoute("/api/youtube/search", search_youtube, methods=["GET"]),
     EndpointRoute(
         "/api/youtube/{video_id}/transcript",

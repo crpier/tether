@@ -206,7 +206,9 @@ async def _forward_tool_start(
     """Remember tool args and forward tool-start events."""
     tool_call_id = event.get("toolCallId")
     args = event.get("args")
-    tool_args: dict[str, Any] = args if isinstance(args, dict) else {}
+    tool_args: dict[str, Any] = (
+        cast("dict[str, Any]", args) if isinstance(args, dict) else {}
+    )
     if isinstance(tool_call_id, str):
         pending_tool_args[tool_call_id] = tool_args
     await websocket.send_json(
