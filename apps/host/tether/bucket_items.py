@@ -45,6 +45,7 @@ from snekql.sqlite import (
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
+from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
@@ -293,7 +294,10 @@ class BucketItemService:
             attributes={"bucket_item.item_type": item_type},
         ) as span:
             _debug(logger, "Adding Bucket item", item_type=item_type)
-            async with self.database.transaction() as tx:
+
+            async def _add(
+                tx: Transaction,
+            ) -> tuple[BucketItem[Fetched], list[BucketItem[Fetched]]]:
                 duplicates = await tx.fetch_all(
                     select(BucketItem)
                     .where(
@@ -313,6 +317,9 @@ class BucketItemService:
                         )
                     ).returning()
                 )
+                return item, duplicates
+
+            item, duplicates = await run_in_transaction(self.database, _add)
             severity = _dedup_severity(duplicates)
             span.set_attribute("bucket_item.id", str(item.id))
             span.set_attribute("bucket_item.dedup_severity", severity)
@@ -475,7 +482,8 @@ class BucketItemService:
             terminate = terminate.set(BucketItem.completed_at.to(CurrentTimestamp))
         else:
             terminate = terminate.set(BucketItem.deleted_at.to(CurrentTimestamp))
-        async with self.database.transaction() as tx:
+
+        async def _terminate_tx(tx: Transaction) -> BucketItem[Fetched]:
             matched_rows = await tx.execute(
                 terminate.where(BucketItem.id.eq(item.id))
                 .where(BucketItem.completed_at.is_null())
@@ -507,6 +515,9 @@ class BucketItemService:
                     f"{item.version} but it had version {fresh_item.version}"
                 )
                 raise BucketItemConflictError(msg)
+            return fresh_item
+
+        fresh_item = await run_in_transaction(self.database, _terminate_tx)
         _info(
             logger,
             "Bucket item terminated",

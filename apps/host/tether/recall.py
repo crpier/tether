@@ -55,6 +55,7 @@ from snekql.sqlite import (
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
+from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
@@ -551,7 +552,8 @@ class RecallService:
                 provenance=MemoryProvenance(kind="youtube"),
                 logger=logger,
             )
-            async with self.database.transaction() as tx:
+
+            async def _start_recall(tx: Transaction) -> StudyItem[Fetched]:
                 study_item = await tx.execute(
                     insert(
                         StudyItem(
@@ -579,6 +581,9 @@ class RecallService:
                             )
                         )
                     )
+                return study_item
+
+            study_item = await run_in_transaction(self.database, _start_recall)
         _info(
             logger,
             "Recall started",
@@ -671,7 +676,10 @@ class RecallService:
                 "recall.quality": quality,
             },
         ):
-            async with self.database.transaction() as tx:
+
+            async def _answer(
+                tx: Transaction,
+            ) -> tuple[RecallPrompt[Fetched], StudyItem[Fetched], bool]:
                 _ = await tx.execute(
                     update(RecallPrompt)
                     .set(RecallPrompt.repetitions.to(reviewed.repetitions))
@@ -710,6 +718,11 @@ class RecallService:
                         .set(StudyItem.updated_at.to(CurrentTimestamp))
                         .where(StudyItem.id.eq(study_item.id))
                     )
+                return fresh_prompt, study_item, newly_complete
+
+            fresh_prompt, study_item, newly_complete = await run_in_transaction(
+                self.database, _answer
+            )
         tethered = False
         if newly_complete:
             tethered = await self._tether_memory(study_item.memory_id, logger=logger)

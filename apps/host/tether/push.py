@@ -32,6 +32,7 @@ from snekql.sqlite import (
     Model,
     Pending,
     Text,
+    Transaction,
     insert,
     select,
     update,
@@ -41,6 +42,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.openapi import EndpointRoute, endpoint
 
@@ -100,45 +102,48 @@ class PushService:
         any prior removal undone, so re-subscribing the same browser converges
         on a single live row rather than accumulating duplicates.
         """
-        async with self.database.transaction() as tx:
+
+        async def _subscribe(tx: Transaction) -> PushSubscription[Fetched]:
             existing = await tx.fetch_one_or_none(
                 select(PushSubscription).where(PushSubscription.endpoint.eq(endpoint))
             )
             if existing is None:
-                subscription = await tx.execute(
+                return await tx.execute(
                     insert(
                         PushSubscription(endpoint=endpoint, p256dh=p256dh, auth=auth)
                     ).returning()
                 )
-            else:
-                _ = await tx.execute(
-                    update(PushSubscription)
-                    .set(PushSubscription.p256dh.to(p256dh))
-                    .set(PushSubscription.auth.to(auth))
-                    .set(PushSubscription.deleted_at.to(None))
-                    .set(PushSubscription.updated_at.to(CurrentTimestamp))
-                    .where(PushSubscription.endpoint.eq(endpoint))
-                )
-                refreshed = await tx.fetch_one_or_none(
-                    select(PushSubscription).where(
-                        PushSubscription.endpoint.eq(endpoint)
-                    )
-                )
-                assert refreshed is not None  # row exists: just updated it
-                subscription = refreshed
+            _ = await tx.execute(
+                update(PushSubscription)
+                .set(PushSubscription.p256dh.to(p256dh))
+                .set(PushSubscription.auth.to(auth))
+                .set(PushSubscription.deleted_at.to(None))
+                .set(PushSubscription.updated_at.to(CurrentTimestamp))
+                .where(PushSubscription.endpoint.eq(endpoint))
+            )
+            refreshed = await tx.fetch_one_or_none(
+                select(PushSubscription).where(PushSubscription.endpoint.eq(endpoint))
+            )
+            assert refreshed is not None  # row exists: just updated it
+            return refreshed
+
+        subscription = await run_in_transaction(self.database, _subscribe)
         await self.event_publisher.publish(InvalidateEvent(keys=["push"]))
         return subscription
 
     async def unsubscribe(self, endpoint: str) -> None:
         """Remove a subscription convergently; a missing endpoint is a no-op."""
-        async with self.database.transaction() as tx:
-            matched = await tx.execute(
+
+        async def _unsubscribe(tx: Transaction) -> int:
+            return await tx.execute(
                 update(PushSubscription)
                 .set(PushSubscription.deleted_at.to(CurrentTimestamp))
                 .set(PushSubscription.updated_at.to(CurrentTimestamp))
                 .where(PushSubscription.endpoint.eq(endpoint))
                 .where(PushSubscription.deleted_at.is_null())
             )
+
+        matched = await run_in_transaction(self.database, _unsubscribe)
         if matched:
             await self.event_publisher.publish(InvalidateEvent(keys=["push"]))
 

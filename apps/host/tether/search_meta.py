@@ -26,12 +26,14 @@ from snekql.sqlite import (
     Model,
     Pending,
     Text,
+    Transaction,
     insert,
     scaffold,
     select,
     update,
 )
 
+from tether.db_retry import run_in_transaction
 from tether.logging import Logger
 
 _SINGLETON_ID = 1
@@ -85,7 +87,8 @@ class SearchMetaService:
             embedding_model=model,
             vector_dim=vector_dim,
         )
-        async with self.database.transaction() as tx:
+
+        async def _set(tx: Transaction) -> SearchMeta[Fetched]:
             existing = await tx.fetch_one_or_none(
                 select(SearchMeta).where(SearchMeta.id.eq(_SINGLETON_ID))
             )
@@ -113,6 +116,8 @@ class SearchMetaService:
                 message = "search_meta singleton vanished after update"
                 raise SearchMetaInvariantError(message)
             return fetched
+
+        return await run_in_transaction(self.database, _set)
 
 
 async def create_search_meta_schema(database: Database) -> None:

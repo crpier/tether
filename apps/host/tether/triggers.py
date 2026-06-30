@@ -61,6 +61,7 @@ from snekql.sqlite import (
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
+from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
@@ -404,8 +405,9 @@ class TriggerService:
                 recurrence=spec.recurrence,
                 action_kind=spec.action_kind,
             )
-            async with self.database.transaction() as tx:
-                trigger = await tx.execute(
+
+            async def _create(tx: Transaction) -> ScheduledTrigger[Fetched]:
+                return await tx.execute(
                     insert(
                         ScheduledTrigger(
                             recurrence=spec.recurrence,
@@ -419,6 +421,8 @@ class TriggerService:
                         )
                     ).returning()
                 )
+
+            trigger = await run_in_transaction(self.database, _create)
             span.set_attribute("trigger.id", str(trigger.id))
             _info(
                 logger,
@@ -483,7 +487,8 @@ class TriggerService:
             trigger_id=str(trigger.id),
             observed_version=trigger.version,
         )
-        async with self.database.transaction() as tx:
+
+        async def _update(tx: Transaction) -> ScheduledTrigger[Fetched]:
             matched = await tx.execute(
                 update(ScheduledTrigger)
                 .set(ScheduledTrigger.recurrence.to(spec.recurrence))
@@ -507,6 +512,9 @@ class TriggerService:
             fresh = await self._fetch_live(tx, trigger.id)
             if matched == 0:
                 self._raise_version_conflict(trigger, fresh, logger=logger)
+            return fresh
+
+        fresh = await run_in_transaction(self.database, _update)
         _info(
             logger,
             "Scheduled trigger updated",
@@ -536,7 +544,8 @@ class TriggerService:
             trigger_id=str(trigger.id),
             observed_version=trigger.version,
         )
-        async with self.database.transaction() as tx:
+
+        async def _delete(tx: Transaction) -> ScheduledTrigger[Fetched]:
             current = await tx.fetch_one_or_none(
                 select(ScheduledTrigger).where(ScheduledTrigger.id.eq(trigger.id))
             )
@@ -560,6 +569,9 @@ class TriggerService:
             assert current is not None
             if matched == 0:
                 self._raise_version_conflict(trigger, current, logger=logger)
+            return current
+
+        current = await run_in_transaction(self.database, _delete)
         _info(
             logger,
             "Scheduled trigger deleted",
@@ -581,8 +593,9 @@ class TriggerService:
         `claimed_at IS NULL`, so a row already in flight is skipped — the claim,
         not the dispatch, is what makes at-least-once delivery safe.
         """
-        claimed: list[ScheduledTrigger[Fetched]] = []
-        async with self.database.transaction() as tx:
+
+        async def _claim_due(tx: Transaction) -> list[ScheduledTrigger[Fetched]]:
+            claimed: list[ScheduledTrigger[Fetched]] = []
             candidates = await tx.fetch_all(
                 select(ScheduledTrigger)
                 .where(_due_predicate(now))
@@ -599,7 +612,9 @@ class TriggerService:
                 )
                 if matched == 1:
                     claimed.append(await self._fetch_live(tx, candidate.id))
-        return claimed
+            return claimed
+
+        return await run_in_transaction(self.database, _claim_due)
 
     async def record_success(
         self,
@@ -696,13 +711,16 @@ class TriggerService:
         has already retired, so settling a claimed trigger never resurrects one
         the human removed mid-dispatch.
         """
-        async with self.database.transaction() as tx:
+
+        async def _apply(tx: Transaction) -> ScheduledTrigger[Fetched]:
             _ = await tx.execute(
                 statement.where(ScheduledTrigger.id.eq(trigger_id)).where(
                     ScheduledTrigger.deleted_at.is_null()
                 )
             )
             return await self._fetch_any(tx, trigger_id)
+
+        return await run_in_transaction(self.database, _apply)
 
     def _raise_version_conflict(
         self,
