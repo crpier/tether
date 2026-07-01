@@ -49,7 +49,8 @@ class FakeTranscriptIndex:
     async def list_ids(self) -> set[UUID]:
         return set(self.docs)
 
-    async def optimize(self) -> None:
+    async def optimize(self, *, logger: Logger) -> None:
+        _ = logger
         self.optimize_calls += 1
 
 
