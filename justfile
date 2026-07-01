@@ -22,13 +22,12 @@ dev:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "web → http://127.0.0.1:3000  (open this)   host → http://127.0.0.1:8000"
-    # Ingestion syncs run eagerly in the startup lifespan and block the server
-    # from binding :8000 (the transcript pass makes synchronous per-video fetches
-    # for the whole liked-list). The fast dev loop is for web/HMR work, so keep
-    # them off here; run `just host` (or unset these) when exercising ingestion.
+    # Ingestion syncs run enabled here: the boot pass is fire-and-forget (#122),
+    # so a real OAuth token no longer blocks the :8000 bind, and `just dev` stays
+    # in step with new liked videos. Set TETHER_YOUTUBE_SYNC_ENABLED=false /
+    # TETHER_TRANSCRIPT_SYNC_ENABLED=false to opt out for a pure web/HMR loop.
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
         TETHER_LOGGING_LEVEL=DEBUG \
-        TETHER_YOUTUBE_SYNC_ENABLED=false TETHER_TRANSCRIPT_SYNC_ENABLED=false \
         uv run python -m tether &
     host_pid=$!
     pnpm -C apps/web dev &

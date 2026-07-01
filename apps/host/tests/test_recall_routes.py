@@ -10,6 +10,8 @@ The recall surface must never leak an answer key: a prompt read carries its
 `choices` but not `correct_index`, and these tests assert that.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -51,28 +53,37 @@ def one_prompt_distillation() -> GeneratedStudyItem:
     )
 
 
+@contextmanager
 def make_client(
     root: Path,
     *,
     api: InMemoryYouTubeApi,
     distillation: GeneratedStudyItem | None = None,
-) -> TestClient:
-    """A test app with a seeded YouTube API and an injected fake generator."""
-    return TestClient(
-        create_app(
-            config=AppConfig(
-                app_password=APP_PASSWORD,
-                database_path=root / "tether.sqlite3",
-                kb_root=root / ".tether",
-                session_secret=SESSION_SECRET,
-                youtube_api=api,
-                study_item_generator=FakeGenerator(
-                    distillation or one_prompt_distillation()
-                ),
+) -> Generator[TestClient]:
+    """A test app with a seeded YouTube API and an injected fake generator.
+
+    Yields the client only after the deferred boot sync mirror has completed
+    (see #122), so the seeded source video exists when recall routes run.
+    """
+    app = create_app(
+        config=AppConfig(
+            app_password=APP_PASSWORD,
+            database_path=root / "tether.sqlite3",
+            kb_root=root / ".tether",
+            session_secret=SESSION_SECRET,
+            youtube_api=api,
+            study_item_generator=FakeGenerator(
+                distillation or one_prompt_distillation()
             ),
-            telemetry_settings=TelemetrySettings(install_global_provider=False),
-        )
+        ),
+        telemetry_settings=TelemetrySettings(install_global_provider=False),
     )
+    with TestClient(app) as client:
+        boot_done = getattr(app.state, "youtube_boot_done", None)
+        portal = client.portal
+        if boot_done is not None and portal is not None:
+            portal.call(boot_done.wait)
+        yield client
 
 
 def login(client: TestClient) -> None:
