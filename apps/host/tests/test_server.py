@@ -12,7 +12,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import structlog
-from snektest import assert_eq, assert_in, assert_true, test
+from snektest import assert_eq, assert_false, assert_in, assert_true, test
+from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tether import server
@@ -144,8 +145,8 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
     assert_eq(settings.tool_secret, "configured-tool-secret")
-    assert_eq(settings.youtube_sync_enabled, False)
-    assert_eq(settings.transcript_sync_enabled, False)
+    assert_false(settings.youtube_sync_enabled)
+    assert_false(settings.transcript_sync_enabled)
 
 
 @test()
@@ -154,8 +155,8 @@ def sync_enabled_defaults_to_true() -> None:
     settings = HostSettings(
         app_password="test-app-password", session_secret="test-session-secret"
     )
-    assert_eq(settings.youtube_sync_enabled, True)
-    assert_eq(settings.transcript_sync_enabled, True)
+    assert_true(settings.youtube_sync_enabled)
+    assert_true(settings.transcript_sync_enabled)
 
 
 @test()
@@ -168,9 +169,9 @@ def environment_app_factory_propagates_sync_flags() -> None:
     """
     captured: list[AppConfig] = []
 
-    def fake_create_app(*, config: AppConfig, **_: object) -> object:
+    def fake_create_app(*, config: AppConfig, **_: object) -> Starlette:
         captured.append(config)
-        return object()
+        return Starlette()
 
     original_create_app = server.create_app
     server.create_app = fake_create_app
@@ -185,8 +186,9 @@ def environment_app_factory_propagates_sync_flags() -> None:
     finally:
         server.create_app = original_create_app
 
-    assert_eq(captured[0].youtube_sync_enabled, False)
-    assert_eq(captured[0].transcript_sync_enabled, False)
+    assert_eq(len(captured), 1)
+    assert_false(captured[0].youtube_sync_enabled)
+    assert_false(captured[0].transcript_sync_enabled)
 
 
 @test()
