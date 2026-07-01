@@ -1,5 +1,11 @@
 # Tether tasks. `just` from root; uv targets apps/host via UV_PROJECT (.envrc).
 
+# Load the repo-root `.env` into every recipe's environment. Without this the
+# host boots with an empty `TETHER_MODEL_ALLOWLIST` (and no default model), so
+# the chat model selector renders no choices. Recipe-line assignments (e.g.
+# `TETHER_APP_PASSWORD=dev` in `host`/`dev`) still override the dotenv values.
+set dotenv-load := true
+
 default:
     @just --list
 
