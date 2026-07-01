@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
+from typing import Protocol
 
 from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
@@ -32,6 +33,16 @@ class RuntimeRegistryConfig:
     idle_seconds: float = 30 * 60
 
 
+class PiSpawner(Protocol):
+    """Spawn seam for pi runtimes, injectable so tests avoid real subprocesses."""
+
+    async def __call__(
+        self, config: PiRuntimeConfig, *, session_registry: SessionRegistry
+    ) -> PiRuntime:
+        """Spawn a pi runtime for `config`, registered with `session_registry`."""
+        ...
+
+
 @dataclass(slots=True)
 class _RuntimeSlot:
     """Live runtime plus idle bookkeeping."""
@@ -48,9 +59,11 @@ class ConversationRuntimeRegistry:
         config: RuntimeRegistryConfig,
         *,
         now: Callable[[], float] = monotonic,
+        spawn: PiSpawner = PiRuntime.spawn,
     ) -> None:
         self.config: RuntimeRegistryConfig = config
         self._now: Callable[[], float] = now
+        self._spawn: PiSpawner = spawn
         self._runtimes: dict[str, _RuntimeSlot] = {}
 
     def current_for(self, conversation_id: object) -> PiRuntime | None:
@@ -66,11 +79,17 @@ class ConversationRuntimeRegistry:
         conversation_key = str(conversation.id)
         slot = self._runtimes.get(conversation_key)
         if slot is not None and slot.runtime.process.returncode is None:
-            slot.last_used = self._now()
-            return slot.runtime
+            # A live process bound to the conversation's *current* pi session is
+            # reusable; one left on a rotated-out session must be torn down so
+            # the next turn starts clean instead of reloading stale context.
+            if slot.runtime.session_id == str(conversation.pi_session_id):
+                slot.last_used = self._now()
+                return slot.runtime
+            await slot.runtime.shutdown()
+            _ = self._runtimes.pop(conversation_key, None)
         session_dir = self.config.session_root / conversation_key
         await AsyncPath(session_dir).mkdir(parents=True, exist_ok=True)
-        runtime = await PiRuntime.spawn(
+        runtime = await self._spawn(
             PiRuntimeConfig(
                 extra_extension_paths=self.config.extra_extension_paths,
                 pi_binary=self.config.pi_binary,

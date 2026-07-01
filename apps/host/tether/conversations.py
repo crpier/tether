@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 from uuid import UUID, uuid7
 
@@ -43,6 +43,11 @@ type JsonValue = (
 
 class ConversationNotFoundError(Exception):
     """Raised when transcript history is requested for an absent conversation."""
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Read a stored timestamp as UTC-aware; SQLite `CURRENT_TIMESTAMP` is naive."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +219,63 @@ class ConversationService:
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation, model
+
+    async def resolve_session(
+        self,
+        conversation: Conversation[Fetched],
+        *,
+        now: datetime,
+        gap: timedelta,
+    ) -> Conversation[Fetched]:
+        """Return the conversation to prompt, rotating pi if the gap ran cold.
+
+        A gap shorter than `gap` reuses the live pi session (warm provider
+        cache); a longer gap rotates to a fresh session. A conversation with no
+        prior activity is treated as warm — there is nothing stale to abandon.
+        """
+        last = await self.latest_activity(conversation.id)
+        if last is None or _as_utc(now) - _as_utc(last) < gap:
+            return conversation
+        return await self.rotate_pi_session(conversation.id)
+
+    async def latest_activity(self, conversation_id: UUID) -> datetime | None:
+        """Return when the last transcript row landed, or None if empty.
+
+        This is the server-observed wall-clock of the most recent turn — the
+        signal used to decide whether an incoming message still lands inside the
+        provider's prompt-cache warmth window.
+        """
+        async with self.database.transaction() as tx:
+            latest = await tx.fetch_one_or_none(
+                select(Message)
+                .where(Message.conversation_id.eq(conversation_id))
+                .order_by(Message.seq.desc())
+                .limit(1)
+            )
+        return latest.created_at if latest is not None else None
+
+    async def rotate_pi_session(self, conversation_id: UUID) -> Conversation[Fetched]:
+        """Point a conversation at a fresh pi session; transcript rows are kept.
+
+        The user keeps seeing one continuous conversation; only the underlying
+        pi session identity changes, so the next turn starts pi with an empty
+        context instead of resending a stale, uncached history.
+        """
+
+        async def _rotate(tx: Transaction) -> Conversation[Fetched] | None:
+            _ = await tx.execute(
+                update(Conversation)
+                .set(Conversation.pi_session_id.to(uuid7()))
+                .where(Conversation.id.eq(conversation_id))
+            )
+            return await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(conversation_id))
+            )
+
+        conversation = await run_in_transaction(self.database, _rotate)
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation
 
     async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
         """Return settled transcript rows for a conversation in display order."""

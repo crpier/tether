@@ -2,19 +2,20 @@
 
 import asyncio
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 from uuid import UUID
 
+from snekql.sqlite import update
 from snektest import assert_eq, assert_in, assert_len, assert_true, test
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tether.chat_ws import _local_timezone_name, _prompt_with_time_context
-from tether.conversations import MessageDraft
+from tether.conversations import ConversationService, Message, MessageDraft
 from tether.model_selection import AgentModelConfig
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
@@ -594,6 +595,53 @@ def websocket_prompt_streams_and_persists_assistant_message() -> None:
     assert_eq([message["role"] for message in messages], ["user", "assistant"])
     assert_eq(messages[1]["content"], "script complete")
     assert_eq(messages[1]["seq"], 2)
+
+
+async def _backdate_transcript(
+    service: ConversationService, conversation_id: UUID, minutes: int
+) -> None:
+    """Age every transcript row so the next prompt reads as a cold gap."""
+    stale = (datetime.now(UTC) - timedelta(minutes=minutes)).replace(tzinfo=None)
+    async with service.database.transaction() as tx:
+        _ = await tx.execute(
+            update(Message)
+            .set(Message.created_at.to(stale))
+            .where(Message.conversation_id.eq(conversation_id))
+        )
+
+
+@test()
+def websocket_prompt_rotates_pi_session_after_a_cold_gap() -> None:
+    """The server rotates the pi session when a prompt lands past the gap."""
+    with (
+        TemporaryDirectory() as directory,
+        make_faux_chat_client(Path(directory)) as client,
+    ):
+        login(client)
+        conversation = client.get("/api/conversations").json()[0]
+        conversation_id = conversation["id"]
+        before = conversation["pi_session_id"]
+        prompt_until_agent_end(
+            client, conversation_id=conversation_id, content="first topic"
+        )
+        warm = client.get("/api/conversations").json()[0]["pi_session_id"]
+
+        portal = client.portal
+        assert portal is not None
+        service = cast("Starlette", client.app).state.conversation_service
+        portal.call(_backdate_transcript, service, UUID(conversation_id), 10)
+        prompt_until_agent_end(
+            client, conversation_id=conversation_id, content="new topic"
+        )
+        after = client.get("/api/conversations").json()[0]["pi_session_id"]
+        messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
+
+    assert_eq(warm, before)
+    assert_true(after != before)
+    assert_eq(
+        [message["role"] for message in messages],
+        ["user", "assistant", "user", "assistant"],
+    )
 
 
 @test()
