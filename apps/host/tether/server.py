@@ -195,6 +195,15 @@ class HostSettings(BaseSettings):
     youtube_token_path: Path = Path(".tether/youtube-oauth-token.json")
     youtube_client_secret_path: Path = Path(".tether/youtube-client-secret.json")
     youtube_oauth_no_browser: bool = False
+    youtube_sync_enabled: bool = True
+    """Whether the background liked-videos sync runs. On by default; set
+    `TETHER_YOUTUBE_SYNC_ENABLED=false` to keep the upstream client wired for
+    on-demand use while skipping the eager boot sync (e.g. the fast dev loop,
+    where the startup pass otherwise delays the server binding its port)."""
+    transcript_sync_enabled: bool = True
+    """Whether the background transcript worker runs. On by default; set
+    `TETHER_TRANSCRIPT_SYNC_ENABLED=false` to skip the eager boot drain (which
+    otherwise fetches per-video transcripts synchronously and delays startup)."""
     transcript_library_enabled: bool = True
     """Whether to compose the `youtube-transcript-api` fallback behind the captions
     provider. Enabled by default; set `TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` to
@@ -917,7 +926,9 @@ def create_app_from_environment() -> Starlette:
             session_secret=settings.session_secret,
             web_dist=settings.web_dist,
             youtube_api=build_configured_youtube_api(settings),
+            youtube_sync_enabled=settings.youtube_sync_enabled,
             transcript_provider=build_configured_transcript_provider(settings),
+            transcript_sync_enabled=settings.transcript_sync_enabled,
         ),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
