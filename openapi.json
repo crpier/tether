@@ -1655,6 +1655,31 @@
       }
     },
     "/api/conversations/{conversation_id}/messages": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Clear one conversation's transcript and rotate its pi session."
+      },
       "get": {
         "parameters": [
           {

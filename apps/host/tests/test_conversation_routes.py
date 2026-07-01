@@ -50,6 +50,9 @@ class FakeRuntime:
         """Match the production runtime's per-prompt queue hygiene hook."""
         return 0
 
+    async def shutdown(self) -> None:
+        """Match the production runtime's teardown hook."""
+
     async def next_event(
         self, event_type: str | None = None, *, wait_seconds: float = 5.0
     ) -> dict[str, Any]:
@@ -1090,3 +1093,52 @@ def websocket_tool_frames_carry_args_and_result() -> None:
         by_event["tool_end"]["tool_result"],
         {"details": {"result": {"id": "memory-id"}}},
     )
+
+
+@test()
+def clearing_a_conversation_empties_the_transcript() -> None:
+    """DELETE on the messages route drops history and rotates the pi session."""
+    fake_runtime = FakeRuntime(
+        [
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hello there"}],
+                },
+            },
+            {"type": "agent_end"},
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation = client.get("/api/conversations").json()[0]
+        conversation_id = conversation["id"]
+        prompt_until_agent_end(
+            client, conversation_id=conversation_id, content="Say hi"
+        )
+        before = client.get(f"/api/conversations/{conversation_id}/messages").json()
+        assert_true(len(before) > 0)
+
+        response = client.delete(f"/api/conversations/{conversation_id}/messages")
+
+        assert_eq(response.status_code, 200)
+        cleared = response.json()
+        assert_eq(cleared["id"], conversation_id)
+        assert_true(cleared["pi_session_id"] != conversation["pi_session_id"])
+        after = client.get(f"/api/conversations/{conversation_id}/messages").json()
+        assert_eq(after, [])
+
+
+@test()
+def clearing_a_missing_conversation_returns_404() -> None:
+    """A DELETE for an unknown conversation id is a clean 404."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        response = client.delete(
+            "/api/conversations/00000000-0000-0000-0000-000000000000/messages"
+        )
+        assert_eq(response.status_code, 404)

@@ -18,6 +18,7 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    delete,
     insert,
     select,
     update,
@@ -277,6 +278,33 @@ class ConversationService:
             raise ConversationNotFoundError(conversation_id)
         return conversation
 
+    async def clear_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
+        """Delete a conversation's transcript rows and rotate its pi session.
+
+        The user's single continuous thread is emptied so they can start fresh;
+        rotating `pi_session_id` in the same transaction means the next turn
+        also starts pi with an empty context rather than replaying the (now
+        deleted) history.
+        """
+
+        async def _clear(tx: Transaction) -> Conversation[Fetched] | None:
+            _ = await tx.execute(
+                delete(Message).where(Message.conversation_id.eq(conversation_id))
+            )
+            _ = await tx.execute(
+                update(Conversation)
+                .set(Conversation.pi_session_id.to(uuid7()))
+                .where(Conversation.id.eq(conversation_id))
+            )
+            return await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(conversation_id))
+            )
+
+        conversation = await run_in_transaction(self.database, _clear)
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation
+
     async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
         """Return settled transcript rows for a conversation in display order."""
         async with self.database.transaction() as tx:
@@ -423,6 +451,32 @@ async def list_messages(request: Request) -> Response:
     return await _messages_response(request, conversation_id)
 
 
+@endpoint(response=ConversationRead)
+async def clear_messages(request: Request) -> Response:
+    """Clear one conversation's transcript and rotate its pi session."""
+    raw_conversation_id = request.path_params["conversation_id"]
+    try:
+        conversation_id = UUID(raw_conversation_id)
+    except ValueError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    try:
+        conversation = await request.app.state.conversation_service.clear_conversation(
+            conversation_id
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    # Tear down any live runtime bound to the now-rotated session so the next
+    # turn spawns clean against the fresh pi session instead of replaying it.
+    runtime = request.app.state.conversation_runtime_registry.current_for(
+        conversation.id
+    )
+    if runtime is not None:
+        await runtime.shutdown()
+    return JSONResponse(
+        ConversationRead.from_conversation(conversation).model_dump(mode="json")
+    )
+
+
 conversation_routes: list[Route] = [
     EndpointRoute("/api/conversations", list_conversations, methods=["GET"]),
     EndpointRoute(
@@ -434,5 +488,10 @@ conversation_routes: list[Route] = [
         "/api/conversations/{conversation_id}/messages",
         list_messages,
         methods=["GET"],
+    ),
+    EndpointRoute(
+        "/api/conversations/{conversation_id}/messages",
+        clear_messages,
+        methods=["DELETE"],
     ),
 ]

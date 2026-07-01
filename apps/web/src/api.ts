@@ -22,6 +22,7 @@ export interface TetherApi {
   logout(): Promise<void>;
   listConversations(): Promise<Conversation[]>;
   listMessages(conversationId: string): Promise<Message[]>;
+  clearConversation(conversationId: string): Promise<Conversation>;
   listModels(): Promise<ModelList>;
   setConversationModel(
     conversationId: string,
@@ -82,6 +83,13 @@ export function createRestApi(
     },
     async listMessages(conversationId) {
       const { data, response } = await client.GET(
+        "/api/conversations/{conversation_id}/messages",
+        { params: { path: { conversation_id: conversationId } } },
+      );
+      return requireData(data, response);
+    },
+    async clearConversation(conversationId) {
+      const { data, response } = await client.DELETE(
         "/api/conversations/{conversation_id}/messages",
         { params: { path: { conversation_id: conversationId } } },
       );

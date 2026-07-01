@@ -327,10 +327,19 @@ function MessageRow(props: { row: TimelineRow }) {
                 </Show>
                 <strong class={bubbleLabelClass}>{toolText(tool())}</strong>
               </div>
+              {/* Keep the raw tool-call arguments out of the transcript flow —
+                  dumping the model's tool-call JSON (e.g. a memory capture's
+                  {"content": …}) read as an assistant message. Tuck it behind a
+                  collapsed disclosure so it stays available without leaking. */}
               <Show when={args().length > 0}>
-                <pre class="bg-background/40 mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
-                  {args()}
-                </pre>
+                <details class="mt-1.5">
+                  <summary class="cursor-pointer select-none opacity-80">
+                    arguments
+                  </summary>
+                  <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
+                    {args()}
+                  </pre>
+                </details>
               </Show>
               <Show when={result().length > 0}>
                 <details class="mt-1.5">
@@ -856,7 +865,11 @@ function YouTubeSyncPanel(props: { api: TetherApi }) {
               <Show when={status().api_paused_until}>
                 {(until) => (
                   <p class="text-destructive text-xs" role="status">
-                    {`API paused until ${formatUntil(until())}`}
+                    {`API backing off until ${formatUntil(until())}`}
+                    <span class="mt-0.5 block opacity-80">
+                      Auto-retry after a quota error from YouTube — not the
+                      daily budget above. Clears on the first successful call.
+                    </span>
                   </p>
                 )}
               </Show>
@@ -1058,7 +1071,11 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   const [turn, setTurn] = createSignal<LiveTurn>(emptyTurn());
   const [messagesRefresh, setMessagesRefresh] = createSignal(0);
   const [notifications, setNotifications] = createSignal<NotifyItem[]>([]);
+  // Survives the live turn being retired by settled history, so the "stopped"
+  // marker stays on the (now persisted) partial reply instead of flashing away.
+  const [interrupted, setInterrupted] = createSignal(false);
   const generating = createMemo(() => turn().generating);
+  const canSend = createMemo(() => !generating() && draft().trim().length > 0);
 
   const conversationsQuery = createQuery(() => ({
     queryFn: () => props.api.listConversations(),
@@ -1139,6 +1156,9 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
       return;
     }
     setTurn((current) => reduceFrame(current, frame, Date.now()));
+    if (frame.event === "abort_ack") {
+      setInterrupted(true);
+    }
     if (frame.event === "error") {
       setError(frame.detail ?? "Chat error");
     }
@@ -1169,8 +1189,38 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
     }
     setDraft("");
     setError(undefined);
+    setInterrupted(false);
     setTurn(startTurn(content, Date.now()));
     bus()?.sendPrompt(id, content);
+  };
+
+  const [clearing, setClearing] = createSignal(false);
+  const clearConversation = () => {
+    const id = conversationId();
+    if (id === undefined || clearing()) {
+      return;
+    }
+    void (async () => {
+      setClearing(true);
+      setError(undefined);
+      try {
+        // Stop any in-flight turn first so its stream cannot resurrect the
+        // transcript we are about to drop.
+        if (generating()) {
+          bus()?.abort(id);
+        }
+        await props.api.clearConversation(id);
+        setInterrupted(false);
+        setTurn(emptyTurn());
+        rehydrate();
+      } catch (caught) {
+        setError(
+          caught instanceof Error ? caught.message : "Could not clear the chat",
+        );
+      } finally {
+        setClearing(false);
+      }
+    })();
   };
 
   const abort = () => {
@@ -1205,7 +1255,10 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   };
 
   return (
-    <main aria-labelledby="chat-title" class="flex h-screen flex-col">
+    <main
+      aria-labelledby="chat-title"
+      class="flex h-screen flex-col overflow-hidden"
+    >
       <header class="bg-card flex items-center gap-4 border-b px-5 py-3">
         <h1
           id="chat-title"
@@ -1221,11 +1274,20 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
             />
           )}
         </Show>
+        <Button
+          disabled={clearing() || conversation() === undefined}
+          onClick={clearConversation}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          New chat
+        </Button>
         <Button onClick={logout} size="sm" type="button" variant="outline">
           Log out
         </Button>
       </header>
-      <div class="mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)_22rem] gap-5 overflow-hidden p-5">
+      <div class="mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)_22rem] gap-5 overflow-hidden p-5">
         <div class="flex min-h-0 flex-col gap-3">
           <Show when={connection() !== "open"}>
             <p
@@ -1270,7 +1332,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
             <MessageRows
               rows={rows()}
               startedAt={turn().startedAt}
-              stopped={turn().stopped}
+              stopped={turn().stopped || interrupted()}
               working={working()}
             />
             <form class="space-y-2" onSubmit={onSubmit}>
@@ -1279,7 +1341,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
                 <TextFieldTextArea onKeyDown={onMessageKeyDown} />
               </TextField>
               <div class="flex justify-end gap-2">
-                <Button disabled={generating()} type="submit">
+                <Button disabled={!canSend()} type="submit">
                   Send
                 </Button>
                 <Button

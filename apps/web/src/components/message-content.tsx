@@ -27,14 +27,26 @@ const proseClass = [
   "[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold",
 ].join(" ");
 
+// Force every rendered link to open in a new tab with tab-nabbing protection.
+// A hook (not a marked renderer override) so it applies uniformly to autolinks,
+// reference links, and inline links alike, and runs after sanitization sees the
+// anchor. Registered once at module load; DOMPurify hooks are process-global.
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  }
+});
+
 function renderMarkdown(text: string): string {
   // marked can return a Promise only with async extensions; this config is
   // synchronous, so the string branch always holds.
   const parsed = marked.parse(text);
   const html = typeof parsed === "string" ? parsed : "";
-  // Sanitize model output before it touches innerHTML. ADD_ATTR opens target so
-  // links can open in a new tab; the sanitizer still strips scripts/handlers.
-  return DOMPurify.sanitize(html, { ADD_ATTR: ["target"] });
+  // Sanitize model output before it touches innerHTML. ADD_ATTR opens target/rel
+  // so the new-tab hook's attributes survive; the sanitizer still strips
+  // scripts/handlers.
+  return DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] });
 }
 
 // Render assistant text as sanitized markdown. Used for settled and streaming

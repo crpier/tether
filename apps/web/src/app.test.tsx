@@ -126,6 +126,7 @@ class FakeApi implements TetherApi {
   deleteTriggerCalls: { triggerId: string; version: number }[] = [];
   loginPassword: string | undefined;
   messageCalls = 0;
+  clearConversationCalls = 0;
   pushSubscribed = false;
   selectedModel: string | undefined;
   storedConversation: Conversation = { ...conversation };
@@ -175,6 +176,18 @@ class FakeApi implements TetherApi {
   listMessages() {
     this.messageCalls += 1;
     return Promise.resolve(this.storedMessages);
+  }
+
+  clearConversation() {
+    this.clearConversationCalls += 1;
+    this.storedMessages = [];
+    this.storedConversation = {
+      ...this.storedConversation,
+      pi_session_id: `018f0000-0000-7000-8000-00000000c${this.clearConversationCalls
+        .toString()
+        .padStart(3, "0")}`,
+    };
+    return Promise.resolve(this.storedConversation);
   }
 
   listModels() {
@@ -638,6 +651,71 @@ describe("Tether SPA", () => {
       },
       { conversationId: conversation.id, type: "abort" },
     ]);
+  });
+
+  test("Send is disabled until the input has non-whitespace text", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    const send = await screen.findByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+
+    const messageBox = textarea(screen.getByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "   " } });
+    expect(send).toBeDisabled();
+
+    fireEvent.input(messageBox, { target: { value: "hello" } });
+    expect(send).toBeEnabled();
+  });
+
+  test("a stopped generation keeps an interrupted marker on the transcript", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "Keep going" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "partial ans",
+      event: "text_delta",
+      type: "chat",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "abort_ack",
+      type: "chat",
+    });
+
+    expect(await screen.findByText("Generation stopped.")).toBeInTheDocument();
+
+    // Settled history arriving must not wipe the marker off the partial reply.
+    bus.emit({ keys: ["messages"], type: "invalidate" });
+    await waitFor(() => {
+      expect(api.messageCalls).toBeGreaterThan(1);
+    });
+    expect(screen.getByText("Generation stopped.")).toBeInTheDocument();
+  });
+
+  test("New chat clears the transcript via the API", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      messages: [message({ content: "old topic", role: "user", seq: 1 })],
+    });
+    renderApp(api);
+
+    expect(await screen.findByText("old topic")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => {
+      expect(api.clearConversationCalls).toBe(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("old topic")).not.toBeInTheDocument();
+    });
   });
 
   test("invalidate frames refetch named query keys", async () => {
