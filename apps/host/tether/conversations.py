@@ -220,6 +220,24 @@ class ConversationService:
             raise ConversationNotFoundError(conversation_id)
         return conversation, model
 
+    async def resolve_session(
+        self,
+        conversation: Conversation[Fetched],
+        *,
+        now: datetime,
+        gap: timedelta,
+    ) -> Conversation[Fetched]:
+        """Return the conversation to prompt, rotating pi if the gap ran cold.
+
+        A gap shorter than `gap` reuses the live pi session (warm provider
+        cache); a longer gap rotates to a fresh session. A conversation with no
+        prior activity is treated as warm — there is nothing stale to abandon.
+        """
+        last = await self.latest_activity(conversation.id)
+        if last is None or _as_utc(now) - _as_utc(last) < gap:
+            return conversation
+        return await self.rotate_pi_session(conversation.id)
+
     async def latest_activity(self, conversation_id: UUID) -> datetime | None:
         """Return when the last transcript row landed, or None if empty.
 
@@ -258,24 +276,6 @@ class ConversationService:
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation
-
-    async def resolve_session(
-        self,
-        conversation: Conversation[Fetched],
-        *,
-        now: datetime,
-        gap: timedelta,
-    ) -> Conversation[Fetched]:
-        """Return the conversation to prompt, rotating pi if the gap ran cold.
-
-        A gap shorter than `gap` reuses the live pi session (warm provider
-        cache); a longer gap rotates to a fresh session. A conversation with no
-        prior activity is treated as warm — there is nothing stale to abandon.
-        """
-        last = await self.latest_activity(conversation.id)
-        if last is None or _as_utc(now) - _as_utc(last) < gap:
-            return conversation
-        return await self.rotate_pi_session(conversation.id)
 
     async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
         """Return settled transcript rows for a conversation in display order."""
