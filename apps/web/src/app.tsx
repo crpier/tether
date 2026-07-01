@@ -213,7 +213,11 @@ function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
   };
 
   return (
-    <div aria-label="Model" class="flex items-center gap-1.5" role="group">
+    <div
+      aria-label="Model"
+      class="flex flex-wrap items-center gap-1.5"
+      role="group"
+    >
       <span class="text-muted-foreground text-xs">Model</span>
       <For each={modelsQuery.data?.models ?? []}>
         {(model) => (
@@ -455,7 +459,12 @@ function MessageRows(props: {
   });
 
   return (
-    <div class="relative flex min-h-0 flex-1 flex-col">
+    // On phones the page scrolls (no fixed-height parent), so the transcript
+    // needs an explicit floor or `flex-1` collapses to its content and the chat
+    // reads as a sliver again. 55svh keeps it the dominant element above the
+    // stacked sidebar while leaving the composer in view. At `lg` the shell is a
+    // fixed-height grid, so we drop the floor and let flex fill the column.
+    <div class="relative flex min-h-[55svh] flex-1 flex-col lg:min-h-0">
       <section
         ref={(element) => {
           viewport = element;
@@ -1391,9 +1400,9 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   return (
     <main
       aria-labelledby="chat-title"
-      class="flex h-screen flex-col overflow-hidden"
+      class="flex min-h-screen flex-col lg:h-screen"
     >
-      <header class="bg-card flex items-center gap-4 border-b px-5 py-3">
+      <header class="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5">
         <h1
           id="chat-title"
           class="mr-auto text-lg font-semibold tracking-tight"
@@ -1421,7 +1430,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
           Log out
         </Button>
       </header>
-      <div class="mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)_22rem] gap-5 overflow-hidden p-5">
+      <div class="mx-auto grid w-full max-w-6xl flex-1 grid-cols-1 gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:overflow-hidden">
         <div class="flex min-h-0 flex-col gap-3">
           <Show when={connection() !== "open"}>
             <p
