@@ -85,3 +85,43 @@ async def resolve_session_keeps_pi_session_when_never_used() -> None:
     )
 
     assert_eq(resolved.pi_session_id, conversation.pi_session_id)
+
+
+@test()
+async def clear_conversation_drops_history_and_rotates_session() -> None:
+    """Clearing empties the transcript and starts a fresh pi session."""
+    service = await load_fixture(conversation_service())
+    conversation = (await service.list_conversations())[0]
+    _ = await service.append_message(
+        MessageDraft(
+            content="old topic",
+            conversation_id=conversation.id,
+            role="user",
+        )
+    )
+
+    cleared = await service.clear_conversation(conversation.id)
+
+    assert_eq(cleared.id, conversation.id)
+    assert_true(cleared.pi_session_id != conversation.pi_session_id)
+    assert_eq(await service.fetch_messages(conversation.id), [])
+
+
+@test()
+async def clear_conversation_resets_the_sequence_counter() -> None:
+    """After clearing, the next appended row starts the sequence over at 1."""
+    service = await load_fixture(conversation_service())
+    conversation = (await service.list_conversations())[0]
+    _ = await service.append_message(
+        MessageDraft(content="one", conversation_id=conversation.id, role="user")
+    )
+    _ = await service.append_message(
+        MessageDraft(content="two", conversation_id=conversation.id, role="assistant")
+    )
+
+    _ = await service.clear_conversation(conversation.id)
+    appended = await service.append_message(
+        MessageDraft(content="fresh", conversation_id=conversation.id, role="user")
+    )
+
+    assert_eq(appended.seq, 1)

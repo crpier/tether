@@ -363,7 +363,29 @@ export interface paths {
     };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Clear one conversation's transcript and rotate its pi session. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          conversation_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ConversationRead"];
+          };
+        };
+      };
+    };
     options?: never;
     head?: never;
     patch?: never;
