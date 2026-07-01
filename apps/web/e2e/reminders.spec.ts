@@ -15,10 +15,15 @@ test("creates a one-off reminder and shows it in the list", async ({
   // depend on the default and the datetime-local field is present.
   await reminders.locator('select[name="recurrence"]').selectOption("once");
 
-  // datetime-local wants a "YYYY-MM-DDTHH:MM" value; use a near-future time.
-  const fireAt = new Date(Date.now() + 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 16);
+  // datetime-local wants a *local* "YYYY-MM-DDTHH:MM" value; build it from local
+  // components (not toISOString(), which is UTC) so the instant is genuinely in
+  // the future in every timezone — the input's `min` and the server both reject
+  // past times.
+  const future = new Date(Date.now() + 60 * 60 * 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const fireAt =
+    `${String(future.getFullYear())}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}` +
+    `T${pad(future.getHours())}:${pad(future.getMinutes())}`;
   await reminders.locator('input[name="fire_at"]').fill(fireAt);
 
   await reminders.getByRole("button", { name: "Add reminder" }).click();

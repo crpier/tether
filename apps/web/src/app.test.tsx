@@ -9,6 +9,7 @@ import {
 import { afterEach, describe, expect, test } from "vitest";
 
 import { App } from "./app";
+import { ApiError } from "./api";
 import type {
   AnswerOutcome,
   Conversation,
@@ -124,6 +125,9 @@ class FakeApi implements TetherApi {
   authenticated: boolean;
   createTriggerCalls: CreateTrigger[] = [];
   deleteTriggerCalls: { triggerId: string; version: number }[] = [];
+  // Per-trigger version the fake "server" will accept on delete; a mismatch
+  // (e.g. after the trigger fired) is rejected with a 409, like the host.
+  serverTriggerVersions: Record<string, number> = {};
   loginPassword: string | undefined;
   messageCalls = 0;
   pushSubscribed = false;
@@ -210,6 +214,20 @@ class FakeApi implements TetherApi {
 
   deleteTrigger(triggerId: string, version: number) {
     this.deleteTriggerCalls.push({ triggerId, version });
+    const serverVersion = this.serverTriggerVersions[triggerId];
+    if (
+      Object.hasOwn(this.serverTriggerVersions, triggerId) &&
+      serverVersion !== version
+    ) {
+      // The server bumped the version (e.g. the trigger fired). Reveal the fresh
+      // state to future list fetches, then reject exactly as the host does.
+      this.storedTriggers = this.storedTriggers.map((existing) =>
+        existing.id === triggerId
+          ? { ...existing, status: "completed", version: serverVersion }
+          : existing,
+      );
+      return Promise.reject(new ApiError(409));
+    }
     this.storedTriggers = this.storedTriggers.filter(
       (existing) => existing.id !== triggerId,
     );
@@ -706,6 +724,40 @@ describe("Tether SPA", () => {
     ).toBeInTheDocument();
   });
 
+  test("does not create a one-off reminder in the past", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    fireEvent.input(input(await screen.findByLabelText("Reminder")), {
+      target: { value: "too late" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Date and time")), {
+      target: { value: "2020-01-01T15:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
+
+    // The `min` guard blocks submission natively; the JS check is a backstop.
+    // Either way, no past reminder is ever posted.
+    await Promise.resolve();
+    expect(api.createTriggerCalls).toHaveLength(0);
+    expect(
+      screen.queryByLabelText("Reminder: too late"),
+    ).not.toBeInTheDocument();
+  });
+
+  test("the reminder time input forbids past instants via min", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    const field = input(await screen.findByLabelText("Date and time"));
+    const min = field.getAttribute("min");
+    expect(min).toBeTruthy();
+    // `min` is a local `YYYY-MM-DDTHH:MM` stamp of roughly now.
+    expect(new Date(min ?? "").getTime()).toBeLessThanOrEqual(
+      Date.now() + 1000,
+    );
+  });
+
   test("deleting a reminder calls the API with its version", async () => {
     const api = new FakeApi({
       authenticated: true,
@@ -723,6 +775,34 @@ describe("Tether SPA", () => {
         { triggerId: "trig-1", version: 3 },
       ]);
     });
+  });
+
+  test("deleting a fired reminder recovers from a stale-version 409", async () => {
+    // The row on screen still holds the pre-fire version; the server bumped it
+    // when the trigger fired. Delete must not dead-end on a bare 409 — it should
+    // refetch the current version and retry so the reminder actually goes away.
+    const api = new FakeApi({
+      authenticated: true,
+      triggers: [
+        trigger({ id: "trig-1", payload: "renew passport", version: 1 }),
+      ],
+    });
+    api.serverTriggerVersions = { "trig-1": 2 };
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Reminder: renew passport");
+    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(api.deleteTriggerCalls).toEqual([
+        { triggerId: "trig-1", version: 1 },
+        { triggerId: "trig-1", version: 2 },
+      ]);
+    });
+    expect(
+      screen.queryByLabelText("Reminder: renew passport"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   test("enabling push subscribes the browser", async () => {

@@ -24,6 +24,7 @@ from snektest import (
     test,
 )
 
+from tether.events import HubEvent, InvalidateEvent
 from tether.logging import Logger
 from tether.triggers import (
     InvalidTriggerSpecError,
@@ -36,6 +37,32 @@ from tether.triggers import (
 )
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.triggers_service")
+
+
+class RecordingPublisher:
+    """Captures every event a service publishes, for assertion in tests."""
+
+    def __init__(self) -> None:
+        self.events: list[HubEvent] = []
+
+    async def publish(self, event: HubEvent) -> None:
+        """Record a published event."""
+        self.events.append(event)
+
+
+@fixture
+async def recording_service() -> AsyncGenerator[
+    tuple[TriggerService, RecordingPublisher]
+]:
+    """A trigger service wired to a recording publisher for invalidate assertions."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_trigger_schema(db)
+    publisher = RecordingPublisher()
+    yield (
+        TriggerService(database=db, tracer=noop_tracer(), event_publisher=publisher),
+        publisher,
+    )
+    await db.close()
 
 
 def noop_tracer() -> Tracer:
@@ -232,6 +259,50 @@ async def create_daily_rejects_an_absolute_instant() -> None:
                 fire_at=datetime(2030, 1, 1, tzinfo=UTC),
             ),
             now=datetime(2030, 1, 1, tzinfo=UTC),
+        )
+
+
+@test()
+async def create_rejects_a_once_trigger_in_the_past() -> None:
+    """A once trigger whose instant has already passed is a malformed spec."""
+    service = await load_fixture(trigger_service())
+
+    with assert_raises(InvalidTriggerSpecError):
+        _ = await make_trigger(
+            service,
+            once("x", datetime(2030, 1, 1, 8, 0, tzinfo=UTC)),
+            now=datetime(2030, 1, 1, 9, 0, tzinfo=UTC),
+        )
+
+
+@test()
+async def create_allows_a_once_trigger_at_the_current_instant() -> None:
+    """A once trigger scheduled for exactly now is due immediately, not rejected."""
+    service = await load_fixture(trigger_service())
+    now = datetime(2030, 1, 1, 9, 0, tzinfo=UTC)
+
+    trigger = await make_trigger(service, once("x", now), now=now)
+
+    assert_eq(trigger.status, "active")
+    assert_eq(trigger.next_fire_at, now)
+
+
+@test()
+async def update_rejects_a_once_trigger_in_the_past() -> None:
+    """Editing a trigger to an instant that has passed is rejected too."""
+    service = await load_fixture(trigger_service())
+    trigger = await make_trigger(
+        service,
+        once("x", datetime(2030, 1, 1, 15, 0, tzinfo=UTC)),
+        now=datetime(2030, 1, 1, 9, 0, tzinfo=UTC),
+    )
+
+    with assert_raises(InvalidTriggerSpecError):
+        _ = await edit_trigger(
+            service,
+            trigger,
+            once("x", datetime(2030, 1, 1, 8, 0, tzinfo=UTC)),
+            now=datetime(2030, 1, 1, 9, 0, tzinfo=UTC),
         )
 
 
@@ -512,3 +583,42 @@ async def record_failure_exhausts_a_daily_trigger_to_next_occurrence() -> None:
     assert_eq(settled.status, "active")
     assert_eq(settled.attempts, 0)
     assert_eq(settled.next_fire_at, datetime(2030, 1, 2, 9, 0, tzinfo=UTC))
+
+
+# --- fire settles publish a triggers invalidate (so the client refetches) ---
+
+
+@test()
+async def record_success_publishes_a_triggers_invalidate() -> None:
+    """Settling a fired trigger tells connected browsers to refetch the list.
+
+    Without this the client keeps the stale (active, version=1) row: the list
+    never flips to `completed` and a Delete sends the pre-fire version, 409ing.
+    """
+    service, publisher = await load_fixture(recording_service())
+    now = datetime(2030, 1, 1, 9, 0, tzinfo=UTC)
+    _ = await make_trigger(
+        service, once("x", now), now=datetime(2030, 1, 1, 8, 0, tzinfo=UTC)
+    )
+    claimed = (await service.claim_due(now))[0]
+    publisher.events.clear()
+
+    _ = await service.record_success(claimed, now=now)
+
+    assert_eq(publisher.events, [InvalidateEvent(keys=["triggers"])])
+
+
+@test()
+async def record_failure_publishes_a_triggers_invalidate() -> None:
+    """A failed dispatch also bumps the version, so the client must refetch."""
+    service, publisher = await load_fixture(recording_service())
+    now = datetime(2030, 1, 1, 9, 0, tzinfo=UTC)
+    _ = await make_trigger(
+        service, once("x", now), now=datetime(2030, 1, 1, 8, 0, tzinfo=UTC)
+    )
+    claimed = (await service.claim_due(now))[0]
+    publisher.events.clear()
+
+    _ = await service.record_failure(claimed, now=now, error="boom")
+
+    assert_eq(publisher.events, [InvalidateEvent(keys=["triggers"])])

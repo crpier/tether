@@ -18,12 +18,13 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { createRestApi } from "./api";
+import { ApiError, createRestApi } from "./api";
 import type {
   AnswerOutcome,
   Conversation,
   CreateTrigger,
   TetherApi,
+  Trigger,
   TriggerActionKind,
   TriggerRecurrence,
 } from "./api";
@@ -528,6 +529,18 @@ function formatFireTime(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
+// A `datetime-local` value is a local (not UTC) `YYYY-MM-DDTHH:MM` stamp, so the
+// `min` guard has to be built from local components rather than `toISOString()`.
+function localDateTimeStamp(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 const WEEKDAYS = [
   "Monday",
   "Tuesday",
@@ -600,6 +613,10 @@ function TriggersPanel(props: { api: TetherApi }) {
         setError("Pick a date and time");
         return;
       }
+      if (parsed.getTime() < Date.now()) {
+        setError("Pick a time in the future");
+        return;
+      }
       fireAtIso = parsed.toISOString();
     }
     const body: CreateTrigger = {
@@ -635,6 +652,17 @@ function TriggersPanel(props: { api: TetherApi }) {
         await props.api.deleteTrigger(triggerId, version);
         refresh();
       } catch (caught) {
+        // A fired trigger's version is bumped server-side, so a delete carrying
+        // the row we loaded 409s. Rather than dead-end on a bare "Request
+        // failed: 409", refetch the current version and retry once so the
+        // reminder actually goes away (the invalidate-on-fire refresh usually
+        // beats the click, but this closes the race and reconnect windows).
+        if (caught instanceof ApiError && caught.status === 409) {
+          const recovered = await retryDeleteWithFreshVersion(triggerId);
+          if (recovered) {
+            return;
+          }
+        }
         setError(
           caught instanceof Error
             ? caught.message
@@ -642,6 +670,28 @@ function TriggersPanel(props: { api: TetherApi }) {
         );
       }
     })();
+  };
+
+  // Refetch triggers, then retry the delete with the current version. Returns
+  // whether the reminder is now gone (deleted here, or already absent server-side).
+  const retryDeleteWithFreshVersion = async (
+    triggerId: string,
+  ): Promise<boolean> => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.triggers });
+    const fresh = (
+      queryClient.getQueryData<Trigger[]>(queryKeys.triggers) ?? []
+    ).find((candidate) => candidate.id === triggerId);
+    if (fresh === undefined) {
+      refresh();
+      return true;
+    }
+    try {
+      await props.api.deleteTrigger(triggerId, fresh.version);
+      refresh();
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
@@ -689,7 +739,11 @@ function TriggersPanel(props: { api: TetherApi }) {
         <Show when={recurrence() === "once"}>
           <TextField onChange={setFireAt} value={fireAt()}>
             <TextFieldLabel>Date and time</TextFieldLabel>
-            <TextFieldInput name="fire_at" type="datetime-local" />
+            <TextFieldInput
+              min={localDateTimeStamp(new Date())}
+              name="fire_at"
+              type="datetime-local"
+            />
           </TextField>
         </Show>
         <Show when={recurrence() !== "once"}>

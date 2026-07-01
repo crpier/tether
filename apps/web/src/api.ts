@@ -43,13 +43,26 @@ export interface TetherApi {
   ): Promise<AnswerOutcome>;
 }
 
+// Carries the HTTP status so callers can react to specific failures (e.g. a 409
+// version conflict on a fired trigger) rather than only surfacing the raw text.
+// The message is the friendly, human-readable text for that status.
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, messages?: HttpStatusMessages) {
+    super(httpStatusMessage(status, messages));
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 function requireData<T>(
   data: T | undefined,
   response: Response,
   messages?: HttpStatusMessages,
 ): T {
   if (!response.ok) {
-    throw new Error(httpStatusMessage(response.status, messages));
+    throw new ApiError(response.status, messages);
   }
   if (data === undefined) {
     throw new Error("Request returned no data");
@@ -59,7 +72,7 @@ function requireData<T>(
 
 function requireOk(response: Response, messages?: HttpStatusMessages): void {
   if (!response.ok) {
-    throw new Error(httpStatusMessage(response.status, messages));
+    throw new ApiError(response.status, messages);
   }
 }
 
