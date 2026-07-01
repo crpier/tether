@@ -706,6 +706,40 @@ describe("Tether SPA", () => {
     ).toBeInTheDocument();
   });
 
+  test("does not create a one-off reminder in the past", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    fireEvent.input(input(await screen.findByLabelText("Reminder")), {
+      target: { value: "too late" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Date and time")), {
+      target: { value: "2020-01-01T15:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
+
+    // The `min` guard blocks submission natively; the JS check is a backstop.
+    // Either way, no past reminder is ever posted.
+    await Promise.resolve();
+    expect(api.createTriggerCalls).toHaveLength(0);
+    expect(
+      screen.queryByLabelText("Reminder: too late"),
+    ).not.toBeInTheDocument();
+  });
+
+  test("the reminder time input forbids past instants via min", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    const field = input(await screen.findByLabelText("Date and time"));
+    const min = field.getAttribute("min");
+    expect(min).toBeTruthy();
+    // `min` is a local `YYYY-MM-DDTHH:MM` stamp of roughly now.
+    expect(new Date(min ?? "").getTime()).toBeLessThanOrEqual(
+      Date.now() + 1000,
+    );
+  });
+
   test("deleting a reminder calls the API with its version", async () => {
     const api = new FakeApi({
       authenticated: true,

@@ -19,6 +19,7 @@ from tether.telemetry import TelemetrySettings
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
 FAR_FUTURE = "2099-01-01T15:00:00+00:00"
+FAR_PAST = "2020-01-01T15:00:00+00:00"
 
 
 def make_client(root: Path) -> TestClient:
@@ -102,6 +103,24 @@ def post_rejects_a_weekly_trigger_without_a_weekday() -> None:
                 "payload": "x",
                 "timezone": "UTC",
                 "time_of_day": "09:00",
+            },
+        )
+
+    assert_eq(response.status_code, 422)
+
+
+@test()
+def post_rejects_a_once_trigger_in_the_past() -> None:
+    """A once trigger whose instant has already passed is a 422, not a stored row."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        response = client.post(
+            "/api/triggers",
+            json={
+                "recurrence": "once",
+                "action_kind": "message",
+                "payload": "x",
+                "fire_at": FAR_PAST,
             },
         )
 

@@ -7,6 +7,7 @@ fired by the live scheduler, reaches a connected browser as a `notify` frame.
 """
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -22,7 +23,15 @@ from tether.telemetry import TelemetrySettings
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
 ENDPOINT = "https://push.example/abc"
-PAST = "2000-01-01T00:00:00+00:00"
+
+
+def _due_soon() -> str:
+    """An ISO instant just ahead of now, so a fast tick fires it near-immediately.
+
+    Past instants are now rejected on create, so this makes the trigger due
+    within a few ticks rather than dating it into the past.
+    """
+    return (datetime.now(UTC) + timedelta(milliseconds=200)).isoformat()
 
 
 @fixture
@@ -147,7 +156,7 @@ def a_fired_trigger_reaches_the_browser_as_a_notify_frame() -> None:
                     "recurrence": "once",
                     "action_kind": "message",
                     "payload": "call the dentist",
-                    "fire_at": PAST,
+                    "fire_at": _due_soon(),
                 },
             )
             assert_eq(created.status_code, 201)

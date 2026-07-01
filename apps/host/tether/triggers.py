@@ -209,7 +209,7 @@ class _ScheduleFacts:
     next_fire_at: datetime
 
 
-def _describe_once(spec: TriggerSpec) -> _ScheduleFacts:
+def _describe_once(spec: TriggerSpec, *, now: datetime) -> _ScheduleFacts:
     """Validate a `once` time spec and derive its stored facts."""
     if spec.fire_at is None:
         message = "a once trigger requires fire_at"
@@ -220,11 +220,15 @@ def _describe_once(spec: TriggerSpec) -> _ScheduleFacts:
     if spec.fire_at.tzinfo is None:
         message = "a once trigger's fire_at must be timezone-aware"
         raise InvalidTriggerSpecError(message)
+    fire_at = spec.fire_at.astimezone(UTC)
+    if fire_at < now:
+        message = "a once trigger's fire_at must not be in the past"
+        raise InvalidTriggerSpecError(message)
     return _ScheduleFacts(
         timezone=spec.timezone or "UTC",
         wall_time=None,
         weekday=None,
-        next_fire_at=spec.fire_at.astimezone(UTC),
+        next_fire_at=fire_at,
     )
 
 
@@ -282,7 +286,7 @@ def _describe_schedule(spec: TriggerSpec, *, now: datetime) -> _ScheduleFacts:
     occurrence is materialised.
     """
     if spec.recurrence == "once":
-        return _describe_once(spec)
+        return _describe_once(spec, now=now)
     return _describe_recurring(spec, spec.recurrence, now=now)
 
 
@@ -642,7 +646,12 @@ class TriggerService:
             statement = statement.set(
                 ScheduledTrigger.next_fire_at.to(self._reschedule(trigger, now))
             )
-        return await self._apply_scheduler_update(trigger.id, statement)
+        settled = await self._apply_scheduler_update(trigger.id, statement)
+        # Firing bumps the version and (for `once`) the status, so a browser
+        # holding the pre-fire row must refetch — else its stale version 409s on
+        # delete and its list never flips to `completed`.
+        await self.event_publisher.publish(InvalidateEvent(keys=["triggers"]))
+        return settled
 
     async def record_failure(
         self,
@@ -684,7 +693,11 @@ class TriggerService:
             statement = statement.set(ScheduledTrigger.attempts.to(attempts)).set(
                 ScheduledTrigger.next_attempt_at.to(now + backoff)
             )
-        return await self._apply_scheduler_update(trigger.id, statement)
+        settled = await self._apply_scheduler_update(trigger.id, statement)
+        # A failed dispatch also bumps the version, so a browser holding the
+        # pre-fire row must refetch to stay deletable.
+        await self.event_publisher.publish(InvalidateEvent(keys=["triggers"]))
+        return settled
 
     def _reschedule(
         self, trigger: ScheduledTrigger[Fetched], now: datetime
