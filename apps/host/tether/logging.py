@@ -18,6 +18,7 @@ import logging
 import sys
 import time
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -152,7 +153,7 @@ def _reorder_fields(
     return reordered
 
 
-def _shared_processors(*, is_tty: bool) -> list[structlog.types.Processor]:
+def _shared_processors(*, format_exceptions: bool) -> list[structlog.types.Processor]:
     processors: list[structlog.types.Processor] = [
         _capture_bound_context,
         structlog.contextvars.merge_contextvars,
@@ -164,7 +165,7 @@ def _shared_processors(*, is_tty: bool) -> list[structlog.types.Processor]:
         ),
         structlog.processors.StackInfoRenderer(),
     ]
-    if not is_tty:
+    if format_exceptions:
         processors.append(structlog.processors.format_exc_info)
     processors.extend(
         [
@@ -193,8 +194,28 @@ def _configure_quiet_loggers() -> None:
         logger.disabled = True
 
 
+def _make_processor_formatter(
+    *,
+    shared_processors: list[structlog.types.Processor],
+    renderer: structlog.types.Processor,
+) -> structlog.stdlib.ProcessorFormatter:
+    """Build a `ProcessorFormatter` that renders records through `renderer`."""
+    return structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
+        pass_foreign_args=True,
+        use_get_message=False,
+    )
+
+
 def configure_logging(
-    log_level: str = "INFO", *, force_tty: bool | None = None
+    log_level: str = "INFO",
+    *,
+    force_tty: bool | None = None,
+    log_file: str | Path | None = None,
 ) -> Logger:
     """Configure structlog and stdlib logging for a Starlette process.
 
@@ -202,15 +223,29 @@ def configure_logging(
     logger = configure_logging("DEBUG", force_tty=True)
     logger.info("Server starting")
     ```
+
+    When `log_file` is given, logs are *also* written there as one JSON object
+    per line, regardless of the console's TTY state. The dev loop uses this to
+    keep the colorized terminal output while persisting a machine-parseable
+    record an agent can read back when debugging a reported bug (see
+    `docs/development.md`). The file is opened in append mode, so a process
+    reload keeps the running session's history; `just dev` truncates it once at
+    launch. The directory is created if missing.
     """
     is_tty = sys.stdout.isatty() if force_tty is None else force_tty
-    renderer: structlog.types.Processor
+    console_renderer: structlog.types.Processor
     if is_tty:
-        renderer = structlog.dev.ConsoleRenderer(colors=True)
+        console_renderer = structlog.dev.ConsoleRenderer(colors=True)
     else:
-        renderer = structlog.processors.JSONRenderer()
+        console_renderer = structlog.processors.JSONRenderer()
 
-    processors = _shared_processors(is_tty=is_tty)
+    # With a file sink the exceptions must be pre-rendered into the `exception`
+    # string so the JSON file carries the traceback; a non-TTY console already
+    # needs this too. The only cost is that a TTY console then prints that
+    # pre-rendered string instead of `ConsoleRenderer`'s colorized traceback —
+    # an acceptable trade in dev, where the file is the traceback of record.
+    format_exceptions = (not is_tty) or log_file is not None
+    processors = _shared_processors(format_exceptions=format_exceptions)
     structlog.configure(
         processors=[
             *processors,
@@ -221,22 +256,31 @@ def configure_logging(
         cache_logger_on_first_use=False,
     )
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            foreign_pre_chain=processors,
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                renderer,
-            ],
-            pass_foreign_args=True,
-            use_get_message=False,
-        ),
+    handlers: list[logging.Handler] = []
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(
+        _make_processor_formatter(
+            shared_processors=processors, renderer=console_renderer
+        )
     )
+    handlers.append(console_handler)
+
+    if log_file is not None:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        file_handler.setFormatter(
+            _make_processor_formatter(
+                shared_processors=processors,
+                renderer=structlog.processors.JSONRenderer(),
+            )
+        )
+        handlers.append(file_handler)
 
     root_logger = logging.getLogger()
     _clear_handlers(root_logger)
-    root_logger.addHandler(handler)
+    for handler in handlers:
+        root_logger.addHandler(handler)
     root_logger.setLevel(log_level)
     _configure_quiet_loggers()
     return cast("Logger", structlog.wrap_logger(logging.getLogger()))

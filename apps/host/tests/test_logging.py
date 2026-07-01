@@ -3,9 +3,11 @@
 import json
 import logging
 import sys
+import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from io import StringIO
+from pathlib import Path
 from typing import TextIO, cast
 
 import structlog
@@ -77,6 +79,9 @@ def captured_logging(*, is_tty: bool) -> Generator[CapturedStdout]:
         sys.stdout = original_stdout
         for handler in list(root_logger.handlers):
             root_logger.removeHandler(handler)
+            # configure_logging installs fresh handlers (a file sink owns an open
+            # descriptor); close them so the temp log file is released cleanly.
+            handler.close()
         for handler in original_root_handlers:
             root_logger.addHandler(handler)
         root_logger.setLevel(original_root_level)
@@ -90,6 +95,12 @@ def captured_logging(*, is_tty: bool) -> Generator[CapturedStdout]:
             logger.propagate = propagate
             logger.disabled = disabled
         structlog.reset_defaults()
+
+
+def _raise_boom() -> None:
+    """Raise a `RuntimeError` so a caller can log the active exception."""
+    error_message = "boom"
+    raise RuntimeError(error_message)
 
 
 def first_json_log(stream: CapturedStdout) -> dict[str, object]:
@@ -207,6 +218,62 @@ def configure_logging_emits_json_when_stdout_is_not_a_tty() -> None:
     assert_eq(logged["level"], "info")
     assert_eq(logged["logger"], "third.party")
     assert_in("timestamp", logged)
+
+
+@test()
+def configure_logging_mirrors_logs_to_a_json_file_while_console_stays_readable() -> (
+    None
+):
+    """A configured `log_file` gets JSON even when the console renders for a TTY.
+
+    The dev loop keeps the colorized console (TTY) *and* a machine-parseable file
+    an agent can read back when debugging a reported bug.
+    """
+    with captured_logging(is_tty=True) as stream, tempfile.TemporaryDirectory() as tmp:
+        log_file = Path(tmp) / "logs" / "host.log"
+        configure_logging(force_tty=True, log_file=log_file)
+        structlog.get_logger("tether.test").info("Saved", memory_id="abc")
+        logging.getLogger().handlers[-1].flush()
+
+        # Console: human-readable, not JSON.
+        assert_in("Saved", stream.getvalue())
+        with assert_raises(json.JSONDecodeError):
+            json.loads(stream.getvalue())
+
+        # File: one JSON object per line with the structured fields intact.
+        line = log_file.read_text("utf-8").splitlines()[0]
+        logged = json.loads(line)
+        assert_eq(logged["event"], "Saved")
+        assert_eq(logged["memory_id"], "abc")
+        assert_eq(logged["level"], "info")
+        assert_in("timestamp", logged)
+
+
+@test()
+def configure_logging_records_exception_tracebacks_in_the_log_file() -> None:
+    """Exceptions logged to the file carry the rendered traceback for debugging."""
+    with captured_logging(is_tty=True) as _stream, tempfile.TemporaryDirectory() as tmp:
+        log_file = Path(tmp) / "host.log"
+        configure_logging(force_tty=True, log_file=log_file)
+        try:
+            _raise_boom()
+        except RuntimeError:
+            logging.getLogger("tether.test").exception("Request failed")
+        logging.getLogger().handlers[-1].flush()
+
+        logged = json.loads(log_file.read_text("utf-8").splitlines()[0])
+        assert_eq(logged["event"], "Request failed")
+        assert_in("RuntimeError", str(logged["exception"]))
+        assert_in("boom", str(logged["exception"]))
+
+
+@test()
+def configure_logging_without_log_file_keeps_a_single_console_handler() -> None:
+    """No `log_file` leaves the root logger with only the stdout handler."""
+    with captured_logging(is_tty=False):
+        configure_logging(force_tty=False)
+
+        assert_eq(len(logging.getLogger().handlers), 1)
 
 
 @test()

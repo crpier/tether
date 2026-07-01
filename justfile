@@ -16,16 +16,26 @@ dev:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "web → http://127.0.0.1:3000  (open this)   host → http://127.0.0.1:8000"
+    # Logs stream to the terminal (colorized, TTY) *and* to files under
+    # .tether/logs so an agent can read back what happened on a reported bug.
+    # See docs/development.md#logs-and-session-data. Truncate once at launch so
+    # each `just dev` run starts clean (the host appends across auto-reloads).
+    mkdir -p .tether/logs
+    : > .tether/logs/host.log
+    : > .tether/logs/web.log
     # Ingestion syncs run eagerly in the startup lifespan and block the server
     # from binding :8000 (the transcript pass makes synchronous per-video fetches
     # for the whole liked-list). The fast dev loop is for web/HMR work, so keep
     # them off here; run `just host` (or unset these) when exercising ingestion.
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
         TETHER_LOGGING_LEVEL=DEBUG \
+        TETHER_LOG_FILE=.tether/logs/host.log \
         TETHER_YOUTUBE_SYNC_ENABLED=false TETHER_TRANSCRIPT_SYNC_ENABLED=false \
         uv run python -m tether &
     host_pid=$!
-    pnpm -C apps/web dev &
+    # Process substitution (not a pipe) keeps $! as pnpm's pid so the trap kills
+    # the dev server directly; tee mirrors Vite's output to the log file.
+    pnpm -C apps/web dev > >(tee .tether/logs/web.log) 2>&1 &
     web_pid=$!
     trap 'kill "$host_pid" "$web_pid" 2>/dev/null || true' EXIT INT TERM
     # return as soon as either process exits; the trap tears the other down

@@ -139,6 +139,7 @@ class AppConfig:
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     kb_root: str | Path = Path(".tether")
     logging_level: str = "INFO"
+    log_file: str | Path | None = None
     model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
     pi_binary: Path | None = None
     youtube_api: YouTubeApi | None = None
@@ -186,6 +187,11 @@ class HostSettings(BaseSettings):
     host: str = "127.0.0.1"
     kb_root: Path = Path(".tether")
     logging_level: str = "INFO"
+    log_file: Path | None = None
+    """Optional path to also write logs to, as one JSON object per line, on top
+    of the console. Unset in production/docker (the container's stdout is the log
+    sink); `just dev` points it at `.tether/logs/host.log` so an agent can read
+    back what the app did when a bug is reported (see `docs/development.md`)."""
     model_allowlist: tuple[AgentModelConfig, ...] = ()
     default_model: str | None = None
     port: int = 8000
@@ -580,7 +586,7 @@ def _lifespan(
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncGenerator[None]:
         """Build the Memory service for the app lifetime and close it after."""
-        app_logger = configure_logging(config.logging_level)
+        app_logger = configure_logging(config.logging_level, log_file=config.log_file)
         telemetry = configure_telemetry(telemetry_settings)
         app.state.logger = app_logger
         app.state.telemetry = telemetry
@@ -921,6 +927,7 @@ def create_app_from_environment() -> Starlette:
             default_model=settings.default_model,
             kb_root=settings.kb_root,
             logging_level=settings.logging_level,
+            log_file=settings.log_file,
             model_allowlist=settings.model_allowlist,
             secure_cookies=settings.secure_cookies,
             session_secret=settings.session_secret,
@@ -954,7 +961,9 @@ def serve(settings: HostSettings | None = None) -> None:
     ```
     """
     configured_settings = HostSettings() if settings is None else settings
-    _ = configure_logging(configured_settings.logging_level)
+    _ = configure_logging(
+        configured_settings.logging_level, log_file=configured_settings.log_file
+    )
     uvicorn.run(
         "tether.server:create_app_from_environment",
         factory=True,
