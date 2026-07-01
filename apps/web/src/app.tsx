@@ -18,12 +18,13 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { createRestApi } from "./api";
+import { ApiError, createRestApi } from "./api";
 import type {
   AnswerOutcome,
   Conversation,
   CreateTrigger,
   TetherApi,
+  Trigger,
   TriggerActionKind,
   TriggerRecurrence,
 } from "./api";
@@ -651,6 +652,17 @@ function TriggersPanel(props: { api: TetherApi }) {
         await props.api.deleteTrigger(triggerId, version);
         refresh();
       } catch (caught) {
+        // A fired trigger's version is bumped server-side, so a delete carrying
+        // the row we loaded 409s. Rather than dead-end on a bare "Request
+        // failed: 409", refetch the current version and retry once so the
+        // reminder actually goes away (the invalidate-on-fire refresh usually
+        // beats the click, but this closes the race and reconnect windows).
+        if (caught instanceof ApiError && caught.status === 409) {
+          const recovered = await retryDeleteWithFreshVersion(triggerId);
+          if (recovered) {
+            return;
+          }
+        }
         setError(
           caught instanceof Error
             ? caught.message
@@ -658,6 +670,28 @@ function TriggersPanel(props: { api: TetherApi }) {
         );
       }
     })();
+  };
+
+  // Refetch triggers, then retry the delete with the current version. Returns
+  // whether the reminder is now gone (deleted here, or already absent server-side).
+  const retryDeleteWithFreshVersion = async (
+    triggerId: string,
+  ): Promise<boolean> => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.triggers });
+    const fresh = (
+      queryClient.getQueryData<Trigger[]>(queryKeys.triggers) ?? []
+    ).find((candidate) => candidate.id === triggerId);
+    if (fresh === undefined) {
+      refresh();
+      return true;
+    }
+    try {
+      await props.api.deleteTrigger(triggerId, fresh.version);
+      refresh();
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {

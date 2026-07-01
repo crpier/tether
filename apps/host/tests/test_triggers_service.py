@@ -597,8 +597,8 @@ async def record_success_publishes_a_triggers_invalidate() -> None:
     """
     service, publisher = await load_fixture(recording_service())
     now = datetime(2030, 1, 1, 9, 0, tzinfo=UTC)
-    _ = await service.create(
-        once("x", now), now=datetime(2030, 1, 1, 8, 0, tzinfo=UTC), logger=LOGGER
+    _ = await make_trigger(
+        service, once("x", now), now=datetime(2030, 1, 1, 8, 0, tzinfo=UTC)
     )
     claimed = (await service.claim_due(now))[0]
     publisher.events.clear()
@@ -613,8 +613,8 @@ async def record_failure_publishes_a_triggers_invalidate() -> None:
     """A failed dispatch also bumps the version, so the client must refetch."""
     service, publisher = await load_fixture(recording_service())
     now = datetime(2030, 1, 1, 9, 0, tzinfo=UTC)
-    _ = await service.create(
-        once("x", now), now=datetime(2030, 1, 1, 8, 0, tzinfo=UTC), logger=LOGGER
+    _ = await make_trigger(
+        service, once("x", now), now=datetime(2030, 1, 1, 8, 0, tzinfo=UTC)
     )
     claimed = (await service.claim_due(now))[0]
     publisher.events.clear()
