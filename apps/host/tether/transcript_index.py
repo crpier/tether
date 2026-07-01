@@ -36,6 +36,13 @@ if TYPE_CHECKING:
     from lancedb.db import AsyncConnection
     from lancedb.table import AsyncTable
 
+    from tether.logging import Logger
+
+# Marker lance stamps on the "file a bug report" class of internal errors — the
+# recoverable-by-rewrite failures (e.g. a fragment whose compaction batch-decode
+# overruns its values buffer). Matched case-insensitively on the message.
+_LANCE_INTERNAL_ERROR_MARKER = "encountered internal error"
+
 _TABLE = "transcript_chunks"
 """The single table name inside the transcript index dataset."""
 
@@ -63,6 +70,14 @@ def chunk_id(
     re-embeds only the chunks whose text actually changed."""
     key = f"{model}\x00{vector_dim}\x00{video_id}\x00{index}\x00{content}"
     return uuid5(_CHUNK_NAMESPACE, key)
+
+
+def _is_lance_internal_error(error: Exception) -> bool:
+    """Whether `error` is the lance-internal ("file a bug report") failure class.
+
+    Scoped to that marker on purpose: unrelated runtime failures (a full disk, a
+    permissions error) must propagate rather than trigger a table rewrite."""
+    return _LANCE_INTERNAL_ERROR_MARKER in str(error).lower()
 
 
 class VectorDimMismatchError(Exception):
@@ -236,6 +251,45 @@ class TranscriptIndex:
         rows = await self._table.query().select([_ID_COLUMN]).to_list()
         return {UUID(str(row[_ID_COLUMN])) for row in rows}
 
-    async def optimize(self) -> None:
-        """Run LanceDB's background hygiene (compaction, index maintenance)."""
+    async def optimize(self, *, logger: Logger) -> None:
+        """Run LanceDB's background hygiene (compaction, index maintenance).
+
+        Self-heals a class of upstream lance bug: a corrupt fragment whose
+        compaction batch-decode overruns its values buffer ("Encountered internal
+        error … Error decoding batch"). Every reconcile tick calls this, so an
+        unhandled failure wedges the loop forever. The rows still read (only the
+        wide compaction decode trips the bug), and this projection is disposable,
+        so we salvage in place: read every row back out, recreate the table, and
+        re-add them — no data lost and no re-embedding, since the vectors survive
+        the round-trip. Any other failure propagates untouched."""
+        try:
+            _ = await self._table.optimize()
+        except RuntimeError as error:
+            if not _is_lance_internal_error(error):
+                raise
+            logger.warning(
+                "Transcript index optimize hit a lance internal error; salvaging",
+                error=str(error),
+            )
+            await self._salvage_rewrite()
+            logger.info("Transcript index salvaged after lance internal error")
+
+    async def _salvage_rewrite(self) -> None:
+        """Rebuild the table from its own readable rows, then compact once.
+
+        Reads survive the fragment corruption that compaction cannot, so the rows
+        (id, video_id, content, vector) round-trip losslessly into a fresh table.
+        The final optimize runs on the wrapped table directly, not through the
+        self-healing entrypoint, so a still-broken rewrite raises instead of
+        looping."""
+        rows = await self._table.query().to_list()
+        await self._connection.drop_table(_TABLE)
+        self._table = await self._create_table(self._connection, self._vector_dim)
+        if rows:
+            _ = await (
+                self._table.merge_insert(_ID_COLUMN)
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute(rows)
+            )
         _ = await self._table.optimize()

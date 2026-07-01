@@ -53,7 +53,7 @@ class TranscriptIndexPort(Protocol):
     async def upsert(self, documents: Sequence[ChunkDocument]) -> None: ...
     async def remove(self, ids: Sequence[UUID]) -> None: ...
     async def list_ids(self) -> set[UUID]: ...
-    async def optimize(self) -> None: ...
+    async def optimize(self, *, logger: Logger) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +112,7 @@ class TranscriptReconciler:
         ]
         if orphans:
             await self.index.remove(orphans)
-        await self.index.optimize()
+        await self.index.optimize(logger=logger)
 
         report = TranscriptReconcileReport(
             indexed=len(desired_ids),
