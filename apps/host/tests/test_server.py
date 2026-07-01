@@ -120,7 +120,9 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_TELEMETRY_EXPORTER="none",
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
             TETHER_TOOL_SECRET="configured-tool-secret",
+            TETHER_TRANSCRIPT_SYNC_ENABLED="false",
             TETHER_WEB_DIST=f"{directory}/dist",
+            TETHER_YOUTUBE_SYNC_ENABLED="false",
         ),
     ):
         settings = HostSettings()
@@ -142,6 +144,49 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
     assert_eq(settings.tool_secret, "configured-tool-secret")
+    assert_eq(settings.youtube_sync_enabled, False)
+    assert_eq(settings.transcript_sync_enabled, False)
+
+
+@test()
+def sync_enabled_defaults_to_true() -> None:
+    """Ingestion syncs are on unless a `TETHER_*_SYNC_ENABLED` flag disables them."""
+    settings = HostSettings(
+        app_password="test-app-password", session_secret="test-session-secret"
+    )
+    assert_eq(settings.youtube_sync_enabled, True)
+    assert_eq(settings.transcript_sync_enabled, True)
+
+
+@test()
+def environment_app_factory_propagates_sync_flags() -> None:
+    """`create_app_from_environment` wires the sync-enabled env flags into AppConfig.
+
+    Regression guard: the flags existed on `AppConfig` but were never read from the
+    environment, so `TETHER_*_SYNC_ENABLED=false` was silently ignored and the
+    ingestion syncs always ran at boot.
+    """
+    captured: list[AppConfig] = []
+
+    def fake_create_app(*, config: AppConfig, **_: object) -> object:
+        captured.append(config)
+        return object()
+
+    original_create_app = server.create_app
+    server.create_app = fake_create_app
+    try:
+        with configured_environment(
+            TETHER_APP_PASSWORD="test-app-password",
+            TETHER_SESSION_SECRET="test-session-secret",
+            TETHER_TRANSCRIPT_SYNC_ENABLED="false",
+            TETHER_YOUTUBE_SYNC_ENABLED="false",
+        ):
+            _ = create_app_from_environment()
+    finally:
+        server.create_app = original_create_app
+
+    assert_eq(captured[0].youtube_sync_enabled, False)
+    assert_eq(captured[0].transcript_sync_enabled, False)
 
 
 @test()
