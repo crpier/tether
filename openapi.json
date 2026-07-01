@@ -690,6 +690,68 @@
         "title": "ModelListRead",
         "type": "object"
       },
+      "NotificationRead": {
+        "description": "HTTP representation of a persisted notification.",
+        "properties": {
+          "action_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Kind"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "source_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Label"
+          },
+          "trigger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Id"
+          }
+        },
+        "required": [
+          "id",
+          "trigger_id",
+          "action_kind",
+          "source_label",
+          "body",
+          "created_at"
+        ],
+        "title": "NotificationRead",
+        "type": "object"
+      },
       "PushStatusRead": {
         "description": "HTTP representation of the browser's push-subscription status.",
         "properties": {
@@ -1942,6 +2004,54 @@
           }
         },
         "summary": "List host-enabled agent model choices."
+      }
+    },
+    "/api/notifications": {
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "OK"
+          }
+        },
+        "summary": "Dismiss every live notification."
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List undismissed notifications, newest first."
+      }
+    },
+    "/api/notifications/{notification_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          }
+        },
+        "summary": "Dismiss one notification."
       }
     },
     "/api/push/status": {

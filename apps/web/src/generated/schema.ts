@@ -656,6 +656,96 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/notifications": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List undismissed notifications, newest first. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["NotificationRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    /** Dismiss every live notification. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications/{notification_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Dismiss one notification. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          notification_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/push/status": {
     parameters: {
       query?: never;
@@ -1608,6 +1698,30 @@ export interface components {
       default_model: string | null;
       /** Models */
       models: components["schemas"]["AgentModelRead"][];
+    };
+    /**
+     * NotificationRead
+     * @description HTTP representation of a persisted notification.
+     */
+    NotificationRead: {
+      /** Action Kind */
+      action_kind: string | null;
+      /** Body */
+      body: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Source Label */
+      source_label: string | null;
+      /** Trigger Id */
+      trigger_id: string | null;
     };
     /**
      * PushStatusRead

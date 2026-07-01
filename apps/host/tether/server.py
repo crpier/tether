@@ -49,6 +49,7 @@ from tether.memories import (
 )
 from tether.memory_search import MemorySearchService
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
+from tether.notifications import NotificationService, create_notification_schema
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
 from tether.push import PushService, create_push_schema
@@ -239,6 +240,7 @@ async def _create_schemas(db: Database) -> None:
     await create_push_schema(db)
     await create_recall_schema(db)
     await create_search_meta_schema(db)
+    await create_notification_schema(db)
 
 
 async def _wire_youtube(
@@ -365,6 +367,7 @@ def _build_scheduler(
     app: Starlette,
     *,
     config: AppConfig,
+    database: Database,
     trigger_service: TriggerService,
     kb_root: Path,
 ) -> Scheduler:
@@ -372,10 +375,17 @@ def _build_scheduler(
 
     Agent-prompt triggers spawn ephemeral pi processes under a dedicated session
     root; fixed-message triggers never touch pi. Delivery goes out over the
-    in-process event hub as `notify` frames. Shared collaborators (event hub,
-    model catalog, session registry, tool secret, logger) are read from the
-    already-populated `app.state`.
+    in-process event hub as `notify` frames and is persisted through the
+    notification service (registered here on `app.state`) so a fired reminder
+    survives a reload. Shared collaborators (event hub, model catalog, session
+    registry, tool secret, logger) are read from the already-populated
+    `app.state`.
     """
+    notification_service = NotificationService(
+        database=database,
+        event_publisher=cast("EventHub", app.state.event_hub),
+    )
+    app.state.notification_service = notification_service
     model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
     session_root = (
         Path(config.pi_session_root)
@@ -398,7 +408,7 @@ def _build_scheduler(
     return Scheduler(
         service=trigger_service,
         dispatcher=TriggerDispatcher(
-            notifier=EventNotifier(app.state.event_hub),
+            notifier=EventNotifier(app.state.event_hub, notification_service),
             agent_runner=prompt_runner,
         ),
         clock=SystemClock(),
@@ -676,6 +686,7 @@ def _lifespan(
             scheduler = _build_scheduler(
                 app,
                 config=config,
+                database=db,
                 trigger_service=trigger_service,
                 kb_root=configured_kb_root,
             )

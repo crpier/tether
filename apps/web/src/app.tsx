@@ -73,6 +73,7 @@ const queryKeys = {
   conversations: ["conversations"] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
   models: ["models"] as const,
+  notifications: ["notifications"] as const,
   push: ["push"] as const,
   recall: ["recall"] as const,
   session: ["session"] as const,
@@ -484,12 +485,6 @@ function MessageRows(props: {
   );
 }
 
-interface NotifyItem {
-  body: string;
-  id: string;
-  title?: string | null;
-}
-
 const PUSH_ENDPOINT_KEY = "tether-push-endpoint";
 
 function browserTimezone(): string {
@@ -551,24 +546,95 @@ const WEEKDAYS = [
   "Sunday",
 ];
 
-function NotificationsPanel(props: { notifications: NotifyItem[] }) {
+function notificationKindLabel(actionKind: string | null): string {
+  if (actionKind === "prompt") {
+    return "Agent result";
+  }
+  if (actionKind === "message") {
+    return "Reminder";
+  }
+  return "Notification";
+}
+
+function NotificationsPanel(props: { api: TetherApi; refreshToken: number }) {
+  const queryClient = useQueryClient();
+  const notificationsQuery = createQuery(() => ({
+    queryFn: () => props.api.listNotifications(),
+    // A fired notification arrives over the WebSocket callback, outside a
+    // reactive owner; bumping the token there changes this key and forces a
+    // refetch of the authoritative list (the same pattern the chat transcript
+    // uses for its own socket-driven refreshes).
+    queryKey: [...queryKeys.notifications, props.refreshToken] as const,
+  }));
+  const notifications = createMemo(() => notificationsQuery.data ?? []);
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
+  };
+
+  const dismiss = (notificationId: string) => {
+    void (async () => {
+      await props.api.dismissNotification(notificationId);
+      refresh();
+    })();
+  };
+
+  const clearAll = () => {
+    void (async () => {
+      await props.api.clearNotifications();
+      refresh();
+    })();
+  };
+
   return (
     <section aria-label="Notifications" class={panelClass}>
-      <h2 class="mb-3 text-sm font-semibold">Notifications</h2>
+      <div class="mb-3 flex items-center justify-between">
+        <h2 class="text-sm font-semibold">Notifications</h2>
+        <Show when={notifications().length > 0}>
+          <Button onClick={clearAll} size="sm" type="button" variant="ghost">
+            Clear all
+          </Button>
+        </Show>
+      </div>
       <Show
         fallback={
           <p class="text-muted-foreground text-sm">No notifications yet</p>
         }
-        when={props.notifications.length > 0}
+        when={notifications().length > 0}
       >
         <ul class="space-y-2">
-          <For each={props.notifications}>
+          <For each={notifications()}>
             {(item) => (
-              <li class="bg-muted rounded-md border px-3 py-2 text-sm">
-                <Show when={item.title}>
-                  {(title) => <strong>{title()} </strong>}
+              <li
+                aria-label={`Notification: ${item.body}`}
+                class="bg-muted rounded-md border px-3 py-2 text-sm"
+              >
+                <div class="flex items-center gap-2">
+                  <Badge variant="secondary">
+                    {notificationKindLabel(item.action_kind)}
+                  </Badge>
+                  <span class="text-muted-foreground text-xs">
+                    {formatSyncTimestamp(item.created_at)}
+                  </span>
+                  <button
+                    aria-label="Dismiss notification"
+                    class="ml-auto shrink-0 opacity-70 hover:opacity-100"
+                    onClick={() => {
+                      dismiss(item.id);
+                    }}
+                    type="button"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p class="mt-1">{item.body}</p>
+                <Show when={item.action_kind === "prompt" && item.source_label}>
+                  {(label) => (
+                    <p class="text-muted-foreground mt-1 text-xs italic">
+                      {`Prompt: ${label()}`}
+                    </p>
+                  )}
                 </Show>
-                <span>{item.body}</span>
               </li>
             )}
           </For>
@@ -732,9 +798,14 @@ function TriggersPanel(props: { api: TetherApi }) {
             }}
             value={actionKind()}
           >
-            <option value="message">Send this message</option>
-            <option value="prompt">Run as agent prompt</option>
+            <option value="message">Notify me with this text</option>
+            <option value="prompt">Run this as an agent prompt</option>
           </select>
+          <span class="text-muted-foreground text-xs">
+            {actionKind() === "prompt"
+              ? "The agent runs your text when it fires; its answer arrives as a notification."
+              : "Your text is delivered verbatim as a notification when it fires."}
+          </span>
         </label>
         <Show when={recurrence() === "once"}>
           <TextField onChange={setFireAt} value={fireAt()}>
@@ -1111,7 +1182,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   const [connection, setConnection] = createSignal<ConnectionStatus>("open");
   const [turn, setTurn] = createSignal<LiveTurn>(emptyTurn());
   const [messagesRefresh, setMessagesRefresh] = createSignal(0);
-  const [notifications, setNotifications] = createSignal<NotifyItem[]>([]);
+  const [notificationsRefresh, setNotificationsRefresh] = createSignal(0);
   const generating = createMemo(() => turn().generating);
 
   const conversationsQuery = createQuery(() => ({
@@ -1174,14 +1245,10 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
       return;
     }
     if (frame.type === "notify") {
-      setNotifications((items) => [
-        {
-          body: frame.body,
-          id: `${frame.trigger_id}:${Date.now().toString()}`,
-          title: frame.title,
-        },
-        ...items,
-      ]);
+      // The fired notification is already persisted host-side; refetch the
+      // authoritative list rather than trusting the ephemeral frame, so the
+      // panel is consistent with what a reload would show.
+      setNotificationsRefresh((refresh) => refresh + 1);
       return;
     }
     const currentConversationId = conversationId();
@@ -1349,7 +1416,10 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
           </Show>
         </div>
         <aside class="flex min-h-0 flex-col gap-4 overflow-y-auto">
-          <NotificationsPanel notifications={notifications()} />
+          <NotificationsPanel
+            api={props.api}
+            refreshToken={notificationsRefresh()}
+          />
           <YouTubeSyncPanel api={props.api} />
           <RecallPanel api={props.api} />
           <TriggersPanel api={props.api} />
