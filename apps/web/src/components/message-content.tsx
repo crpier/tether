@@ -30,15 +30,25 @@ const proseClass = [
 // Force every rendered link to open in a new tab with tab-nabbing protection.
 // A hook (not a marked renderer override) so it applies uniformly to autolinks,
 // reference links, and inline links alike, and runs after sanitization sees the
-// anchor. Registered once at module load; DOMPurify hooks are process-global.
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
+// anchor. Registered lazily behind a guard rather than at import: DOMPurify
+// hooks are process-global, so we avoid an import-time side-effect and only add
+// the hook the first time we actually sanitize.
+let newTabHookRegistered = false;
+function ensureNewTabHook(): void {
+  if (newTabHookRegistered) {
+    return;
   }
-});
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A") {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+  newTabHookRegistered = true;
+}
 
 function renderMarkdown(text: string): string {
+  ensureNewTabHook();
   // marked can return a Promise only with async extensions; this config is
   // synchronous, so the string branch always holds.
   const parsed = marked.parse(text);

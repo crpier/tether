@@ -285,6 +285,12 @@ class ConversationService:
         rotating `pi_session_id` in the same transaction means the next turn
         also starts pi with an empty context rather than replaying the (now
         deleted) history.
+
+        This is a deliberately destructive, unconditional "New chat" action: the
+        transcript is hard-deleted with no version precondition and no undo. That
+        is accepted here because it is explicit single-user intent, not a
+        convergence/overwrite hazard — the caveat in docs/principles.md about
+        state-destructive edits is knowingly waived for this reset.
         """
 
         async def _clear(tx: Transaction) -> Conversation[Fetched] | None:

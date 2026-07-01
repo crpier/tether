@@ -468,8 +468,21 @@ function MessageRows(props: {
         <Show when={props.working && props.startedAt !== null}>
           <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
         </Show>
+        {/* Attach the marker to the assistant side, directly under the partial
+            reply it belongs to, rather than floating it centre-stage. It is
+            session-scoped (client state): the truncated text itself is what pi
+            persisted, and durably flagging a message as interrupted would need a
+            transcript schema change out of scope for this polish. */}
         <Show when={props.stopped}>
-          <p class="text-muted-foreground mx-auto py-1 text-xs">
+          <p
+            aria-label="Generation stopped"
+            class="text-muted-foreground mr-auto flex items-center gap-1.5 py-0.5 text-xs italic"
+            role="status"
+          >
+            <span
+              aria-hidden="true"
+              class="bg-muted-foreground/60 inline-block size-1.5 rounded-full"
+            />
             Generation stopped.
           </p>
         </Show>
@@ -1074,6 +1087,7 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
   // Survives the live turn being retired by settled history, so the "stopped"
   // marker stays on the (now persisted) partial reply instead of flashing away.
   const [interrupted, setInterrupted] = createSignal(false);
+  const [clearing, setClearing] = createSignal(false);
   const generating = createMemo(() => turn().generating);
   const canSend = createMemo(() => !generating() && draft().trim().length > 0);
 
@@ -1194,7 +1208,6 @@ function ChatView(props: { api: TetherApi; createChatBus: CreateChatBus }) {
     bus()?.sendPrompt(id, content);
   };
 
-  const [clearing, setClearing] = createSignal(false);
   const clearConversation = () => {
     const id = conversationId();
     if (id === undefined || clearing()) {
