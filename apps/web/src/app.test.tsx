@@ -349,6 +349,25 @@ function renderApp(api: FakeApi, bus = createBusHarness()) {
 afterEach(cleanup);
 
 describe("Tether SPA", () => {
+  test("chat shell is responsive at phone widths", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    // Log out must stay reachable: the header wraps instead of clipping it.
+    const header = await screen.findByRole("banner");
+    expect(header.className).toContain("flex-wrap");
+    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+
+    // The two-column layout collapses to a single stacked column by default and
+    // only splits into transcript + sidebar at the `lg` breakpoint, so the chat
+    // is full-width (not a sliver) on phones.
+    const transcript = await screen.findByLabelText("Chat transcript");
+    const layout = transcript.closest<HTMLElement>("[class*='grid-cols']");
+    expect(layout).not.toBeNull();
+    expect(layout?.className).toContain("grid-cols-1");
+    expect(layout?.className).toContain("lg:grid-cols-");
+  });
+
   test("unauthenticated users log in before seeing chat", async () => {
     const api = new FakeApi({ authenticated: false });
     renderApp(api);
