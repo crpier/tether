@@ -614,12 +614,7 @@ function NotificationsPanel(props: { api: TetherApi; refreshToken: number }) {
                     ✕
                   </button>
                 </div>
-                <p class="mt-1">
-                  <Show when={item.title}>
-                    {(title) => <strong>{title()} </strong>}
-                  </Show>
-                  {item.body}
-                </p>
+                <p class="mt-1">{item.body}</p>
                 <Show when={item.action_kind === "prompt" && item.source_label}>
                   {(label) => (
                     <p class="text-muted-foreground mt-1 text-xs italic">

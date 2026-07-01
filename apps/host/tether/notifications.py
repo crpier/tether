@@ -67,8 +67,6 @@ class Notification[S = Pending](Model[S, "Notification[Fetched]"]):
     """The producing action (`message` or `prompt`); differentiates the source."""
     source_label: Notification.Col[str | None] = Text(default=None, nullable=True)
     """Human-facing origin — the reminder text or the agent prompt that fired."""
-    title: Notification.Col[str | None] = Text(default=None, nullable=True)
-    """Optional short heading shown ahead of the body."""
     body: Notification.Col[str] = Text()
     """The delivered message: a fixed reminder verbatim, or an agent result."""
     created_at: Notification.GenCol[datetime] = Text(default=CurrentTimestamp)
@@ -89,7 +87,6 @@ class NotificationDraft:
     trigger_id: str | None = None
     action_kind: str | None = None
     source_label: str | None = None
-    title: str | None = None
 
 
 class NotificationService:
@@ -120,7 +117,6 @@ class NotificationService:
                         trigger_id=draft.trigger_id,
                         action_kind=draft.action_kind,
                         source_label=draft.source_label,
-                        title=draft.title,
                     )
                 ).returning()
             )
@@ -188,7 +184,6 @@ class NotificationRead(BaseModel):
     trigger_id: str | None
     action_kind: str | None
     source_label: str | None
-    title: str | None
     body: str
     created_at: datetime
 
@@ -200,7 +195,6 @@ class NotificationRead(BaseModel):
             trigger_id=notification.trigger_id,
             action_kind=notification.action_kind,
             source_label=notification.source_label,
-            title=notification.title,
             body=notification.body,
             created_at=_as_utc(notification.created_at),
         )

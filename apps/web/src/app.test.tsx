@@ -128,7 +128,6 @@ function notification(overrides: Partial<Notification>): Notification {
     created_at: "2026-01-01T00:00:00Z",
     id: "018f0000-0000-7000-8000-0000000000f1",
     source_label: "call the dentist",
-    title: null,
     trigger_id: "018f0000-0000-7000-8000-0000000000aa",
     ...overrides,
   };

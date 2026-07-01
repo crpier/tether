@@ -10,7 +10,7 @@ it.
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, fixture, load_fixture, test
@@ -119,40 +119,89 @@ def login(client: TestClient) -> None:
     assert_eq(response.status_code, 204)
 
 
+def _receive_until(websocket: Any, frame_type: str) -> dict[str, Any]:
+    """Read frames until one of `frame_type` arrives (bounded by WS timeout)."""
+    for _attempt in range(50):
+        frame = websocket.receive_json()
+        if frame.get("type") == frame_type:
+            return frame
+    message = f"no {frame_type} frame received"
+    raise AssertionError(message)
+
+
+def _fire_message_trigger(client: TestClient, *, payload: str) -> dict[str, Any]:
+    """Create a due message trigger and wait for the scheduler to fire it.
+
+    Returns the created trigger's JSON so a test can correlate the persisted
+    notification back to its source.
+    """
+    with client.websocket_connect("/ws") as websocket:
+        created = client.post(
+            "/api/triggers",
+            json={
+                "recurrence": "once",
+                "action_kind": "message",
+                "payload": payload,
+                "fire_at": PAST,
+            },
+        )
+        assert_eq(created.status_code, 201)
+        _receive_until(websocket, "notify")
+    return cast("dict[str, Any]", created.json())
+
+
 @test()
-def notifications_round_trip_over_rest() -> None:
-    """List reflects a fired notification; dismiss and clear empty the list."""
+def a_fired_notification_is_listed_with_its_source() -> None:
+    """A fired trigger persists a notification carrying its source and action."""
     with (
         TemporaryDirectory() as directory,
         make_client(Path(directory), tick_seconds=0.05) as client,
     ):
         login(client)
-        with client.websocket_connect("/ws") as websocket:
-            created = client.post(
-                "/api/triggers",
-                json={
-                    "recurrence": "once",
-                    "action_kind": "message",
-                    "payload": "call the dentist",
-                    "fire_at": PAST,
-                },
-            )
-            assert_eq(created.status_code, 201)
-            _receive_until(websocket, "notify")
+        created = _fire_message_trigger(client, payload="call the dentist")
 
         listed = client.get("/api/notifications")
+
         assert_eq(listed.status_code, 200)
         items = listed.json()
         assert_eq(len(items), 1)
         assert_eq(items[0]["body"], "call the dentist")
         assert_eq(items[0]["action_kind"], "message")
         assert_eq(items[0]["source_label"], "call the dentist")
-        assert_eq(items[0]["trigger_id"], created.json()["id"])
+        assert_eq(items[0]["trigger_id"], created["id"])
 
-        dismissed = client.request("DELETE", f"/api/notifications/{items[0]['id']}")
+
+@test()
+def dismissing_a_notification_over_rest_removes_it() -> None:
+    """Dismissing a fired notification drops it from the listed set."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), tick_seconds=0.05) as client,
+    ):
+        login(client)
+        _ = _fire_message_trigger(client, payload="call the dentist")
+        notification_id = client.get("/api/notifications").json()[0]["id"]
+
+        dismissed = client.request("DELETE", f"/api/notifications/{notification_id}")
+
         assert_eq(dismissed.status_code, 204)
-        after_dismiss = client.get("/api/notifications")
-        assert_eq(len(after_dismiss.json()), 0)
+        assert_eq(len(client.get("/api/notifications").json()), 0)
+
+
+@test()
+def clearing_notifications_over_rest_empties_the_list() -> None:
+    """Clearing dismisses every fired notification in one call."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), tick_seconds=0.05) as client,
+    ):
+        login(client)
+        _ = _fire_message_trigger(client, payload="drink water")
+
+        cleared = client.request("DELETE", "/api/notifications")
+
+        assert_eq(cleared.status_code, 204)
+        assert_eq(len(client.get("/api/notifications").json()), 0)
 
 
 @test()
@@ -163,35 +212,11 @@ def a_fired_notification_survives_a_reload() -> None:
         make_client(Path(directory), tick_seconds=0.05) as client,
     ):
         login(client)
-        with client.websocket_connect("/ws") as websocket:
-            created = client.post(
-                "/api/triggers",
-                json={
-                    "recurrence": "once",
-                    "action_kind": "message",
-                    "payload": "drink water",
-                    "fire_at": PAST,
-                },
-            )
-            assert_eq(created.status_code, 201)
-            _receive_until(websocket, "notify")
+        _ = _fire_message_trigger(client, payload="drink water")
 
         # The socket is closed — mimics a browser that reloads (or was away) and
         # fetches the persisted list fresh.
         reloaded = client.get("/api/notifications")
+
         assert_eq(reloaded.status_code, 200)
         assert_eq(reloaded.json()[0]["body"], "drink water")
-
-        cleared = client.request("DELETE", "/api/notifications")
-        assert_eq(cleared.status_code, 204)
-        assert_eq(len(client.get("/api/notifications").json()), 0)
-
-
-def _receive_until(websocket: Any, frame_type: str) -> dict[str, Any]:
-    """Read frames until one of `frame_type` arrives (bounded by WS timeout)."""
-    for _attempt in range(50):
-        frame = websocket.receive_json()
-        if frame.get("type") == frame_type:
-            return frame
-    message = f"no {frame_type} frame received"
-    raise AssertionError(message)

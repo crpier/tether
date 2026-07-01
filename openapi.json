@@ -729,17 +729,6 @@
             ],
             "title": "Source Label"
           },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
           "trigger_id": {
             "anyOf": [
               {
@@ -757,7 +746,6 @@
           "trigger_id",
           "action_kind",
           "source_label",
-          "title",
           "body",
           "created_at"
         ],

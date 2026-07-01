@@ -1720,8 +1720,6 @@ export interface components {
       id: string;
       /** Source Label */
       source_label: string | null;
-      /** Title */
-      title: string | null;
       /** Trigger Id */
       trigger_id: string | null;
     };
