@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
@@ -23,6 +23,14 @@ from tether.pi_runtime import PiRuntimeError
 
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
+_SESSION_GAP = timedelta(minutes=5)
+"""Idle window after which a new turn rotates onto a fresh pi session.
+
+Roughly the provider's automatic prompt-cache warmth window: inside it we reuse
+the live session (cache hit); past it we start clean rather than resend a stale,
+uncached history — which also matches the usual "after a few minutes it's a new
+topic" shape of these conversations.
+"""
 _LOCALTIME_PATH = Path("/etc/localtime")
 _ZONEINFO_MARKER = "zoneinfo/"
 
@@ -423,12 +431,15 @@ async def _run_prompt(
 ) -> None:
     """Forward one prompt to pi, then stream its events."""
     try:
-        conversation = (
-            await websocket.app.state.conversation_service.fetch_conversation(
-                conversation_id
-            )
+        service = websocket.app.state.conversation_service
+        conversation = await service.fetch_conversation(conversation_id)
+        # Decide which pi session receives this turn *before* recording the new
+        # user row, so the gap is measured against the previous turn. A cold gap
+        # rotates the conversation onto a fresh pi session.
+        conversation = await service.resolve_session(
+            conversation, now=datetime.now(UTC), gap=_SESSION_GAP
         )
-        message = await websocket.app.state.conversation_service.append_message(
+        message = await service.append_message(
             MessageDraft(
                 content=content,
                 conversation_id=conversation_id,
