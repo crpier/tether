@@ -343,32 +343,63 @@ async def _wire_youtube(
     )
     app.state.transcript_sync = transcript_sync
     tasks: list[asyncio.Task[None]] = []
+    # Boot passes run off the startup critical path so the lifespan completes and
+    # uvicorn binds its port immediately (#122); a slow first sync no longer hangs
+    # startup. Each worker's `<...>_boot_done` barrier is set once its boot pass
+    # finishes (or is skipped), so callers — a readiness probe, and tests that
+    # depend on the boot mirror — can await completion deterministically.
+    youtube_boot_done = asyncio.Event()
+    app.state.youtube_boot_done = youtube_boot_done
+    transcript_boot_done = asyncio.Event()
+    app.state.transcript_boot_done = transcript_boot_done
+
     # The likes sync only runs against a real upstream client; the in-memory fake
     # is a read-only seam with nothing to pull.
     if config.youtube_api is not None and config.youtube_sync_enabled:
-        # Non-eager: only sync at boot if the gate window has elapsed, so repeated
-        # restarts during development don't each trigger a full pass.
-        _ = await sync.maybe_sync(logger=logger)
-        tasks.append(
-            asyncio.create_task(
-                sync.sync_forever(
-                    interval_seconds=config.youtube_sync_interval_seconds, logger=logger
-                )
+
+        async def _run_likes_sync() -> None:
+            # Non-eager boot pass: only syncs if the gate window has elapsed, so
+            # repeated dev restarts don't each re-spend the day's budget. Boot
+            # failures are logged, not fatal, and still release the barrier.
+            try:
+                _ = await sync.maybe_sync(logger=logger)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("YouTube likes boot sync failed")
+            finally:
+                youtube_boot_done.set()
+            await sync.sync_forever(
+                interval_seconds=config.youtube_sync_interval_seconds, logger=logger
             )
-        )
+
+        tasks.append(asyncio.create_task(_run_likes_sync()))
+    else:
+        youtube_boot_done.set()
+
     # The transcript worker auto-runs only for an explicitly configured provider
     # (captions in production). The fake-derived provider still serves on-demand
     # fetches but does not start a background drain in tests.
     if config.transcript_provider is not None and config.transcript_sync_enabled:
-        _ = await transcript_sync.sync(logger=logger)
-        tasks.append(
-            asyncio.create_task(
-                transcript_sync.sync_forever(
-                    interval_seconds=config.transcript_sync_interval_seconds,
-                    logger=logger,
-                )
+
+        async def _run_transcript_sync() -> None:
+            try:
+                _ = await transcript_sync.sync(logger=logger)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("YouTube transcript boot sync failed")
+            finally:
+                transcript_boot_done.set()
+            await transcript_sync.sync_forever(
+                interval_seconds=config.transcript_sync_interval_seconds,
+                logger=logger,
             )
-        )
+
+        tasks.append(asyncio.create_task(_run_transcript_sync()))
+    else:
+        transcript_boot_done.set()
+
     return tasks
 
 
