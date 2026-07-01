@@ -1,5 +1,6 @@
 import { createTetherClient } from "./generated";
 import type { components, TetherClient } from "./generated";
+import { httpStatusMessage, type HttpStatusMessages } from "./lib/http-errors";
 
 export type AgentModel = components["schemas"]["AgentModelRead"];
 export type Conversation = components["schemas"]["ConversationRead"];
@@ -42,9 +43,13 @@ export interface TetherApi {
   ): Promise<AnswerOutcome>;
 }
 
-function requireData<T>(data: T | undefined, response: Response): T {
+function requireData<T>(
+  data: T | undefined,
+  response: Response,
+  messages?: HttpStatusMessages,
+): T {
   if (!response.ok) {
-    throw new Error(`Request failed: ${String(response.status)}`);
+    throw new Error(httpStatusMessage(response.status, messages));
   }
   if (data === undefined) {
     throw new Error("Request returned no data");
@@ -52,9 +57,9 @@ function requireData<T>(data: T | undefined, response: Response): T {
   return data;
 }
 
-function requireOk(response: Response): void {
+function requireOk(response: Response, messages?: HttpStatusMessages): void {
   if (!response.ok) {
-    throw new Error(`Request failed: ${String(response.status)}`);
+    throw new Error(httpStatusMessage(response.status, messages));
   }
 }
 
@@ -70,7 +75,7 @@ export function createRestApi(
       const { response } = await client.POST("/api/auth/login", {
         body: { password },
       });
-      requireOk(response);
+      requireOk(response, { 401: "Incorrect password." });
     },
     async logout() {
       const { response } = await client.POST("/api/auth/logout");
