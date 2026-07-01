@@ -8,6 +8,22 @@
 - When creating or editing a PR body with `gh`, write the markdown to a temporary file and use `--body-file`; do not pass multiline markdown through `--body`. Verify the rendered body with `gh pr view` afterward.
 - When doing feature/bug-fixing/refactoring or any code-related work, use TDD.
 
+## Debugging: logs and session data
+
+- When a bug is reported against a running `just dev`, read what the app actually
+  did from the files it mirrors under `.tether/` (gitignored) — don't rely on the
+  live terminal:
+  - **`.tether/logs/host.log`** — host (Python) logs as one JSON object per line:
+    requests, tool calls, scheduler, ingestion, and full tracebacks. Follow one
+    chat turn with `jq -r 'select(.run_id=="<run_id>")' .tether/logs/host.log`.
+  - **`.tether/logs/web.log`** — Vite/HMR dev-server output (proxy + build errors).
+  - **`.tether/pi-sessions/<id>/*.jsonl`** — per-run agent transcripts (model
+    turns + tool calls); `scheduled/` and `recall/` subdirs for those run kinds.
+  - **`GET /trace`** on the host (`:8000`) — in-memory per-run agent trace view.
+- `just dev` truncates the two `.log` files at launch (fresh per run) and sets
+  `TETHER_LOG_FILE=.tether/logs/host.log`; the console stays a colorized TTY view
+  regardless. Full details: [docs/development.md](./docs/development.md#logs-and-session-data).
+
 ## Web UI work
 
 - A headed Playwright MCP server (`playwright`, configured in the project-local `.mcp.json`) is available for driving and observing the running SPA. Use it to load the page, click through the affected flow, and read the browser console/network while iterating — not just at the end. It runs headed by default so the developer can watch the browser in real time.

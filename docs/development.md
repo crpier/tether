@@ -45,15 +45,43 @@ YouTube ingestion is optional; see [deploy.md](./deploy.md#youtube-ingestion)
 and `.env.example`. Locally, `just youtube-auth` runs the browser OAuth flow and
 caches the token under `.tether/`.
 
-## Logs
+## Logs and session data
 
 In `just dev` the host logs print **colorized and readable** straight to the
-terminal (a TTY selects the console renderer). Set
+terminal (a TTY selects the console renderer). `just dev` also runs at
 `TETHER_LOGGING_LEVEL=DEBUG` for more detail.
 
 Every host log line servicing a chat turn carries a `run_id`, so you can follow
 one turn end to end by grepping for its id. (In the docker path the container
 emits JSON; `just logs <run_id>` renders it readable and filters to that turn.)
+
+### Where to look when a bug is reported
+
+`just dev` mirrors everything to files under `.tether/` (gitignored) so an
+**agent can read back what the app actually did** without needing the live
+terminal. These are the canonical debugging sources:
+
+| What | Path | Format |
+| --- | --- | --- |
+| Host app logs (Python: requests, tools, scheduler, ingestion, tracebacks) | `.tether/logs/host.log` | one JSON object per line |
+| Web dev-server output (Vite/HMR, proxy, build errors) | `.tether/logs/web.log` | raw Vite stdout/stderr |
+| Agent session transcripts (per pi run: model turns + tool calls) | `.tether/pi-sessions/<conversation-id>/*.jsonl` | JSONL, one event per line |
+| Scheduled/recall agent runs | `.tether/pi-sessions/{scheduled,recall}/<session-id>/*.jsonl` | JSONL |
+| Live per-run agent trace (in-memory, last 200 runs) | `GET /trace` on the host (`:8000`) | JSON |
+
+`just dev` **truncates** `host.log` and `web.log` at launch, so each run starts
+clean; the host **appends** across auto-reloads within that run. Read the host
+log as structured JSON, e.g. follow one chat turn:
+
+```sh
+tail -f .tether/logs/host.log | jq -r 'select(.run_id=="<run_id>")'
+```
+
+The file sink is driven by `TETHER_LOG_FILE` (set to `.tether/logs/host.log` by
+`just dev`). The console output is unchanged whether or not the file sink is on —
+it stays a colorized TTY view. Unset in production; the docker container logs to
+stdout (`just logs`). To capture host logs to a file outside `just dev`, run e.g.
+`TETHER_LOG_FILE=.tether/logs/host.log just host`.
 
 ## Codegen
 
