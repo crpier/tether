@@ -6,6 +6,8 @@ seeded `InMemoryYouTubeApi` so no live YouTube call is ever made. The browser
 surface is authenticated, so each test logs in first.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -45,29 +47,43 @@ def video(
     )
 
 
+@contextmanager
 def make_client(
     root: Path,
     api: InMemoryYouTubeApi,
     *,
     quota_limit: int = 1000,
     provider: TranscriptProvider | None = None,
-) -> TestClient:
-    """A test app whose YouTube service is backed by the given in-memory API."""
-    return TestClient(
-        create_app(
-            config=AppConfig(
-                app_password=APP_PASSWORD,
-                database_path=root / "tether.sqlite3",
-                kb_root=root / ".tether",
-                session_secret=SESSION_SECRET,
-                youtube_api=api,
-                youtube_daily_quota_limit=quota_limit,
-                transcript_provider=provider,
-                transcript_sync_enabled=False,
-            ),
-            telemetry_settings=TelemetrySettings(install_global_provider=False),
-        )
+) -> Generator[TestClient]:
+    """A test app whose YouTube service is backed by the given in-memory API.
+
+    Yields the client only after the deferred boot sync mirror has completed
+    (see #122), so tests observe the seeded liked videos deterministically.
+    """
+    app = create_app(
+        config=AppConfig(
+            app_password=APP_PASSWORD,
+            database_path=root / "tether.sqlite3",
+            kb_root=root / ".tether",
+            session_secret=SESSION_SECRET,
+            youtube_api=api,
+            youtube_daily_quota_limit=quota_limit,
+            transcript_provider=provider,
+            transcript_sync_enabled=False,
+        ),
+        telemetry_settings=TelemetrySettings(install_global_provider=False),
     )
+    with TestClient(app) as client:
+        _wait_for_boot(client, app)
+        yield client
+
+
+def _wait_for_boot(client: TestClient, app: object) -> None:
+    """Block the test until the app's deferred YouTube boot sync has finished."""
+    boot_done = getattr(getattr(app, "state", None), "youtube_boot_done", None)
+    portal = client.portal
+    if boot_done is not None and portal is not None:
+        portal.call(boot_done.wait)
 
 
 def login(client: TestClient) -> None:

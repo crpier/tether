@@ -9,6 +9,8 @@ Recall-specific behavior: starting Recall on a transcribed source, listing due
 prompts without leaking the answer key, and grading an answer.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -64,8 +66,13 @@ def seeded_api() -> InMemoryYouTubeApi:
     )
 
 
-def make_client(root: Path, api: InMemoryYouTubeApi) -> TestClient:
-    """A test app with a seeded YouTube API and an injected fake generator."""
+@contextmanager
+def make_client(root: Path, api: InMemoryYouTubeApi) -> Generator[TestClient]:
+    """A test app with a seeded YouTube API and an injected fake generator.
+
+    Yields the client only after the deferred boot sync mirror has completed
+    (see #122), so the seeded source video exists when recall tools run.
+    """
     app = create_app(
         config=AppConfig(
             app_password="test-app-password",
@@ -79,7 +86,12 @@ def make_client(root: Path, api: InMemoryYouTubeApi) -> TestClient:
         tool_secret=SECRET,
     )
     cast("SessionRegistry", app.state.session_registry).register(SESSION)
-    return TestClient(app)
+    with TestClient(app) as client:
+        boot_done = getattr(app.state, "youtube_boot_done", None)
+        portal = client.portal
+        if boot_done is not None and portal is not None:
+            portal.call(boot_done.wait)
+        yield client
 
 
 def call(client: TestClient, tool: str, **params: Any) -> dict[str, Any]:

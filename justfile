@@ -1,5 +1,11 @@
 # Tether tasks. `just` from root; uv targets apps/host via UV_PROJECT (.envrc).
 
+# Load the repo-root `.env` into every recipe's environment. Without this the
+# host boots with an empty `TETHER_MODEL_ALLOWLIST` (and no default model), so
+# the chat model selector renders no choices. Recipe-line assignments (e.g.
+# `TETHER_APP_PASSWORD=dev` in `host`/`dev`) still override the dotenv values.
+set dotenv-load := true
+
 default:
     @just --list
 
@@ -23,14 +29,13 @@ dev:
     mkdir -p .tether/logs
     : > .tether/logs/host.log
     : > .tether/logs/web.log
-    # Ingestion syncs run eagerly in the startup lifespan and block the server
-    # from binding :8000 (the transcript pass makes synchronous per-video fetches
-    # for the whole liked-list). The fast dev loop is for web/HMR work, so keep
-    # them off here; run `just host` (or unset these) when exercising ingestion.
+    # Ingestion syncs run enabled here: the boot pass is fire-and-forget (#122),
+    # so a real OAuth token no longer blocks the :8000 bind, and `just dev` stays
+    # in step with new liked videos. Set TETHER_YOUTUBE_SYNC_ENABLED=false /
+    # TETHER_TRANSCRIPT_SYNC_ENABLED=false to opt out for a pure web/HMR loop.
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
         TETHER_LOGGING_LEVEL=DEBUG \
         TETHER_LOG_FILE=.tether/logs/host.log \
-        TETHER_YOUTUBE_SYNC_ENABLED=false TETHER_TRANSCRIPT_SYNC_ENABLED=false \
         uv run python -m tether &
     host_pid=$!
     # Process substitution (not a pipe) keeps $! as pnpm's pid so the trap kills
