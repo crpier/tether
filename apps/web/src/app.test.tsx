@@ -16,6 +16,7 @@ import type {
   DuePrompt,
   Message,
   ModelList,
+  Notification,
   PushStatus,
   TetherApi,
   Trigger,
@@ -120,16 +121,32 @@ function trigger(overrides: Partial<Trigger>): Trigger {
   };
 }
 
+function notification(overrides: Partial<Notification>): Notification {
+  return {
+    action_kind: "message",
+    body: "call the dentist",
+    created_at: "2026-01-01T00:00:00Z",
+    id: "018f0000-0000-7000-8000-0000000000f1",
+    source_label: "call the dentist",
+    title: null,
+    trigger_id: "018f0000-0000-7000-8000-0000000000aa",
+    ...overrides,
+  };
+}
+
 class FakeApi implements TetherApi {
   authenticated: boolean;
   createTriggerCalls: CreateTrigger[] = [];
   deleteTriggerCalls: { triggerId: string; version: number }[] = [];
+  dismissNotificationCalls: string[] = [];
+  clearNotificationsCalls = 0;
   loginPassword: string | undefined;
   messageCalls = 0;
   pushSubscribed = false;
   selectedModel: string | undefined;
   storedConversation: Conversation = { ...conversation };
   storedMessages: Message[];
+  storedNotifications: Notification[] = [];
   storedTriggers: Trigger[];
   subscribeCalls: { auth: string; endpoint: string; p256dh: string }[] = [];
   unsubscribeCalls: string[] = [];
@@ -272,6 +289,27 @@ class FakeApi implements TetherApi {
       quality: correct ? 5 : 1,
       tethered: false,
     });
+  }
+
+  listNotificationsCalls = 0;
+
+  listNotifications(): Promise<Notification[]> {
+    this.listNotificationsCalls += 1;
+    return Promise.resolve(this.storedNotifications);
+  }
+
+  dismissNotification(notificationId: string): Promise<void> {
+    this.dismissNotificationCalls.push(notificationId);
+    this.storedNotifications = this.storedNotifications.filter(
+      (item) => item.id !== notificationId,
+    );
+    return Promise.resolve();
+  }
+
+  clearNotifications(): Promise<void> {
+    this.clearNotificationsCalls += 1;
+    this.storedNotifications = [];
+    return Promise.resolve();
   }
 
   private placeholderPrompt(promptId: string): DuePrompt["prompt"] {
@@ -741,19 +779,118 @@ describe("Tether SPA", () => {
     ).toBeInTheDocument();
   });
 
-  test("notify frames surface in the notifications panel", async () => {
+  test("persisted notifications load into the panel on mount", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedNotifications = [notification({ body: "call the dentist" })];
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    const row = await screen.findByLabelText("Notification: call the dentist");
+    expect(within(row).getByText("call the dentist")).toBeInTheDocument();
+    // The message action reads as a "Reminder" so it is distinguishable from an
+    // agent result.
+    expect(within(row).getByText("Reminder")).toBeInTheDocument();
+  });
+
+  test("an agent-result notification is labelled and shows its prompt", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedNotifications = [
+      notification({
+        action_kind: "prompt",
+        body: "It is sunny.",
+        source_label: "what is the weather?",
+      }),
+    ];
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    expect(await screen.findByText("It is sunny.")).toBeInTheDocument();
+    expect(screen.getByText("Agent result")).toBeInTheDocument();
+    expect(
+      screen.getByText("Prompt: what is the weather?"),
+    ).toBeInTheDocument();
+  });
+
+  test("notify frames refetch the persisted notifications list", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
 
-    await screen.findByRole("heading", { name: "Tether chat" });
+    await waitFor(() => {
+      expect(api.listNotificationsCalls).toBeGreaterThan(0);
+    });
+    const before = api.listNotificationsCalls;
+    // The host persists before the frame arrives; the frame only prompts a
+    // refetch of the authoritative list.
+    api.storedNotifications = [notification({ body: "drink water" })];
     bus.emit({
-      body: "call the dentist",
-      title: "Reminder",
+      body: "drink water",
+      title: null,
       trigger_id: "trig-9",
       type: "notify",
     });
 
-    expect(await screen.findByText("call the dentist")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.listNotificationsCalls).toBeGreaterThan(before);
+    });
+    expect(await screen.findByText("drink water")).toBeInTheDocument();
+  });
+
+  test("dismissing a notification removes it from the panel", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedNotifications = [notification({ body: "call the dentist" })];
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Notification: call the dentist");
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Dismiss notification" }),
+    );
+
+    await waitFor(() => {
+      expect(api.dismissNotificationCalls).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("call the dentist")).not.toBeInTheDocument();
+    });
+  });
+
+  test("clearing dismisses every notification", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedNotifications = [
+      notification({ body: "call the dentist", id: "n1" }),
+      notification({ body: "drink water", id: "n2" }),
+    ];
+    renderApp(api);
+
+    await screen.findByText("call the dentist");
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+
+    await waitFor(() => {
+      expect(api.clearNotificationsCalls).toBe(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("drink water")).not.toBeInTheDocument();
+    });
+  });
+
+  test("the reminder action help text distinguishes the two kinds", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    expect(
+      screen.getByText(
+        "Your text is delivered verbatim as a notification when it fires.",
+      ),
+    ).toBeInTheDocument();
+
+    const actionSelect = screen.getByDisplayValue("Notify me with this text");
+    fireEvent.change(actionSelect, { target: { value: "prompt" } });
+
+    expect(
+      screen.getByText(
+        "The agent runs your text when it fires; its answer arrives as a notification.",
+      ),
+    ).toBeInTheDocument();
   });
 
   test("lists outstanding recall prompts with their choices", async () => {

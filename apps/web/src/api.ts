@@ -15,6 +15,7 @@ export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
 export type DuePrompt = components["schemas"]["DuePromptRead"];
 export type AnswerOutcome = components["schemas"]["AnswerOutcomeRead"];
 export type YouTubeSyncStatus = components["schemas"]["YouTubeSyncStatusRead"];
+export type Notification = components["schemas"]["NotificationRead"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -40,6 +41,9 @@ export interface TetherApi {
     selectedIndex: number,
     responseMs: number,
   ): Promise<AnswerOutcome>;
+  listNotifications(): Promise<Notification[]>;
+  dismissNotification(notificationId: string): Promise<void>;
+  clearNotifications(): Promise<void>;
 }
 
 function requireData<T>(data: T | undefined, response: Response): T {
@@ -151,6 +155,21 @@ export function createRestApi(
         },
       );
       return requireData(data, response);
+    },
+    async listNotifications() {
+      const { data, response } = await client.GET("/api/notifications");
+      return requireData(data, response);
+    },
+    async dismissNotification(notificationId) {
+      const { response } = await client.DELETE(
+        "/api/notifications/{notification_id}",
+        { params: { path: { notification_id: notificationId } } },
+      );
+      requireOk(response);
+    },
+    async clearNotifications() {
+      const { response } = await client.DELETE("/api/notifications");
+      requireOk(response);
     },
   };
 }

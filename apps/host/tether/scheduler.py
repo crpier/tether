@@ -37,6 +37,7 @@ from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.events import EventPublisher, NotifyEvent
 from tether.logging import Logger
 from tether.model_selection import AgentModelConfig
+from tether.notifications import NotificationDraft
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig, PiRuntimeError
 from tether.tools import SessionRegistry
 from tether.triggers import (
@@ -76,16 +77,32 @@ class TriggerNotifier(Protocol):
         ...
 
 
+class NotificationRecorder(Protocol):
+    """Persists a delivered notification so it survives a browser reload."""
+
+    async def record(self, draft: NotificationDraft) -> object:
+        """Persist one delivered notification."""
+        ...
+
+
 class EventNotifier:
     """Delivers fired triggers as `NotifyEvent`s over the in-process event hub.
 
     This is the WebSocket half of capture → resurface: the frame reaches every
-    browser currently connected to the host. (Real Web Push to a closed tab is a
-    deferred follow-up; subscriptions are stored separately by the push service.)
+    browser currently connected to the host. Each delivery is also persisted via
+    the `NotificationRecorder`, so a tab that was closed when the trigger fired
+    still finds the notification — timestamped and labelled with its source —
+    on the next reload. (Real Web Push to a closed tab is a deferred follow-up;
+    subscriptions are stored separately by the push service.)
     """
 
-    def __init__(self, event_publisher: EventPublisher) -> None:
+    def __init__(
+        self,
+        event_publisher: EventPublisher,
+        recorder: NotificationRecorder | None = None,
+    ) -> None:
         self.event_publisher: EventPublisher = event_publisher
+        self.recorder: NotificationRecorder | None = recorder
 
     async def deliver(
         self,
@@ -93,7 +110,21 @@ class EventNotifier:
         trigger: ScheduledTrigger[Fetched],
         message: str,
     ) -> None:
-        """Publish a notification frame for one fired trigger."""
+        """Persist and publish a notification frame for one fired trigger.
+
+        The stored row carries the producing action and the trigger's payload as
+        its source, so the panel can tell an agent result apart from a plain
+        reminder and show where each came from.
+        """
+        if self.recorder is not None:
+            _ = await self.recorder.record(
+                NotificationDraft(
+                    body=message,
+                    trigger_id=str(trigger.id),
+                    action_kind=trigger.action_kind,
+                    source_label=trigger.payload,
+                )
+            )
         await self.event_publisher.publish(
             NotifyEvent(body=message, trigger_id=str(trigger.id))
         )
