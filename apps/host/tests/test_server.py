@@ -22,11 +22,13 @@ from tether.server import (
     AppConfig,
     HostSettings,
     _build_supadata_provider,
+    _compose_transcript_provider,
     create_app_from_environment,
     serve,
 )
 from tether.telemetry import TelemetryExporter, TelemetrySettings
 from tether.transcript_supadata import SupadataTranscriptProvider
+from tether.youtube import FallbackTranscriptProvider, NullTranscriptProvider
 
 
 class CapturedStdout(StringIO):
@@ -456,3 +458,34 @@ def supadata_is_built_when_key_and_flag_are_both_set() -> None:
         _supadata_settings(enabled=True, api_key="sk-secret")
     )
     assert_true(isinstance(provider, SupadataTranscriptProvider))
+
+
+@test()
+def supadata_leads_and_captions_trails_when_it_is_present() -> None:
+    """With Supadata configured it is the primary; captions/library become fallbacks."""
+    captions = NullTranscriptProvider()
+    library = NullTranscriptProvider()
+    supadata = NullTranscriptProvider()
+
+    provider = _compose_transcript_provider(
+        captions=captions, library=library, supadata=supadata
+    )
+
+    assert isinstance(provider, FallbackTranscriptProvider)
+    assert_true(provider.leaf_providers()[0] is supadata)
+    assert_true(captions in provider.leaf_providers()[1:])
+    assert_true(library in provider.leaf_providers()[1:])
+
+
+@test()
+def captions_leads_when_supadata_is_absent() -> None:
+    """No Supadata falls back to the prior order: captions primary, library behind."""
+    captions = NullTranscriptProvider()
+    library = NullTranscriptProvider()
+
+    provider = _compose_transcript_provider(
+        captions=captions, library=library, supadata=None
+    )
+
+    assert isinstance(provider, FallbackTranscriptProvider)
+    assert_true(provider.leaf_providers()[0] is captions)

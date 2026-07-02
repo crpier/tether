@@ -1,23 +1,28 @@
-"""The paid, flag-gated last-resort `TranscriptProvider` backed by Supadata.
+"""The paid, flag-gated `TranscriptProvider` backed by Supadata.
 
-The captions provider and the free `youtube-transcript-api` library cover most
-liked videos, but some yield nothing — the library gets IP-blocked for long
-stretches, and a few videos are not covered by either free source. Supadata is an
-HTTP transcript API (with an API key, billed per call) tried *last* so the few
-videos the free sources miss can still get transcripts when the user has opted in
-to spending for them.
+The OAuth captions Data API is owner-only — it 403s for nearly every third-party
+(liked) video — and the free `youtube-transcript-api` library is IP-block-prone,
+so on their own they transcribe almost none of the liked corpus. Supadata is an
+HTTP transcript API (with an API key, billed per call) that reliably does, so when
+it is configured it becomes the *primary* source (see `tether.server`); the free
+providers trail it as best-effort fallbacks.
 
 This wraps Supadata behind the `TranscriptProvider` port so the composite
-(`FallbackTranscriptProvider`) slots it in after the free providers with no
-structural change to the worker. Two pieces of resilience matter:
+(`FallbackTranscriptProvider`) slots it in with no structural change to the
+worker. Three pieces of resilience matter:
 
 * It is gated — composed into the chain only when an API key is configured *and*
-  the feature flag is on (see `tether.server`), so the default install never spends
-  and stays offline-friendly.
+  the feature flag is on, so the default install never spends and stays
+  offline-friendly.
 * It reuses the per-source provider-pause pattern with its own ``"supadata"``
   source key: a Supadata rate limit maps to the *blocked* outcome (carrying any
   retry-after hint), so hitting Supadata's limits pauses *only* Supadata while the
   free providers keep working.
+* A `SupadataSpendGuard` enforces a hard, persisted cap on total uses: each call
+  reserves one use before spending, and an exhausted cap raises the same *blocked*
+  outcome, so a bounded plan (e.g. 100 uses) stops the background sweep instead of
+  overspending. `mode=native` keeps every call to a single, cheap lookup — never
+  the multi-use AI `generate` path.
 
 Supadata serves long videos via an async job model (submit returns a `jobId`,
 poll it to completion), so `fetch` submits, then polls at a bounded interval up to
@@ -33,23 +38,33 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import httpx2
+from snekql.sqlite import Database, Transaction, insert, select, update
 
+from tether.db_retry import run_in_transaction
 from tether.youtube import (
+    FallbackTranscriptProvider,
     FetchedTranscript,
     TranscriptBlockedError,
     TranscriptProvider,
     TranscriptSegment,
     TranscriptTransientError,
     TranscriptUnavailableError,
+    YouTubeSyncState,
 )
 
 _SOURCE = "supadata"
 """The provenance tag stamped onto Supadata transcripts and its pause-state key."""
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
 """The empty default for `fetch`'s `paused_sources` — Supadata is a leaf source."""
+
+_SPEND_KEY = "supadata_uses"
+"""The `YouTubeSyncState` key holding the running count of Supadata uses spent.
+
+Persisted (not per-process) so the hard cap survives host restarts — a frequent
+`just dev` restart must not hand the sweep a fresh budget every boot."""
 
 _HTTP_TOO_MANY_REQUESTS = 429
 """Supadata's rate-limit / quota status — the *blocked* outcome."""
@@ -62,6 +77,11 @@ _HTTP_CLIENT_ERROR_FLOOR = 400
 # other status (active, queued, starting, ...) is still pending and keeps polling.
 _JOB_COMPLETED = "completed"
 _JOB_FAILED = "failed"
+
+
+SupadataMode = Literal["native", "generate"]
+"""Supadata's transcript modes: `native` fetches an existing caption track (one
+use); `generate` runs multi-use AI transcription. Tether pins `native`."""
 
 
 class SupadataConfigurationError(Exception):
@@ -111,6 +131,12 @@ class SupadataConfig:
     """How long to wait between polls of an in-flight async transcript job."""
     max_poll_attempts: int = 10
     """Poll budget for an async job; exhausting it is *transient*, not a hang."""
+    mode: SupadataMode = "native"
+    """Supadata transcript mode sent on every submit. `native` fetches an existing
+    caption track only — one Supadata use per call — and returns *unavailable* for a
+    caption-less video rather than silently falling through to the multi-use AI
+    `generate` path. Pinned so a bounded plan (e.g. 100 uses) is spent one lookup at
+    a time and never surprise-billed for a generation."""
 
 
 def _is_rate_limited(response: SupadataResponse) -> bool:
@@ -215,17 +241,112 @@ def _unfinished_error(
     )
 
 
-class SupadataTranscriptProvider(TranscriptProvider):
-    """The paid last-resort `TranscriptProvider` backed by Supadata.
+class SupadataBudgetExhaustedError(Exception):
+    """The Supadata use cap is reached, so no further call may be billed.
 
-    Composed behind the free providers (and only when key + flag enable it), so it
-    is reached only after captions and the free library have failed. It submits a
-    transcript request, returns immediately on a direct hit, and otherwise polls
-    the async job to completion within a bounded number of attempts. A rate limit
-    is the distinct *blocked* signal that trips the worker's Supadata-specific
-    pause; no transcript is *unavailable*; an exhausted-poll or transport error is
-    *transient*. It holds no budget — Supadata's cost is governed by the key + flag,
-    not the YouTube daily-unit budget.
+    Raised by a `SupadataSpendGuard` *before* any HTTP call, carrying the spent
+    count and the cap for the log line. The provider translates it into the
+    *blocked* outcome so the worker pauses Supadata and leaves videos pending.
+    """
+
+    def __init__(self, used: int, limit: int) -> None:
+        super().__init__(f"supadata use cap reached ({used}/{limit})")
+        self.used: int = used
+        self.limit: int = limit
+
+
+class SupadataSpendGuard(Protocol):
+    """Reserves one Supadata use before a billed call, enforcing a hard cap."""
+
+    async def charge(self) -> None:
+        """Reserve one use, or raise `SupadataBudgetExhaustedError` if the cap is hit."""
+        ...
+
+
+class UnlimitedSupadataSpend(SupadataSpendGuard):
+    """The default guard: never caps (used in tests and when no cap is wired)."""
+
+    async def charge(self) -> None:
+        """A no-op — spending is unbounded."""
+
+
+class PersistentSupadataSpendGuard(SupadataSpendGuard):
+    """A hard, persisted cap on Supadata uses spanning restarts.
+
+    The count lives in `YouTubeSyncState` under `_SPEND_KEY`; `charge` reads,
+    checks against `max_uses`, and increments in a single transaction, so a serial
+    worker never exceeds the cap. The check runs *before* the billed call and the
+    increment persists on success, so a crash between reserving and calling
+    over-counts (safe) rather than over-spends. Single-tenant Tether has no
+    concurrent charger, so the read-then-write needs no extra locking beyond the
+    transaction.
+    """
+
+    def __init__(self, database: Database, *, max_uses: int) -> None:
+        self._database: Database = database
+        self._max_uses: int = max(0, max_uses)
+
+    async def charge(self) -> None:
+        """Reserve one use within the cap, or raise `SupadataBudgetExhaustedError`."""
+
+        async def _reserve(tx: Transaction) -> None:
+            row = await tx.fetch_one_or_none(
+                select(YouTubeSyncState).where(YouTubeSyncState.key.eq(_SPEND_KEY))
+            )
+            used = int(row.value) if row is not None else 0
+            if used >= self._max_uses:
+                raise SupadataBudgetExhaustedError(used, self._max_uses)
+            spent = str(used + 1)
+            if row is None:
+                _ = await tx.execute(
+                    insert(YouTubeSyncState(key=_SPEND_KEY, value=spent))
+                )
+            else:
+                _ = await tx.execute(
+                    update(YouTubeSyncState)
+                    .set(YouTubeSyncState.value.to(spent))
+                    .where(YouTubeSyncState.key.eq(_SPEND_KEY))
+                )
+
+        await run_in_transaction(self._database, _reserve)
+
+
+def _iter_supadata_providers(
+    provider: TranscriptProvider,
+) -> Iterable[SupadataTranscriptProvider]:
+    """Yield every `SupadataTranscriptProvider` reachable from `provider`."""
+    if isinstance(provider, SupadataTranscriptProvider):
+        yield provider
+    elif isinstance(provider, FallbackTranscriptProvider):
+        for child in provider.leaf_providers():
+            yield from _iter_supadata_providers(child)
+
+
+def bind_supadata_spend_guard(
+    provider: TranscriptProvider, database: Database, *, max_uses: int
+) -> None:
+    """Late-bind a persisted cap onto every Supadata provider in a chain.
+
+    The provider tree is built from settings before the database exists, so the
+    hard cap is attached here (at wire time) the same way the semantic-search
+    collaborator is. Walks a `FallbackTranscriptProvider`'s leaves so a Supadata
+    primary *or* fallback is covered; a no-op when the chain has no Supadata.
+    """
+    for leaf in _iter_supadata_providers(provider):
+        leaf.spend_guard = PersistentSupadataSpendGuard(database, max_uses=max_uses)
+
+
+class SupadataTranscriptProvider(TranscriptProvider):
+    """The paid `TranscriptProvider` backed by Supadata (the primary when enabled).
+
+    Enabled only when key + flag are set, in which case it leads the chain. It
+    reserves one use from its `SupadataSpendGuard` (raising *blocked* at the cap),
+    then submits a transcript request, returns immediately on a direct hit, and
+    otherwise polls the async job to completion within a bounded number of
+    attempts. A rate limit is the distinct *blocked* signal that trips the worker's
+    Supadata-specific pause; no transcript is *unavailable*; an exhausted-poll or
+    transport error is *transient*. Its spend is bounded by the guard's persisted
+    use cap, separate from the YouTube daily-unit budget.
     """
 
     source: str = _SOURCE
@@ -236,11 +357,15 @@ class SupadataTranscriptProvider(TranscriptProvider):
         *,
         config: SupadataConfig | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        spend_guard: SupadataSpendGuard | None = None,
     ) -> None:
         self._transport: SupadataTransport = transport
         self._config: SupadataConfig = config or SupadataConfig()
         # Injectable so tests need not wait real seconds between poll attempts.
         self._sleep: Callable[[float], Awaitable[None]] = sleep or asyncio.sleep
+        # Public so the wiring can late-bind the persisted cap once the database
+        # exists (the tree is built from settings first); unbounded by default.
+        self.spend_guard: SupadataSpendGuard = spend_guard or UnlimitedSupadataSpend()
 
     async def fetch(
         self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
@@ -249,8 +374,16 @@ class SupadataTranscriptProvider(TranscriptProvider):
 
         Supadata is a leaf source the composite skips while paused, so
         `paused_sources` is a no-op here.
+
+        Reserves one guarded use before the billed call; an exhausted cap is the
+        *blocked* outcome (Supadata's own source), so the worker pauses Supadata
+        and leaves the video pending rather than spending past the plan.
         """
         _ = paused_sources
+        try:
+            await self.spend_guard.charge()
+        except SupadataBudgetExhaustedError as error:
+            raise TranscriptBlockedError(str(error), source=_SOURCE) from error
         response = await self._transport.submit(video_id)
         # A rate limit or any client/server error is a failure to classify; a 2xx is
         # either a job handoff, a direct transcript, or a genuine "no transcript".
@@ -297,6 +430,16 @@ class SupadataTranscriptProvider(TranscriptProvider):
         raise _unfinished_error(video_id, job_id, self._config.max_poll_attempts)
 
 
+def _submit_params(video_id: str, mode: SupadataMode) -> dict[str, str]:
+    """The query params for a Supadata transcript submit, pinning the billed mode.
+
+    `mode` is always sent so a caption-less video costs one `native` lookup and
+    returns unavailable, never the multi-use `generate` path Supadata would pick
+    when the param is omitted.
+    """
+    return {"videoId": video_id, "mode": mode}
+
+
 class HttpSupadataTransport(SupadataTransport):
     """The production `SupadataTransport`: a thin httpx client over Supadata's API.
 
@@ -313,7 +456,9 @@ class HttpSupadataTransport(SupadataTransport):
         self._config: SupadataConfig = config or SupadataConfig()
 
     async def submit(self, video_id: str) -> SupadataResponse:
-        return await self._get("/transcript", params={"videoId": video_id})
+        return await self._get(
+            "/transcript", params=_submit_params(video_id, self._config.mode)
+        )
 
     async def poll(self, job_id: str) -> SupadataResponse:
         return await self._get(f"/transcript/{job_id}")
