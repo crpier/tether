@@ -448,6 +448,10 @@ class FallbackTranscriptProvider(TranscriptProvider):
         """The composite's own tag is the primary's — sub-providers stamp their own."""
         return self._primary.source
 
+    def leaf_providers(self) -> tuple[TranscriptProvider, ...]:
+        """The composed providers (primary first) for wiring to walk and late-bind."""
+        return (self._primary, *self._fallbacks)
+
     async def fetch(
         self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
     ) -> FetchedTranscript:

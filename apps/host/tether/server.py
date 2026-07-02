@@ -90,6 +90,7 @@ from tether.transcript_supadata import (
     HttpSupadataTransport,
     SupadataConfig,
     SupadataTranscriptProvider,
+    bind_supadata_spend_guard,
 )
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
@@ -153,6 +154,7 @@ class AppConfig:
     youtube_api_gate_pause_base_seconds: float = 15 * 60
     youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
     transcript_provider: TranscriptProvider | None = None
+    transcript_supadata_max_uses: int = 100
     transcript_sync_enabled: bool = True
     transcript_sync_interval_seconds: float = 5 * 60
     transcript_sync_recent_window: int = 50
@@ -215,9 +217,12 @@ class HostSettings(BaseSettings):
     provider. Enabled by default; set `TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` to
     run captions-only (e.g. if the host IP keeps getting blocked)."""
     supadata_enabled: bool = False
-    """Whether to compose the paid Supadata provider as the last-resort fallback.
-    Off by default and a no-op unless `supadata_api_key` is also set, so enabling
-    paid transcription is a deliberate, credentialed choice."""
+    """Whether to compose the paid Supadata provider. When enabled (and keyed) it
+    becomes the *primary* transcript source: it is the only source that reliably
+    transcribes third-party liked videos, so the owner-only captions API and the
+    free library trail it as best-effort fallbacks. Off by default and a no-op
+    unless `supadata_api_key` is also set, so enabling paid transcription is a
+    deliberate, credentialed choice."""
     supadata_api_key: str = ""
     """Supadata API key. Empty (the default) keeps Supadata out of the chain
     entirely, so the default install never spends and stays offline-friendly."""
@@ -229,6 +234,14 @@ class HostSettings(BaseSettings):
     """Delay between polls of an in-flight async Supadata transcript job."""
     supadata_max_poll_attempts: int = 10
     """Poll budget for a Supadata async job before the attempt is treated as transient."""
+    supadata_mode: str = "native"
+    """Supadata transcript mode. `native` (the default) fetches an existing caption
+    track only — one use per call — so a caption-less video costs one lookup and
+    returns unavailable instead of the multi-use AI `generate` path."""
+    supadata_max_uses: int = 100
+    """Hard cap on total Supadata uses, persisted across restarts. The background
+    sweep stops calling Supadata once this many are spent (remaining videos stay
+    pending), bounding spend to a limited plan. Raise it after topping up."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -256,6 +269,27 @@ async def _create_schemas(db: Database) -> None:
     await create_recall_schema(db)
     await create_search_meta_schema(db)
     await create_notification_schema(db)
+
+
+def _resolve_transcript_provider(
+    config: AppConfig, api: YouTubeApi, database: Database
+) -> TranscriptProvider:
+    """Pick the transcript provider and bind its persisted Supadata use cap.
+
+    The on-demand fetch path always needs a provider: prefer the explicitly
+    configured one (the composed captions/Supadata chain in production), else reuse
+    the upstream fake when it doubles as a `TranscriptProvider` (the in-memory test
+    double), else a null provider that reports every video unavailable. The Supadata
+    cap is late-bound here — the provider tree is built from settings before the
+    database exists — and is a no-op when the chain has no Supadata.
+    """
+    provider = config.transcript_provider or (
+        api if isinstance(api, InMemoryYouTubeApi) else NullTranscriptProvider()
+    )
+    bind_supadata_spend_guard(
+        provider, database, max_uses=config.transcript_supadata_max_uses
+    )
+    return provider
 
 
 async def _wire_youtube(
@@ -293,13 +327,7 @@ async def _wire_youtube(
             ),
         ),
     )
-    # The on-demand fetch path always needs a provider; prefer the explicitly
-    # configured one (captions in production), else reuse the upstream fake when it
-    # doubles as a `TranscriptProvider` (the in-memory test double), else a null
-    # provider that reports every video unavailable.
-    provider = config.transcript_provider or (
-        api if isinstance(api, InMemoryYouTubeApi) else NullTranscriptProvider()
-    )
+    provider = _resolve_transcript_provider(config, api, database)
     youtube_service = YouTubeService(
         database=database,
         client=client,
@@ -888,29 +916,51 @@ def build_configured_transcript_provider(
 ) -> TranscriptProvider | None:
     """Build the transcript provider when a YouTube token has been authorized.
 
-    The captions API (OAuth-backed, sharing the liked-list adapter's config and
-    validated caption scope) is the primary. Unless disabled, the wider but
-    IP-block-prone `youtube-transcript-api` library is composed *behind* it via
-    `FallbackTranscriptProvider`, so the cheaper, higher-quality captions source
-    wins when available and the library only fills the gaps. The paid Supadata
-    last-resort is appended only when its key + flag are both set, so a video is
-    given up on only after every configured source has nothing. With no fallback
-    configured the captions provider is returned bare; with no token, returns
-    `None` so the on-demand path falls back to a null provider and the background
-    transcript worker stays off.
+    Provider precedence follows what actually transcribes the liked corpus. The
+    OAuth captions Data API is *owner-only*: it 403s for nearly every third-party
+    (liked) video, so on its own it yields almost nothing. Supadata is the only
+    source that reliably transcribes them. So when Supadata is keyed + enabled it
+    is the **primary**, with the captions API and the free (IP-block-prone)
+    `youtube-transcript-api` library trailing as best-effort fallbacks that cost no
+    Supadata budget. Without Supadata the captions API leads and the library fills
+    gaps (the prior behaviour). With no token, returns `None` so the on-demand path
+    falls back to a null provider and the background transcript worker stays off.
+
+    The per-call Supadata use cap is late-bound at wire time (it needs the
+    database), so it is not applied here.
     """
     if not settings.youtube_token_path.exists():
         return None
     captions = CaptionsTranscriptProvider.from_config(_youtube_oauth_config(settings))
-    fallbacks: list[TranscriptProvider] = []
-    if settings.transcript_library_enabled:
-        fallbacks.append(YouTubeTranscriptApiProvider())
-    supadata = _build_supadata_provider(settings)
+    library = (
+        YouTubeTranscriptApiProvider() if settings.transcript_library_enabled else None
+    )
+    return _compose_transcript_provider(
+        captions=captions, library=library, supadata=_build_supadata_provider(settings)
+    )
+
+
+def _compose_transcript_provider(
+    *,
+    captions: TranscriptProvider,
+    library: TranscriptProvider | None,
+    supadata: TranscriptProvider | None,
+) -> TranscriptProvider:
+    """Order the configured sources by what actually transcribes the liked corpus.
+
+    Supadata, when present, leads (it is the only source that reliably transcribes
+    third-party videos); the owner-only captions API and the free library trail it
+    as best-effort fallbacks. Without Supadata the captions API leads and the
+    library fills gaps. A single bare source is returned uncomposed.
+    """
     if supadata is not None:
-        fallbacks.append(supadata)
-    if not fallbacks:
-        return captions
-    return FallbackTranscriptProvider(captions, fallbacks=fallbacks)
+        fallbacks: list[TranscriptProvider] = [captions]
+        if library is not None:
+            fallbacks.append(library)
+        return FallbackTranscriptProvider(supadata, fallbacks=fallbacks)
+    if library is not None:
+        return FallbackTranscriptProvider(captions, fallbacks=[library])
+    return captions
 
 
 def _build_supadata_provider(
@@ -929,6 +979,7 @@ def _build_supadata_provider(
         timeout=timedelta(seconds=settings.supadata_timeout_seconds),
         poll_interval=timedelta(seconds=settings.supadata_poll_interval_seconds),
         max_poll_attempts=settings.supadata_max_poll_attempts,
+        mode=settings.supadata_mode,
     )
     transport = HttpSupadataTransport(settings.supadata_api_key, config=config)
     return SupadataTranscriptProvider(transport, config=config)
@@ -966,6 +1017,7 @@ def create_app_from_environment() -> Starlette:
             youtube_api=build_configured_youtube_api(settings),
             youtube_sync_enabled=settings.youtube_sync_enabled,
             transcript_provider=build_configured_transcript_provider(settings),
+            transcript_supadata_max_uses=settings.supadata_max_uses,
             transcript_sync_enabled=settings.transcript_sync_enabled,
         ),
         telemetry_settings=settings.telemetry,

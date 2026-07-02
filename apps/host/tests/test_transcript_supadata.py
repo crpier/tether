@@ -16,20 +16,29 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from snektest import assert_eq, assert_is_none, assert_raises, test
+from snekql.sqlite import Config, Database
+from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 
 from tether.transcript_supadata import (
     HttpSupadataTransport,
+    PersistentSupadataSpendGuard,
+    SupadataBudgetExhaustedError,
     SupadataConfig,
     SupadataConfigurationError,
     SupadataResponse,
+    SupadataSpendGuard,
     SupadataTranscriptProvider,
     _retry_after_seconds,
+    _submit_params,
+    bind_supadata_spend_guard,
 )
 from tether.youtube import (
+    FallbackTranscriptProvider,
+    NullTranscriptProvider,
     TranscriptBlockedError,
     TranscriptTransientError,
     TranscriptUnavailableError,
+    create_youtube_schema,
 )
 
 
@@ -232,3 +241,81 @@ def retry_after_parses_delta_seconds_only() -> None:
     assert_eq(_retry_after_seconds({"Retry-After": "30"}), timedelta(seconds=30))
     assert_is_none(_retry_after_seconds({}))
     assert_is_none(_retry_after_seconds({"Retry-After": "soon"}))
+
+
+class _CountingGuard(SupadataSpendGuard):
+    """A guard that counts charges and can be scripted to exhaust after N uses."""
+
+    def __init__(self, *, cap: int | None = None) -> None:
+        self._cap: int | None = cap
+        self.charges: int = 0
+
+    async def charge(self) -> None:
+        if self._cap is not None and self.charges >= self._cap:
+            raise SupadataBudgetExhaustedError(self.charges, self._cap)
+        self.charges += 1
+
+
+@test()
+def native_is_the_default_mode_and_is_sent_on_every_submit() -> None:
+    """`mode=native` is the config default and rides on the submit params (never generate)."""
+    assert_eq(SupadataConfig().mode, "native")
+    assert_eq(_submit_params("v1", "native"), {"videoId": "v1", "mode": "native"})
+
+
+@test()
+async def an_exhausted_use_cap_is_blocked_without_billing_a_call() -> None:
+    """At the cap, fetch raises *blocked* (supadata source) and never calls the transport."""
+    transport = FakeSupadataTransport(submit=[SupadataResponse(200, {"content": "hi"})])
+    provider = _provider(transport)
+    provider.spend_guard = _CountingGuard(cap=0)
+
+    with assert_raises(TranscriptBlockedError) as caught:
+        _ = await provider.fetch("v1")
+    assert_eq(caught.exception.source, "supadata")
+    assert_eq(transport.submit_calls, 0)
+
+
+@test()
+async def a_use_is_reserved_before_the_billed_call() -> None:
+    """A healthy fetch charges the guard once before reaching the transport."""
+    transport = FakeSupadataTransport(submit=[SupadataResponse(200, {"content": "hi"})])
+    provider = _provider(transport)
+    guard = _CountingGuard()
+    provider.spend_guard = guard
+
+    result = await provider.fetch("v1")
+    assert_eq(result.source, "supadata")
+    assert_eq(guard.charges, 1)
+    assert_eq(transport.submit_calls, 1)
+
+
+@test()
+async def the_persisted_cap_bounds_uses_and_survives_a_restart() -> None:
+    """The DB-backed guard allows exactly `max_uses` charges, spanning fresh instances."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+
+    first = PersistentSupadataSpendGuard(db, max_uses=2)
+    await first.charge()
+    await first.charge()
+    with assert_raises(SupadataBudgetExhaustedError):
+        await first.charge()
+
+    # A new guard (a restart) reads the persisted count — the cap still holds.
+    reborn = PersistentSupadataSpendGuard(db, max_uses=2)
+    with assert_raises(SupadataBudgetExhaustedError):
+        await reborn.charge()
+
+
+@test()
+async def binding_the_cap_reaches_supadata_inside_a_fallback_chain() -> None:
+    """`bind_supadata_spend_guard` walks a composite to bind the Supadata leaf."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    supadata = _provider(FakeSupadataTransport(submit=[SupadataResponse(200, {})]))
+    chain = FallbackTranscriptProvider(supadata, fallbacks=[NullTranscriptProvider()])
+
+    bind_supadata_spend_guard(chain, db, max_uses=5)
+
+    assert_true(isinstance(supadata.spend_guard, PersistentSupadataSpendGuard))
