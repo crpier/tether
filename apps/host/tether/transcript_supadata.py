@@ -38,7 +38,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import httpx2
 from snekql.sqlite import Database, Transaction, insert, select, update
@@ -77,6 +77,11 @@ _HTTP_CLIENT_ERROR_FLOOR = 400
 # other status (active, queued, starting, ...) is still pending and keeps polling.
 _JOB_COMPLETED = "completed"
 _JOB_FAILED = "failed"
+
+
+SupadataMode = Literal["native", "generate"]
+"""Supadata's transcript modes: `native` fetches an existing caption track (one
+use); `generate` runs multi-use AI transcription. Tether pins `native`."""
 
 
 class SupadataConfigurationError(Exception):
@@ -126,12 +131,12 @@ class SupadataConfig:
     """How long to wait between polls of an in-flight async transcript job."""
     max_poll_attempts: int = 10
     """Poll budget for an async job; exhausting it is *transient*, not a hang."""
-    mode: str = "native"
-    """Supadata transcript mode sent on every submit. ``native`` fetches an
-    existing caption track only — one Supadata use per call — and returns
-    *unavailable* for a caption-less video rather than silently falling through to
-    the multi-use AI ``generate`` path. Pinned so a bounded plan (e.g. 100 uses) is
-    spent one lookup at a time and never surprise-billed for a generation."""
+    mode: SupadataMode = "native"
+    """Supadata transcript mode sent on every submit. `native` fetches an existing
+    caption track only — one Supadata use per call — and returns *unavailable* for a
+    caption-less video rather than silently falling through to the multi-use AI
+    `generate` path. Pinned so a bounded plan (e.g. 100 uses) is spent one lookup at
+    a time and never surprise-billed for a generation."""
 
 
 def _is_rate_limited(response: SupadataResponse) -> bool:
@@ -306,6 +311,17 @@ class PersistentSupadataSpendGuard(SupadataSpendGuard):
         await run_in_transaction(self._database, _reserve)
 
 
+def _iter_supadata_providers(
+    provider: TranscriptProvider,
+) -> Iterable[SupadataTranscriptProvider]:
+    """Yield every `SupadataTranscriptProvider` reachable from `provider`."""
+    if isinstance(provider, SupadataTranscriptProvider):
+        yield provider
+    elif isinstance(provider, FallbackTranscriptProvider):
+        for child in provider.leaf_providers():
+            yield from _iter_supadata_providers(child)
+
+
 def bind_supadata_spend_guard(
     provider: TranscriptProvider, database: Database, *, max_uses: int
 ) -> None:
@@ -318,17 +334,6 @@ def bind_supadata_spend_guard(
     """
     for leaf in _iter_supadata_providers(provider):
         leaf.spend_guard = PersistentSupadataSpendGuard(database, max_uses=max_uses)
-
-
-def _iter_supadata_providers(
-    provider: TranscriptProvider,
-) -> Iterable[SupadataTranscriptProvider]:
-    """Yield every `SupadataTranscriptProvider` reachable from `provider`."""
-    if isinstance(provider, SupadataTranscriptProvider):
-        yield provider
-    elif isinstance(provider, FallbackTranscriptProvider):
-        for child in provider.leaf_providers():
-            yield from _iter_supadata_providers(child)
 
 
 class SupadataTranscriptProvider(TranscriptProvider):
@@ -425,11 +430,11 @@ class SupadataTranscriptProvider(TranscriptProvider):
         raise _unfinished_error(video_id, job_id, self._config.max_poll_attempts)
 
 
-def _submit_params(video_id: str, mode: str) -> dict[str, str]:
+def _submit_params(video_id: str, mode: SupadataMode) -> dict[str, str]:
     """The query params for a Supadata transcript submit, pinning the billed mode.
 
-    ``mode`` is always sent so a caption-less video costs one ``native`` lookup and
-    returns unavailable, never the multi-use ``generate`` path Supadata would pick
+    `mode` is always sent so a caption-less video costs one `native` lookup and
+    returns unavailable, never the multi-use `generate` path Supadata would pick
     when the param is omitted.
     """
     return {"videoId": video_id, "mode": mode}

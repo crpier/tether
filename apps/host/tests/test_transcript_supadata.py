@@ -257,9 +257,14 @@ class _CountingGuard(SupadataSpendGuard):
 
 
 @test()
-def native_is_the_default_mode_and_is_sent_on_every_submit() -> None:
-    """`mode=native` is the config default and rides on the submit params (never generate)."""
+def native_is_the_default_mode() -> None:
+    """The config defaults to `native` — one use per call, never AI `generate`."""
     assert_eq(SupadataConfig().mode, "native")
+
+
+@test()
+def the_mode_rides_on_every_submit_param() -> None:
+    """The pinned mode is sent on the submit params so Supadata never auto-generates."""
     assert_eq(_submit_params("v1", "native"), {"videoId": "v1", "mode": "native"})
 
 
@@ -291,19 +296,26 @@ async def a_use_is_reserved_before_the_billed_call() -> None:
 
 
 @test()
-async def the_persisted_cap_bounds_uses_and_survives_a_restart() -> None:
-    """The DB-backed guard allows exactly `max_uses` charges, spanning fresh instances."""
+async def the_persisted_cap_allows_exactly_max_uses_charges() -> None:
+    """The DB-backed guard permits `max_uses` charges, then raises on the next."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
+    guard = PersistentSupadataSpendGuard(db, max_uses=2)
 
-    first = PersistentSupadataSpendGuard(db, max_uses=2)
-    await first.charge()
-    await first.charge()
+    await guard.charge()
+    await guard.charge()
     with assert_raises(SupadataBudgetExhaustedError):
-        await first.charge()
+        await guard.charge()
 
-    # A new guard (a restart) reads the persisted count — the cap still holds.
-    reborn = PersistentSupadataSpendGuard(db, max_uses=2)
+
+@test()
+async def the_persisted_cap_survives_a_restart() -> None:
+    """A fresh guard reads the persisted count, so the cap holds across a restart."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    await PersistentSupadataSpendGuard(db, max_uses=1).charge()
+
+    reborn = PersistentSupadataSpendGuard(db, max_uses=1)
     with assert_raises(SupadataBudgetExhaustedError):
         await reborn.charge()
 

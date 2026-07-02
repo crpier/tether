@@ -89,6 +89,7 @@ from tether.transcript_search import TranscriptSearchService
 from tether.transcript_supadata import (
     HttpSupadataTransport,
     SupadataConfig,
+    SupadataMode,
     SupadataTranscriptProvider,
     bind_supadata_spend_guard,
 )
@@ -234,7 +235,7 @@ class HostSettings(BaseSettings):
     """Delay between polls of an in-flight async Supadata transcript job."""
     supadata_max_poll_attempts: int = 10
     """Poll budget for a Supadata async job before the attempt is treated as transient."""
-    supadata_mode: str = "native"
+    supadata_mode: SupadataMode = "native"
     """Supadata transcript mode. `native` (the default) fetches an existing caption
     track only — one use per call — so a caption-less video costs one lookup and
     returns unavailable instead of the multi-use AI `generate` path."""
