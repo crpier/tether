@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database, Fetched, insert, select
+from snekql.sqlite import Config, Database, Fetched, insert, select, update
 from snektest import (
     assert_eq,
     assert_in,
@@ -39,6 +39,7 @@ from tether.youtube import (
     IngestedVideo,
     InMemoryYouTubeApi,
     TranscriptExcludedError,
+    TranscriptSegment,
     TranscriptSyncConfig,
     TranscriptSyncService,
     TranscriptTransientError,
@@ -78,6 +79,7 @@ class Ok:
     """A scripted successful outcome carrying the transcript text to return."""
 
     text: str
+    source: str = "fake"
 
 
 # Scripted failure tokens, mapped to the provider's typed signals.
@@ -106,16 +108,27 @@ class FakeTranscriptProvider:
         self.calls: dict[str, int] = {}
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
-        _ = paused_sources  # this fake has no blockable source to skip
+        _ = (
+            paused_sources,
+            disabled_sources,
+        )  # this fake has no blockable source to skip
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
             raise TranscriptUnavailableError(video_id)
         token = script.pop(0) if len(script) > 1 else script[0]
         if isinstance(token, Ok):
-            return FetchedTranscript(text=token.text, segments=(), source="fake")
+            return FetchedTranscript(
+                text=token.text,
+                segments=(TranscriptSegment(start_seconds=0.5, text=token.text),),
+                source=token.source,
+            )
         if token == EXCLUDED:
             raise TranscriptExcludedError(video_id)
         if token == TRANSIENT:
@@ -220,6 +233,8 @@ async def successful_fetch_stores_transcript_and_marks_done() -> None:
     assert_eq(report.fetched, 1)
     stored = await env.service.get_video("v1")
     assert_eq(stored.transcript, "coroutines at length")
+    assert_eq(stored.transcript_source, "fake")
+    assert_is_not_none(stored.transcript_segments_json)
     persisted = await state_of(env.db, "v1")
     assert_is_not_none(persisted)
     assert_eq(persisted.status if persisted is not None else None, "done")
@@ -241,6 +256,25 @@ async def a_done_video_is_not_fetched_again() -> None:
 
 
 # --- Unavailable: terminal, never retried -----------------------------------
+
+
+@test()
+async def caption_unavailable_videos_skip_supadata_but_try_library() -> None:
+    """Manual-caption false skips Supadata without suppressing the library."""
+    provider = FakeTranscriptProvider({"v1": [Ok("library body", source="library")]})
+    env = await load_fixture(make_env(provider))
+    await seed(env.db, "v1")
+    async with env.db.transaction() as tx:
+        _ = await tx.execute(
+            update(IngestedVideo)
+            .set(IngestedVideo.caption_available.to(0))
+            .where(IngestedVideo.video_id.eq("v1"))
+        )
+
+    _ = await env.worker.sync(logger=test_logger())
+
+    stored = await env.service.get_video("v1")
+    assert_eq(stored.transcript, "library body")
 
 
 @test()

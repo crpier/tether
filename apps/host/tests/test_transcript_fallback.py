@@ -112,9 +112,13 @@ class FakeSource(TranscriptProvider):
         return self.name
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
-        _ = paused_sources
+        _ = (paused_sources, disabled_sources)
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
@@ -287,7 +291,13 @@ async def make_env(
     await db.close()
 
 
-async def seed(db: Database, video_id: str, *, liked_at: datetime) -> None:
+async def seed(
+    db: Database,
+    video_id: str,
+    *,
+    liked_at: datetime,
+    caption_available: int | None = None,
+) -> None:
     """Insert an active, transcript-less ingested video."""
     async with db.transaction() as tx:
         _ = await tx.execute(
@@ -300,6 +310,7 @@ async def seed(db: Database, video_id: str, *, liked_at: datetime) -> None:
                     topic="python",
                     description="",
                     liked_at=liked_at,
+                    caption_available=caption_available,
                 )
             )
         )
@@ -584,6 +595,22 @@ async def supadata_covers_what_the_free_sources_miss() -> None:
     assert_eq(await transcript_of(env.db, "v1"), "supadata body")
     persisted = await state_of(env.db, "v1")
     assert_eq(persisted.status if persisted is not None else None, "done")
+
+
+@test()
+async def caption_unavailable_videos_skip_supadata_but_try_library() -> None:
+    """Manual-caption false saves Supadata spend while the library can still fetch."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Ok("library body")]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata body")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER, caption_available=0)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 1)
+    assert_eq(await transcript_of(env.db, "v1"), "library body")
+    assert_eq(env.supadata.calls.get("v1"), None)
 
 
 @test()

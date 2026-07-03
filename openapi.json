@@ -1261,10 +1261,7 @@
         "type": "object"
       },
       "YouTubeSource": {
-        "enum": [
-          "liked",
-          "watch_later"
-        ],
+        "const": "liked",
         "type": "string"
       },
       "YouTubeSyncStatusRead": {

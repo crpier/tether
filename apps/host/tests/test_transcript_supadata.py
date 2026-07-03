@@ -14,7 +14,7 @@ wiring helper.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
@@ -61,8 +61,10 @@ class FakeSupadataTransport:
         self.submit_calls: int = 0
         self.poll_calls: int = 0
 
-    async def submit(self, video_id: str) -> SupadataResponse:
-        _ = video_id
+    async def submit(
+        self, video_id: str, *, language: str | None = None
+    ) -> SupadataResponse:
+        _ = (video_id, language)
         self.submit_calls += 1
         return self._submit.pop(0) if len(self._submit) > 1 else self._submit[0]
 
@@ -252,7 +254,11 @@ class _CountingGuard(SupadataSpendGuard):
 
     async def charge(self) -> None:
         if self._cap is not None and self.charges >= self._cap:
-            raise SupadataBudgetExhaustedError(self.charges, self._cap)
+            raise SupadataBudgetExhaustedError(
+                self.charges,
+                self._cap,
+                reset_at=datetime(2026, 7, 1, tzinfo=UTC),
+            )
         self.charges += 1
 
 
@@ -265,7 +271,10 @@ def native_is_the_default_mode() -> None:
 @test()
 def the_mode_rides_on_every_submit_param() -> None:
     """The pinned mode is sent on the submit params so Supadata never auto-generates."""
-    assert_eq(_submit_params("v1", "native"), {"videoId": "v1", "mode": "native"})
+    assert_eq(
+        _submit_params("v1", "native", language="en"),
+        {"videoId": "v1", "mode": "native", "lang": "en"},
+    )
 
 
 @test()
@@ -306,6 +315,22 @@ async def the_persisted_cap_allows_exactly_max_uses_charges() -> None:
     await guard.charge()
     with assert_raises(SupadataBudgetExhaustedError):
         await guard.charge()
+
+
+@test()
+async def the_monthly_cap_resets_at_the_next_utc_month() -> None:
+    """Supadata spend is keyed by UTC calendar month, not lifetime."""
+    current = datetime(2026, 6, 30, 23, tzinfo=UTC)
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    guard = PersistentSupadataSpendGuard(db, max_uses=1, clock=lambda: current)
+    await guard.charge()
+    with assert_raises(SupadataBudgetExhaustedError):
+        await guard.charge()
+
+    current = datetime(2026, 7, 1, tzinfo=UTC)
+    await guard.charge()
+    await db.close()
 
 
 @test()

@@ -6,6 +6,7 @@ against a real in-memory SQLite database and a paginated in-memory `YouTubeApi`
 we can assert browse/search stay local and the sync stays within budget.
 """
 
+import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -13,7 +14,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database, Fetched, Pending, insert, select
+from snekql.sqlite import Config, Database, Fetched, Pending, delete, insert, select
 from snektest import (
     assert_eq,
     assert_in,
@@ -28,13 +29,17 @@ from snektest import (
 
 from tether.logging import Logger
 from tether.youtube import (
+    _BACKFILL_COMPLETED_AT_KEY,
     _LIKES_LAST_RUN_KEY,
+    _NO_PAUSED_SOURCES,
     DailyQuota,
     EmptyYouTubeSearchQueryError,
+    FetchedTranscript,
     IngestedVideo,
     InMemoryYouTubeApi,
     LikedPage,
     RawYouTubeVideo,
+    TranscriptSegment,
     TranscriptUnavailableError,
     YouTubeApi,
     YouTubeApiClient,
@@ -285,6 +290,58 @@ async def sync_pages_and_backfills_across_runs() -> None:
 
 
 @test()
+async def backfill_stops_after_exhaustion_until_the_rewalk_interval() -> None:
+    """A completed historical walk is not restarted on every sync pass."""
+    clock = FakeClock(datetime(2026, 6, 1, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 4)])
+    config = YouTubeSyncConfig(
+        hot_pages=1,
+        backfill_pages=2,
+        page_size=2,
+        backfill_rewalk_interval=timedelta(days=30),
+    )
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+
+    first = await env.sync.sync(logger=test_logger())
+    calls_after_first = api.list_calls
+    second = await env.sync.sync(logger=test_logger())
+    calls_after_second = api.list_calls
+    clock.advance(timedelta(days=31))
+    third = await env.sync.sync(logger=test_logger())
+
+    assert_eq(first.backfill_exhausted, True)
+    assert_eq(second.backfill_deferred, True)
+    # Only the hot page ran while the completed backfill was still fresh.
+    assert_eq(calls_after_second, calls_after_first + 1)
+    assert_eq(third.backfill_deferred, False)
+    assert_is_not_none(await _state_get(env.db, _BACKFILL_COMPLETED_AT_KEY))
+
+
+@test()
+async def drift_restarts_completed_backfill_immediately() -> None:
+    """If upstream total exceeds local + known skipped, the next pass re-walks now."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 4)])
+    config = YouTubeSyncConfig(
+        hot_pages=1,
+        backfill_pages=2,
+        page_size=2,
+        backfill_rewalk_interval=timedelta(days=30),
+    )
+    env = await load_fixture(make_env(api, config=config))
+    _ = await env.sync.sync(logger=test_logger())
+    # Simulate an out-of-band local loss: upstream total is now larger than local.
+    async with env.db.transaction() as tx:
+        _ = await tx.execute(
+            delete(IngestedVideo).where(IngestedVideo.video_id.eq("v3"))
+        )
+
+    report = await env.sync.sync(logger=test_logger())
+
+    assert_eq(report.drift_detected, True)
+    assert_eq(report.backfill_deferred, False)
+
+
+@test()
 async def backfill_cursor_resumes_after_a_restart() -> None:
     """The persisted cursor lets a fresh sync instance resume the backfill."""
     api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
@@ -491,6 +548,34 @@ async def sync_preserves_enriched_metadata() -> None:
     assert_is_not_none(stored.liked_at)
 
 
+@test()
+async def captions_flip_clears_terminal_transcript_state() -> None:
+    """When metadata discovers captions later, terminal transcript state is cleared."""
+    first = video("v1")
+    first.caption_available = False
+    second = video("v1")
+    second.caption_available = True
+    api = InMemoryYouTubeApi(liked=[first])
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+    async with env.db.transaction() as tx:
+        _ = await tx.execute(
+            insert(YouTubeTranscriptState(video_id="v1", status="terminal"))
+        )
+    env.api._liked = [second]
+    env.api._by_id = {"v1": second}
+
+    _ = await env.sync.sync(logger=test_logger())
+
+    async with env.db.transaction() as tx:
+        state = await tx.fetch_one_or_none(
+            select(YouTubeTranscriptState).where(
+                YouTubeTranscriptState.video_id.eq("v1")
+            )
+        )
+    assert_is_none(state)
+
+
 # --- Ignore / retry survive re-sync ---
 
 
@@ -550,6 +635,41 @@ async def fetch_transcript_returns_and_persists_the_text() -> None:
 
     assert_eq(result.transcript, "the transcript body")
     assert_eq(result.video.transcript, "the transcript body")
+
+
+@test()
+async def fetched_transcript_persists_segments_and_source() -> None:
+    """New transcript fetches keep provider provenance and timed segments."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+    fetched = FetchedTranscript(
+        text="hello world",
+        segments=(TranscriptSegment(start_seconds=1.5, text="hello"),),
+        source="test_source",
+    )
+
+    class SegmentProvider:
+        source = "test_source"
+
+        async def fetch(
+            self,
+            video_id: str,
+            *,
+            paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+            disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        ) -> FetchedTranscript:
+            _ = (video_id, paused_sources, disabled_sources)
+            return fetched
+
+    env.service.provider = SegmentProvider()
+    result = await env.service.fetch_transcript("v1", logger=test_logger())
+
+    assert_eq(result.video.transcript_source, "test_source")
+    assert_eq(
+        json.loads(result.video.transcript_segments_json or "[]"),
+        [{"start_seconds": 1.5, "text": "hello"}],
+    )
 
 
 @test()

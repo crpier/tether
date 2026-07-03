@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol, cast
 
 import httpx2
@@ -60,11 +60,8 @@ _SOURCE = "supadata"
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
 """The empty default for `fetch`'s `paused_sources` — Supadata is a leaf source."""
 
-_SPEND_KEY = "supadata_uses"
-"""The `YouTubeSyncState` key holding the running count of Supadata uses spent.
-
-Persisted (not per-process) so the hard cap survives host restarts — a frequent
-`just dev` restart must not hand the sweep a fresh budget every boot."""
+_SPEND_KEY_PREFIX = "supadata_uses:"
+"""Prefix for monthly `YouTubeSyncState` Supadata spend counters."""
 
 _HTTP_TOO_MANY_REQUESTS = 429
 """Supadata's rate-limit / quota status — the *blocked* outcome."""
@@ -77,6 +74,7 @@ _HTTP_CLIENT_ERROR_FLOOR = 400
 # other status (active, queued, starting, ...) is still pending and keeps polling.
 _JOB_COMPLETED = "completed"
 _JOB_FAILED = "failed"
+_DECEMBER = 12
 
 
 SupadataMode = Literal["native", "generate"]
@@ -110,7 +108,9 @@ class SupadataTransport(Protocol):
     provider's logic is exercised offline.
     """
 
-    async def submit(self, video_id: str) -> SupadataResponse:
+    async def submit(
+        self, video_id: str, *, language: str | None = None
+    ) -> SupadataResponse:
         """Request a transcript for a video (sync result or an async job id)."""
         ...
 
@@ -137,6 +137,8 @@ class SupadataConfig:
     caption-less video rather than silently falling through to the multi-use AI
     `generate` path. Pinned so a bounded plan (e.g. 100 uses) is spent one lookup at
     a time and never surprise-billed for a generation."""
+    languages: tuple[str, ...] = ("en", "ro")
+    """Preferred transcript languages, first choice first."""
 
 
 def _is_rate_limited(response: SupadataResponse) -> bool:
@@ -241,6 +243,13 @@ def _unfinished_error(
     )
 
 
+def _next_month_start(now: datetime) -> datetime:
+    """The next UTC calendar-month boundary for monthly Supadata caps."""
+    if now.month == _DECEMBER:
+        return datetime(now.year + 1, 1, 1, tzinfo=UTC)
+    return datetime(now.year, now.month + 1, 1, tzinfo=UTC)
+
+
 class SupadataBudgetExhaustedError(Exception):
     """The Supadata use cap is reached, so no further call may be billed.
 
@@ -249,10 +258,11 @@ class SupadataBudgetExhaustedError(Exception):
     *blocked* outcome so the worker pauses Supadata and leaves videos pending.
     """
 
-    def __init__(self, used: int, limit: int) -> None:
+    def __init__(self, used: int, limit: int, *, reset_at: datetime) -> None:
         super().__init__(f"supadata use cap reached ({used}/{limit})")
         self.used: int = used
         self.limit: int = limit
+        self.reset_at: datetime = reset_at
 
 
 class SupadataSpendGuard(Protocol):
@@ -282,30 +292,41 @@ class PersistentSupadataSpendGuard(SupadataSpendGuard):
     transaction.
     """
 
-    def __init__(self, database: Database, *, max_uses: int) -> None:
+    def __init__(
+        self,
+        database: Database,
+        *,
+        max_uses: int,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._database: Database = database
         self._max_uses: int = max(0, max_uses)
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
 
     async def charge(self) -> None:
         """Reserve one use within the cap, or raise `SupadataBudgetExhaustedError`."""
 
+        now = self._clock().astimezone(UTC)
+        key = f"{_SPEND_KEY_PREFIX}{now:%Y-%m}"
+        reset_at = _next_month_start(now)
+
         async def _reserve(tx: Transaction) -> None:
             row = await tx.fetch_one_or_none(
-                select(YouTubeSyncState).where(YouTubeSyncState.key.eq(_SPEND_KEY))
+                select(YouTubeSyncState).where(YouTubeSyncState.key.eq(key))
             )
             used = int(row.value) if row is not None else 0
             if used >= self._max_uses:
-                raise SupadataBudgetExhaustedError(used, self._max_uses)
+                raise SupadataBudgetExhaustedError(
+                    used, self._max_uses, reset_at=reset_at
+                )
             spent = str(used + 1)
             if row is None:
-                _ = await tx.execute(
-                    insert(YouTubeSyncState(key=_SPEND_KEY, value=spent))
-                )
+                _ = await tx.execute(insert(YouTubeSyncState(key=key, value=spent)))
             else:
                 _ = await tx.execute(
                     update(YouTubeSyncState)
                     .set(YouTubeSyncState.value.to(spent))
-                    .where(YouTubeSyncState.key.eq(_SPEND_KEY))
+                    .where(YouTubeSyncState.key.eq(key))
                 )
 
         await run_in_transaction(self._database, _reserve)
@@ -368,7 +389,11 @@ class SupadataTranscriptProvider(TranscriptProvider):
         self.spend_guard: SupadataSpendGuard = spend_guard or UnlimitedSupadataSpend()
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Fetch a transcript via Supadata (direct or async job), or raise a signal.
 
@@ -379,12 +404,17 @@ class SupadataTranscriptProvider(TranscriptProvider):
         *blocked* outcome (Supadata's own source), so the worker pauses Supadata
         and leaves the video pending rather than spending past the plan.
         """
-        _ = paused_sources
+        _ = (paused_sources, disabled_sources)
         try:
             await self.spend_guard.charge()
         except SupadataBudgetExhaustedError as error:
-            raise TranscriptBlockedError(str(error), source=_SOURCE) from error
-        response = await self._transport.submit(video_id)
+            retry_after = error.reset_at - datetime.now(UTC)
+            raise TranscriptBlockedError(
+                str(error), retry_after=retry_after, source=_SOURCE
+            ) from error
+        response = await self._transport.submit(
+            video_id, language=_preferred_language(self._config.languages)
+        )
         # A rate limit or any client/server error is a failure to classify; a 2xx is
         # either a job handoff, a direct transcript, or a genuine "no transcript".
         if (
@@ -430,14 +460,19 @@ class SupadataTranscriptProvider(TranscriptProvider):
         raise _unfinished_error(video_id, job_id, self._config.max_poll_attempts)
 
 
-def _submit_params(video_id: str, mode: SupadataMode) -> dict[str, str]:
-    """The query params for a Supadata transcript submit, pinning the billed mode.
+def _preferred_language(languages: tuple[str, ...]) -> str | None:
+    """Supadata accepts one language hint; use the primary configured preference."""
+    return languages[0] if languages else None
 
-    `mode` is always sent so a caption-less video costs one `native` lookup and
-    returns unavailable, never the multi-use `generate` path Supadata would pick
-    when the param is omitted.
-    """
-    return {"videoId": video_id, "mode": mode}
+
+def _submit_params(
+    video_id: str, mode: SupadataMode, *, language: str | None
+) -> dict[str, str]:
+    """The query params for a Supadata transcript submit, pinning the billed mode."""
+    params = {"videoId": video_id, "mode": mode}
+    if language is not None:
+        params["lang"] = language
+    return params
 
 
 class HttpSupadataTransport(SupadataTransport):
@@ -455,9 +490,12 @@ class HttpSupadataTransport(SupadataTransport):
         self._api_key: str = api_key
         self._config: SupadataConfig = config or SupadataConfig()
 
-    async def submit(self, video_id: str) -> SupadataResponse:
+    async def submit(
+        self, video_id: str, *, language: str | None = None
+    ) -> SupadataResponse:
         return await self._get(
-            "/transcript", params=_submit_params(video_id, self._config.mode)
+            "/transcript",
+            params=_submit_params(video_id, self._config.mode, language=language),
         )
 
     async def poll(self, job_id: str) -> SupadataResponse:

@@ -247,14 +247,18 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
         return self._fetcher
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Fetch a transcript via the library, or raise a typed signal.
 
         This *is* a blockable source, so `paused_sources` does not apply here — the
         composite provider is what skips it while its pause is in effect.
         """
-        _ = paused_sources
+        _ = (paused_sources, disabled_sources)
         fetcher = self._ensure_fetcher()
         try:
             raw = await asyncio.to_thread(fetcher, video_id)

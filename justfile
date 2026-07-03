@@ -94,6 +94,10 @@ youtube-auth:
 youtube-import-backup *args:
     uv run python -m tether.youtube_import_backup {{args}}
 
+# force the next background sync to re-walk the full liked-videos history
+youtube-reset-backfill:
+    uv run python -m tether.youtube_reset_backfill
+
 # sync/install all deps
 install:
     uv sync

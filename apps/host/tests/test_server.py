@@ -12,7 +12,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import structlog
-from snektest import assert_eq, assert_false, assert_in, assert_true, test
+from snektest import (
+    assert_eq,
+    assert_false,
+    assert_in,
+    assert_raises,
+    assert_true,
+    test,
+)
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -425,67 +432,51 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
     assert_in("Request completed", log_events)
 
 
-def _supadata_settings(*, enabled: bool, api_key: str) -> HostSettings:
-    """HostSettings with the always-required secrets plus the Supadata gating."""
+def _supadata_settings(*, api_key: str) -> HostSettings:
+    """HostSettings with the always-required secrets plus Supadata credentials."""
     return HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
-        supadata_enabled=enabled,
         supadata_api_key=api_key,
     )
 
 
 @test()
-def supadata_is_omitted_when_the_flag_is_off() -> None:
-    """A configured key with the flag off keeps Supadata out of the chain (no spend)."""
+def supadata_is_omitted_when_the_key_is_absent() -> None:
+    """No key keeps Supadata out of the chain, even if named in provider order."""
     provider = _build_supadata_provider(
-        _supadata_settings(enabled=False, api_key="sk-secret")
+        _supadata_settings(api_key=""), languages=("en", "ro")
     )
     assert_true(provider is None)
 
 
 @test()
-def supadata_is_omitted_when_the_key_is_absent() -> None:
-    """The flag on but no key is still a no-op — paid transcription needs credentials."""
-    provider = _build_supadata_provider(_supadata_settings(enabled=True, api_key=""))
-    assert_true(provider is None)
-
-
-@test()
-def supadata_is_built_when_key_and_flag_are_both_set() -> None:
-    """Key + flag together build the Supadata provider for the fallback chain."""
+def supadata_is_built_when_key_is_set() -> None:
+    """Provider order controls use; a configured key builds the Supadata provider."""
     provider = _build_supadata_provider(
-        _supadata_settings(enabled=True, api_key="sk-secret")
+        _supadata_settings(api_key="sk-secret"), languages=("en", "ro")
     )
     assert_true(isinstance(provider, SupadataTranscriptProvider))
 
 
 @test()
-def supadata_leads_and_captions_trails_when_it_is_present() -> None:
-    """With Supadata configured it is the primary; captions/library become fallbacks."""
+def provider_order_controls_transcript_composition() -> None:
+    """The configured order decides the primary and fallback sequence."""
     captions = NullTranscriptProvider()
     library = NullTranscriptProvider()
     supadata = NullTranscriptProvider()
 
     provider = _compose_transcript_provider(
-        captions=captions, library=library, supadata=supadata
+        order=("library", "supadata", "captions"),
+        providers={"captions": captions, "library": library, "supadata": supadata},
     )
 
     assert isinstance(provider, FallbackTranscriptProvider)
-    assert_true(provider.leaf_providers()[0] is supadata)
-    assert_true(captions in provider.leaf_providers()[1:])
-    assert_true(library in provider.leaf_providers()[1:])
+    assert_eq(provider.leaf_providers(), (library, supadata, captions))
 
 
 @test()
-def captions_leads_when_supadata_is_absent() -> None:
-    """No Supadata falls back to the prior order: captions primary, library behind."""
-    captions = NullTranscriptProvider()
-    library = NullTranscriptProvider()
-
-    provider = _compose_transcript_provider(
-        captions=captions, library=library, supadata=None
-    )
-
-    assert isinstance(provider, FallbackTranscriptProvider)
-    assert_true(provider.leaf_providers()[0] is captions)
+def provider_order_rejects_unknown_sources() -> None:
+    """Misspelled provider names fail at wire time instead of silently reordering."""
+    with assert_raises(ValueError):
+        _ = _compose_transcript_provider(order=("library", "wat"), providers={})

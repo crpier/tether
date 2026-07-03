@@ -420,9 +420,16 @@ class OAuthYouTubeApi:
             if isinstance(item, dict)
         ]
         next_token = payload.get("nextPageToken")
+        page_info = payload.get("pageInfo")
+        total_results: int | None = None
+        if isinstance(page_info, Mapping):
+            typed_page_info = cast("Mapping[str, object]", page_info)
+            raw_total = typed_page_info.get("totalResults")
+            total_results = raw_total if isinstance(raw_total, int) else None
         return LikedPage(
             videos=videos,
             next_page_token=next_token if isinstance(next_token, str) else None,
+            total_results=total_results,
         )
 
     async def fetch_video_metadata(
@@ -719,12 +726,16 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         return cls(resource)
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Fetch and parse the best caption track, or raise a typed signal."""
         # The captions API is never blockable, so the worker's pause hook is a
         # no-op here; the composite provider is what skips its blockable sources.
-        _ = paused_sources
+        _ = (paused_sources, disabled_sources)
         items = await asyncio.to_thread(self._list_captions, video_id)
         track_id = _select_caption_track(items)
         if track_id is None:

@@ -193,9 +193,13 @@ def post_transcript_when_provider_blocked_is_503() -> None:
         source: str = "fake"
 
         async def fetch(
-            self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+            self,
+            video_id: str,
+            *,
+            paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+            disabled_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         ) -> FetchedTranscript:
-            _ = paused_sources
+            _ = (paused_sources, disabled_sources)
             raise TranscriptBlockedError(f"blocked fetching {video_id}")
 
     api = InMemoryYouTubeApi(liked=[video("v1", title="Talk")])
