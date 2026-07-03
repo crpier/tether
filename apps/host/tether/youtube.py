@@ -34,7 +34,7 @@ import json
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast, runtime_checkable
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
@@ -680,6 +680,11 @@ _BACKFILL_COMPLETED_AT_KEY = "likes_backfill_completed_at"
 # survives restarts: the instant any Data API call may be tried again, and the
 # consecutive-error streak its cooldown escalates with. One pair of keys gates
 # every live call (the metadata sync and the transcript budget alike).
+# The set of liked video ids whose `videos.list` detail lookup returned nothing
+# (deleted, private, or members-only), persisted as a JSON array. Tracked so the
+# drift alarm can fold this known, un-ingestable gap into its formula and fire only
+# on genuine data loss; an id is dropped once the video later becomes fetchable.
+_KNOWN_SKIPPED_IDS_KEY = "likes_known_skipped_ids"
 _API_GATE_PAUSED_UNTIL_KEY = "youtube_api_paused_until"
 _API_GATE_STREAK_KEY = "youtube_api_block_streak"
 # Provider-level transcript pause, persisted per blockable source in the sync-state
@@ -745,6 +750,11 @@ class SyncReport:
     upserted: int
     pages: int
     backfill_exhausted: bool
+    backfill_deferred: bool = False
+    """True when a completed backfill was left settled this pass — not restarted by
+    drift and not yet older than the re-walk interval — so only the hot pages ran."""
+    drift_detected: bool = False
+    """True when this pass detected likes drift and restarted the history walk."""
 
 
 @dataclass(slots=True)
@@ -814,11 +824,12 @@ class YouTubeSyncConfig:
     pages keep refreshing); it re-walks from the tail once the completion is older
     than this. `None` walks history exactly once and never again (drift can still
     force a restart)."""
-    drift_alarm_margin: int = 25
-    """How far the upstream liked-playlist total may exceed the local corpus before
-    a completed backfill is treated as drifted and restarted. The counts never
-    match exactly — deleted, private, and members-only videos are skipped locally —
-    so a margin absorbs that known gap; only a larger shortfall trips the alarm."""
+    drift_alarm_margin: int = 5
+    """How far the upstream liked-playlist total may exceed the local corpus (after
+    the known-skipped count is added back) before a completed backfill is treated as
+    drifted and restarted. Deleted, private, and members-only videos are tracked by
+    id and folded into the comparison precisely, so this margin only absorbs
+    transient races (a like landing mid-pass); a larger shortfall trips the alarm."""
 
 
 type TranscriptOutcome = Literal[
@@ -1160,6 +1171,22 @@ def _json_or_none(values: Sequence[str] | Mapping[str, str]) -> str | None:
     return json.dumps(values) if values else None
 
 
+def _decode_skipped_ids(raw: str | None) -> set[str]:
+    """Decode the persisted known-skipped-ids JSON array into a set of ids.
+
+    Tolerates absence and malformed values (returning an empty set) so a corrupt
+    state row degrades to "nothing skipped" rather than crashing the sync."""
+    if not raw:
+        return set()
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(decoded, list):
+        return set()
+    return {str(item) for item in cast("list[object]", decoded)}
+
+
 def _bool_to_int(*, value: bool | None) -> int | None:
     """Map an optional bool onto the 0/1 integer the column stores."""
     return None if value is None else int(value)
@@ -1346,6 +1373,8 @@ class YouTubeSyncService:
             _debug(logger, "YouTube sync starting")
             tally = _SyncTally()
             backfill_exhausted = False
+            backfill_deferred = False
+            drift_detected = False
             quota_exhausted = False
             # Resume the persisted backfill cursor (the hot tail seeds it first run)
             # and the completion marker that stops the perpetual re-walk.
@@ -1355,12 +1384,16 @@ class YouTubeSyncService:
                 hot_token, total_results = await self._pull_hot_pages(tally)
                 # Decide whether to touch history this pass: a settled backfill is
                 # left alone until it ages out or drifts from the upstream total.
-                restart = await self._detect_drift(
+                drift_detected = await self._detect_drift(
                     total_results, completed_at, logger=logger
                 )
                 active, cursor, completed_at = self._resolve_backfill(
-                    cursor, completed_at, restart=restart, now=self.client.now()
+                    cursor, completed_at, restart=drift_detected, now=self.client.now()
                 )
+                # A settled backfill that neither drifted nor aged out is deferred:
+                # `_resolve_backfill` declines to walk history and only the hot pages
+                # ran this pass.
+                backfill_deferred = not active
                 if active:
                     cursor, backfill_exhausted = await self._walk_backfill(
                         tally, cursor if cursor is not None else hot_token
@@ -1383,6 +1416,8 @@ class YouTubeSyncService:
             upserted=tally.upserted,
             pages=tally.pages,
             backfill_exhausted=backfill_exhausted,
+            backfill_deferred=backfill_deferred,
+            drift_detected=drift_detected,
             quota_exhausted=quota_exhausted,
         )
         if tally.upserted:
@@ -1392,6 +1427,8 @@ class YouTubeSyncService:
             upserted=tally.upserted,
             pages=tally.pages,
             backfill_exhausted=backfill_exhausted,
+            backfill_deferred=backfill_deferred,
+            drift_detected=drift_detected,
         )
 
     async def _pull_hot_pages(self, tally: _SyncTally) -> tuple[str | None, int | None]:
@@ -1482,15 +1519,53 @@ class YouTubeSyncService:
 
         async def _mirror(tx: Transaction) -> int:
             upserted = 0
+            skipped: set[str] = set()
+            ingested: set[str] = set()
             for raw in videos:
                 enriched = details.get(raw.video_id)
                 if enriched is None:
+                    # No fetchable details: track the id so drift accounting can fold
+                    # this known, un-ingestable gap in rather than alarming on it.
+                    skipped.add(raw.video_id)
                     continue
                 await self._upsert(tx, enriched)
+                # A previously-skipped video that now ingests self-corrects the set.
+                ingested.add(raw.video_id)
                 upserted += 1
+            await self._update_known_skipped(tx, add=skipped, remove=ingested)
             return upserted
 
         return await run_in_transaction(self.database, _mirror)
+
+    async def _update_known_skipped(
+        self, tx: Transaction, *, add: set[str], remove: set[str]
+    ) -> None:
+        """Fold this page's skipped/ingested ids into the persisted skipped-id set.
+
+        Adds ids whose details were missing and drops any that ingested, writing back
+        only when the set actually changes so a clean page stays read-only."""
+        if not add and not remove:
+            return
+        row = await tx.fetch_one_or_none(
+            select(YouTubeSyncState).where(
+                YouTubeSyncState.key.eq(_KNOWN_SKIPPED_IDS_KEY)
+            )
+        )
+        current = _decode_skipped_ids(row.value if row is not None else None)
+        updated = (current | add) - remove
+        if updated == current:
+            return
+        value = json.dumps(sorted(updated))
+        if row is None:
+            _ = await tx.execute(
+                insert(YouTubeSyncState(key=_KNOWN_SKIPPED_IDS_KEY, value=value))
+            )
+        else:
+            _ = await tx.execute(
+                update(YouTubeSyncState)
+                .set(YouTubeSyncState.value.to(value))
+                .where(YouTubeSyncState.key.eq(_KNOWN_SKIPPED_IDS_KEY))
+            )
 
     async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> None:
         await upsert_ingested_video(tx, raw)
@@ -1538,15 +1613,22 @@ class YouTubeSyncService:
         if completed_at is None or total_results is None:
             return False
         local = await self._local_liked_count()
-        if total_results - local <= self.drift_alarm_margin:
+        known_skipped = await self._known_skipped_count()
+        if total_results - (local + known_skipped) <= self.drift_alarm_margin:
             return False
         logger.warning(
             "YouTube likes drift detected; restarting backfill",
             upstream_total=total_results,
             local_count=local,
+            known_skipped_count=known_skipped,
             drift_alarm_margin=self.drift_alarm_margin,
         )
         return True
+
+    async def _known_skipped_count(self) -> int:
+        """Count the liked videos tracked as un-ingestable (no fetchable details)."""
+        raw = await _state_get(self.database, _KNOWN_SKIPPED_IDS_KEY)
+        return len(_decode_skipped_ids(raw))
 
     async def _local_liked_count(self) -> int:
         """Count the liked videos mirrored locally (active and ignored alike)."""

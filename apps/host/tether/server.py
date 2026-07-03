@@ -153,7 +153,7 @@ class AppConfig:
     youtube_sync_page_size: int = 50
     youtube_likes_cutoff_date: date | None = None
     youtube_likes_rewalk_interval_days: float = 30.0
-    youtube_likes_drift_alarm_margin: int = 25
+    youtube_likes_drift_alarm_margin: int = 5
     youtube_api_gate_pause_base_seconds: float = 15 * 60
     youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
     transcript_provider: TranscriptProvider | None = None
@@ -211,10 +211,11 @@ class HostSettings(BaseSettings):
     Once history has been mirrored the sync only refreshes the hot (newest) pages;
     it re-walks history from the tail once the last completion is older than this,
     catching likes that predate the corpus. Set high to walk history rarely."""
-    youtube_likes_drift_alarm_margin: int = 25
+    youtube_likes_drift_alarm_margin: int = 5
     """How far the upstream liked-playlist total may exceed the local corpus before
-    a settled backfill is treated as drifted and restarted immediately. Absorbs the
-    known gap from videos skipped locally (deleted, private, members-only)."""
+    a settled backfill is treated as drifted and restarted immediately. Videos
+    skipped locally (deleted, private, members-only) are tracked by id and folded
+    into the comparison precisely, so this margin only absorbs transient races."""
     youtube_sync_enabled: bool = True
     """Whether the background liked-videos sync runs. On by default; set
     `TETHER_YOUTUBE_SYNC_ENABLED=false` to keep the upstream client wired for

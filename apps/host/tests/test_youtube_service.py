@@ -6,7 +6,7 @@ against a real in-memory SQLite database and a paginated in-memory `YouTubeApi`
 we can assert browse/search stay local and the sync stays within budget.
 """
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 
@@ -30,6 +30,7 @@ from tether.logging import Logger
 from tether.youtube import (
     _BACKFILL_COMPLETED_AT_KEY,
     _BACKFILL_CURSOR_KEY,
+    _KNOWN_SKIPPED_IDS_KEY,
     _LIKES_LAST_RUN_KEY,
     DailyQuota,
     EmptyYouTubeSearchQueryError,
@@ -49,6 +50,7 @@ from tether.youtube import (
     YouTubeSyncService,
     YouTubeTranscriptState,
     YouTubeVideoNotFoundError,
+    _decode_skipped_ids,
     _state_get,
     create_youtube_schema,
     derive_ingest_state,
@@ -313,8 +315,14 @@ class FixedTotalYouTubeApi(InMemoryYouTubeApi):
     corpus, so drift-alarm tests can simulate an upstream that outgrew the local
     corpus without seeding hundreds of skipped videos."""
 
-    def __init__(self, *, liked: list[RawYouTubeVideo], total_results: int) -> None:
-        super().__init__(liked=liked)
+    def __init__(
+        self,
+        *,
+        liked: list[RawYouTubeVideo],
+        total_results: int,
+        unavailable: Sequence[str] = (),
+    ) -> None:
+        super().__init__(liked=liked, unavailable=unavailable)
         self._total_results = total_results
 
     async def list_liked_page(
@@ -407,6 +415,142 @@ async def drift_within_the_margin_leaves_a_settled_backfill_alone() -> None:
     _ = await env.sync.sync(logger=test_logger())
 
     assert_eq(api.list_calls - calls_before, 1)
+
+
+@test()
+async def known_skipped_videos_do_not_trip_drift() -> None:
+    """Videos with no fetchable details are tracked and folded into the drift gap."""
+    api = InMemoryYouTubeApi(
+        liked=[video("v1"), video("m1"), video("m2")], unavailable=["m1", "m2"]
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=2, page_size=10, drift_alarm_margin=0
+    )
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+    # Upstream total is 3; only v1 ingests, m1/m2 are known-skipped, so the gap
+    # is fully accounted and drift does not fire even with a zero margin.
+    assert_eq(
+        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        ["m1", "m2"],
+    )
+
+    calls_before = api.list_calls
+    _ = await env.sync.sync(logger=test_logger())
+
+    # No re-walk: only the single hot page is fetched.
+    assert_eq(api.list_calls - calls_before, 1)
+
+
+@test()
+async def a_genuine_shortfall_beyond_margin_and_skipped_trips_drift() -> None:
+    """A gap larger than the margin plus the known-skipped count still re-walks."""
+    api = FixedTotalYouTubeApi(
+        liked=[video("v1"), video("m1"), video("m2")],
+        unavailable=["m1", "m2"],
+        total_results=8,
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=2, page_size=10, drift_alarm_margin=0
+    )
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+    # local=1, skipped=2, upstream=8 -> gap 5 beyond margin 0: genuine data loss.
+
+    report = await env.sync.sync(logger=test_logger())
+
+    # The genuine shortfall trips the alarm despite the known-skipped accounting.
+    assert_eq(report.drift_detected, True)
+
+
+@test()
+async def a_repeatedly_skipped_video_is_counted_once() -> None:
+    """The same unfetchable video seen across passes is tracked as one id, not many."""
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("m1")], unavailable=["m1"])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=10)
+    env = await load_fixture(make_env(api, config=config))
+
+    _ = await env.sync.sync(logger=test_logger())
+    _ = await env.sync.sync(logger=test_logger())
+
+    assert_eq(
+        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        ["m1"],
+    )
+
+
+@test()
+async def a_later_ingested_video_leaves_the_skipped_set() -> None:
+    """A once-unfetchable video that later ingests is removed from the skipped set."""
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("m1")], unavailable=["m1"])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=10)
+    env = await load_fixture(make_env(api, config=config))
+    _ = await env.sync.sync(logger=test_logger())
+    assert_eq(
+        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        ["m1"],
+    )
+
+    # m1 becomes fetchable: a fresh api over the same db mirrors it in.
+    api2 = InMemoryYouTubeApi(liked=[video("v1"), video("m1")])
+    client2 = YouTubeApiClient(api2, env.quota)
+    sync2 = YouTubeSyncService(
+        database=env.db, client=client2, tracer=noop_tracer(), config=config
+    )
+    _ = await sync2.sync(logger=test_logger())
+
+    assert_eq(
+        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        [],
+    )
+
+
+@test()
+async def a_settled_pass_reports_the_backfill_deferred() -> None:
+    """A settled, un-drifted, un-aged backfill reports it deferred the re-walk."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=2)
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+
+    report = await env.sync.sync(logger=test_logger())
+
+    assert_eq(report.backfill_deferred, True)
+    assert_eq(report.drift_detected, False)
+
+
+@test()
+async def a_rewalking_pass_does_not_report_the_backfill_deferred() -> None:
+    """Once the re-walk interval elapses the pass walks history, not defers it."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=1, page_size=2, rewalk_interval=timedelta(days=30)
+    )
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+    await _drain_backfill(env)
+
+    clock.advance(timedelta(days=31))
+    report = await env.sync.sync(logger=test_logger())
+
+    assert_eq(report.backfill_deferred, False)
+
+
+@test()
+async def a_drift_pass_reports_drift_detected() -> None:
+    """A drift-restarted pass surfaces the detection on its report."""
+    api = FixedTotalYouTubeApi(
+        liked=[video(f"v{i}") for i in range(1, 6)], total_results=1000
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=1, page_size=2, drift_alarm_margin=25
+    )
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+
+    report = await env.sync.sync(logger=test_logger())
+
+    assert_eq(report.drift_detected, True)
 
 
 @test()
