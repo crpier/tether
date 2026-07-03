@@ -112,9 +112,13 @@ class FakeSource(TranscriptProvider):
         return self.name
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
-        _ = paused_sources
+        _ = (paused_sources, skip_sources)
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
@@ -237,6 +241,32 @@ async def composite_stamps_block_with_the_fallback_source() -> None:
     assert_eq(caught.exception.source, "library")
 
 
+@test()
+async def composite_skips_a_gated_primary_and_uses_the_next_source() -> None:
+    """A skipped source is dropped even when it is the primary; the next one runs."""
+    supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
+    library = FakeSource({"v1": [Ok("library")]}, name="library")
+    composite = FallbackTranscriptProvider(supadata, fallbacks=[library])
+
+    result = await composite.fetch("v1", skip_sources=frozenset({"supadata"}))
+
+    assert_eq(result.text, "library")
+    # The gated Supadata primary was never billed.
+    assert_eq(supadata.calls.get("v1"), None)
+
+
+@test()
+async def composite_goes_terminal_when_only_gated_and_unavailable_remain() -> None:
+    """A gated source never defers: the remaining unavailable source is terminal."""
+    supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
+    library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
+    composite = FallbackTranscriptProvider(supadata, fallbacks=[library])
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await composite.fetch("v1", skip_sources=frozenset({"supadata"}))
+    assert_eq(supadata.calls.get("v1"), None)
+
+
 # --- Worker integration over the real composite -----------------------------
 
 
@@ -287,7 +317,13 @@ async def make_env(
     await db.close()
 
 
-async def seed(db: Database, video_id: str, *, liked_at: datetime) -> None:
+async def seed(
+    db: Database,
+    video_id: str,
+    *,
+    liked_at: datetime,
+    caption_available: int | None = None,
+) -> None:
     """Insert an active, transcript-less ingested video."""
     async with db.transaction() as tx:
         _ = await tx.execute(
@@ -300,6 +336,7 @@ async def seed(db: Database, video_id: str, *, liked_at: datetime) -> None:
                     topic="python",
                     description="",
                     liked_at=liked_at,
+                    caption_available=caption_available,
                 )
             )
         )
@@ -567,6 +604,55 @@ async def make_env3(
         config=config,
     )
     await db.close()
+
+
+@test()
+async def a_caption_less_video_skips_supadata_but_still_tries_the_library() -> None:
+    """caption_available false gates Supadata's paid use; the free library still runs."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Ok("library body")]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata body")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER, caption_available=0)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 1)
+    # The library served it; Supadata's paid lookup was never billed.
+    assert_eq(await transcript_of(env.db, "v1"), "library body")
+    assert_eq(supadata.calls.get("v1"), None)
+
+
+@test()
+async def a_caption_less_video_with_no_library_transcript_goes_terminal() -> None:
+    """Gating Supadata never defers: a caption-less, library-less video is terminal."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata body")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER, caption_available=0)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.unavailable, 1)
+    assert_eq(supadata.calls.get("v1"), None)
+    persisted = await state_of(env.db, "v1")
+    assert_eq(persisted.status if persisted is not None else None, "terminal")
+
+
+@test()
+async def a_captioned_video_still_uses_supadata() -> None:
+    """With captions present the gate is off, so Supadata remains in the chain."""
+    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata body")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v1", liked_at=LATER, caption_available=1)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 1)
+    assert_eq(await transcript_of(env.db, "v1"), "supadata body")
 
 
 @test()

@@ -12,7 +12,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import structlog
-from snektest import assert_eq, assert_false, assert_in, assert_true, test
+from snektest import (
+    assert_eq,
+    assert_false,
+    assert_in,
+    assert_raises,
+    assert_true,
+    test,
+)
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -21,14 +28,21 @@ from tether.logging import QUIET_LOGGERS, SILENCED_LOGGERS
 from tether.server import (
     AppConfig,
     HostSettings,
+    TranscriptProviderConfigError,
     _build_supadata_provider,
     _compose_transcript_provider,
+    _parse_transcript_languages,
+    _parse_transcript_provider_order,
     create_app_from_environment,
     serve,
 )
 from tether.telemetry import TelemetryExporter, TelemetrySettings
 from tether.transcript_supadata import SupadataTranscriptProvider
-from tether.youtube import FallbackTranscriptProvider, NullTranscriptProvider
+from tether.youtube import (
+    FallbackTranscriptProvider,
+    NullTranscriptProvider,
+    TranscriptProvider,
+)
 
 
 class CapturedStdout(StringIO):
@@ -460,32 +474,62 @@ def supadata_is_built_when_key_and_flag_are_both_set() -> None:
     assert_true(isinstance(provider, SupadataTranscriptProvider))
 
 
-@test()
-def supadata_leads_and_captions_trails_when_it_is_present() -> None:
-    """With Supadata configured it is the primary; captions/library become fallbacks."""
-    captions = NullTranscriptProvider()
-    library = NullTranscriptProvider()
-    supadata = NullTranscriptProvider()
-
-    provider = _compose_transcript_provider(
-        captions=captions, library=library, supadata=supadata
-    )
-
-    assert isinstance(provider, FallbackTranscriptProvider)
-    assert_true(provider.leaf_providers()[0] is supadata)
-    assert_true(captions in provider.leaf_providers()[1:])
-    assert_true(library in provider.leaf_providers()[1:])
+def _named_providers() -> dict[str, TranscriptProvider]:
+    """A distinct fake provider per known source name, for order assertions."""
+    return {
+        "supadata": NullTranscriptProvider(),
+        "captions": NullTranscriptProvider(),
+        "library": NullTranscriptProvider(),
+    }
 
 
 @test()
-def captions_leads_when_supadata_is_absent() -> None:
-    """No Supadata falls back to the prior order: captions primary, library behind."""
-    captions = NullTranscriptProvider()
-    library = NullTranscriptProvider()
+def the_order_flag_composes_sources_primary_first() -> None:
+    """The first named source leads; the rest trail as fallbacks, in order."""
+    available = _named_providers()
 
-    provider = _compose_transcript_provider(
-        captions=captions, library=library, supadata=None
-    )
+    provider = _compose_transcript_provider(["supadata", "library"], available)
 
     assert isinstance(provider, FallbackTranscriptProvider)
-    assert_true(provider.leaf_providers()[0] is captions)
+    assert_true(provider.leaf_providers()[0] is available["supadata"])
+    assert_true(provider.leaf_providers()[1] is available["library"])
+
+
+@test()
+def an_unconfigured_named_source_is_skipped_in_the_order() -> None:
+    """A named source absent from the available map drops out of the chain."""
+    available = {"library": NullTranscriptProvider()}
+
+    provider = _compose_transcript_provider(["supadata", "library"], available)
+
+    # Supadata is unconfigured, so the single survivor is returned uncomposed.
+    assert_true(provider is available["library"])
+
+
+@test()
+def an_unknown_source_name_is_rejected() -> None:
+    """A typo'd source name in the order flag fails loudly at wire time."""
+    with assert_raises(TranscriptProviderConfigError):
+        _ = _compose_transcript_provider(["captoins"], _named_providers())
+
+
+@test()
+def an_order_with_no_configured_source_is_rejected() -> None:
+    """An order whose every source is unconfigured leaves nothing to compose."""
+    with assert_raises(TranscriptProviderConfigError):
+        _ = _compose_transcript_provider(["supadata"], {})
+
+
+@test()
+def the_order_flag_is_parsed_into_normalized_names() -> None:
+    """Whitespace and case are normalized; blank entries are dropped."""
+    assert_eq(
+        _parse_transcript_provider_order(" Supadata , library ,"),
+        ["supadata", "library"],
+    )
+
+
+@test()
+def the_language_flag_is_parsed_in_preference_order() -> None:
+    """Languages keep their order (most preferred first); blanks are dropped."""
+    assert_eq(_parse_transcript_languages("en, ro ,"), ("en", "ro"))

@@ -28,6 +28,8 @@ from snektest import (
 
 from tether.logging import Logger
 from tether.youtube import (
+    _BACKFILL_COMPLETED_AT_KEY,
+    _BACKFILL_CURSOR_KEY,
     _LIKES_LAST_RUN_KEY,
     DailyQuota,
     EmptyYouTubeSearchQueryError,
@@ -35,6 +37,7 @@ from tether.youtube import (
     InMemoryYouTubeApi,
     LikedPage,
     RawYouTubeVideo,
+    TranscriptStatus,
     TranscriptUnavailableError,
     YouTubeApi,
     YouTubeApiClient,
@@ -49,6 +52,7 @@ from tether.youtube import (
     _state_get,
     create_youtube_schema,
     derive_ingest_state,
+    upsert_ingested_video,
 )
 
 
@@ -302,6 +306,202 @@ async def backfill_cursor_resumes_after_a_restart() -> None:
         row.video_id for row in (await env.service.browse(logger=test_logger())).videos
     }
     assert_in("v5", found)
+
+
+class FixedTotalYouTubeApi(InMemoryYouTubeApi):
+    """An in-memory API that reports a fixed upstream total, decoupled from its
+    corpus, so drift-alarm tests can simulate an upstream that outgrew the local
+    corpus without seeding hundreds of skipped videos."""
+
+    def __init__(self, *, liked: list[RawYouTubeVideo], total_results: int) -> None:
+        super().__init__(liked=liked)
+        self._total_results = total_results
+
+    async def list_liked_page(
+        self, *, page_token: str | None, page_size: int
+    ) -> LikedPage:
+        page = await super().list_liked_page(page_token=page_token, page_size=page_size)
+        return LikedPage(
+            videos=page.videos,
+            next_page_token=page.next_page_token,
+            total_results=self._total_results,
+        )
+
+
+async def _drain_backfill(env: Env) -> None:
+    """Run sync passes until the backfill reaches the end of history (completes)."""
+    for _ in range(10):
+        _ = await env.sync.sync(logger=test_logger())
+        if await _state_get(env.db, _BACKFILL_COMPLETED_AT_KEY):
+            return
+    message = "backfill did not complete within the pass budget"
+    raise AssertionError(message)
+
+
+@test()
+async def a_completed_backfill_stops_rewalking_history() -> None:
+    """Once history is walked, later passes pull only the hot pages, not history."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=2)
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+
+    calls_before = api.list_calls
+    _ = await env.sync.sync(logger=test_logger())
+
+    # A settled backfill leaves history alone: only the single hot page is fetched.
+    assert_eq(api.list_calls - calls_before, 1)
+
+
+@test()
+async def a_settled_backfill_rewalks_once_the_interval_elapses() -> None:
+    """After the re-walk interval passes, the backfill restarts from the hot tail."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=1, page_size=2, rewalk_interval=timedelta(days=30)
+    )
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+    await _drain_backfill(env)
+
+    clock.advance(timedelta(days=31))
+    calls_before = api.list_calls
+    _ = await env.sync.sync(logger=test_logger())
+
+    # Hot page plus a re-walked backfill page: more than the hot page alone.
+    assert_eq(api.list_calls - calls_before, 2)
+
+
+@test()
+async def drift_beyond_the_margin_restarts_a_settled_backfill() -> None:
+    """An upstream total far above the local corpus re-walks a settled backfill."""
+    api = FixedTotalYouTubeApi(
+        liked=[video(f"v{i}") for i in range(1, 6)], total_results=1000
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=1, page_size=2, drift_alarm_margin=25
+    )
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+
+    calls_before = api.list_calls
+    _ = await env.sync.sync(logger=test_logger())
+
+    # Drift forces history to be walked again despite the settled marker.
+    assert_eq(api.list_calls - calls_before, 2)
+
+
+@test()
+async def drift_within_the_margin_leaves_a_settled_backfill_alone() -> None:
+    """A small upstream-vs-local gap stays within tolerance and does not re-walk."""
+    api = FixedTotalYouTubeApi(
+        liked=[video(f"v{i}") for i in range(1, 6)], total_results=20
+    )
+    config = YouTubeSyncConfig(
+        hot_pages=1, backfill_pages=1, page_size=2, drift_alarm_margin=25
+    )
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+
+    calls_before = api.list_calls
+    _ = await env.sync.sync(logger=test_logger())
+
+    assert_eq(api.list_calls - calls_before, 1)
+
+
+@test()
+async def reset_backfill_clears_the_cursor_and_completion_marker() -> None:
+    """The manual reset makes the next pass re-walk history from the hot tail."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 6)])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=1, page_size=2)
+    env = await load_fixture(make_env(api, config=config))
+    await _drain_backfill(env)
+
+    await env.sync.reset_backfill()
+
+    calls_before = api.list_calls
+    _ = await env.sync.sync(logger=test_logger())
+    # Reset re-opens history, so a backfill page is fetched alongside the hot page.
+    assert_eq(api.list_calls - calls_before, 2)
+
+
+@test()
+async def a_completed_backfill_records_its_completion_time() -> None:
+    """Reaching the end of history stamps the completion marker for the re-walk gate."""
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    api = InMemoryYouTubeApi(liked=[video(f"v{i}") for i in range(1, 4)])
+    config = YouTubeSyncConfig(hot_pages=1, backfill_pages=2, page_size=2)
+    env = await load_fixture(make_env(api, clock=clock, config=config))
+
+    _ = await env.sync.sync(logger=test_logger())
+
+    assert_eq(
+        await _state_get(env.db, _BACKFILL_COMPLETED_AT_KEY), clock.now().isoformat()
+    )
+    assert_eq(await _state_get(env.db, _BACKFILL_CURSOR_KEY), "")
+
+
+async def _seed_terminal_video(
+    db: Database, video_id: str, *, status: TranscriptStatus, caption_available: int
+) -> None:
+    """Insert a video with a given caption flag and a transcript-state row."""
+    async with db.transaction() as tx:
+        _ = await tx.execute(
+            insert(
+                IngestedVideo(
+                    video_id=video_id,
+                    source="liked",
+                    title="t",
+                    channel="c",
+                    topic="python",
+                    description="",
+                    caption_available=caption_available,
+                )
+            )
+        )
+        _ = await tx.execute(
+            insert(YouTubeTranscriptState(video_id=video_id, status=status))
+        )
+
+
+@test()
+async def captions_appearing_reopens_a_terminal_video() -> None:
+    """A false->true caption flip clears the terminal state so the sweep retries it."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+    await _seed_terminal_video(env.db, "v1", status="terminal", caption_available=0)
+
+    async with env.db.transaction() as tx:
+        await upsert_ingested_video(
+            tx, video("v1").model_copy(update={"caption_available": True})
+        )
+
+    async with env.db.transaction() as tx:
+        state = await tx.fetch_one_or_none(
+            select(YouTubeTranscriptState).where(
+                YouTubeTranscriptState.video_id.eq("v1")
+            )
+        )
+    assert_is_none(state)
+
+
+@test()
+async def captions_appearing_leaves_a_done_video_untouched() -> None:
+    """A caption flip does not disturb an already-transcribed (done) video."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+    await _seed_terminal_video(env.db, "v1", status="done", caption_available=0)
+
+    async with env.db.transaction() as tx:
+        await upsert_ingested_video(
+            tx, video("v1").model_copy(update={"caption_available": True})
+        )
+
+    async with env.db.transaction() as tx:
+        state = await tx.fetch_one_or_none(
+            select(YouTubeTranscriptState).where(
+                YouTubeTranscriptState.video_id.eq("v1")
+            )
+        )
+    assert_eq(state.status if state is not None else None, "done")
 
 
 @test()

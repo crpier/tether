@@ -37,16 +37,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol, cast
 
 import httpx2
+import structlog
 from snekql.sqlite import Database, Transaction, insert, select, update
 
 from tether.db_retry import run_in_transaction
 from tether.youtube import (
+    Clock,
     FallbackTranscriptProvider,
     FetchedTranscript,
+    SystemClock,
     TranscriptBlockedError,
     TranscriptProvider,
     TranscriptSegment,
@@ -60,11 +63,32 @@ _SOURCE = "supadata"
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
 """The empty default for `fetch`'s `paused_sources` — Supadata is a leaf source."""
 
-_SPEND_KEY = "supadata_uses"
-"""The `YouTubeSyncState` key holding the running count of Supadata uses spent.
+_SPEND_KEY_PREFIX = "supadata_uses"
+"""Prefix of the `YouTubeSyncState` keys holding the Supadata use count.
 
-Persisted (not per-process) so the hard cap survives host restarts — a frequent
-`just dev` restart must not hand the sweep a fresh budget every boot."""
+The count is bucketed by UTC calendar month (`supadata_uses:YYYY-MM`), mirroring
+the daily YouTube-quota pattern, so the cap is a *monthly* budget that resets at
+the month boundary. Persisted (not per-process) so a frequent `just dev` restart
+does not hand the sweep a fresh budget every boot. The local month may not align
+with Supadata's own billing month, so the counter is a conservative floor."""
+
+
+def _month_key(now: datetime) -> str:
+    """The spend-counter key for the UTC calendar month containing `now`."""
+    return f"{_SPEND_KEY_PREFIX}:{now.astimezone(UTC):%Y-%m}"
+
+
+_LAST_MONTH_OF_YEAR = 12
+"""December — a December `now` rolls the monthly cap over into the next January."""
+
+
+def _start_of_next_month(now: datetime) -> datetime:
+    """The first instant of the UTC month after `now` — when a monthly cap resets."""
+    moment = now.astimezone(UTC)
+    if moment.month == _LAST_MONTH_OF_YEAR:
+        return datetime(moment.year + 1, 1, 1, tzinfo=UTC)
+    return datetime(moment.year, moment.month + 1, 1, tzinfo=UTC)
+
 
 _HTTP_TOO_MANY_REQUESTS = 429
 """Supadata's rate-limit / quota status — the *blocked* outcome."""
@@ -125,6 +149,10 @@ class SupadataConfig:
 
     base_url: str = "https://api.supadata.ai/v1"
     """Supadata API root the transport issues its requests against."""
+    languages: tuple[str, ...] = ()
+    """Preferred caption languages, most preferred first (ISO codes). The most
+    preferred is sent as the `lang` param on each submit so Supadata returns that
+    track when it exists; empty leaves the param off (Supadata picks the default)."""
     timeout: timedelta = timedelta(seconds=30)
     """Per-request HTTP timeout for both submit and poll."""
     poll_interval: timedelta = timedelta(seconds=2)
@@ -242,17 +270,23 @@ def _unfinished_error(
 
 
 class SupadataBudgetExhaustedError(Exception):
-    """The Supadata use cap is reached, so no further call may be billed.
+    """The Supadata monthly use cap is reached, so no further call may be billed.
 
     Raised by a `SupadataSpendGuard` *before* any HTTP call, carrying the spent
-    count and the cap for the log line. The provider translates it into the
-    *blocked* outcome so the worker pauses Supadata and leaves videos pending.
+    count, the cap, and the time until the monthly budget resets. The provider
+    translates it into the *blocked* outcome so the worker pauses Supadata until
+    the month boundary and leaves videos pending.
     """
 
-    def __init__(self, used: int, limit: int) -> None:
-        super().__init__(f"supadata use cap reached ({used}/{limit})")
+    def __init__(
+        self, used: int, limit: int, *, retry_after: timedelta | None = None
+    ) -> None:
+        super().__init__(
+            f"supadata monthly use cap reached ({used}/{limit}); resets at the month boundary"
+        )
         self.used: int = used
         self.limit: int = limit
+        self.retry_after: timedelta | None = retry_after
 
 
 class SupadataSpendGuard(Protocol):
@@ -271,41 +305,51 @@ class UnlimitedSupadataSpend(SupadataSpendGuard):
 
 
 class PersistentSupadataSpendGuard(SupadataSpendGuard):
-    """A hard, persisted cap on Supadata uses spanning restarts.
+    """A hard, persisted *monthly* cap on Supadata uses spanning restarts.
 
-    The count lives in `YouTubeSyncState` under `_SPEND_KEY`; `charge` reads,
-    checks against `max_uses`, and increments in a single transaction, so a serial
-    worker never exceeds the cap. The check runs *before* the billed call and the
-    increment persists on success, so a crash between reserving and calling
-    over-counts (safe) rather than over-spends. Single-tenant Tether has no
-    concurrent charger, so the read-then-write needs no extra locking beyond the
-    transaction.
+    The count lives in `YouTubeSyncState` under the current month's key
+    (`supadata_uses:YYYY-MM`); `charge` reads, checks against `max_uses`, and
+    increments in a single transaction, so a serial worker never exceeds the cap.
+    A new UTC month starts with no row and therefore a fresh budget. The check runs
+    *before* the billed call and the increment persists on success, so a crash
+    between reserving and calling over-counts (safe) rather than over-spends.
+    Single-tenant Tether has no concurrent charger, so the read-then-write needs no
+    extra locking beyond the transaction.
     """
 
-    def __init__(self, database: Database, *, max_uses: int) -> None:
+    def __init__(
+        self, database: Database, *, max_uses: int, clock: Clock | None = None
+    ) -> None:
         self._database: Database = database
         self._max_uses: int = max(0, max_uses)
+        self._clock: Clock = clock or SystemClock()
 
     async def charge(self) -> None:
-        """Reserve one use within the cap, or raise `SupadataBudgetExhaustedError`."""
+        """Reserve one use within the month's cap, or raise when it is exhausted."""
+        now = self._clock.now()
+        month_key = _month_key(now)
 
         async def _reserve(tx: Transaction) -> None:
             row = await tx.fetch_one_or_none(
-                select(YouTubeSyncState).where(YouTubeSyncState.key.eq(_SPEND_KEY))
+                select(YouTubeSyncState).where(YouTubeSyncState.key.eq(month_key))
             )
             used = int(row.value) if row is not None else 0
             if used >= self._max_uses:
-                raise SupadataBudgetExhaustedError(used, self._max_uses)
+                raise SupadataBudgetExhaustedError(
+                    used,
+                    self._max_uses,
+                    retry_after=_start_of_next_month(now) - now,
+                )
             spent = str(used + 1)
             if row is None:
                 _ = await tx.execute(
-                    insert(YouTubeSyncState(key=_SPEND_KEY, value=spent))
+                    insert(YouTubeSyncState(key=month_key, value=spent))
                 )
             else:
                 _ = await tx.execute(
                     update(YouTubeSyncState)
                     .set(YouTubeSyncState.value.to(spent))
-                    .where(YouTubeSyncState.key.eq(_SPEND_KEY))
+                    .where(YouTubeSyncState.key.eq(month_key))
                 )
 
         await run_in_transaction(self._database, _reserve)
@@ -323,9 +367,13 @@ def _iter_supadata_providers(
 
 
 def bind_supadata_spend_guard(
-    provider: TranscriptProvider, database: Database, *, max_uses: int
+    provider: TranscriptProvider,
+    database: Database,
+    *,
+    max_uses: int,
+    clock: Clock | None = None,
 ) -> None:
-    """Late-bind a persisted cap onto every Supadata provider in a chain.
+    """Late-bind a persisted monthly cap onto every Supadata provider in a chain.
 
     The provider tree is built from settings before the database exists, so the
     hard cap is attached here (at wire time) the same way the semantic-search
@@ -333,7 +381,9 @@ def bind_supadata_spend_guard(
     primary *or* fallback is covered; a no-op when the chain has no Supadata.
     """
     for leaf in _iter_supadata_providers(provider):
-        leaf.spend_guard = PersistentSupadataSpendGuard(database, max_uses=max_uses)
+        leaf.spend_guard = PersistentSupadataSpendGuard(
+            database, max_uses=max_uses, clock=clock
+        )
 
 
 class SupadataTranscriptProvider(TranscriptProvider):
@@ -368,22 +418,36 @@ class SupadataTranscriptProvider(TranscriptProvider):
         self.spend_guard: SupadataSpendGuard = spend_guard or UnlimitedSupadataSpend()
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Fetch a transcript via Supadata (direct or async job), or raise a signal.
 
-        Supadata is a leaf source the composite skips while paused, so
-        `paused_sources` is a no-op here.
+        Supadata is a leaf source the composite skips while paused or gated, so
+        `paused_sources` and `skip_sources` are no-ops here.
 
         Reserves one guarded use before the billed call; an exhausted cap is the
         *blocked* outcome (Supadata's own source), so the worker pauses Supadata
         and leaves the video pending rather than spending past the plan.
         """
-        _ = paused_sources
+        _ = (paused_sources, skip_sources)
         try:
             await self.spend_guard.charge()
         except SupadataBudgetExhaustedError as error:
-            raise TranscriptBlockedError(str(error), source=_SOURCE) from error
+            # Loud: the paid monthly budget is spent. The worker pauses Supadata
+            # until the month boundary (the carried retry-after), leaving videos
+            # pending rather than overspending.
+            structlog.stdlib.get_logger("tether.transcript_supadata").warning(
+                "Supadata monthly use cap exhausted; pausing until reset",
+                used=error.used,
+                limit=error.limit,
+            )
+            raise TranscriptBlockedError(
+                str(error), retry_after=error.retry_after, source=_SOURCE
+            ) from error
         response = await self._transport.submit(video_id)
         # A rate limit or any client/server error is a failure to classify; a 2xx is
         # either a job handoff, a direct transcript, or a genuine "no transcript".
@@ -430,14 +494,20 @@ class SupadataTranscriptProvider(TranscriptProvider):
         raise _unfinished_error(video_id, job_id, self._config.max_poll_attempts)
 
 
-def _submit_params(video_id: str, mode: SupadataMode) -> dict[str, str]:
+def _submit_params(
+    video_id: str, mode: SupadataMode, languages: tuple[str, ...] = ()
+) -> dict[str, str]:
     """The query params for a Supadata transcript submit, pinning the billed mode.
 
     `mode` is always sent so a caption-less video costs one `native` lookup and
     returns unavailable, never the multi-use `generate` path Supadata would pick
-    when the param is omitted.
+    when the param is omitted. The most preferred `languages` code, when set, rides
+    along as `lang` so Supadata returns that track when it exists.
     """
-    return {"videoId": video_id, "mode": mode}
+    params = {"videoId": video_id, "mode": mode}
+    if languages:
+        params["lang"] = languages[0]
+    return params
 
 
 class HttpSupadataTransport(SupadataTransport):
@@ -457,7 +527,8 @@ class HttpSupadataTransport(SupadataTransport):
 
     async def submit(self, video_id: str) -> SupadataResponse:
         return await self._get(
-            "/transcript", params=_submit_params(video_id, self._config.mode)
+            "/transcript",
+            params=_submit_params(video_id, self._config.mode, self._config.languages),
         )
 
     async def poll(self, job_id: str) -> SupadataResponse:
