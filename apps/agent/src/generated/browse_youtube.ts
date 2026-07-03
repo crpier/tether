@@ -5,13 +5,12 @@ import type {
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const browse_youtubeParameters = Type.Object({
   topic: Type.Optional(Type.String()),
-  source: Type.Optional(StringEnum(["liked", "watch_later"] as const)),
+  source: Type.Optional(Type.String()),
   limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
 });
 

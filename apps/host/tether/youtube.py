@@ -62,13 +62,11 @@ from tether.logging import Logger
 if TYPE_CHECKING:
     from tether.transcript_search import TranscriptSearchService
 
-type YouTubeSource = Literal["liked", "watch_later"]
+type YouTubeSource = Literal["liked"]
 """Which saved list a video was ingested from.
 
 Only ``liked`` is ever written: the YouTube Data API does not expose the Watch
-Later playlist, so ``watch_later`` is aspirational — kept in the type as the
-intended shape should another ingestion source ever land, but nothing produces it
-today."""
+Later playlist, so liked videos are the sole ingestion source today."""
 
 type IngestState = Literal["active", "ignored"]
 """Whether an ingested video is live in browse/search or purged from it."""
