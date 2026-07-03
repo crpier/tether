@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import secrets
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -152,6 +152,8 @@ class AppConfig:
     youtube_sync_backfill_pages: int = 1
     youtube_sync_page_size: int = 50
     youtube_likes_cutoff_date: date | None = None
+    youtube_likes_rewalk_interval_days: float = 30.0
+    youtube_likes_drift_alarm_margin: int = 5
     youtube_api_gate_pause_base_seconds: float = 15 * 60
     youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
     transcript_provider: TranscriptProvider | None = None
@@ -204,6 +206,16 @@ class HostSettings(BaseSettings):
     youtube_token_path: Path = Path(".tether/youtube-oauth-token.json")
     youtube_client_secret_path: Path = Path(".tether/youtube-client-secret.json")
     youtube_oauth_no_browser: bool = False
+    youtube_likes_rewalk_interval_days: float = 30.0
+    """How long a completed likes backfill stays settled before the walk restarts.
+    Once history has been mirrored the sync only refreshes the hot (newest) pages;
+    it re-walks history from the tail once the last completion is older than this,
+    catching likes that predate the corpus. Set high to walk history rarely."""
+    youtube_likes_drift_alarm_margin: int = 5
+    """How far the upstream liked-playlist total may exceed the local corpus before
+    a settled backfill is treated as drifted and restarted immediately. Videos
+    skipped locally (deleted, private, members-only) are tracked by id and folded
+    into the comparison precisely, so this margin only absorbs transient races."""
     youtube_sync_enabled: bool = True
     """Whether the background liked-videos sync runs. On by default; set
     `TETHER_YOUTUBE_SYNC_ENABLED=false` to keep the upstream client wired for
@@ -214,9 +226,23 @@ class HostSettings(BaseSettings):
     `TETHER_TRANSCRIPT_SYNC_ENABLED=false` to skip the eager boot drain (which
     otherwise fetches per-video transcripts synchronously and delays startup)."""
     transcript_library_enabled: bool = True
-    """Whether to compose the `youtube-transcript-api` fallback behind the captions
-    provider. Enabled by default; set `TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` to
-    run captions-only (e.g. if the host IP keeps getting blocked)."""
+    """Whether the `youtube-transcript-api` library source is available to compose.
+    Enabled by default; set `TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` to drop it
+    from the chain entirely (e.g. if the host IP keeps getting blocked)."""
+    transcript_languages: str = "en,ro"
+    """Comma-separated preferred transcript languages, most preferred first (ISO
+    codes). Passed to the `youtube-transcript-api` library (which tries them in
+    order) and to Supadata (which requests the most preferred track), replacing the
+    old hardcoded English-only preference. The default is English primary, Romanian
+    secondary."""
+    transcript_provider_order: str = "supadata,library"
+    """Comma-separated transcript sources, primary first, that compose the fetch
+    chain. Known names: `supadata` (paid, the reliable primary for third-party
+    videos), `library` (the free `youtube-transcript-api`), `captions` (the
+    owner-only Data API, dropped from the default order because it transcribes
+    almost none of the liked corpus). A named source that is unconfigured (Supadata
+    without a key, the library disabled) is skipped; an *unknown* name is rejected
+    at startup. The default leads with Supadata and trails with the free library."""
     supadata_enabled: bool = False
     """Whether to compose the paid Supadata provider. When enabled (and keyed) it
     becomes the *primary* transcript source: it is the only source that reliably
@@ -293,6 +319,37 @@ def _resolve_transcript_provider(
     return provider
 
 
+def _build_youtube_client(
+    api: YouTubeApi, config: AppConfig, database: Database
+) -> YouTubeApiClient:
+    """Wrap the upstream API in the budgeted, gated client the workers share."""
+    return YouTubeApiClient(
+        api,
+        DailyQuota(database, limit=config.youtube_daily_quota_limit),
+        clock=SystemClock(),
+        gate=YouTubeApiGate(
+            database,
+            config=YouTubeApiGateConfig(
+                pause_base=timedelta(
+                    seconds=config.youtube_api_gate_pause_base_seconds
+                ),
+                pause_cap=timedelta(seconds=config.youtube_api_gate_pause_cap_seconds),
+            ),
+        ),
+    )
+
+
+def _build_transcript_sync_config(config: AppConfig) -> TranscriptSyncConfig:
+    """The shared transcript retry/backoff config for the worker and on-demand path."""
+    return TranscriptSyncConfig(
+        recent_window=config.transcript_sync_recent_window,
+        backoff_base=timedelta(seconds=config.transcript_retry_backoff_base_seconds),
+        backoff_cap=timedelta(seconds=config.transcript_retry_backoff_cap_seconds),
+        block_pause_base=timedelta(seconds=config.transcript_block_pause_base_seconds),
+        block_pause_cap=timedelta(seconds=config.transcript_block_pause_cap_seconds),
+    )
+
+
 async def _wire_youtube(
     app: Starlette,
     *,
@@ -314,21 +371,9 @@ async def _wire_youtube(
     logger = cast("Logger", app.state.logger)
     tracer = cast("Telemetry", app.state.telemetry).tracer
     api = config.youtube_api or InMemoryYouTubeApi()
-    client = YouTubeApiClient(
-        api,
-        DailyQuota(database, limit=config.youtube_daily_quota_limit),
-        clock=SystemClock(),
-        gate=YouTubeApiGate(
-            database,
-            config=YouTubeApiGateConfig(
-                pause_base=timedelta(
-                    seconds=config.youtube_api_gate_pause_base_seconds
-                ),
-                pause_cap=timedelta(seconds=config.youtube_api_gate_pause_cap_seconds),
-            ),
-        ),
-    )
+    client = _build_youtube_client(api, config, database)
     provider = _resolve_transcript_provider(config, api, database)
+    transcript_config = _build_transcript_sync_config(config)
     youtube_service = YouTubeService(
         database=database,
         client=client,
@@ -336,8 +381,10 @@ async def _wire_youtube(
         event_publisher=event_publisher,
         tracer=tracer,
     )
-    # Late-bind the optional semantic-search collaborator (None when search is
-    # disabled, leaving the lexical LIKE fallback in place).
+    # Late-bind the on-demand retry config to the same one the worker uses, and the
+    # optional semantic-search collaborator (None when search is disabled, leaving
+    # the lexical LIKE fallback in place).
+    youtube_service.config = transcript_config
     youtube_service.transcript_search = transcript_search
     app.state.youtube_service = youtube_service
     sync = YouTubeSyncService(
@@ -353,6 +400,8 @@ async def _wire_youtube(
             # interval of the last run (this or a prior process) skips re-syncing,
             # so iterating on the host doesn't re-spend the daily YouTube budget.
             min_interval=timedelta(seconds=config.youtube_sync_interval_seconds),
+            rewalk_interval=timedelta(days=config.youtube_likes_rewalk_interval_days),
+            drift_alarm_margin=config.youtube_likes_drift_alarm_margin,
         ),
         event_publisher=event_publisher,
     )
@@ -361,35 +410,39 @@ async def _wire_youtube(
         database=database,
         client=client,
         provider=provider,
-        config=TranscriptSyncConfig(
-            recent_window=config.transcript_sync_recent_window,
-            backoff_base=timedelta(
-                seconds=config.transcript_retry_backoff_base_seconds
-            ),
-            backoff_cap=timedelta(seconds=config.transcript_retry_backoff_cap_seconds),
-            block_pause_base=timedelta(
-                seconds=config.transcript_block_pause_base_seconds
-            ),
-            block_pause_cap=timedelta(
-                seconds=config.transcript_block_pause_cap_seconds
-            ),
-        ),
+        config=transcript_config,
         event_publisher=event_publisher,
     )
     app.state.transcript_sync = transcript_sync
+    return _start_youtube_workers(
+        app, config=config, logger=logger, sync=sync, transcript_sync=transcript_sync
+    )
+
+
+def _start_youtube_workers(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    logger: Logger,
+    sync: YouTubeSyncService,
+    transcript_sync: TranscriptSyncService,
+) -> list[asyncio.Task[None]]:
+    """Launch the likes + transcript boot passes and periodic loops off the critical
+    path, and return the loop tasks.
+
+    Boot passes run off the startup critical path so the lifespan completes and
+    uvicorn binds its port immediately; a slow first sync no longer hangs startup.
+    Each worker's `<...>_boot_done` barrier is set once its boot pass finishes (or is
+    skipped), so a readiness probe and boot-mirror tests can await it. Each worker
+    starts only when its real upstream is configured (a likes client / a transcript
+    provider); otherwise its barrier is released immediately and no loop runs.
+    """
     tasks: list[asyncio.Task[None]] = []
-    # Boot passes run off the startup critical path so the lifespan completes and
-    # uvicorn binds its port immediately (#122); a slow first sync no longer hangs
-    # startup. Each worker's `<...>_boot_done` barrier is set once its boot pass
-    # finishes (or is skipped), so callers — a readiness probe, and tests that
-    # depend on the boot mirror — can await completion deterministically.
     youtube_boot_done = asyncio.Event()
     app.state.youtube_boot_done = youtube_boot_done
     transcript_boot_done = asyncio.Event()
     app.state.transcript_boot_done = transcript_boot_done
 
-    # The likes sync only runs against a real upstream client; the in-memory fake
-    # is a read-only seam with nothing to pull.
     if config.youtube_api is not None and config.youtube_sync_enabled:
 
         async def _run_likes_sync() -> None:
@@ -412,9 +465,6 @@ async def _wire_youtube(
     else:
         youtube_boot_done.set()
 
-    # The transcript worker auto-runs only for an explicitly configured provider
-    # (captions in production). The fake-derived provider still serves on-demand
-    # fetches but does not start a background drain in tests.
     if config.transcript_provider is not None and config.transcript_sync_enabled:
 
         async def _run_transcript_sync() -> None:
@@ -912,71 +962,120 @@ def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
     return OAuthYouTubeApi.from_config(_youtube_oauth_config(settings))
 
 
+_KNOWN_TRANSCRIPT_SOURCES: frozenset[str] = frozenset(
+    {"supadata", "captions", "library"}
+)
+"""The transcript source names accepted in `TETHER_TRANSCRIPT_PROVIDER_ORDER`."""
+
+
+class TranscriptProviderConfigError(Exception):
+    """The configured transcript provider order is unusable.
+
+    Raised at wire time when `TETHER_TRANSCRIPT_PROVIDER_ORDER` names an unknown
+    source, or when every named source is unconfigured so no provider remains to
+    compose.
+
+    ```python
+    _compose_transcript_provider(["typo"], {})  # raises
+    ```
+    """
+
+
+def _parse_transcript_provider_order(raw: str) -> list[str]:
+    """Split the comma-separated order flag into normalized source names."""
+    return [name.strip().lower() for name in raw.split(",") if name.strip()]
+
+
+def _parse_transcript_languages(raw: str) -> tuple[str, ...]:
+    """Split the comma-separated language flag into normalized ISO codes."""
+    return tuple(code.strip() for code in raw.split(",") if code.strip())
+
+
 def build_configured_transcript_provider(
     settings: HostSettings,
 ) -> TranscriptProvider | None:
-    """Build the transcript provider when a YouTube token has been authorized.
+    """Build the transcript provider chain from the configured source order.
 
-    Provider precedence follows what actually transcribes the liked corpus. The
-    OAuth captions Data API is *owner-only*: it 403s for nearly every third-party
-    (liked) video, so on its own it yields almost nothing. Supadata is the only
-    source that reliably transcribes them. So when Supadata is keyed + enabled it
-    is the **primary**, with the captions API and the free (IP-block-prone)
-    `youtube-transcript-api` library trailing as best-effort fallbacks that cost no
-    Supadata budget. Without Supadata the captions API leads and the library fills
-    gaps (the prior behaviour). With no token, returns `None` so the on-demand path
-    falls back to a null provider and the background transcript worker stays off.
+    The chain is composed from `TETHER_TRANSCRIPT_PROVIDER_ORDER` (primary first).
+    Each named source is included only when it is actually configured: `captions`
+    is always available once a token exists, `library` unless disabled, and
+    `supadata` only when keyed + enabled. The default order leads with Supadata (the
+    only source that reliably transcribes third-party liked videos) and trails with
+    the free `youtube-transcript-api` library; the owner-only captions API is
+    available by name but dropped from the default because it transcribes almost
+    none of the corpus. With no token, returns `None` so the on-demand path falls
+    back to a null provider and the background transcript worker stays off.
 
     The per-call Supadata use cap is late-bound at wire time (it needs the
     database), so it is not applied here.
     """
     if not settings.youtube_token_path.exists():
         return None
-    captions = CaptionsTranscriptProvider.from_config(_youtube_oauth_config(settings))
-    library = (
-        YouTubeTranscriptApiProvider() if settings.transcript_library_enabled else None
-    )
+    # An empty flag falls back to English so the library/Supadata always get a hint.
+    languages = _parse_transcript_languages(settings.transcript_languages) or ("en",)
+    available: dict[str, TranscriptProvider] = {
+        "captions": CaptionsTranscriptProvider.from_config(
+            _youtube_oauth_config(settings)
+        )
+    }
+    if settings.transcript_library_enabled:
+        available["library"] = YouTubeTranscriptApiProvider(languages=languages)
+    supadata = _build_supadata_provider(settings, languages=languages)
+    if supadata is not None:
+        available["supadata"] = supadata
     return _compose_transcript_provider(
-        captions=captions, library=library, supadata=_build_supadata_provider(settings)
+        _parse_transcript_provider_order(settings.transcript_provider_order), available
     )
 
 
 def _compose_transcript_provider(
-    *,
-    captions: TranscriptProvider,
-    library: TranscriptProvider | None,
-    supadata: TranscriptProvider | None,
+    order: Sequence[str], available: Mapping[str, TranscriptProvider]
 ) -> TranscriptProvider:
-    """Order the configured sources by what actually transcribes the liked corpus.
+    """Compose the configured sources into one chain, primary first.
 
-    Supadata, when present, leads (it is the only source that reliably transcribes
-    third-party videos); the owner-only captions API and the free library trail it
-    as best-effort fallbacks. Without Supadata the captions API leads and the
-    library fills gaps. A single bare source is returned uncomposed.
+    Walks `order`, keeping each named source that is actually available (skipping
+    the unconfigured ones), and composes the survivors as
+    `FallbackTranscriptProvider(primary, fallbacks=rest)`. A single survivor is
+    returned uncomposed. An unknown name, or an order that leaves no available
+    source, raises `TranscriptProviderConfigError`.
     """
-    if supadata is not None:
-        fallbacks: list[TranscriptProvider] = [captions]
-        if library is not None:
-            fallbacks.append(library)
-        return FallbackTranscriptProvider(supadata, fallbacks=fallbacks)
-    if library is not None:
-        return FallbackTranscriptProvider(captions, fallbacks=[library])
-    return captions
+    selected: list[TranscriptProvider] = []
+    for name in order:
+        if name not in _KNOWN_TRANSCRIPT_SOURCES:
+            message = (
+                f"unknown transcript source {name!r} in "
+                f"TETHER_TRANSCRIPT_PROVIDER_ORDER; known sources are "
+                f"{sorted(_KNOWN_TRANSCRIPT_SOURCES)}"
+            )
+            raise TranscriptProviderConfigError(message)
+        provider = available.get(name)
+        if provider is not None:
+            selected.append(provider)
+    if not selected:
+        message = (
+            f"no transcript source in {list(order)} is configured; check "
+            f"TETHER_TRANSCRIPT_PROVIDER_ORDER and each source's credentials"
+        )
+        raise TranscriptProviderConfigError(message)
+    if len(selected) == 1:
+        return selected[0]
+    return FallbackTranscriptProvider(selected[0], fallbacks=selected[1:])
 
 
 def _build_supadata_provider(
-    settings: HostSettings,
+    settings: HostSettings, *, languages: tuple[str, ...] = ()
 ) -> SupadataTranscriptProvider | None:
     """Build the paid Supadata provider only when its key *and* flag are both set.
 
     Either missing makes Supadata a true no-op (omitted from the chain), so the
     free providers behave exactly as before and no cost can be incurred by
-    accident.
+    accident. `languages` sets the preferred caption language sent on each submit.
     """
     if not (settings.supadata_enabled and settings.supadata_api_key):
         return None
     config = SupadataConfig(
         base_url=settings.supadata_base_url,
+        languages=languages,
         timeout=timedelta(seconds=settings.supadata_timeout_seconds),
         poll_interval=timedelta(seconds=settings.supadata_poll_interval_seconds),
         max_poll_attempts=settings.supadata_max_poll_attempts,
@@ -1016,6 +1115,8 @@ def create_app_from_environment() -> Starlette:
             session_secret=settings.session_secret,
             web_dist=settings.web_dist,
             youtube_api=build_configured_youtube_api(settings),
+            youtube_likes_rewalk_interval_days=settings.youtube_likes_rewalk_interval_days,
+            youtube_likes_drift_alarm_margin=settings.youtube_likes_drift_alarm_margin,
             youtube_sync_enabled=settings.youtube_sync_enabled,
             transcript_provider=build_configured_transcript_provider(settings),
             transcript_supadata_max_uses=settings.supadata_max_uses,

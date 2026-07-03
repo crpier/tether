@@ -12,6 +12,7 @@ recency ordering.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,7 @@ from tether.youtube import (
     IngestedVideo,
     InMemoryYouTubeApi,
     TranscriptExcludedError,
+    TranscriptSegment,
     TranscriptSyncConfig,
     TranscriptSyncService,
     TranscriptTransientError,
@@ -75,9 +77,14 @@ class FakeClock:
 
 @dataclass(frozen=True)
 class Ok:
-    """A scripted successful outcome carrying the transcript text to return."""
+    """A scripted successful outcome carrying the transcript to return.
+
+    `segments` and `source` default to the text-only, generic-source case so most
+    tests need only the text; provenance tests set them explicitly."""
 
     text: str
+    segments: tuple[TranscriptSegment, ...] = ()
+    source: str = "fake"
 
 
 # Scripted failure tokens, mapped to the provider's typed signals.
@@ -106,16 +113,22 @@ class FakeTranscriptProvider:
         self.calls: dict[str, int] = {}
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
-        _ = paused_sources  # this fake has no blockable source to skip
+        _ = (paused_sources, skip_sources)  # this fake has no blockable source
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
             raise TranscriptUnavailableError(video_id)
         token = script.pop(0) if len(script) > 1 else script[0]
         if isinstance(token, Ok):
-            return FetchedTranscript(text=token.text, segments=(), source="fake")
+            return FetchedTranscript(
+                text=token.text, segments=token.segments, source=token.source
+            )
         if token == EXCLUDED:
             raise TranscriptExcludedError(video_id)
         if token == TRANSIENT:
@@ -157,6 +170,9 @@ async def make_env(
     service = YouTubeService(
         database=db, client=client, provider=provider, tracer=noop_tracer()
     )
+    if config is not None:
+        # Match the composition root: the on-demand path shares the worker's config.
+        service.config = config
     yield Env(
         worker=worker,
         service=service,
@@ -238,6 +254,66 @@ async def a_done_video_is_not_fetched_again() -> None:
     _ = await env.worker.sync(logger=test_logger())
 
     assert_eq(env.provider.calls["v1"], 1)
+
+
+# --- Provenance: the producing source and timed segments are persisted -------
+
+
+@test()
+async def a_fetch_persists_the_producing_source() -> None:
+    """The provider tag that produced a transcript is stored on the video row."""
+    provider = FakeTranscriptProvider({"v1": [Ok("hi there", source="supadata")]})
+    env = await load_fixture(make_env(provider))
+    await seed(env.db, "v1")
+
+    _ = await env.worker.sync(logger=test_logger())
+
+    assert_eq((await env.service.get_video("v1")).transcript_source, "supadata")
+
+
+@test()
+async def a_fetch_persists_timed_segments_as_json() -> None:
+    """A transcript's timed segments are stored as JSON alongside the joined text."""
+    provider = FakeTranscriptProvider(
+        {
+            "v1": [
+                Ok(
+                    "hello world",
+                    segments=(
+                        TranscriptSegment(start_seconds=0.0, text="hello"),
+                        TranscriptSegment(start_seconds=1.5, text="world"),
+                    ),
+                    source="supadata",
+                )
+            ]
+        }
+    )
+    env = await load_fixture(make_env(provider))
+    await seed(env.db, "v1")
+
+    _ = await env.worker.sync(logger=test_logger())
+
+    stored = (await env.service.get_video("v1")).transcript_segments_json
+    assert_is_not_none(stored)
+    assert_eq(
+        json.loads(stored) if stored is not None else None,
+        [
+            {"start_seconds": 0.0, "text": "hello"},
+            {"start_seconds": 1.5, "text": "world"},
+        ],
+    )
+
+
+@test()
+async def a_text_only_fetch_stores_null_segments() -> None:
+    """A provider that yields no segments leaves the segments column null."""
+    provider = FakeTranscriptProvider({"v1": [Ok("plain text", source="captions")]})
+    env = await load_fixture(make_env(provider))
+    await seed(env.db, "v1")
+
+    _ = await env.worker.sync(logger=test_logger())
+
+    assert_is_none((await env.service.get_video("v1")).transcript_segments_json)
 
 
 # --- Unavailable: terminal, never retried -----------------------------------
@@ -397,3 +473,24 @@ async def on_demand_unavailable_raises_and_marks_terminal() -> None:
     assert_eq(raised, True)
     persisted = await state_of(env.db, "v1")
     assert_eq(persisted.status if persisted is not None else None, "terminal")
+
+
+@test()
+async def on_demand_transient_retry_uses_the_configured_backoff() -> None:
+    """An on-demand transient failure schedules its retry on the service's config,
+    not a divergent default backoff."""
+    provider = FakeTranscriptProvider({"v1": [TRANSIENT]})
+    config = TranscriptSyncConfig(backoff_base=timedelta(minutes=45))
+    env = await load_fixture(make_env(provider, config=config))
+    await seed(env.db, "v1")
+
+    raised = False
+    try:
+        _ = await env.service.fetch_transcript("v1", logger=test_logger())
+    except TranscriptTransientError:
+        raised = True
+
+    assert_eq(raised, True)
+    persisted = await state_of(env.db, "v1")
+    due = persisted.next_attempt_at if persisted is not None else None
+    assert_eq(due, (env.clock.now() + timedelta(minutes=45)).isoformat())

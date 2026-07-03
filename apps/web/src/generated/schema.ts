@@ -2006,8 +2006,8 @@ export interface components {
        */
       weekday: number | null;
     };
-    /** @enum {string} */
-    YouTubeSource: "liked" | "watch_later";
+    /** @constant */
+    YouTubeSource: "liked";
     /**
      * YouTubeSyncStatusRead
      * @description HTTP snapshot of the background ingestion's progress and health.

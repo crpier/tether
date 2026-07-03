@@ -14,7 +14,7 @@ wiring helper.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
@@ -269,6 +269,21 @@ def the_mode_rides_on_every_submit_param() -> None:
 
 
 @test()
+def the_preferred_language_rides_on_the_submit_param() -> None:
+    """The most preferred language is sent as `lang` so Supadata returns that track."""
+    assert_eq(
+        _submit_params("v1", "native", ("ro", "en")),
+        {"videoId": "v1", "mode": "native", "lang": "ro"},
+    )
+
+
+@test()
+def no_language_leaves_the_lang_param_off() -> None:
+    """With no configured languages the `lang` param is omitted (Supadata's default)."""
+    assert_eq(_submit_params("v1", "native", ()), {"videoId": "v1", "mode": "native"})
+
+
+@test()
 async def an_exhausted_use_cap_is_blocked_without_billing_a_call() -> None:
     """At the cap, fetch raises *blocked* (supadata source) and never calls the transport."""
     transport = FakeSupadataTransport(submit=[SupadataResponse(200, {"content": "hi"})])
@@ -318,6 +333,48 @@ async def the_persisted_cap_survives_a_restart() -> None:
     reborn = PersistentSupadataSpendGuard(db, max_uses=1)
     with assert_raises(SupadataBudgetExhaustedError):
         await reborn.charge()
+
+
+class FakeClock:
+    """A controllable clock so monthly-cap tests can cross a month boundary."""
+
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, delta: timedelta) -> None:
+        self._now += delta
+
+
+@test()
+async def the_monthly_cap_resets_at_the_next_utc_month() -> None:
+    """An exhausted month's cap starts fresh once the clock rolls into a new month."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 7, 20, 12, 0, tzinfo=UTC))
+    guard = PersistentSupadataSpendGuard(db, max_uses=1, clock=clock)
+    await guard.charge()
+
+    clock.advance(timedelta(days=20))  # into August
+    await guard.charge()  # the new month's budget is fresh; does not raise
+
+
+@test()
+async def an_exhausted_cap_reports_the_wait_until_the_month_boundary() -> None:
+    """The exhausted-cap error carries the time until the monthly budget resets."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 7, 31, 23, 0, tzinfo=UTC))
+    guard = PersistentSupadataSpendGuard(db, max_uses=1, clock=clock)
+    await guard.charge()
+
+    with assert_raises(SupadataBudgetExhaustedError) as raised:
+        await guard.charge()
+
+    # One hour remains until 2026-08-01T00:00Z, when the cap resets.
+    assert_eq(raised.exception.retry_after, timedelta(hours=1))
 
 
 @test()

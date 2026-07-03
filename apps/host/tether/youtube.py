@@ -34,7 +34,7 @@ import json
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast, runtime_checkable
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
@@ -49,6 +49,7 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    delete,
     insert,
     select,
     update,
@@ -61,8 +62,11 @@ from tether.logging import Logger
 if TYPE_CHECKING:
     from tether.transcript_search import TranscriptSearchService
 
-type YouTubeSource = Literal["liked", "watch_later"]
-"""Which saved list a video was ingested from."""
+type YouTubeSource = Literal["liked"]
+"""Which saved list a video was ingested from.
+
+Only ``liked`` is ever written: the YouTube Data API does not expose the Watch
+Later playlist, so liked videos are the sole ingestion source today."""
 
 type IngestState = Literal["active", "ignored"]
 """Whether an ingested video is live in browse/search or purged from it."""
@@ -74,6 +78,12 @@ _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
 # Cap on videos returned by semantic search when the caller passes no explicit
 # limit, keeping assistant-facing results within the model's context.
 _DEFAULT_SEMANTIC_LIMIT = 50
+
+# Transcript sources skipped by default for a video with no manual captions. Only
+# Supadata's paid `native` lookup is gated — it would spend a use to return nothing
+# for a caption-less video — while the free library still runs (auto-captions can
+# exist when the manual-caption flag is false).
+_DEFAULT_CAPTION_GATED_SOURCES: frozenset[str] = frozenset({"supadata"})
 
 
 def _empty_snippets() -> dict[str, str]:
@@ -234,10 +244,16 @@ class CacheMeta(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class LikedPage:
-    """One page of liked videos plus the cursor to the next page."""
+    """One page of liked videos, the next-page cursor, and the playlist size.
+
+    `total_results` is the upstream `pageInfo.totalResults` for the whole liked
+    playlist (not just this page); the sync compares it against the local corpus
+    to detect drift. It is `None` when the source does not report a total.
+    """
 
     videos: list[RawYouTubeVideo]
     next_page_token: str | None
+    total_results: int | None = None
 
 
 @runtime_checkable
@@ -312,7 +328,11 @@ class InMemoryYouTubeApi(YouTubeApi):
         page = self._liked[start : start + size]
         next_start = start + size
         next_token = str(next_start) if next_start < len(self._liked) else None
-        return LikedPage(videos=list(page), next_page_token=next_token)
+        return LikedPage(
+            videos=list(page),
+            next_page_token=next_token,
+            total_results=len(self._liked),
+        )
 
     async def fetch_video_metadata(
         self, video_ids: Sequence[str]
@@ -321,10 +341,14 @@ class InMemoryYouTubeApi(YouTubeApi):
         return {vid: self._by_id[vid] for vid in video_ids if vid in self._by_id}
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Return a seeded transcript or raise `TranscriptUnavailableError`."""
-        _ = paused_sources  # the in-memory fake has no blockable source to skip
+        _ = (paused_sources, skip_sources)  # the fake has no blockable source
         self.transcript_calls += 1
         try:
             text = self._transcripts[video_id]
@@ -381,13 +405,23 @@ class TranscriptProvider(Protocol):
     sources currently in cooldown. A composite provider skips any fallback whose
     `source` is in the set and runs only the reachable ones (e.g. the captions API,
     or Supadata while the free library is paused). Leaf providers ignore it.
+
+    `skip_sources` is the worker's per-video exclusion hook: sources to drop from
+    this fetch entirely, as if unconfigured (used to skip Supadata for a video with
+    no captions, saving its paid budget). Unlike a pause it never defers — the
+    remaining sources decide the outcome — so a video with every reachable source
+    unavailable still goes terminal. Leaf providers ignore it.
     """
 
     source: str
     """The provenance tag this provider stamps onto the transcripts it produces."""
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Return the video's transcript, or raise a typed unavailability signal."""
         ...
@@ -404,10 +438,14 @@ class NullTranscriptProvider(TranscriptProvider):
     source: str = "null"
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         """Always signal absence — there is no configured transcript source."""
-        _ = paused_sources  # nothing blockable to skip
+        _ = (paused_sources, skip_sources)  # nothing blockable to skip
         raise TranscriptUnavailableError(video_id)
 
 
@@ -453,24 +491,45 @@ class FallbackTranscriptProvider(TranscriptProvider):
         return (self._primary, *self._fallbacks)
 
     async def fetch(
-        self, video_id: str, *, paused_sources: frozenset[str] = _NO_PAUSED_SOURCES
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
-        """Try the primary, then each reachable fallback, surfacing the best outcome."""
+        """Try the primary, then each reachable fallback, surfacing the best outcome.
+
+        A source in `skip_sources` is dropped from this fetch as if unconfigured —
+        the primary included — and never defers; a source in `paused_sources` is
+        skipped but defers (keeps the video pending) rather than going terminal.
+        """
         last_unavailable: TranscriptUnavailableError | None = None
-        try:
-            return await self._primary.fetch(video_id, paused_sources=paused_sources)
-        except TranscriptUnavailableError as error:
-            last_unavailable = error
-        # The primary had nothing. Try each fallback in order, skipping any whose
-        # source is in cooldown. A real block propagates, stamped with the source
-        # that raised it so the worker pauses that provider specifically.
         skipped_paused = False
+        # The primary and fallbacks are one ordered chain for skip/pause handling;
+        # only the primary is exempt from the pause skip (it is never blockable).
+        if self._primary.source in skip_sources:
+            pass
+        else:
+            try:
+                return await self._primary.fetch(
+                    video_id, paused_sources=paused_sources, skip_sources=skip_sources
+                )
+            except TranscriptUnavailableError as error:
+                last_unavailable = error
+        # The primary had nothing (or was skipped). Try each fallback in order,
+        # dropping skipped sources entirely and deferring paused ones. A real block
+        # propagates, stamped with the source that raised it so the worker pauses
+        # that provider specifically.
         for fallback in self._fallbacks:
+            if fallback.source in skip_sources:
+                continue
             if fallback.source in paused_sources:
                 skipped_paused = True
                 continue
             try:
-                return await fallback.fetch(video_id, paused_sources=paused_sources)
+                return await fallback.fetch(
+                    video_id, paused_sources=paused_sources, skip_sources=skip_sources
+                )
             except TranscriptUnavailableError as error:
                 last_unavailable = error
             except TranscriptBlockedError as error:
@@ -500,6 +559,14 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     """Saved-content text searched alongside the transcript."""
     transcript: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
     """The transcript, present only once explicitly fetched."""
+    transcript_segments_json: IngestedVideo.Col[str | None] = Text(
+        default=None, nullable=True
+    )
+    """The transcript's timed segments as JSON, alongside the joined `transcript`;
+    null for a text-only fetch or a video never transcribed."""
+    transcript_source: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
+    """Which provider produced the stored transcript (e.g. `supadata`,
+    `youtube_transcript_api`); null until one is fetched."""
     ignored_at: IngestedVideo.Col[datetime | None] = Text(default=None, nullable=True)
     """When the video was purged from ingestion; null while it is active."""
     # --- Enriched metadata (nullable; filled by sync detail fetch / import). ---
@@ -604,10 +671,20 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
 
 _BACKFILL_CURSOR_KEY = "likes_backfill_next_page_token"
 _LIKES_LAST_RUN_KEY = "likes_last_run_at"
+# When the backfill cursor last reached the end of history, as an ISO-8601 UTC
+# string. Its presence is what stops the perpetual re-walk: once set, the sync
+# leaves history alone until this is older than the configured re-walk interval
+# (or drift forces an immediate restart, which clears it).
+_BACKFILL_COMPLETED_AT_KEY = "likes_backfill_completed_at"
 # The shared, global Data API backoff gate, persisted so a live quota block
 # survives restarts: the instant any Data API call may be tried again, and the
 # consecutive-error streak its cooldown escalates with. One pair of keys gates
 # every live call (the metadata sync and the transcript budget alike).
+# The set of liked video ids whose `videos.list` detail lookup returned nothing
+# (deleted, private, or members-only), persisted as a JSON array. Tracked so the
+# drift alarm can fold this known, un-ingestable gap into its formula and fire only
+# on genuine data loss; an id is dropped once the video later becomes fetchable.
+_KNOWN_SKIPPED_IDS_KEY = "likes_known_skipped_ids"
 _API_GATE_PAUSED_UNTIL_KEY = "youtube_api_paused_until"
 _API_GATE_STREAK_KEY = "youtube_api_block_streak"
 # Provider-level transcript pause, persisted per blockable source in the sync-state
@@ -673,6 +750,23 @@ class SyncReport:
     upserted: int
     pages: int
     backfill_exhausted: bool
+    backfill_deferred: bool = False
+    """True when a completed backfill was left settled this pass — not restarted by
+    drift and not yet older than the re-walk interval — so only the hot pages ran."""
+    drift_detected: bool = False
+    """True when this pass detected likes drift and restarted the history walk."""
+
+
+@dataclass(slots=True)
+class _SyncTally:
+    """Running counts a sync pass accumulates across its hot and backfill walks.
+
+    Mutable and passed into the walk helpers so a mid-walk quota stop keeps the
+    partial counts it managed before halting."""
+
+    pulled: int = 0
+    upserted: int = 0
+    pages: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -724,6 +818,18 @@ class YouTubeSyncConfig:
     """When set, `maybe_sync` skips a pass if the persisted last-run is newer than
     this — so app restarts within the window don't re-spend quota. `None` (the
     default) disables the gate, so every `maybe_sync` runs."""
+    rewalk_interval: timedelta | None = timedelta(days=30)
+    """How long a completed backfill stays settled before the walk restarts. Once
+    the cursor reaches the end of history the sync stops re-walking (only the hot
+    pages keep refreshing); it re-walks from the tail once the completion is older
+    than this. `None` walks history exactly once and never again (drift can still
+    force a restart)."""
+    drift_alarm_margin: int = 5
+    """How far the upstream liked-playlist total may exceed the local corpus (after
+    the known-skipped count is added back) before a completed backfill is treated as
+    drifted and restarted. Deleted, private, and members-only videos are tracked by
+    id and folded into the comparison precisely, so this margin only absorbs
+    transient races (a like landing mid-pass); a larger shortfall trips the alarm."""
 
 
 type TranscriptOutcome = Literal[
@@ -770,6 +876,12 @@ class TranscriptSyncConfig:
     backoff_cap: timedelta = timedelta(hours=6)
     block_pause_base: timedelta = timedelta(minutes=30)
     block_pause_cap: timedelta = timedelta(hours=6)
+    caption_gated_sources: frozenset[str] = _DEFAULT_CAPTION_GATED_SOURCES
+    """Transcript sources to skip for a video the Data API marks as having no manual
+    captions (`caption_available` false). Supadata's `native` mode only fetches an
+    existing caption track, so it would spend a paid use to return nothing; skipping
+    it there preserves the cap. The library still runs (auto-captions can exist even
+    when the manual-caption flag is false), so the skip is not a hard terminal."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1059,6 +1171,22 @@ def _json_or_none(values: Sequence[str] | Mapping[str, str]) -> str | None:
     return json.dumps(values) if values else None
 
 
+def _decode_skipped_ids(raw: str | None) -> set[str]:
+    """Decode the persisted known-skipped-ids JSON array into a set of ids.
+
+    Tolerates absence and malformed values (returning an empty set) so a corrupt
+    state row degrades to "nothing skipped" rather than crashing the sync."""
+    if not raw:
+        return set()
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(decoded, list):
+        return set()
+    return {str(item) for item in cast("list[object]", decoded)}
+
+
 def _bool_to_int(*, value: bool | None) -> int | None:
     """Map an optional bool onto the 0/1 integer the column stores."""
     return None if value is None else int(value)
@@ -1152,6 +1280,26 @@ async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
         .set(IngestedVideo.updated_at.to(CurrentTimestamp))
         .where(IngestedVideo.video_id.eq(raw.video_id))
     )
+    # Self-correction: when captions appear on a video the worker previously gave
+    # up on (its manual-caption flag flipped false -> true), clear any terminal
+    # transcript state so it re-enters the sweep instead of staying unavailable.
+    if existing.caption_available == 0 and raw.caption_available is True:
+        await _clear_terminal_transcript_state(tx, raw.video_id)
+
+
+async def _clear_terminal_transcript_state(tx: Transaction, video_id: str) -> None:
+    """Drop a video's transcript state row when it is terminal, re-opening the fetch.
+
+    Absence of a row means *pending*, so deleting a terminal row is what returns the
+    video to the eligible sweep; a `done` or `retry` row is left untouched."""
+    existing = await _transcript_state(tx, video_id)
+    if existing is None or existing.status != "terminal":
+        return
+    _ = await tx.execute(
+        delete(YouTubeTranscriptState).where(
+            YouTubeTranscriptState.video_id.eq(video_id)
+        )
+    )
 
 
 class YouTubeSyncService:
@@ -1183,6 +1331,8 @@ class YouTubeSyncService:
         self.page_size: int = max(1, resolved.page_size)
         self.cutoff_date: date | None = resolved.cutoff_date
         self.min_interval: timedelta | None = resolved.min_interval
+        self.rewalk_interval: timedelta | None = resolved.rewalk_interval
+        self.drift_alarm_margin: int = max(0, resolved.drift_alarm_margin)
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
 
     async def maybe_sync(self, *, logger: Logger) -> SyncReport | None:
@@ -1221,74 +1371,107 @@ class YouTubeSyncService:
         """Run one idempotent ingestion pass: hot pages then backfill pages."""
         with self.tracer.start_as_current_span("YouTubeSyncService.sync"):
             _debug(logger, "YouTube sync starting")
-            pulled = 0
-            upserted = 0
-            pages = 0
+            tally = _SyncTally()
             backfill_exhausted = False
+            backfill_deferred = False
+            drift_detected = False
             quota_exhausted = False
-            # Resume the persisted backfill cursor (the hot tail seeds it first run).
+            # Resume the persisted backfill cursor (the hot tail seeds it first run)
+            # and the completion marker that stops the perpetual re-walk.
             cursor = await self._load_cursor()
+            completed_at = await self._load_completed_at()
             try:
-                # Hot pages: always from the head of the liked list.
-                hot_token: str | None = None
-                for _ in range(self.hot_pages):
-                    page = await self.client.list_liked_page(
-                        page_token=hot_token, page_size=self.page_size
+                hot_token, total_results = await self._pull_hot_pages(tally)
+                # Decide whether to touch history this pass: a settled backfill is
+                # left alone until it ages out or drifts from the upstream total.
+                drift_detected = await self._detect_drift(
+                    total_results, completed_at, logger=logger
+                )
+                active, cursor, completed_at = self._resolve_backfill(
+                    cursor, completed_at, restart=drift_detected, now=self.client.now()
+                )
+                # A settled backfill that neither drifted nor aged out is deferred:
+                # `_resolve_backfill` declines to walk history and only the hot pages
+                # ran this pass.
+                backfill_deferred = not active
+                if active:
+                    cursor, backfill_exhausted = await self._walk_backfill(
+                        tally, cursor if cursor is not None else hot_token
                     )
-                    pages += 1
-                    scoped, reached_cutoff = self._apply_cutoff(page.videos)
-                    # Count the page as pulled only once `_mirror_page` returns;
-                    # a quota stop mid-enrich must not overstate the report.
-                    upserted += await self._mirror_page(scoped)
-                    pulled += len(scoped)
-                    hot_token = page.next_page_token
-                    if hot_token is None or reached_cutoff:
-                        break
-
-                # Backfill: advance the cursor a little through history.
-                if cursor is None:
-                    cursor = hot_token
-                for _ in range(self.backfill_pages):
-                    if cursor is None:
-                        backfill_exhausted = True
-                        break
-                    page = await self.client.list_liked_page(
-                        page_token=cursor, page_size=self.page_size
-                    )
-                    pages += 1
-                    scoped, hit_cutoff = self._apply_cutoff(page.videos)
-                    upserted += await self._mirror_page(scoped)
-                    pulled += len(scoped)
-                    cursor = page.next_page_token
-                    if hit_cutoff:
-                        cursor = None
-                    if cursor is None:
-                        backfill_exhausted = True
-                        break
             except YouTubeQuotaExceededError as error:
                 # The day's budget is spent: stop calling out and resume next pass.
                 quota_exhausted = True
                 _debug(logger, "YouTube sync stopped on quota", error=str(error))
+            if backfill_exhausted:
+                # Record completion so the next pass leaves history settled.
+                completed_at = self.client.now()
             await self._store_cursor(cursor)
+            await self._store_completed_at(completed_at)
             await self._mark_run()
 
         _info(
             logger,
             "YouTube sync completed",
-            pulled=pulled,
-            upserted=upserted,
-            pages=pages,
+            pulled=tally.pulled,
+            upserted=tally.upserted,
+            pages=tally.pages,
             backfill_exhausted=backfill_exhausted,
+            backfill_deferred=backfill_deferred,
+            drift_detected=drift_detected,
             quota_exhausted=quota_exhausted,
         )
-        if upserted:
+        if tally.upserted:
             await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return SyncReport(
-            pulled=pulled,
-            upserted=upserted,
-            pages=pages,
+            pulled=tally.pulled,
+            upserted=tally.upserted,
+            pages=tally.pages,
             backfill_exhausted=backfill_exhausted,
+            backfill_deferred=backfill_deferred,
+            drift_detected=drift_detected,
         )
+
+    async def _pull_hot_pages(self, tally: _SyncTally) -> tuple[str | None, int | None]:
+        """Mirror the hot (newest) pages into `tally`; return the next-page cursor and
+        the upstream playlist total from the first page (for the drift check)."""
+        hot_token: str | None = None
+        total_results: int | None = None
+        for index in range(self.hot_pages):
+            page = await self.client.list_liked_page(
+                page_token=hot_token, page_size=self.page_size
+            )
+            if index == 0:
+                total_results = page.total_results
+            tally.pages += 1
+            scoped, reached_cutoff = self._apply_cutoff(page.videos)
+            # Count the page as pulled only once `_mirror_page` returns; a quota stop
+            # mid-enrich must not overstate the report.
+            tally.upserted += await self._mirror_page(scoped)
+            tally.pulled += len(scoped)
+            hot_token = page.next_page_token
+            if hot_token is None or reached_cutoff:
+                break
+        return hot_token, total_results
+
+    async def _walk_backfill(
+        self, tally: _SyncTally, cursor: str | None
+    ) -> tuple[str | None, bool]:
+        """Advance the backfill cursor through history, mirroring pages into `tally`;
+        return the resumable cursor and whether history was exhausted this pass."""
+        for _ in range(self.backfill_pages):
+            if cursor is None:
+                return None, True
+            page = await self.client.list_liked_page(
+                page_token=cursor, page_size=self.page_size
+            )
+            tally.pages += 1
+            scoped, hit_cutoff = self._apply_cutoff(page.videos)
+            tally.upserted += await self._mirror_page(scoped)
+            tally.pulled += len(scoped)
+            cursor = None if hit_cutoff else page.next_page_token
+            if cursor is None:
+                return None, True
+        return cursor, False
 
     async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
         """Run sync passes on the given interval until cancelled."""
@@ -1336,18 +1519,133 @@ class YouTubeSyncService:
 
         async def _mirror(tx: Transaction) -> int:
             upserted = 0
+            skipped: set[str] = set()
+            ingested: set[str] = set()
             for raw in videos:
                 enriched = details.get(raw.video_id)
                 if enriched is None:
+                    # No fetchable details: track the id so drift accounting can fold
+                    # this known, un-ingestable gap in rather than alarming on it.
+                    skipped.add(raw.video_id)
                     continue
                 await self._upsert(tx, enriched)
+                # A previously-skipped video that now ingests self-corrects the set.
+                ingested.add(raw.video_id)
                 upserted += 1
+            await self._update_known_skipped(tx, add=skipped, remove=ingested)
             return upserted
 
         return await run_in_transaction(self.database, _mirror)
 
+    async def _update_known_skipped(
+        self, tx: Transaction, *, add: set[str], remove: set[str]
+    ) -> None:
+        """Fold this page's skipped/ingested ids into the persisted skipped-id set.
+
+        Adds ids whose details were missing and drops any that ingested, writing back
+        only when the set actually changes so a clean page stays read-only."""
+        if not add and not remove:
+            return
+        row = await tx.fetch_one_or_none(
+            select(YouTubeSyncState).where(
+                YouTubeSyncState.key.eq(_KNOWN_SKIPPED_IDS_KEY)
+            )
+        )
+        current = _decode_skipped_ids(row.value if row is not None else None)
+        updated = (current | add) - remove
+        if updated == current:
+            return
+        value = json.dumps(sorted(updated))
+        if row is None:
+            _ = await tx.execute(
+                insert(YouTubeSyncState(key=_KNOWN_SKIPPED_IDS_KEY, value=value))
+            )
+        else:
+            _ = await tx.execute(
+                update(YouTubeSyncState)
+                .set(YouTubeSyncState.value.to(value))
+                .where(YouTubeSyncState.key.eq(_KNOWN_SKIPPED_IDS_KEY))
+            )
+
     async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> None:
         await upsert_ingested_video(tx, raw)
+
+    def _resolve_backfill(
+        self,
+        cursor: str | None,
+        completed_at: datetime | None,
+        *,
+        restart: bool,
+        now: datetime,
+    ) -> tuple[bool, str | None, datetime | None]:
+        """Decide whether to walk history this pass, returning `(active, cursor,
+        completed_at)`.
+
+        Drift forces a fresh walk from the hot tail. Otherwise an un-completed
+        backfill keeps advancing its cursor; a completed one stays settled until it
+        is older than `rewalk_interval`, at which point it re-walks from the tail. A
+        `None` interval settles forever once completed.
+        """
+        if restart:
+            return True, None, None
+        if completed_at is None:
+            return True, cursor, None
+        if self.rewalk_interval is not None and now - completed_at >= (
+            self.rewalk_interval
+        ):
+            return True, None, None
+        return False, cursor, completed_at
+
+    async def _detect_drift(
+        self,
+        total_results: int | None,
+        completed_at: datetime | None,
+        *,
+        logger: Logger,
+    ) -> bool:
+        """Whether a *completed* backfill has drifted far below the upstream total.
+
+        Only meaningful once history has been walked (before then the local corpus
+        is legitimately smaller). A shortfall beyond `drift_alarm_margin` means
+        likes were added faster than the hot pages caught, so the walk is restarted
+        and the gap logged loudly.
+        """
+        if completed_at is None or total_results is None:
+            return False
+        local = await self._local_liked_count()
+        known_skipped = await self._known_skipped_count()
+        if total_results - (local + known_skipped) <= self.drift_alarm_margin:
+            return False
+        logger.warning(
+            "YouTube likes drift detected; restarting backfill",
+            upstream_total=total_results,
+            local_count=local,
+            known_skipped_count=known_skipped,
+            drift_alarm_margin=self.drift_alarm_margin,
+        )
+        return True
+
+    async def _known_skipped_count(self) -> int:
+        """Count the liked videos tracked as un-ingestable (no fetchable details)."""
+        raw = await _state_get(self.database, _KNOWN_SKIPPED_IDS_KEY)
+        return len(_decode_skipped_ids(raw))
+
+    async def _local_liked_count(self) -> int:
+        """Count the liked videos mirrored locally (active and ignored alike)."""
+        async with self.database.transaction() as tx:
+            rows = await tx.fetch_all(
+                select(IngestedVideo.video_id).where(IngestedVideo.source.eq("liked"))
+            )
+        return len(rows)
+
+    async def reset_backfill(self) -> None:
+        """Clear the cursor and completion marker so the next pass re-walks history.
+
+        The manual escape hatch behind `just youtube-reset-backfill`: a full resync
+        of liked history on demand, without waiting for the re-walk interval.
+        """
+        await self._store_cursor(None)
+        await self._store_completed_at(None)
 
     async def _load_cursor(self) -> str | None:
         value = await _state_get(self.database, _BACKFILL_CURSOR_KEY)
@@ -1357,6 +1655,19 @@ class YouTubeSyncService:
         # An exhausted cursor is stored as the empty string and reads back as
         # absent, so the next pass restarts the backfill from the hot tail.
         await _state_set(self.database, _BACKFILL_CURSOR_KEY, cursor or "")
+
+    async def _load_completed_at(self) -> datetime | None:
+        raw = await _state_get(self.database, _BACKFILL_COMPLETED_AT_KEY)
+        return datetime.fromisoformat(raw) if raw else None
+
+    async def _store_completed_at(self, completed_at: datetime | None) -> None:
+        # An unset marker is stored as the empty string and reads back as absent,
+        # so an incomplete or reset backfill keeps walking.
+        await _state_set(
+            self.database,
+            _BACKFILL_COMPLETED_AT_KEY,
+            completed_at.isoformat() if completed_at is not None else "",
+        )
 
     async def _mark_run(self) -> None:
         await _state_set(
@@ -1533,6 +1844,7 @@ async def _fetch_and_store_transcript(
     video_id: str,
     now: datetime,
     paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+    skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
 ) -> TranscriptAttempt:
     """Run one provider fetch for a video and persist the resulting state.
 
@@ -1551,7 +1863,9 @@ async def _fetch_and_store_transcript(
     """
     database = context.database
     try:
-        fetched = await context.provider.fetch(video_id, paused_sources=paused_sources)
+        fetched = await context.provider.fetch(
+            video_id, paused_sources=paused_sources, skip_sources=skip_sources
+        )
     except TranscriptUnavailableError as error:
         await _mark_terminal(database, video_id, error=str(error), purge=False)
         return TranscriptAttempt(outcome="unavailable")
@@ -1567,24 +1881,45 @@ async def _fetch_and_store_transcript(
             database, video_id, now=now, config=context.config, error=str(error)
         )
         return TranscriptAttempt(outcome="transient")
-    updated = await _store_transcript(database, video_id, fetched.text)
+    updated = await _store_transcript(database, video_id, fetched)
     await context.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
     return TranscriptAttempt(
         outcome="done", video=updated, text=fetched.text, source=fetched.source
     )
 
 
+def _segments_to_json(segments: tuple[TranscriptSegment, ...]) -> str | None:
+    """Encode timed transcript segments as a JSON array, or None when there are none.
+
+    Text-only providers yield no segments, so a null column distinguishes "not
+    timed" from an empty list; the joined `transcript` still carries the text."""
+    if not segments:
+        return None
+    return json.dumps(
+        [
+            {"start_seconds": segment.start_seconds, "text": segment.text}
+            for segment in segments
+        ]
+    )
+
+
 async def _store_transcript(
-    database: Database, video_id: str, text: str
+    database: Database, video_id: str, fetched: FetchedTranscript
 ) -> IngestedVideo[Fetched]:
-    """Persist a fetched transcript onto its video and mark the state done."""
+    """Persist a fetched transcript, its segments, and its source; mark state done."""
 
     async def _store(tx: Transaction) -> IngestedVideo[Fetched] | None:
         existing = await _transcript_state(tx, video_id)
         attempts = existing.attempts if existing is not None else 0
         _ = await tx.execute(
             update(IngestedVideo)
-            .set(IngestedVideo.transcript.to(text))
+            .set(IngestedVideo.transcript.to(fetched.text))
+            .set(
+                IngestedVideo.transcript_segments_json.to(
+                    _segments_to_json(fetched.segments)
+                )
+            )
+            .set(IngestedVideo.transcript_source.to(fetched.source))
             .set(IngestedVideo.updated_at.to(CurrentTimestamp))
             .where(IngestedVideo.video_id.eq(video_id))
         )
@@ -1746,6 +2081,7 @@ class TranscriptSyncService:
                 video_id=video.video_id,
                 now=now,
                 paused_sources=paused_sources,
+                skip_sources=self._skip_sources_for(video),
             )
             if attempt.outcome == "done":
                 fetched += 1
@@ -1806,6 +2142,13 @@ class TranscriptSyncService:
             blocked=blocked,
             paused=bool(paused),
         )
+
+    def _skip_sources_for(self, video: IngestedVideo[Fetched]) -> frozenset[str]:
+        """Sources to drop for this video: the caption-gated ones when it has no
+        manual captions (`caption_available` is stored as 0)."""
+        if video.caption_available == 0:
+            return self.config.caption_gated_sources
+        return _NO_PAUSED_SOURCES
 
     @staticmethod
     def _paused_sources(
@@ -1940,6 +2283,10 @@ class YouTubeService:
         self.tracer: Tracer = tracer
         self.provider: TranscriptProvider = provider or NullTranscriptProvider()
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
+        # The retry/backoff config the on-demand fetch persists its transient retry
+        # with. Defaults here and is late-bound by the composition root to the same
+        # config the background worker uses, so both schedule retries on one cadence.
+        self.config: TranscriptSyncConfig = TranscriptSyncConfig()
         # Optional, late-bound search collaborator (wired by the composition root
         # after construction). When set, semantic transcript search replaces the
         # lexical fallback; left None (search disabled), `search` keeps the SQLite
@@ -2164,7 +2511,7 @@ class YouTubeService:
         context = _TranscriptFetchContext(
             database=self.database,
             provider=self.provider,
-            config=TranscriptSyncConfig(),
+            config=self.config,
             event_publisher=self.event_publisher,
         )
         attempt = await _fetch_and_store_transcript(
@@ -2321,6 +2668,14 @@ def _youtube_migrations() -> dict[str, str]:
         '"last_error" TEXT, '
         "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
         ") STRICT"
+    )
+    # Transcript provenance: the timed segments and the producing provider, stored
+    # alongside the joined `transcript` on every new fetch.
+    migrations["009_ingested_video_transcript_segments_json"] = (
+        'ALTER TABLE "ingested_video" ADD COLUMN "transcript_segments_json" TEXT'
+    )
+    migrations["009_ingested_video_transcript_source"] = (
+        'ALTER TABLE "ingested_video" ADD COLUMN "transcript_source" TEXT'
     )
     return migrations
 
