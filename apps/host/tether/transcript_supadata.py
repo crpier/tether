@@ -35,6 +35,7 @@ unit-tested against fixtures.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -159,6 +160,12 @@ class SupadataConfig:
     """How long to wait between polls of an in-flight async transcript job."""
     max_poll_attempts: int = 10
     """Poll budget for an async job; exhausting it is *transient*, not a hang."""
+    min_request_interval: timedelta = timedelta(0)
+    """Minimum spacing between consecutive billed submits. The worker fetches videos
+    back-to-back, so a low-rate plan returns `429 limit-exceeded` on the burst and
+    the source is paused; spacing submits keeps them under that per-request rate.
+    Zero (the default) disables pacing — behaviour unchanged — so a plan with a
+    generous rate incurs no delay."""
     mode: SupadataMode = "native"
     """Supadata transcript mode sent on every submit. `native` fetches an existing
     caption track only — one Supadata use per call — and returns *unavailable* for a
@@ -407,15 +414,38 @@ class SupadataTranscriptProvider(TranscriptProvider):
         *,
         config: SupadataConfig | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        monotonic: Callable[[], float] | None = None,
         spend_guard: SupadataSpendGuard | None = None,
     ) -> None:
         self._transport: SupadataTransport = transport
         self._config: SupadataConfig = config or SupadataConfig()
         # Injectable so tests need not wait real seconds between poll attempts.
         self._sleep: Callable[[float], Awaitable[None]] = sleep or asyncio.sleep
+        # A monotonic clock (injectable for tests) drives the request-pacing gate;
+        # the provider is long-lived, so it remembers the last submit across fetches.
+        self._monotonic: Callable[[], float] = monotonic or time.monotonic
+        self._last_request_at: float | None = None
         # Public so the wiring can late-bind the persisted cap once the database
         # exists (the tree is built from settings first); unbounded by default.
         self.spend_guard: SupadataSpendGuard = spend_guard or UnlimitedSupadataSpend()
+
+    async def _throttle(self) -> None:
+        """Wait out the min-interval since the previous submit, if one is configured.
+
+        Enforces at most one billed submit per `min_request_interval` so the worker's
+        back-to-back fetches stay under a low-rate plan's per-request limit. A no-op
+        when pacing is disabled (zero interval) or when the interval has already
+        elapsed; the timestamp is stamped after any wait so it reflects the actual
+        request time.
+        """
+        interval = self._config.min_request_interval.total_seconds()
+        if interval <= 0:
+            return
+        if self._last_request_at is not None:
+            wait = interval - (self._monotonic() - self._last_request_at)
+            if wait > 0:
+                await self._sleep(wait)
+        self._last_request_at = self._monotonic()
 
     async def fetch(
         self,
@@ -448,6 +478,8 @@ class SupadataTranscriptProvider(TranscriptProvider):
             raise TranscriptBlockedError(
                 str(error), retry_after=error.retry_after, source=_SOURCE
             ) from error
+        # Pace the billed submit to stay under the plan's per-request rate limit.
+        await self._throttle()
         response = await self._transport.submit(video_id)
         # A rate limit or any client/server error is a failure to classify; a 2xx is
         # either a job handoff, a direct transcript, or a genuine "no transcript".

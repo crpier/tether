@@ -261,6 +261,11 @@ class HostSettings(BaseSettings):
     """Delay between polls of an in-flight async Supadata transcript job."""
     supadata_max_poll_attempts: int = 10
     """Poll budget for a Supadata async job before the attempt is treated as transient."""
+    supadata_min_request_interval_seconds: float = 1.0
+    """Minimum spacing between billed Supadata submits. The transcript sweep fetches
+    videos back-to-back, so a low-rate plan returns `429 limit-exceeded` on the burst
+    and pauses the source; spacing submits keeps them under that per-request rate. The
+    1.0s default suits a modest plan; set 0 to disable pacing on a generous one."""
     supadata_mode: SupadataMode = "native"
     """Supadata transcript mode. `native` (the default) fetches an existing caption
     track only — one use per call — so a caption-less video costs one lookup and
@@ -1080,6 +1085,9 @@ def _build_supadata_provider(
         poll_interval=timedelta(seconds=settings.supadata_poll_interval_seconds),
         max_poll_attempts=settings.supadata_max_poll_attempts,
         mode=settings.supadata_mode,
+        min_request_interval=timedelta(
+            seconds=settings.supadata_min_request_interval_seconds
+        ),
     )
     transport = HttpSupadataTransport(settings.supadata_api_key, config=config)
     return SupadataTranscriptProvider(transport, config=config)

@@ -86,6 +86,38 @@ def _provider(
     return SupadataTranscriptProvider(transport, config=config, sleep=_no_sleep)
 
 
+class _FakeClock:
+    """A controllable monotonic clock whose `sleep` advances it and records waits.
+
+    Lets the request-pacing tests assert the exact delay the throttle inserts
+    without waiting real seconds; sleeping moves the clock forward so a subsequent
+    `monotonic()` reads the time as if the wait had happened.
+    """
+
+    def __init__(self) -> None:
+        self.now: float = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _paced_provider(
+    transport: FakeSupadataTransport, clock: _FakeClock, *, interval_seconds: float
+) -> SupadataTranscriptProvider:
+    config = SupadataConfig(
+        min_request_interval=timedelta(seconds=interval_seconds),
+        poll_interval=timedelta(seconds=0),
+    )
+    return SupadataTranscriptProvider(
+        transport, config=config, sleep=clock.sleep, monotonic=clock.monotonic
+    )
+
+
 @test()
 async def direct_hit_with_timed_cues_returns_segments_tagged_supadata() -> None:
     """A 200 with timed `content` cues yields joined text + segments tagged supadata."""
@@ -394,3 +426,77 @@ async def binding_the_cap_reaches_supadata_inside_a_fallback_chain() -> None:
     bind_supadata_spend_guard(chain, db, max_uses=5)
 
     assert_true(isinstance(supadata.spend_guard, PersistentSupadataSpendGuard))
+
+
+# --- Request pacing: stay under the plan's per-request rate limit ------------
+
+
+@test()
+async def sequential_submits_are_paced_by_the_min_interval() -> None:
+    """A configured min interval delays the next submit by the unspent remainder,
+    so back-to-back videos don't burst past the plan's request-rate limit."""
+    clock = _FakeClock()
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(200, {"content": "body"})]
+    )
+    provider = _paced_provider(transport, clock, interval_seconds=2)
+
+    _ = await provider.fetch("v1")
+    # The first submit has no predecessor, so it is not delayed.
+    assert_eq(clock.sleeps, [])
+
+    # 0.5s of unrelated work elapses before the next video's submit.
+    clock.now += 0.5
+    _ = await provider.fetch("v2")
+
+    # Only 0.5s of the 2s interval has passed, so it waits the remaining 1.5s.
+    assert_eq(clock.sleeps, [1.5])
+    assert_eq(transport.submit_calls, 2)
+
+
+@test()
+async def a_gap_longer_than_the_interval_is_not_paced() -> None:
+    """When more than the interval already elapsed, the next submit fires at once."""
+    clock = _FakeClock()
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(200, {"content": "body"})]
+    )
+    provider = _paced_provider(transport, clock, interval_seconds=2)
+
+    _ = await provider.fetch("v1")
+    clock.now += 5.0  # already well past the interval
+    _ = await provider.fetch("v2")
+
+    assert_eq(clock.sleeps, [])
+
+
+@test()
+async def pacing_is_off_when_the_interval_is_zero() -> None:
+    """The default (zero interval) inserts no delay — behaviour unchanged."""
+    clock = _FakeClock()
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(200, {"content": "body"})]
+    )
+    provider = _paced_provider(transport, clock, interval_seconds=0)
+
+    _ = await provider.fetch("v1")
+    _ = await provider.fetch("v2")
+
+    assert_eq(clock.sleeps, [])
+
+
+@test()
+async def an_exhausted_budget_incurs_no_pacing_delay() -> None:
+    """Pacing wraps only the billed submit: a call blocked at the cap never waits."""
+    clock = _FakeClock()
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(200, {"content": "body"})]
+    )
+    provider = _paced_provider(transport, clock, interval_seconds=2)
+    provider.spend_guard = _CountingGuard(cap=0)
+
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v1")
+
+    assert_eq(clock.sleeps, [])
+    assert_eq(transport.submit_calls, 0)
