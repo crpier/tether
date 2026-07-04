@@ -24,12 +24,12 @@ model only through `Embedder`, so it is fully testable against fakes of both.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from snekql.sqlite import select
 
+from tether.reconcile_loop import run_reconcile_loop
 from tether.transcript_chunks import chunk_transcript
 from tether.transcript_index import ChunkDocument, chunk_id
 from tether.youtube import IngestedVideo
@@ -144,16 +144,13 @@ class TranscriptReconciler:
         boot cancels this task while it is still sleeping, never mid-pass. A failed
         pass is logged and swallowed so a transient error never kills the loop;
         the next tick retries."""
-        delay = initial_delay_seconds
-        while True:
-            await asyncio.sleep(delay)
-            try:
-                _ = await self.reconcile(logger=logger)
-            except Exception:
-                logger.exception(
-                    "Periodic transcript reconcile failed; retrying next tick"
-                )
-            delay = interval_seconds
+        await run_reconcile_loop(
+            lambda: self.reconcile(logger=logger),
+            interval_seconds=interval_seconds,
+            initial_delay_seconds=initial_delay_seconds,
+            logger=logger,
+            failure_message="Periodic transcript reconcile failed; retrying next tick",
+        )
 
     async def _desired_chunks(self) -> list[_ChunkSpec]:
         """Re-derive the desired chunk set from every active video.

@@ -34,7 +34,6 @@ only through `Embedder`, so it is fully testable against fakes of both.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -43,6 +42,7 @@ from snekql.sqlite import update
 from tether.db_retry import run_in_transaction
 from tether.embeddings import vector_from_bytes, vector_to_bytes
 from tether.memories import Memory, MemoryService
+from tether.reconcile_loop import run_reconcile_loop
 from tether.search_index import SearchDocument
 
 if TYPE_CHECKING:
@@ -202,14 +202,17 @@ class SearchReconciler:
 
         This is the correctness backstop the latency hooks lean on: it sweeps
         orphans a missed event left behind and runs `optimize()` while the host
-        is up, not only at boot. A failed pass is logged and swallowed so a
-        transient error never kills the loop — the next tick retries."""
-        while True:
-            await asyncio.sleep(interval_seconds)
-            try:
-                _ = await self.reconcile(logger=logger)
-            except Exception:
-                logger.exception("Periodic search reconcile failed; retrying next tick")
+        is up, not only at boot. The boot reconcile runs at wiring time, so the
+        first periodic pass waits a full interval rather than repeating it
+        immediately. A failed pass is logged and swallowed so a transient error
+        never kills the loop — the next tick retries."""
+        await run_reconcile_loop(
+            lambda: self.reconcile(logger=logger),
+            interval_seconds=interval_seconds,
+            initial_delay_seconds=interval_seconds,
+            logger=logger,
+            failure_message="Periodic search reconcile failed; retrying next tick",
+        )
 
     async def index_memory(self, memory: Memory[Fetched], *, logger: Logger) -> None:
         """Make a single tethered Memory searchable now (the tether/edit hook).

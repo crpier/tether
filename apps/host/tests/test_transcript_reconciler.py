@@ -10,13 +10,15 @@ database with a `FakeTranscriptIndex` and a `CountingEmbedder`, no model downloa
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
 import structlog
 from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
-from snektest import assert_eq, fixture, load_fixture, test
+from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
 from tether.embeddings import Embedder, FakeEmbedder, Vector
 from tether.logging import Logger
@@ -232,3 +234,25 @@ async def a_model_swap_re_embeds_the_whole_corpus() -> None:
     assert_eq(report.embedded, len(h.index.docs))
     assert_eq(report.removed, len(original_ids))
     assert_eq(set(h.index.docs).isdisjoint(original_ids), True)
+
+
+@test()
+async def reconcile_forever_runs_passes_until_cancelled() -> None:
+    """The periodic loop fills and maintains the index until cancelled."""
+    h = await load_fixture(harness())
+    await _add_video(h.database, "vid1", transcript="a short transcript")
+
+    task = asyncio.create_task(
+        h.reconciler.reconcile_forever(
+            interval_seconds=0.001, logger=_logger(), initial_delay_seconds=0.001
+        )
+    )
+    for _ in range(1000):  # bounded wait so a broken loop fails fast, never hangs
+        if h.index.optimize_calls >= 1:
+            break
+        await asyncio.sleep(0.001)
+    _ = task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert_true(h.index.optimize_calls >= 1)
