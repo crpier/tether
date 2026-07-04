@@ -20,10 +20,10 @@ import re
 from typing import Literal
 
 from pydantic import UUID7, BaseModel
-from snekql.sqlite import Database, Fetched, select
+from snekql.sqlite import Database, Fetched
 
 from tether.logging import Logger
-from tether.memories import Memory, MemoryProvenance
+from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.routes import MemoryRead
 
 DEDUP_THRESHOLD = 0.6
@@ -220,14 +220,10 @@ class ReviewService:
         logger.debug("Computing review digest")
         async with self.database.transaction() as tx:
             loose = await tx.fetch_all(
-                select(Memory)
-                .where(Memory.tethered_at.is_null() & Memory.deleted_at.is_null())
-                .order_by(Memory.created_at.desc())
+                MemoryService.loose_queue().order_by(Memory.created_at.desc())
             )
             tethered = await tx.fetch_all(
-                select(Memory)
-                .where(Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null())
-                .order_by(Memory.created_at.desc())
+                MemoryService.tethered_corpus().order_by(Memory.created_at.desc())
             )
         digest = ReviewDigest(
             queue=[ReviewQueueItem.from_memory(memory) for memory in loose],

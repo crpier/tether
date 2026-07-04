@@ -28,6 +28,7 @@ from snekql.sqlite import (
     Integer,
     Model,
     Pending,
+    SelectModelQuery,
     Text,
     Transaction,
     insert,
@@ -279,6 +280,23 @@ class MemoryService:
         MemoryService that never searches. The Review trigger sites best-effort
         index through it; `search` requires it."""
 
+    @staticmethod
+    def tethered_corpus() -> SelectModelQuery[Memory, Memory[Fetched]]:
+        """The ADR-0001 trusted corpus: tethered, non-deleted Memories.
+
+        The single home of the trust predicate — corpus selections compose on
+        this (chained `.where` accumulates as AND) instead of re-encoding it."""
+        return select(Memory).where(
+            Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
+        )
+
+    @staticmethod
+    def loose_queue() -> SelectModelQuery[Memory, Memory[Fetched]]:
+        """The Review queue: loose (untethered), non-deleted Memories."""
+        return select(Memory).where(
+            Memory.tethered_at.is_null() & Memory.deleted_at.is_null()
+        )
+
     async def capture(
         self,
         content: str,
@@ -373,11 +391,7 @@ class MemoryService:
             }
             async with self.database.transaction() as tx:
                 memories = await tx.fetch_all(
-                    select(Memory).where(
-                        Memory.id.in_(*rank)
-                        & Memory.tethered_at.is_not_null()
-                        & Memory.deleted_at.is_null()
-                    )
+                    MemoryService.tethered_corpus().where(Memory.id.in_(*rank))
                 )
             memories.sort(key=lambda memory: rank[memory.id])
             span.set_attribute("memory.search.result_count", len(memories))
@@ -407,14 +421,11 @@ class MemoryService:
         caps the rows returned (`None` is unbounded for the review UI; the
         assistant-facing tool passes a bound to protect the model's context)."""
         _debug(logger, "Browsing Memories by state", state=state)
-        live = select(Memory).where(Memory.deleted_at.is_null())
         match state:
             case "loose":
-                browse = live.where(Memory.tethered_at.is_null()).order_by(
-                    Memory.created_at.desc()
-                )
+                browse = MemoryService.loose_queue().order_by(Memory.created_at.desc())
             case "tethered":
-                browse = live.where(Memory.tethered_at.is_not_null()).order_by(
+                browse = MemoryService.tethered_corpus().order_by(
                     Memory.tethered_at.desc()
                 )
         if limit is not None:
@@ -655,11 +666,7 @@ class MemoryService:
         """
         _debug(logger, "Regenerating Knowledge base")
         async with self.database.transaction() as tx:
-            tethered_memories = await tx.fetch_all(
-                select(Memory).where(
-                    Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
-                )
-            )
+            tethered_memories = await tx.fetch_all(MemoryService.tethered_corpus())
         expected_filenames = {f"{memory.id}.md" for memory in tethered_memories}
         removed_count = 0
         async for path in Path(self.kb_service.kb_root).iterdir():
