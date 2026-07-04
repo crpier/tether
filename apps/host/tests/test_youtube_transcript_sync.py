@@ -23,10 +23,12 @@ from opentelemetry.trace import Tracer
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,
+    assert_false,
     assert_in,
     assert_is_none,
     assert_is_not_none,
     assert_not_in,
+    assert_true,
     fixture,
     load_fixture,
     test,
@@ -394,6 +396,62 @@ async def transient_failure_schedules_a_backed_off_retry() -> None:
     assert_eq(third.fetched, 1)
     assert_eq(env.provider.calls["v1"], 2)
     assert_eq((await env.service.get_video("v1")).transcript, "eventually")
+
+
+# --- Transient-failure storm: a systematic failure halts the pass -----------
+
+
+@test()
+async def a_transient_failure_storm_stops_the_pass_early() -> None:
+    """Consecutive transient failures trip the storm breaker: the pass halts after
+    the threshold instead of burning a call (and a paid credit) on every candidate.
+
+    This is the guard against a systematic failure (e.g. every Supadata request
+    400ing) marching through the whole recent window before something else pauses
+    it."""
+    ids = ("v1", "v2", "v3", "v4", "v5")
+    provider = FakeTranscriptProvider({vid: [TRANSIENT] for vid in ids})
+    config = TranscriptSyncConfig(transient_storm_threshold=3)
+    env = await load_fixture(make_env(provider, config=config))
+    for offset, vid in enumerate(ids):
+        await seed(env.db, vid, liked_at=datetime(2026, 6, 5 - offset, tzinfo=UTC))
+
+    report = await env.worker.sync(logger=test_logger())
+
+    # Exactly `threshold` calls, then the breaker stops the pass; the remaining
+    # candidates are never fetched, so no credit is spent on them.
+    assert_eq(sum(env.provider.calls.values()), 3)
+    assert_eq(report.retried, 3)
+    assert_true(report.transient_storm)
+
+
+@test()
+async def a_success_between_transients_resets_the_storm_counter() -> None:
+    """The breaker counts *consecutive* transients: a success resets the run, so a
+    flaky-but-working provider still drains the whole pass."""
+    ids = ("v1", "v2", "v3", "v4", "v5")
+    provider = FakeTranscriptProvider(
+        {
+            "v1": [TRANSIENT],
+            "v2": [TRANSIENT],
+            "v3": [Ok("body")],
+            "v4": [TRANSIENT],
+            "v5": [TRANSIENT],
+        }
+    )
+    config = TranscriptSyncConfig(transient_storm_threshold=3)
+    env = await load_fixture(make_env(provider, config=config))
+    for offset, vid in enumerate(ids):
+        await seed(env.db, vid, liked_at=datetime(2026, 6, 5 - offset, tzinfo=UTC))
+
+    report = await env.worker.sync(logger=test_logger())
+
+    # Newest-first: v1,v2 transient (run 2), v3 success (reset), v4,v5 transient
+    # (run 2) — never 3 in a row, so no storm and every candidate is attempted.
+    assert_eq(sum(env.provider.calls.values()), 5)
+    assert_false(report.transient_storm)
+    assert_eq(report.fetched, 1)
+    assert_eq(report.retried, 4)
 
 
 # --- Daily budget -----------------------------------------------------------

@@ -265,7 +265,10 @@ def native_is_the_default_mode() -> None:
 @test()
 def the_mode_rides_on_every_submit_param() -> None:
     """The pinned mode is sent on the submit params so Supadata never auto-generates."""
-    assert_eq(_submit_params("v1", "native"), {"videoId": "v1", "mode": "native"})
+    assert_eq(
+        _submit_params("v1", "native"),
+        {"url": "https://www.youtube.com/watch?v=v1", "mode": "native"},
+    )
 
 
 @test()
@@ -273,14 +276,17 @@ def the_preferred_language_rides_on_the_submit_param() -> None:
     """The most preferred language is sent as `lang` so Supadata returns that track."""
     assert_eq(
         _submit_params("v1", "native", ("ro", "en")),
-        {"videoId": "v1", "mode": "native", "lang": "ro"},
+        {"url": "https://www.youtube.com/watch?v=v1", "mode": "native", "lang": "ro"},
     )
 
 
 @test()
 def no_language_leaves_the_lang_param_off() -> None:
     """With no configured languages the `lang` param is omitted (Supadata's default)."""
-    assert_eq(_submit_params("v1", "native", ()), {"videoId": "v1", "mode": "native"})
+    assert_eq(
+        _submit_params("v1", "native", ()),
+        {"url": "https://www.youtube.com/watch?v=v1", "mode": "native"},
+    )
 
 
 @test()
