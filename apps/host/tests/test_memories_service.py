@@ -1211,6 +1211,47 @@ async def tethered_browse_orders_by_tethered_at_not_created_at() -> None:
     assert_eq(found, [captured_first.id, captured_second.id])
 
 
+# --- Named corpus selectors (ADR-0001 invariant, written once) ---
+# `MemoryService.tethered_corpus()` / `loose_queue()` are the single home of
+# the trust predicate; every corpus/queue selection composes on top of them.
+
+
+@test()
+async def tethered_corpus_selects_only_tethered_non_deleted() -> None:
+    """The named trusted-corpus selector enforces ADR-0001 on its own."""
+    service = await load_fixture(memory_service())
+    loose = await service.capture("a loose memory")
+    tethered = await capture_tethered_memory(service, "a tethered memory")
+    deleted = await capture_tethered_memory(service, "a tethered memory to reject")
+    _ = await service.delete(deleted)
+
+    async with service.database.transaction() as tx:
+        corpus = await tx.fetch_all(MemoryService.tethered_corpus())
+
+    found = [memory.id for memory in corpus]
+    assert_in(tethered.id, found)
+    assert_not_in(loose.id, found)
+    assert_not_in(deleted.id, found)
+
+
+@test()
+async def loose_queue_selects_only_loose_non_deleted() -> None:
+    """The named review-queue selector is the loose, non-deleted inverse."""
+    service = await load_fixture(memory_service())
+    loose = await service.capture("a loose memory")
+    tethered = await capture_tethered_memory(service, "a tethered memory")
+    deleted = await service.capture("a loose memory to reject")
+    _ = await service.delete(deleted)
+
+    async with service.database.transaction() as tx:
+        queue = await tx.fetch_all(MemoryService.loose_queue())
+
+    found = [memory.id for memory in queue]
+    assert_in(loose.id, found)
+    assert_not_in(tethered.id, found)
+    assert_not_in(deleted.id, found)
+
+
 # --- Keyword Search limit (default 50) ---
 
 

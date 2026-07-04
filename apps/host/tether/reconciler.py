@@ -38,11 +38,11 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from snekql.sqlite import select, update
+from snekql.sqlite import update
 
 from tether.db_retry import run_in_transaction
 from tether.embeddings import vector_from_bytes, vector_to_bytes
-from tether.memories import Memory
+from tether.memories import Memory, MemoryService
 from tether.search_index import SearchDocument
 
 if TYPE_CHECKING:
@@ -145,11 +145,7 @@ class SearchReconciler:
         )
 
         async with self.database.transaction() as tx:
-            memories = await tx.fetch_all(
-                select(Memory).where(
-                    Memory.tethered_at.is_not_null() & Memory.deleted_at.is_null()
-                )
-            )
+            memories = await tx.fetch_all(MemoryService.tethered_corpus())
         owed = [
             memory
             for memory in memories
