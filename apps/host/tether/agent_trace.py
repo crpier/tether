@@ -25,12 +25,16 @@ Two redaction rules keep traces safe to retain and render:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, cast
 from uuid import uuid4
+
+import structlog
 
 type RunKind = Literal["conversation", "scheduled", "recall"]
 """Which host entry point opened a run."""
@@ -357,12 +361,97 @@ class AgentTraceRecorder:
                 _ = self._active.pop(evicted.session_id, None)
 
 
+@dataclass(slots=True)
+class RunHandle:
+    """The caller's view of one run opened by `record_run`.
+
+    `run_id` is `None` when tracing is off (no recorder wired). A caller that
+    settles a failure without raising — e.g. answering a rejected prompt over
+    the WebSocket — stamps the outcome with `mark` before leaving the block.
+
+    >>> handle = RunHandle(run_id="r1")
+    >>> handle.mark("error", "prompt rejected")
+    >>> handle.termination, handle.error
+    ('error', 'prompt rejected')
+    """
+
+    run_id: str | None
+    termination: Termination = "completed"
+    error: str | None = None
+
+    def mark(self, termination: Termination, error: str | None = None) -> None:
+        """Record why the run ended without raising out of the block."""
+        self.termination = termination
+        self.error = error
+
+
+@contextlib.contextmanager
+def record_run(
+    recorder: AgentTraceRecorder | None,
+    *,
+    session_id: str,
+    kind: RunKind,
+    prompt: str | None = None,
+    conversation_id: str | None = None,
+) -> Generator[RunHandle]:
+    """Trace one agent run over the wrapped block.
+
+    Opens a run on the recorder (when one is wired), binds the run id into the
+    structlog contextvars so every host log line emitted while driving the
+    prompt correlates with the loopback tool calls the tool seam stamps, and
+    closes the run on exit. An exception escaping the block maps to its
+    termination — `CancelledError` to `aborted`, `TimeoutError` to `timeout`,
+    anything else to `error` — and is re-raised, so rendering the failure
+    (e.g. a WebSocket error frame) stays with the caller.
+
+    >>> recorder = AgentTraceRecorder()
+    >>> with record_run(recorder, session_id="s1", kind="conversation") as run:
+    ...     pass
+    >>> recorder.recent_runs(limit=1)[0].termination
+    'completed'
+    """
+    run_id = (
+        recorder.begin_run(
+            session_id=session_id,
+            kind=kind,
+            prompt=prompt,
+            conversation_id=conversation_id,
+        )
+        if recorder is not None
+        else None
+    )
+    handle = RunHandle(run_id=run_id)
+    try:
+        with structlog.contextvars.bound_contextvars(
+            **({"run_id": run_id} if run_id is not None else {})
+        ):
+            yield handle
+    except asyncio.CancelledError:
+        handle.mark("aborted", "generation cancelled")
+        raise
+    except TimeoutError as error:
+        handle.mark("timeout", str(error) or None)
+        raise
+    except Exception as error:
+        handle.mark("error", str(error))
+        raise
+    finally:
+        if recorder is not None:
+            _ = recorder.end_run(
+                session_id=session_id,
+                termination=handle.termination,
+                error=handle.error,
+            )
+
+
 __all__ = [
     "AgentTraceRecorder",
+    "RunHandle",
     "RunKind",
     "RunTrace",
     "Termination",
     "ToolCallTrace",
+    "record_run",
     "redact_args",
     "summarize_result",
 ]

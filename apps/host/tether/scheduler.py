@@ -29,11 +29,10 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid7
 
-import structlog
 from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
-from tether.agent_trace import AgentTraceRecorder, RunKind
+from tether.agent_trace import AgentTraceRecorder, RunKind, record_run
 from tether.events import EventPublisher, NotifyEvent
 from tether.logging import Logger
 from tether.model_selection import AgentModelConfig
@@ -209,30 +208,14 @@ class EphemeralPiPromptRunner:
             ),
             session_registry=self.config.session_registry,
         )
-        recorder = self.config.trace_recorder
-        run_id = (
-            recorder.begin_run(
-                session_id=session_id, kind=self.config.run_kind, prompt=prompt
-            )
-            if recorder is not None
-            else None
-        )
-        # Correlate host log lines emitted while driving this pi with the run id
-        # the tool seam also stamps onto its loopback tool calls.
-        log_context = {"run_id": run_id} if run_id is not None else {}
         try:
-            with structlog.contextvars.bound_contextvars(**log_context):
-                final_text = await self._drive(runtime, prompt, session_id)
-        except Exception as error:
-            if recorder is not None:
-                _ = recorder.end_run(
-                    session_id=session_id, termination="error", error=str(error)
-                )
-            raise
-        else:
-            if recorder is not None:
-                _ = recorder.end_run(session_id=session_id, termination="completed")
-            return final_text
+            with record_run(
+                self.config.trace_recorder,
+                session_id=session_id,
+                kind=self.config.run_kind,
+                prompt=prompt,
+            ):
+                return await self._drive(runtime, prompt, session_id)
         finally:
             await runtime.shutdown()
 
