@@ -10,12 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
+from uuid import uuid4
 
 import uvicorn
 from snektest import (
     assert_eq,
     assert_in,
     assert_not_in,
+    assert_raises,
     assert_true,
     fixture,
     load_fixture,
@@ -225,6 +227,26 @@ async def client_correlates_out_of_order_responses_by_id() -> None:
 
     assert_eq(state_response["data"], {"sessionId": "first"})
     assert_eq(models_response["data"], {"models": ["second"]})
+
+
+@test()
+async def next_event_timeout_names_the_wait_it_exceeded() -> None:
+    """A pi gone silent raises a `TimeoutError` that carries the wait length.
+
+    The agent-trace run records `str(error)` as the run's failure detail, so a
+    bare `wait_for` timeout would leave timeout runs with no error text at all.
+    """
+    runtime = PiRuntime(
+        client=PiRpcClient(reader=ControlledByteReader(), writer=MemoryByteWriter()),
+        process=cast("asyncio.subprocess.Process", None),
+        session_id=str(uuid4()),
+        session_registry=SessionRegistry(),
+    )
+
+    with assert_raises(TimeoutError) as exc_info:
+        _ = await runtime.next_event(wait_seconds=0.05)
+
+    assert_eq(str(exc_info.exception), "no pi event within 0.05s")
 
 
 @test()
