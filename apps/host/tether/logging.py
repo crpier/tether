@@ -32,7 +32,14 @@ from structlog.typing import EventDict, WrappedLogger
 type Logger = structlog.stdlib.BoundLogger
 
 
-QUIET_LOGGERS = ("watchfiles.main", "uvicorn", "uvicorn.error", "aiosqlite", "snekql")
+QUIET_LOGGERS = (
+    "watchfiles.main",
+    "uvicorn",
+    "uvicorn.error",
+    "aiosqlite",
+    "snekql",
+    "httpcore2",
+)
 """Server loggers that share the root handler but emit warnings only.
 
 The `uvicorn`/`uvicorn.error` pair is quieted rather than silenced: `serve()`
@@ -49,7 +56,14 @@ stays suppressed while genuine failures surface through structlog.
 `aiosqlite` and `snekql` are quieted for a different reason: at DEBUG they emit
 a line per cursor/commit/SQL statement (and child loggers `snekql.runtime`,
 `snekql.sqlite.pool` inherit the parent level), which drowns the app's own DEBUG
-logs. WARNING keeps their genuine errors while dropping the per-query noise."""
+logs. WARNING keeps their genuine errors while dropping the per-query noise.
+
+`httpcore2` is quieted for the same reason: at DEBUG its connection backend
+(`httpcore2.connection`, `httpcore2.http11` children inherit the level) logs a
+line per TCP connect / TLS handshake / request-header/body frame for every
+outbound HTTP call, which buries the app's own logs. WARNING drops that spam;
+the `httpx2` request/response summary (one INFO line per call, e.g. the Supadata
+transcript fetch and its status) is a separate logger and stays."""
 
 SILENCED_LOGGERS = ("uvicorn.access",)
 """Uvicorn loggers that are fully disabled because uvicorn owns its formatting."""

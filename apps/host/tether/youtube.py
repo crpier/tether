@@ -876,6 +876,14 @@ class TranscriptSyncConfig:
     backoff_cap: timedelta = timedelta(hours=6)
     block_pause_base: timedelta = timedelta(minutes=30)
     block_pause_cap: timedelta = timedelta(hours=6)
+    transient_storm_threshold: int = 8
+    """How many *consecutive* transient failures halt the pass. A systematic fault
+    (a misshaped request every provider 400s on, a provider outage) otherwise
+    marches through the whole `recent_window`, spending a call — and, for a paid
+    source like Supadata, a billed credit — on every candidate before anything
+    pauses it. Stopping after a short run bounds that waste; the next scheduled pass
+    retries, so a transient fault still recovers on its own. A success, or any
+    non-transient outcome, resets the run (see the worker loop)."""
     caption_gated_sources: frozenset[str] = _DEFAULT_CAPTION_GATED_SOURCES
     """Transcript sources to skip for a video the Data API marks as having no manual
     captions (`caption_available` false). Supadata's `native` mode only fetches an
@@ -895,6 +903,31 @@ class TranscriptSyncReport:
     quota_exhausted: bool
     blocked: int = 0
     paused: bool = False
+    transient_storm: bool = False
+    """Set when the pass stopped early on a run of consecutive transient failures
+    (the storm breaker) rather than draining the candidate window."""
+
+
+@dataclass(slots=True)
+class _TranscriptPassState:
+    """The mutable state of one transcript sync pass: counts plus live pause state.
+
+    Folded by `_apply_attempt` as each fetch resolves. `pauses`/`paused_sources`
+    track which blockable sources are in cooldown (a fresh block escalates one and
+    adds it to the set); `transient_storm` flips once a run of consecutive transient
+    failures reaches the configured threshold, which is the caller's signal to end
+    the pass.
+    """
+
+    pauses: dict[str, _ProviderPauseState]
+    paused_sources: frozenset[str]
+    fetched: int = 0
+    unavailable: int = 0
+    excluded: int = 0
+    retried: int = 0
+    blocked: int = 0
+    consecutive_transient: int = 0
+    transient_storm: bool = False
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -2046,17 +2079,15 @@ class TranscriptSyncService:
         source's own pause; a clean fetch while a source was reachable clears that
         source's streak.
         """
-        fetched = 0
-        unavailable = 0
-        excluded = 0
-        retried = 0
-        blocked = 0
         quota_exhausted = False
         _debug(logger, "Transcript sync starting")
         context = self._context
         pauses = await _load_all_provider_pauses(self.database)
-        paused_sources = self._paused_sources(pauses, self.client.now())
-        for source in paused_sources:
+        state = _TranscriptPassState(
+            pauses=pauses,
+            paused_sources=self._paused_sources(pauses, self.client.now()),
+        )
+        for source in state.paused_sources:
             pause = pauses[source]
             _info(
                 logger,
@@ -2080,68 +2111,104 @@ class TranscriptSyncService:
                 context,
                 video_id=video.video_id,
                 now=now,
-                paused_sources=paused_sources,
+                paused_sources=state.paused_sources,
                 skip_sources=self._skip_sources_for(video),
             )
-            if attempt.outcome == "done":
-                fetched += 1
-                # Name the source that produced it so transcript provenance (and
-                # which paid/free source was billed) is visible in the logs.
-                _info(
-                    logger,
-                    "Transcript fetched",
-                    video_id=video.video_id,
-                    source=attempt.source,
-                )
-                # A clean fetch means every reachable source was healthy this pass,
-                # so reset the escalation streak of each unpaused blocked source.
-                await self._reset_reachable_streaks(pauses, paused_sources)
-            elif attempt.outcome == "unavailable":
-                unavailable += 1
-            elif attempt.outcome == "excluded":
-                excluded += 1
-            elif attempt.outcome == "blocked":
-                blocked += 1
-                source = attempt.source
-                if source is not None and source not in paused_sources:
-                    # A fresh block from a reachable source: escalate that source's
-                    # own pause and skip it for the rest of the pass.
-                    pauses[source] = await self._trip_pause(
-                        source,
-                        now,
-                        pauses.get(source),
-                        attempt.retry_after,
-                        logger=logger,
-                    )
-                    paused_sources = paused_sources | {source}
-                # else: a deferral (composite skipped an already-paused fallback) or
-                # an already-paused source, so the video stays pending — nothing to do.
-            else:
-                retried += 1
-        paused = self._paused_sources(pauses, self.client.now())
+            await self._apply_attempt(
+                state, video=video, attempt=attempt, now=now, logger=logger
+            )
+            if state.transient_storm:
+                # A systematic failure tripped the storm breaker — stop before
+                # spending a call/credit on the rest of the window. The next
+                # scheduled pass retries, so a real transient still recovers.
+                break
+        paused = self._paused_sources(state.pauses, self.client.now())
         remaining = await self._pending_count(self.client.now())
         _info(
             logger,
             "Transcript sync completed",
-            fetched=fetched,
-            unavailable=unavailable,
-            excluded=excluded,
-            retried=retried,
-            blocked=blocked,
+            fetched=state.fetched,
+            unavailable=state.unavailable,
+            excluded=state.excluded,
+            retried=state.retried,
+            blocked=state.blocked,
             paused=bool(paused),
             paused_sources=sorted(paused),
             quota_exhausted=quota_exhausted,
+            transient_storm=state.transient_storm,
             remaining=remaining,
         )
         return TranscriptSyncReport(
-            fetched=fetched,
-            unavailable=unavailable,
-            excluded=excluded,
-            retried=retried,
+            fetched=state.fetched,
+            unavailable=state.unavailable,
+            excluded=state.excluded,
+            retried=state.retried,
             quota_exhausted=quota_exhausted,
-            blocked=blocked,
+            blocked=state.blocked,
             paused=bool(paused),
+            transient_storm=state.transient_storm,
         )
+
+    async def _apply_attempt(
+        self,
+        state: _TranscriptPassState,
+        *,
+        video: IngestedVideo[Fetched],
+        attempt: TranscriptAttempt,
+        now: datetime,
+        logger: Logger,
+    ) -> None:
+        """Fold one fetch outcome into `state` (counts and live pause state).
+
+        A fresh block escalates that source's own pause and adds it to
+        `state.paused_sources`; a run of consecutive transient failures flips
+        `state.transient_storm` (the caller ends the pass on it). Any non-transient
+        outcome resets that run, since the chain answered meaningfully.
+        """
+        if attempt.outcome != "transient":
+            state.consecutive_transient = 0
+        if attempt.outcome == "done":
+            state.fetched += 1
+            # Name the source that produced it so transcript provenance (and which
+            # paid/free source was billed) is visible in the logs.
+            _info(
+                logger,
+                "Transcript fetched",
+                video_id=video.video_id,
+                source=attempt.source,
+            )
+            # A clean fetch means every reachable source was healthy this pass, so
+            # reset the escalation streak of each unpaused blocked source.
+            await self._reset_reachable_streaks(state.pauses, state.paused_sources)
+        elif attempt.outcome == "unavailable":
+            state.unavailable += 1
+        elif attempt.outcome == "excluded":
+            state.excluded += 1
+        elif attempt.outcome == "blocked":
+            state.blocked += 1
+            source = attempt.source
+            if source is not None and source not in state.paused_sources:
+                state.pauses[source] = await self._trip_pause(
+                    source,
+                    now,
+                    state.pauses.get(source),
+                    attempt.retry_after,
+                    logger=logger,
+                )
+                state.paused_sources = state.paused_sources | {source}
+            # else: a deferral (composite skipped an already-paused fallback) or an
+            # already-paused source, so the video stays pending — nothing to do.
+        else:
+            state.retried += 1
+            state.consecutive_transient += 1
+            if state.consecutive_transient >= self.config.transient_storm_threshold:
+                state.transient_storm = True
+                _info(
+                    logger,
+                    "Transcript sync stopped: transient-failure storm",
+                    consecutive_transient=state.consecutive_transient,
+                    threshold=self.config.transient_storm_threshold,
+                )
 
     def _skip_sources_for(self, video: IngestedVideo[Fetched]) -> frozenset[str]:
         """Sources to drop for this video: the caption-gated ones when it has no

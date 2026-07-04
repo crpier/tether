@@ -494,17 +494,28 @@ class SupadataTranscriptProvider(TranscriptProvider):
         raise _unfinished_error(video_id, job_id, self._config.max_poll_attempts)
 
 
+def _video_url(video_id: str) -> str:
+    """The canonical watch URL Supadata's `url` param requires for a YouTube video.
+
+    Supadata's `/v1/transcript` validates `url` as a real URL and rejects a bare
+    video id (`"url: Invalid url"`), so the id is expanded to a full watch URL.
+    """
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def _submit_params(
     video_id: str, mode: SupadataMode, languages: tuple[str, ...] = ()
 ) -> dict[str, str]:
     """The query params for a Supadata transcript submit, pinning the billed mode.
 
-    `mode` is always sent so a caption-less video costs one `native` lookup and
-    returns unavailable, never the multi-use `generate` path Supadata would pick
-    when the param is omitted. The most preferred `languages` code, when set, rides
-    along as `lang` so Supadata returns that track when it exists.
+    The video is sent as `url` (a full watch URL) because Supadata's endpoint
+    requires it and 400s on the old `videoId` param (`"url: Required"`). `mode` is
+    always sent so a caption-less video costs one `native` lookup and returns
+    unavailable, never the multi-use `generate` path Supadata would pick when the
+    param is omitted. The most preferred `languages` code, when set, rides along as
+    `lang` so Supadata returns that track when it exists.
     """
-    params = {"videoId": video_id, "mode": mode}
+    params = {"url": _video_url(video_id), "mode": mode}
     if languages:
         params["lang"] = languages[0]
     return params
