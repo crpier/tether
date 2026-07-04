@@ -316,11 +316,20 @@ class PiRuntime:
     async def next_event(
         self, event_type: str | None = None, *, wait_seconds: float = 5.0
     ) -> dict[str, Any]:
-        """Read queued events until one with `event_type` is found."""
+        """Read queued events until one with `event_type` is found.
+
+        A silent pi raises a `TimeoutError` whose message names the exceeded
+        wait: `wait_for` raises a bare one, and the agent-trace run records
+        `str(error)` as its failure detail, which must not come out empty.
+        """
         while True:
-            event = await asyncio.wait_for(
-                self.client.events.get(), timeout=wait_seconds
-            )
+            try:
+                event = await asyncio.wait_for(
+                    self.client.events.get(), timeout=wait_seconds
+                )
+            except TimeoutError:
+                message = f"no pi event within {wait_seconds:g}s"
+                raise TimeoutError(message) from None
             if event_type is None or event.get("type") == event_type:
                 return event
 

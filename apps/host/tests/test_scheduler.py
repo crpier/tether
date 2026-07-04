@@ -7,8 +7,12 @@ SQLite), so claim/settle transitions are exercised end to end.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator
+import contextlib
+from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
 
 import structlog
 from opentelemetry import trace
@@ -19,19 +23,26 @@ from snektest import (
     assert_eq,
     assert_is_none,
     assert_is_not_none,
+    assert_raises,
     assert_true,
     fixture,
     load_fixture,
     test,
 )
 
+from tether import scheduler as scheduler_module
+from tether.agent_trace import AgentTraceRecorder
 from tether.logging import Logger
+from tether.pi_runtime import PiRuntimeError
 from tether.scheduler import (
+    EphemeralPiConfig,
+    EphemeralPiPromptRunner,
     Scheduler,
     SchedulerConfig,
     TriggerDispatcher,
     TriggerNotifier,
 )
+from tether.tools import SessionRegistry
 from tether.triggers import (
     ScheduledTrigger,
     TriggerService,
@@ -293,3 +304,117 @@ async def concurrency_cap_bounds_in_flight_dispatches() -> None:
 
     assert_eq(notifier.delivered, 5)
     assert_true(notifier.peak <= 2)
+
+
+class FakeRpcClient:
+    """A canned pi RPC client: accepts or rejects the prompt request."""
+
+    def __init__(self, *, accepts_prompt: bool) -> None:
+        self.accepts_prompt: bool = accepts_prompt
+
+    async def request(self, method: str, **params: object) -> dict[str, Any]:
+        """Answer every RPC, rejecting the prompt when scripted to."""
+        if method == "prompt" and not self.accepts_prompt:
+            return {"success": False, "error": "scripted rejection"}
+        return {"success": True}
+
+
+class FakePiRuntime:
+    """A pi runtime double: scripted RPC answers, no subprocess, no events."""
+
+    def __init__(self, *, accepts_prompt: bool) -> None:
+        self.client: FakeRpcClient = FakeRpcClient(accepts_prompt=accepts_prompt)
+        self.shutdown_called: bool = False
+
+    async def next_event(
+        self, event_type: str | None = None, *, wait_seconds: float = 5.0
+    ) -> dict[str, Any]:
+        """Simulate pi going silent past the agent-event timeout."""
+        raise TimeoutError("no pi event within the wait")
+
+    async def shutdown(self) -> None:
+        """Record that the runner tore the process down."""
+        self.shutdown_called = True
+
+
+class FakePiRuntimeSpawner:
+    """Stands in for the `PiRuntime` class, spawning a prepared fake."""
+
+    def __init__(self, runtime: FakePiRuntime) -> None:
+        self.runtime: FakePiRuntime = runtime
+
+    async def spawn(self, config: object, *, session_registry: object) -> FakePiRuntime:
+        """Hand out the prepared fake instead of launching a process."""
+        return self.runtime
+
+
+@contextlib.contextmanager
+def fake_pi_runtime(runtime: FakePiRuntime) -> Generator[None]:
+    """Swap the scheduler module's `PiRuntime` for a fake, restoring on exit.
+
+    The fake is intentionally not type-compatible with the real class, so the
+    swap goes through `setattr` to stay out of static type checking.
+    """
+    original = scheduler_module.PiRuntime
+    setattr(scheduler_module, "PiRuntime", FakePiRuntimeSpawner(runtime))  # noqa: B010
+    try:
+        yield
+    finally:
+        setattr(scheduler_module, "PiRuntime", original)  # noqa: B010
+
+
+@fixture
+async def ephemeral_session_root() -> AsyncGenerator[Path]:
+    """Temporary directory for the ephemeral runner's pi session files."""
+    with TemporaryDirectory() as directory:
+        yield Path(directory)
+
+
+def build_ephemeral_runner(
+    session_root: Path, recorder: AgentTraceRecorder
+) -> EphemeralPiPromptRunner:
+    """Wire an ephemeral runner whose pi spawn will be faked by the test."""
+    return EphemeralPiPromptRunner(
+        EphemeralPiConfig(
+            session_registry=SessionRegistry(),
+            session_root=session_root,
+            tool_base_url="http://127.0.0.1:0",
+            tool_secret="test-secret",
+            trace_recorder=recorder,
+        )
+    )
+
+
+@test()
+async def a_rejected_ephemeral_prompt_ends_its_run_as_error_and_shuts_pi_down() -> None:
+    """A drive failure stamps the run `error` and still shuts the runtime down."""
+    session_root = await load_fixture(ephemeral_session_root())
+    recorder = AgentTraceRecorder()
+    runtime = FakePiRuntime(accepts_prompt=False)
+    runner = build_ephemeral_runner(session_root, recorder)
+
+    with fake_pi_runtime(runtime), assert_raises(PiRuntimeError):
+        _ = await runner.run("summarise the day")
+
+    runs = recorder.recent_runs(limit=1)
+    assert_eq(len(runs), 1)
+    assert_eq(runs[0].termination, "error")
+    assert_eq(runs[0].error, "agent prompt was rejected by pi")
+    assert_true(runtime.shutdown_called)
+
+
+@test()
+async def an_ephemeral_prompt_gone_silent_ends_its_run_as_timeout() -> None:
+    """A pi that stops emitting events ends the run as `timeout`, not `error`."""
+    session_root = await load_fixture(ephemeral_session_root())
+    recorder = AgentTraceRecorder()
+    runtime = FakePiRuntime(accepts_prompt=True)
+    runner = build_ephemeral_runner(session_root, recorder)
+
+    with fake_pi_runtime(runtime), assert_raises(TimeoutError):
+        _ = await runner.run("summarise the day")
+
+    runs = recorder.recent_runs(limit=1)
+    assert_eq(len(runs), 1)
+    assert_eq(runs[0].termination, "timeout")
+    assert_true(runtime.shutdown_called)

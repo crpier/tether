@@ -10,12 +10,11 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-import structlog
 from pydantic import BaseModel, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from tether.agent_trace import AgentTraceRecorder, Termination
+from tether.agent_trace import AgentTraceRecorder, record_run
 from tether.auth import SESSION_COOKIE, verify_session_cookie
 from tether.conversations import ConversationNotFoundError, JsonValue, MessageDraft
 from tether.events import HubEvent, NotifyEvent
@@ -467,23 +466,14 @@ async def _run_prompt(
         getattr(websocket.app.state, "trace_recorder", None),
     )
     session_id = str(conversation.pi_session_id)
-    termination: Termination = "completed"
-    run_error: str | None = None
-    run_id = (
-        recorder.begin_run(
+    try:
+        with record_run(
+            recorder,
             session_id=session_id,
             kind="conversation",
             prompt=content,
             conversation_id=str(conversation_id),
-        )
-        if recorder is not None
-        else None
-    )
-    # Correlate every host log line emitted while driving this prompt with the
-    # run id the tool seam also stamps onto loopback tool calls.
-    log_context = {"run_id": run_id} if run_id is not None else {}
-    try:
-        with structlog.contextvars.bound_contextvars(**log_context):
+        ) as run:
             runtime = (
                 await websocket.app.state.conversation_runtime_registry.runtime_for(
                     conversation
@@ -501,7 +491,7 @@ async def _run_prompt(
             prompt_response = await runtime.client.request("prompt", message=pi_message)
             if prompt_response.get("success") is not True:
                 failure_detail = _prompt_failure_detail(prompt_response)
-                termination, run_error = "error", failure_detail
+                run.mark("error", failure_detail)
                 await _send_error(
                     websocket,
                     conversation_id=conversation_id,
@@ -516,7 +506,6 @@ async def _run_prompt(
                 session_id=session_id,
             )
     except PiRuntimeError as error:
-        termination, run_error = "error", str(error)
         await _send_error(
             websocket,
             conversation_id=conversation_id,
@@ -525,23 +514,13 @@ async def _run_prompt(
     except TimeoutError:
         # pi went silent past the agent-event timeout. Tell the browser so it
         # can leave the generating state instead of hanging on "Stop" forever.
-        detail = (
-            f"agent timed out (no response in {int(_AGENT_EVENT_TIMEOUT_SECONDS)}s)"
-        )
-        termination, run_error = "timeout", detail
         await _send_error(
             websocket,
             conversation_id=conversation_id,
-            detail=detail,
+            detail=(
+                f"agent timed out (no response in {int(_AGENT_EVENT_TIMEOUT_SECONDS)}s)"
+            ),
         )
-    except asyncio.CancelledError:
-        termination, run_error = "aborted", "generation cancelled"
-        raise
-    finally:
-        if recorder is not None:
-            _ = recorder.end_run(
-                session_id=session_id, termination=termination, error=run_error
-            )
 
 
 async def _handle_frame(

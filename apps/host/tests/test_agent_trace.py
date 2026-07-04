@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
-from snektest import assert_eq, assert_is_none, assert_true, test
+import structlog
+from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 
 from tether.agent_trace import (
     AgentTraceRecorder,
+    record_run,
     redact_args,
     summarize_result,
 )
+from tether.pi_runtime import PiRuntimeError
 
 SESSION = "session-a"
 
@@ -143,6 +147,112 @@ def recent_runs_are_returned_newest_first() -> None:
     newer = recorder.begin_run(session_id="s2", kind="scheduled")
     recent = recorder.recent_runs(limit=2)
     assert_eq([run.run_id for run in recent], [newer, older])
+
+
+@test()
+def record_run_completes_the_run_on_a_clean_exit() -> None:
+    """Leaving the block without raising closes the run as completed."""
+    recorder = AgentTraceRecorder(now=_tick())
+
+    with record_run(
+        recorder, session_id=SESSION, kind="conversation", prompt="hi"
+    ) as run:
+        assert run.run_id is not None
+        opened_run_id = run.run_id
+
+    assert_is_none(recorder.current_run(SESSION))
+    ended = recorder.get_run(opened_run_id)
+    assert ended is not None
+    assert_eq(ended.termination, "completed")
+    assert_true(not ended.is_active)
+
+
+@test()
+def record_run_honours_a_termination_marked_on_the_handle() -> None:
+    """A caller settling a failure without raising stamps it via `mark`."""
+    recorder = AgentTraceRecorder()
+
+    with record_run(recorder, session_id=SESSION, kind="conversation") as run:
+        run.mark("error", "prompt rejected")
+        assert run.run_id is not None
+        opened_run_id = run.run_id
+
+    ended = recorder.get_run(opened_run_id)
+    assert ended is not None
+    assert_eq(ended.termination, "error")
+    assert_eq(ended.error, "prompt rejected")
+
+
+@test()
+def record_run_records_a_raised_exception_as_error_and_reraises() -> None:
+    """A runtime failure inside the block ends the run as `error`, re-raised."""
+    recorder = AgentTraceRecorder()
+
+    with (
+        assert_raises(PiRuntimeError),
+        record_run(recorder, session_id=SESSION, kind="conversation"),
+    ):
+        raise PiRuntimeError("pi went away")
+
+    runs = recorder.recent_runs(limit=1)
+    assert_eq(len(runs), 1)
+    assert_eq(runs[0].termination, "error")
+    assert_eq(runs[0].error, "pi went away")
+
+
+@test()
+def record_run_records_a_timeout_as_timeout_and_reraises() -> None:
+    """A TimeoutError inside the block ends the run as `timeout`, re-raised."""
+    recorder = AgentTraceRecorder()
+
+    with (
+        assert_raises(TimeoutError),
+        record_run(recorder, session_id=SESSION, kind="scheduled"),
+    ):
+        raise TimeoutError("no event in 60s")
+
+    runs = recorder.recent_runs(limit=1)
+    assert_eq(runs[0].termination, "timeout")
+    assert_eq(runs[0].error, "no event in 60s")
+
+
+@test()
+def record_run_records_a_cancellation_as_aborted_and_reraises() -> None:
+    """A cancelled generation ends the run as `aborted` and propagates."""
+    recorder = AgentTraceRecorder()
+
+    with (
+        assert_raises(asyncio.CancelledError),
+        record_run(recorder, session_id=SESSION, kind="conversation"),
+    ):
+        raise asyncio.CancelledError
+
+    runs = recorder.recent_runs(limit=1)
+    assert_eq(runs[0].termination, "aborted")
+    assert_eq(runs[0].error, "generation cancelled")
+
+
+@test()
+def record_run_without_a_recorder_still_runs_the_block() -> None:
+    """Tracing is optional: with no recorder the handle carries no run id."""
+    block_ran = False
+
+    with record_run(None, session_id=SESSION, kind="conversation") as run:
+        block_ran = True
+        assert_is_none(run.run_id)
+
+    assert_true(block_ran)
+
+
+@test()
+def record_run_binds_the_run_id_into_the_logging_context() -> None:
+    """Log lines emitted inside the block carry the run id for correlation."""
+    recorder = AgentTraceRecorder()
+
+    with record_run(recorder, session_id=SESSION, kind="conversation") as run:
+        assert_eq(structlog.contextvars.get_contextvars().get("run_id"), run.run_id)
+
+    assert_is_none(structlog.contextvars.get_contextvars().get("run_id"))
 
 
 @test()
