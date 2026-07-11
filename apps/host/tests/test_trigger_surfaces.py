@@ -1,9 +1,9 @@
-"""REST behavior tests for Scheduled triggers.
+"""Dual-surface behaviour tests for Scheduled triggers.
 
-These drive the mounted Starlette app through `TestClient`, so request parsing,
-route wiring, service behavior, and response serialization are checked together.
-Triggers are created far in the future so the live scheduler never fires them
-mid-test.
+One app, both shells: the REST routes assert request parsing, status codes,
+and response serialisation; the `/internal/tools/*` endpoints assert the
+uniform envelope. Both derive from `tether.trigger_capabilities`. Triggers are
+created far in the future so the live scheduler never fires them mid-test.
 """
 
 from pathlib import Path
@@ -13,34 +13,12 @@ from typing import Any
 from snektest import assert_eq, assert_in, assert_is_none, test
 from starlette.testclient import TestClient
 
-from tether.server import AppConfig, create_app
-from tether.telemetry import TelemetrySettings
+from tests.surfaces import call_tool, login, surface_client
 
-APP_PASSWORD = "test-app-password"
-SESSION_SECRET = "test-session-secret"
 FAR_FUTURE = "2099-01-01T15:00:00+00:00"
 FAR_PAST = "2020-01-01T15:00:00+00:00"
 
-
-def make_client(root: Path) -> TestClient:
-    """Create a test app with isolated persistent DB and `.tether` root."""
-    return TestClient(
-        create_app(
-            config=AppConfig(
-                app_password=APP_PASSWORD,
-                database_path=root / "tether.sqlite3",
-                kb_root=root / ".tether",
-                session_secret=SESSION_SECRET,
-            ),
-            telemetry_settings=TelemetrySettings(install_global_provider=False),
-        )
-    )
-
-
-def login(client: TestClient) -> None:
-    """Authenticate the test browser."""
-    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
-    assert_eq(response.status_code, 204)
+make_client = surface_client
 
 
 def create_trigger(client: TestClient, **body: Any) -> dict[str, Any]:
@@ -237,3 +215,85 @@ def delete_of_a_missing_trigger_is_404() -> None:
         )
 
     assert_eq(response.status_code, 404)
+
+
+@test()
+def create_trigger_returns_a_well_formed_success_envelope() -> None:
+    """A successful create conforms to the envelope and lands active."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "create_trigger",
+            recurrence="once",
+            action_kind="message",
+            payload="call the dentist",
+            fire_at=FAR_FUTURE,
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"]["status"], "active")
+    assert_eq(envelope["result"]["action_kind"], "message")
+    assert_is_none(envelope["quota"])
+
+
+@test()
+def create_trigger_with_a_bad_spec_is_a_success_false_envelope() -> None:
+    """A weekly trigger missing its weekday is a well-formed invalid_input."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "create_trigger",
+            recurrence="weekly",
+            action_kind="message",
+            payload="x",
+            timezone="UTC",
+            time_of_day="09:00",
+        )
+
+        assert_eq(envelope["success"], False)
+        assert_eq(envelope["error"]["code"], "invalid_input")
+        assert_is_none(envelope["result"])
+
+        listed = call_tool(client, "list_triggers")
+
+    assert_eq(listed["result"], [])
+
+
+@test()
+def delete_trigger_removes_it() -> None:
+    """Deleting through the tool seam removes the trigger from the list."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        created = call_tool(
+            client,
+            "create_trigger",
+            recurrence="once",
+            action_kind="message",
+            payload="x",
+            fire_at=FAR_FUTURE,
+        )["result"]
+
+        envelope = call_tool(
+            client,
+            "delete_trigger",
+            trigger_id=created["id"],
+            version=created["version"],
+        )
+        listed = call_tool(client, "list_triggers")
+
+    assert_eq(envelope["success"], True)
+    assert_eq(listed["result"], [])
+
+
+@test()
+def delete_unknown_trigger_is_a_not_found_envelope() -> None:
+    """Deleting an unknown id is a well-formed not_found envelope."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "delete_trigger",
+            trigger_id="018f0000-0000-7000-8000-000000000000",
+            version=1,
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "not_found")

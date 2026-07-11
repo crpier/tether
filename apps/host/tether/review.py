@@ -24,7 +24,7 @@ from snekql.sqlite import Database, Fetched
 
 from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
-from tether.routes import MemoryRead
+from tether.memory_capabilities import MemoryRead
 
 DEDUP_THRESHOLD = 0.6
 """Token-overlap ratio above which two loose Memories are near-duplicates.
