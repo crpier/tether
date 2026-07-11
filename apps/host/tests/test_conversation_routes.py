@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,6 +18,17 @@ from starlette.websockets import WebSocketDisconnect
 from tether.chat_ws import _local_timezone_name, _prompt_with_time_context
 from tether.conversations import ConversationService, Message, MessageDraft
 from tether.model_selection import AgentModelConfig
+from tether.pi_runtime import (
+    AgentEnded,
+    AssistantStreamNote,
+    MessageSettled,
+    ModelTurnStarted,
+    TextDelta,
+    ThinkingDelta,
+    ToolSettled,
+    ToolStarted,
+    TurnEvent,
+)
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import TOOL_AUTH_HEADER
@@ -40,11 +52,11 @@ class FakePiClient:
 
 
 class FakeRuntime:
-    """pi runtime test double with queued protocol events."""
+    """pi runtime test double that streams queued typed turn events."""
 
-    def __init__(self, events: list[dict[str, Any]]) -> None:
+    def __init__(self, turn_events: list[TurnEvent]) -> None:
         self.client: FakePiClient = FakePiClient()
-        self._events: list[dict[str, Any]] = events
+        self._turn_events: list[TurnEvent] = turn_events
 
     def drain_events(self) -> int:
         """Match the production runtime's per-prompt queue hygiene hook."""
@@ -53,13 +65,13 @@ class FakeRuntime:
     async def shutdown(self) -> None:
         """Match the production runtime's teardown hook."""
 
-    async def next_event(
-        self, event_type: str | None = None, *, wait_seconds: float = 5.0
-    ) -> dict[str, Any]:
-        """Return the next queued event."""
-        _ = event_type
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
+        """Yield the queued typed events of one turn."""
         _ = wait_seconds
-        return self._events.pop(0)
+        for turn_event in self._turn_events:
+            yield turn_event
 
 
 class FailingPromptClient(FakePiClient):
@@ -84,14 +96,16 @@ class FailingPromptRuntime:
         """Match the production runtime's per-prompt queue hygiene hook."""
         return 0
 
-    async def next_event(
-        self, event_type: str | None = None, *, wait_seconds: float = 5.0
-    ) -> dict[str, Any]:
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
         """Prompt failure should prevent stream consumption."""
-        _ = event_type
         _ = wait_seconds
         message = "stream should not be read after prompt failure"
         raise AssertionError(message)
+        # Unreachable by design: the yield makes this an async generator so
+        # iteration (not the call) raises, matching the production runtime.
+        yield AgentEnded()
 
 
 class BlockingRuntime:
@@ -99,18 +113,21 @@ class BlockingRuntime:
 
     def __init__(self) -> None:
         self.client: FakePiClient = FakePiClient()
-        self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.events: asyncio.Queue[TurnEvent] = asyncio.Queue()
 
     def drain_events(self) -> int:
         """Match the production runtime's per-prompt queue hygiene hook."""
         return 0
 
-    async def next_event(
-        self, event_type: str | None = None, *, wait_seconds: float = 5.0
-    ) -> dict[str, Any]:
-        """Wait for the next queued event."""
-        _ = event_type
-        return await asyncio.wait_for(self.events.get(), timeout=wait_seconds)
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
+        """Yield each event as the test releases it."""
+        while True:
+            turn_event = await asyncio.wait_for(self.events.get(), timeout=wait_seconds)
+            yield turn_event
+            if isinstance(turn_event, AgentEnded):
+                return
 
 
 class FakeRuntimeRegistry:
@@ -136,22 +153,22 @@ class FakeRuntimeRegistry:
 class OrderedRuntime:
     """Runtime double that records drain/prompt ordering in one log."""
 
-    def __init__(self, events: list[dict[str, Any]]) -> None:
+    def __init__(self, turn_events: list[TurnEvent]) -> None:
         self.client: FakePiClient = FakePiClient()
-        self._events: list[dict[str, Any]] = events
+        self._turn_events: list[TurnEvent] = turn_events
 
     def drain_events(self) -> int:
         """Log the per-prompt drain into the shared command log."""
         self.client.commands.append("drain")
         return 0
 
-    async def next_event(
-        self, event_type: str | None = None, *, wait_seconds: float = 5.0
-    ) -> dict[str, Any]:
-        """Return the next queued event."""
-        _ = event_type
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
+        """Yield the queued typed events of one turn."""
         _ = wait_seconds
-        return self._events.pop(0)
+        for turn_event in self._turn_events:
+            yield turn_event
 
 
 class TimeoutRuntime:
@@ -164,14 +181,16 @@ class TimeoutRuntime:
         """Match the production runtime's per-prompt queue hygiene hook."""
         return 0
 
-    async def next_event(
-        self, event_type: str | None = None, *, wait_seconds: float = 5.0
-    ) -> dict[str, Any]:
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
         """Simulate pi going silent past the agent-event timeout."""
-        _ = event_type
         _ = wait_seconds
         message = "agent event timed out"
         raise TimeoutError(message)
+        # Unreachable by design: the yield makes this an async generator so
+        # iteration (not the call) raises, matching the production runtime.
+        yield AgentEnded()
 
 
 def make_client(root: Path) -> TestClient:
@@ -538,7 +557,7 @@ def local_timezone_name_prefers_tz_env() -> None:
 @test()
 def websocket_prompt_sends_time_context_to_pi_not_history() -> None:
     """pi receives the clock preamble; the stored user row stays clean."""
-    fake_runtime = FakeRuntime([{"type": "agent_end"}])
+    fake_runtime = FakeRuntime([AgentEnded()])
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         cast(
             "Starlette", client.app
@@ -678,23 +697,13 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
     """The host assembles streamed text when pi's final event has no content."""
     fake_runtime = FakeRuntime(
         [
-            {"type": "message_start", "message": {"role": "assistant"}},
-            {
-                "type": "message_update",
-                "assistantMessageEvent": {
-                    "type": "text_delta",
-                    "delta": {"text": "streamed "},
-                },
-            },
-            {
-                "type": "message_update",
-                "assistantMessageEvent": {
-                    "type": "text_delta",
-                    "delta": {"text": "answer"},
-                },
-            },
-            {"type": "message_end", "message": {"role": "assistant"}},
-            {"type": "agent_end"},
+            ModelTurnStarted(),
+            TextDelta(
+                content_index=None, raw_delta={"text": "streamed "}, text="streamed "
+            ),
+            TextDelta(content_index=None, raw_delta={"text": "answer"}, text="answer"),
+            MessageSettled(reasoning="", text=""),
+            AgentEnded(),
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
@@ -739,7 +748,7 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
 @test()
 def websocket_drains_stale_events_before_prompt() -> None:
     """Each prompt drains leftover events before driving pi (queue hygiene)."""
-    runtime = OrderedRuntime([{"type": "agent_end"}])
+    runtime = OrderedRuntime([AgentEnded()])
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         cast(
             "Starlette", client.app
@@ -792,29 +801,16 @@ def websocket_persists_reasoning_as_its_own_row_before_the_answer() -> None:
     """Thinking deltas settle into a reasoning row, never merged into the answer."""
     fake_runtime = FakeRuntime(
         [
-            {"type": "message_start", "message": {"role": "assistant"}},
-            {
-                "type": "message_update",
-                "assistantMessageEvent": {"type": "thinking_start", "contentIndex": 0},
-            },
-            {
-                "type": "message_update",
-                "assistantMessageEvent": {
-                    "type": "thinking_delta",
-                    "delta": {"text": "secret reasoning"},
-                    "contentIndex": 0,
-                },
-            },
-            {
-                "type": "message_update",
-                "assistantMessageEvent": {
-                    "type": "text_delta",
-                    "delta": {"text": "answer"},
-                    "contentIndex": 1,
-                },
-            },
-            {"type": "message_end", "message": {"role": "assistant"}},
-            {"type": "agent_end"},
+            ModelTurnStarted(),
+            AssistantStreamNote(content_index=0, kind="thinking_start", raw_delta=None),
+            ThinkingDelta(
+                content_index=0,
+                raw_delta={"text": "secret reasoning"},
+                text="secret reasoning",
+            ),
+            TextDelta(content_index=1, raw_delta={"text": "answer"}, text="answer"),
+            MessageSettled(reasoning="", text=""),
+            AgentEnded(),
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
@@ -1000,20 +996,17 @@ def websocket_persists_tool_call_rows() -> None:
     """Tool completion events settle as compact transcript rows."""
     fake_runtime = FakeRuntime(
         [
-            {
-                "type": "tool_execution_start",
-                "toolCallId": "call-capture",
-                "toolName": "capture",
-                "args": {"content": "tool memory"},
-            },
-            {
-                "type": "tool_execution_end",
-                "toolCallId": "call-capture",
-                "toolName": "capture",
-                "result": {"details": {"result": {"id": "memory-id"}}},
-                "isError": False,
-            },
-            {"type": "agent_end"},
+            ToolStarted(
+                args={"content": "tool memory"},
+                tool_call_id="call-capture",
+                tool_name="capture",
+            ),
+            ToolSettled(
+                result={"details": {"result": {"id": "memory-id"}}},
+                tool_call_id="call-capture",
+                tool_name="capture",
+            ),
+            AgentEnded(),
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
@@ -1049,20 +1042,17 @@ def websocket_tool_frames_carry_args_and_result() -> None:
     """Streamed tool frames surface the call input and result for the UI."""
     fake_runtime = FakeRuntime(
         [
-            {
-                "type": "tool_execution_start",
-                "toolCallId": "call-capture",
-                "toolName": "capture",
-                "args": {"content": "tool memory"},
-            },
-            {
-                "type": "tool_execution_end",
-                "toolCallId": "call-capture",
-                "toolName": "capture",
-                "result": {"details": {"result": {"id": "memory-id"}}},
-                "isError": False,
-            },
-            {"type": "agent_end"},
+            ToolStarted(
+                args={"content": "tool memory"},
+                tool_call_id="call-capture",
+                tool_name="capture",
+            ),
+            ToolSettled(
+                result={"details": {"result": {"id": "memory-id"}}},
+                tool_call_id="call-capture",
+                tool_name="capture",
+            ),
+            AgentEnded(),
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
@@ -1100,14 +1090,8 @@ def clearing_a_conversation_empties_the_transcript() -> None:
     """DELETE on the messages route drops history and rotates the pi session."""
     fake_runtime = FakeRuntime(
         [
-            {
-                "type": "message_end",
-                "message": {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "hello there"}],
-                },
-            },
-            {"type": "agent_end"},
+            MessageSettled(reasoning="", text="hello there"),
+            AgentEnded(),
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -16,9 +17,20 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from tether.agent_trace import AgentTraceRecorder, record_run
 from tether.auth import SESSION_COOKIE, verify_session_cookie
-from tether.conversations import ConversationNotFoundError, JsonValue, MessageDraft
+from tether.conversations import ConversationNotFoundError, MessageDraft
 from tether.events import HubEvent, NotifyEvent
-from tether.pi_runtime import PiRuntimeError
+from tether.pi_runtime import (
+    AgentEnded,
+    AssistantStreamNote,
+    MessageSettled,
+    ModelTurnStarted,
+    PiRuntimeError,
+    TextDelta,
+    ThinkingDelta,
+    ToolSettled,
+    ToolStarted,
+    TurnEvent,
+)
 
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
@@ -91,79 +103,6 @@ class InboundFrame(BaseModel):
     ) = None
 
 
-def _json_object(value: object) -> dict[str, JsonValue]:
-    """Return JSON object values as dictionaries."""
-    if isinstance(value, dict):
-        return cast("dict[str, JsonValue]", value)
-    return {"value": cast("JsonValue", value)}
-
-
-def _delta_text(assistant_event: dict[str, Any]) -> str:
-    """Extract text from pi assistant message update payloads."""
-    delta = assistant_event.get("delta")
-    if isinstance(delta, str):
-        return delta
-    if isinstance(delta, dict):
-        delta_data = cast("dict[str, object]", delta)
-        text = delta_data.get("text")
-        if isinstance(text, str):
-            return text
-    text = assistant_event.get("text")
-    if isinstance(text, str):
-        return text
-    return ""
-
-
-def _is_assistant_message(message: object) -> bool:
-    """Report whether a pi message envelope is an assistant turn."""
-    if not isinstance(message, dict):
-        return False
-    return cast("dict[str, Any]", message).get("role") == "assistant"
-
-
-def _message_text(message: object) -> str:
-    """Extract displayed text from a pi message content array."""
-    if not isinstance(message, dict):
-        return ""
-    message_data = cast("dict[str, Any]", message)
-    content = message_data.get("content")
-    if not isinstance(content, list):
-        return ""
-    content_items = cast("list[object]", content)
-    chunks: list[str] = []
-    for raw_item in content_items:
-        if not isinstance(raw_item, dict):
-            continue
-        item = cast("dict[str, Any]", raw_item)
-        if item.get("type") == "text" and isinstance(item.get("text"), str):
-            chunks.append(cast("str", item["text"]))
-    return "".join(chunks)
-
-
-def _message_reasoning(message: object) -> str:
-    """Extract thinking-block text from a pi message content array.
-
-    Mirrors `_message_text` for the `thinking` channel. Encrypted/redacted
-    reasoning (codex) carries no plaintext `thinking`, so it yields the empty
-    string and is simply not persisted.
-    """
-    if not isinstance(message, dict):
-        return ""
-    message_data = cast("dict[str, Any]", message)
-    content = message_data.get("content")
-    if not isinstance(content, list):
-        return ""
-    content_items = cast("list[object]", content)
-    chunks: list[str] = []
-    for raw_item in content_items:
-        if not isinstance(raw_item, dict):
-            continue
-        item = cast("dict[str, Any]", raw_item)
-        if item.get("type") == "thinking" and isinstance(item.get("thinking"), str):
-            chunks.append(cast("str", item["thinking"]))
-    return "".join(chunks)
-
-
 def _prompt_failure_detail(response: dict[str, object]) -> str:
     """Render pi's failed prompt response for the browser."""
     for key in ("error", "detail", "message"):
@@ -193,53 +132,36 @@ async def _send_error(
     await websocket.send_json(frame)
 
 
-async def _forward_message_start(
-    websocket: WebSocket, *, conversation_id: UUID, event: dict[str, Any]
-) -> None:
-    """Forward assistant message start events."""
-    message = event.get("message")
-    if not isinstance(message, dict):
-        return
-    message_data = cast("dict[str, Any]", message)
-    if message_data.get("role") == "assistant":
-        await websocket.send_json(
-            {
-                "type": "chat",
-                "conversation_id": str(conversation_id),
-                "event": "message_start",
-            }
-        )
-
-
-async def _forward_message_update(
+async def _relay_stream_update(
     websocket: WebSocket,
     *,
     conversation_id: UUID,
-    event: dict[str, Any],
+    update: TextDelta | ThinkingDelta | AssistantStreamNote,
     streamed_text: list[str],
     streamed_reasoning: list[str],
 ) -> None:
-    """Forward assistant stream deltas into their separate persisted channels."""
-    assistant_event = event.get("assistantMessageEvent")
-    if not isinstance(assistant_event, dict):
-        return
-    assistant_event_data = cast("dict[str, Any]", assistant_event)
-    sub_type = assistant_event_data.get("type")
-    # Text and reasoning settle into distinct transcript rows, so they are
-    # accumulated separately and never merged. Encrypted reasoning (codex) is
-    # masked on the wire, so its `thinking_delta` carries no plaintext and the
-    # reasoning row is simply skipped.
-    if sub_type == "text_delta":
-        streamed_text.append(_delta_text(assistant_event_data))
-    elif sub_type == "thinking_delta":
-        streamed_reasoning.append(_delta_text(assistant_event_data))
+    """Accumulate delta text on its channel and forward the update verbatim.
+
+    Text and reasoning chunks land in separate buffers because they settle
+    into distinct transcript rows; the raw provider delta rides along
+    unchanged so the browser sees exactly what pi emitted.
+    """
+    match update:
+        case TextDelta(text=chunk):
+            event_name = "text_delta"
+            streamed_text.append(chunk)
+        case ThinkingDelta(text=chunk):
+            event_name = "thinking_delta"
+            streamed_reasoning.append(chunk)
+        case AssistantStreamNote(kind=kind):
+            event_name = kind
     await websocket.send_json(
         {
             "type": "chat",
             "conversation_id": str(conversation_id),
-            "event": sub_type or "message_update",
-            "delta": assistant_event_data.get("delta"),
-            "content_index": assistant_event_data.get("contentIndex"),
+            "event": event_name,
+            "delta": update.raw_delta,
+            "content_index": update.content_index,
         }
     )
 
@@ -248,20 +170,18 @@ async def _settle_message_end(
     websocket: WebSocket,
     *,
     conversation_id: UUID,
-    event: dict[str, Any],
+    settled: MessageSettled,
     streamed_text: list[str],
     streamed_reasoning: list[str],
 ) -> None:
-    """Persist the settled reasoning and answer rows once pi closes a message."""
-    message = event.get("message")
-    if not isinstance(message, dict):
-        return
-    message_data = cast("dict[str, Any]", message)
-    if message_data.get("role") != "assistant":
-        return
-    # Persist reasoning ahead of the answer so the transcript keeps "thinking
-    # then reply" order under the monotonic per-thread sequence.
-    reasoning = _message_reasoning(message_data) or "".join(streamed_reasoning)
+    """Persist the settled reasoning and answer rows once pi closes a message.
+
+    Reasoning is persisted ahead of the answer so the transcript keeps
+    "thinking then reply" order under the monotonic per-thread sequence.
+    Either channel falls back to its accumulated stream deltas when the
+    settled message carries no content of that kind.
+    """
+    reasoning = settled.reasoning or "".join(streamed_reasoning)
     if reasoning:
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
@@ -270,7 +190,7 @@ async def _settle_message_end(
                 role="reasoning",
             )
         )
-    content = _message_text(message_data) or "".join(streamed_text)
+    content = settled.text or "".join(streamed_text)
     if content:
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
@@ -292,25 +212,20 @@ async def _forward_tool_start(
     websocket: WebSocket,
     *,
     conversation_id: UUID,
-    event: dict[str, Any],
+    started: ToolStarted,
     pending_tool_args: dict[str, dict[str, Any]],
 ) -> None:
     """Remember tool args and forward tool-start events."""
-    tool_call_id = event.get("toolCallId")
-    args = event.get("args")
-    tool_args: dict[str, Any] = (
-        cast("dict[str, Any]", args) if isinstance(args, dict) else {}
-    )
-    if isinstance(tool_call_id, str):
-        pending_tool_args[tool_call_id] = tool_args
+    if started.tool_call_id is not None:
+        pending_tool_args[started.tool_call_id] = started.args
     await websocket.send_json(
         {
             "type": "chat",
             "conversation_id": str(conversation_id),
             "event": "tool_start",
-            "tool_name": event.get("toolName"),
-            "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
-            "tool_args": tool_args,
+            "tool_name": started.tool_name,
+            "tool_id": started.tool_call_id,
+            "tool_args": started.args,
         }
     )
 
@@ -319,23 +234,20 @@ async def _settle_tool_end(
     websocket: WebSocket,
     *,
     conversation_id: UUID,
-    event: dict[str, Any],
+    settled: ToolSettled,
     pending_tool_args: dict[str, dict[str, Any]],
 ) -> None:
     """Persist tool completion envelopes and forward tool-end events."""
-    tool_call_id = event.get("toolCallId")
-    tool_name = event.get("toolName")
-    tool_result = _json_object(event.get("result"))
-    if isinstance(tool_call_id, str) and isinstance(tool_name, str):
+    if settled.tool_call_id is not None and settled.tool_name is not None:
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
-                content=tool_name,
+                content=settled.tool_name,
                 conversation_id=conversation_id,
-                pi_message_id=tool_call_id,
+                pi_message_id=settled.tool_call_id,
                 role="tool",
-                tool_args=pending_tool_args.pop(tool_call_id, {}),
-                tool_name=tool_name,
-                tool_result=tool_result,
+                tool_args=pending_tool_args.pop(settled.tool_call_id, {}),
+                tool_name=settled.tool_name,
+                tool_result=settled.result,
             )
         )
     await websocket.send_json(
@@ -343,9 +255,9 @@ async def _settle_tool_end(
             "type": "chat",
             "conversation_id": str(conversation_id),
             "event": "tool_end",
-            "tool_name": tool_name,
-            "tool_id": tool_call_id if isinstance(tool_call_id, str) else None,
-            "tool_result": tool_result,
+            "tool_name": settled.tool_name,
+            "tool_id": settled.tool_call_id,
+            "tool_result": settled.result,
         }
     )
 
@@ -358,58 +270,66 @@ async def _stream_runtime(
     recorder: AgentTraceRecorder | None = None,
     session_id: str | None = None,
 ) -> None:
-    """Forward pi events and persist settled assistant messages."""
+    """Relay one turn's typed pi events to the browser and persist settled rows.
+
+    Text and reasoning deltas are accumulated separately and never merged:
+    they settle into distinct transcript rows. Encrypted reasoning (codex) is
+    masked on the wire, so its deltas carry no plaintext and the reasoning row
+    is simply skipped.
+    """
     pending_tool_args: dict[str, dict[str, Any]] = {}
     streamed_text: list[str] = []
     streamed_reasoning: list[str] = []
-    while True:
-        event = await runtime.next_event(wait_seconds=_AGENT_EVENT_TIMEOUT_SECONDS)
-        match event.get("type"):
-            case "message_start":
+    turn_stream: AsyncGenerator[TurnEvent] = runtime.stream_turn(
+        wait_seconds=_AGENT_EVENT_TIMEOUT_SECONDS
+    )
+    async for turn_event in turn_stream:
+        match turn_event:
+            case ModelTurnStarted():
                 streamed_text.clear()
                 streamed_reasoning.clear()
-                if (
-                    recorder is not None
-                    and session_id is not None
-                    and _is_assistant_message(event.get("message"))
-                ):
+                if recorder is not None and session_id is not None:
                     recorder.record_model_turn(session_id=session_id)
-                await _forward_message_start(
-                    websocket, conversation_id=conversation_id, event=event
+                await websocket.send_json(
+                    {
+                        "type": "chat",
+                        "conversation_id": str(conversation_id),
+                        "event": "message_start",
+                    }
                 )
-            case "message_update":
-                await _forward_message_update(
+            case TextDelta() | ThinkingDelta() | AssistantStreamNote():
+                await _relay_stream_update(
                     websocket,
                     conversation_id=conversation_id,
-                    event=event,
+                    update=turn_event,
                     streamed_text=streamed_text,
                     streamed_reasoning=streamed_reasoning,
                 )
-            case "message_end":
+            case MessageSettled():
                 await _settle_message_end(
                     websocket,
                     conversation_id=conversation_id,
-                    event=event,
+                    settled=turn_event,
                     streamed_text=streamed_text,
                     streamed_reasoning=streamed_reasoning,
                 )
                 streamed_text.clear()
                 streamed_reasoning.clear()
-            case "tool_execution_start":
+            case ToolStarted():
                 await _forward_tool_start(
                     websocket,
                     conversation_id=conversation_id,
-                    event=event,
+                    started=turn_event,
                     pending_tool_args=pending_tool_args,
                 )
-            case "tool_execution_end":
+            case ToolSettled():
                 await _settle_tool_end(
                     websocket,
                     conversation_id=conversation_id,
-                    event=event,
+                    settled=turn_event,
                     pending_tool_args=pending_tool_args,
                 )
-            case "agent_end":
+            case AgentEnded():
                 await websocket.send_json(
                     {
                         "type": "chat",
@@ -417,9 +337,6 @@ async def _stream_runtime(
                         "event": "agent_end",
                     }
                 )
-                return
-            case _:
-                pass
 
 
 async def _run_prompt(

@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Protocol
 from uuid import uuid7
 
 from anyio import Path as AsyncPath
@@ -37,7 +37,13 @@ from tether.events import EventPublisher, NotifyEvent
 from tether.logging import Logger
 from tether.model_selection import AgentModelConfig
 from tether.notifications import NotificationDraft
-from tether.pi_runtime import PiRuntime, PiRuntimeConfig, PiRuntimeError
+from tether.pi_runtime import (
+    MessageSettled,
+    ModelTurnStarted,
+    PiRuntime,
+    PiRuntimeConfig,
+    PiRuntimeError,
+)
 from tether.tools import SessionRegistry
 from tether.triggers import (
     DEFAULT_BACKOFF_BASE,
@@ -137,33 +143,6 @@ class AgentPromptRunner(Protocol):
         ...
 
 
-def _is_assistant_message(message: object) -> bool:
-    """Report whether a pi message envelope is an assistant turn."""
-    if not isinstance(message, dict):
-        return False
-    return cast("dict[str, Any]", message).get("role") == "assistant"
-
-
-def _assistant_message_text(message: object) -> str:
-    """Extract the displayed text from a settled pi assistant message."""
-    if not isinstance(message, dict):
-        return ""
-    message_data = cast("dict[str, Any]", message)
-    if message_data.get("role") != "assistant":
-        return ""
-    content = message_data.get("content")
-    if not isinstance(content, list):
-        return ""
-    chunks: list[str] = []
-    for raw_item in cast("list[object]", content):
-        if not isinstance(raw_item, dict):
-            continue
-        item = cast("dict[str, Any]", raw_item)
-        if item.get("type") == "text" and isinstance(item.get("text"), str):
-            chunks.append(cast("str", item["text"]))
-    return "".join(chunks)
-
-
 @dataclass(frozen=True, slots=True)
 class EphemeralPiConfig:
     """Wiring for spawning an ephemeral pi to run one agent-prompt trigger."""
@@ -234,27 +213,20 @@ class EphemeralPiPromptRunner:
         return await self._collect_final_text(runtime, session_id)
 
     async def _collect_final_text(self, runtime: PiRuntime, session_id: str) -> str:
-        """Drain pi events to the turn's end, keeping the last assistant text."""
+        """Drain the typed turn stream, keeping the last settled assistant text."""
         recorder = self.config.trace_recorder
         final_text = ""
-        while True:
-            event = await runtime.next_event(
-                wait_seconds=self.config.event_timeout_seconds
-            )
-            match event.get("type"):
-                case "message_start":
-                    if recorder is not None and _is_assistant_message(
-                        event.get("message")
-                    ):
-                        recorder.record_model_turn(session_id=session_id)
-                case "message_end":
-                    text = _assistant_message_text(event.get("message"))
-                    if text:
-                        final_text = text
-                case "agent_end":
-                    return final_text
+        async for turn_event in runtime.stream_turn(
+            wait_seconds=self.config.event_timeout_seconds
+        ):
+            match turn_event:
+                case ModelTurnStarted() if recorder is not None:
+                    recorder.record_model_turn(session_id=session_id)
+                case MessageSettled(text=text) if text:
+                    final_text = text
                 case _:
                     pass
+        return final_text
 
 
 class TriggerDispatcher:
