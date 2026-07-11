@@ -1168,45 +1168,6 @@ async def api_gate_pauses_then_reopens_when_cooldown_elapses() -> None:
 
 
 @test()
-async def api_gate_escalates_exponentially_capped_at_six_hours() -> None:
-    """Consecutive quota errors double the cooldown, clamped to six hours."""
-    db = await gate_db()
-    gate = YouTubeApiGate(db, config=gate_config())
-
-    cooldowns = [
-        (await gate.record_quota_error(now=_GATE_NOW)) - _GATE_NOW for _ in range(7)
-    ]
-
-    assert_eq(
-        cooldowns,
-        [
-            timedelta(minutes=15),
-            timedelta(minutes=30),
-            timedelta(minutes=60),
-            timedelta(minutes=120),
-            timedelta(minutes=240),
-            timedelta(hours=6),
-            timedelta(hours=6),
-        ],
-    )
-    await db.close()
-
-
-@test()
-async def api_gate_retry_after_hint_floors_the_cooldown() -> None:
-    """A provider retry-after longer than the computed cooldown wins."""
-    db = await gate_db()
-    gate = YouTubeApiGate(db, config=gate_config())
-
-    paused_until = await gate.record_quota_error(
-        now=_GATE_NOW, retry_after=timedelta(hours=2)
-    )
-
-    assert_eq(paused_until, _GATE_NOW + timedelta(hours=2))
-    await db.close()
-
-
-@test()
 async def api_gate_success_clears_pause_and_resets_streak() -> None:
     """A clean call clears the pause, so the next error starts from the base."""
     db = await gate_db()

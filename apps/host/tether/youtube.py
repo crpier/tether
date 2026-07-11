@@ -34,6 +34,7 @@ import json
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast, runtime_checkable
 from uuid import uuid7
 
@@ -56,6 +57,12 @@ from snekql.sqlite import (
 )
 
 from tether.db_retry import run_in_transaction
+from tether.escalating_pause import (
+    PauseKeys,
+    PauseState,
+    PersistentEscalatingPause,
+    load_pause_state,
+)
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
@@ -696,12 +703,12 @@ _TRANSCRIPT_PAUSED_UNTIL_PREFIX = "transcript_provider_paused_until:"
 _TRANSCRIPT_BLOCK_STREAK_PREFIX = "transcript_provider_block_streak:"
 
 
-def _paused_until_key(source: str) -> str:
-    return f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}{source}"
-
-
-def _block_streak_key(source: str) -> str:
-    return f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}{source}"
+def _provider_pause_keys(source: str) -> PauseKeys:
+    """The sync-state keys one blockable transcript source's pause persists under."""
+    return PauseKeys(
+        paused_until=f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}{source}",
+        streak=f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}{source}",
+    )
 
 
 def derive_ingest_state(video: IngestedVideo[Fetched]) -> IngestState:
@@ -919,7 +926,7 @@ class _TranscriptPassState:
     the pass.
     """
 
-    pauses: dict[str, _ProviderPauseState]
+    pauses: dict[str, PauseState]
     paused_sources: frozenset[str]
     fetched: int = 0
     unavailable: int = 0
@@ -1033,15 +1040,25 @@ class YouTubeApiGate:
         *,
         config: YouTubeApiGateConfig | None = None,
     ) -> None:
-        self._database: Database = database
-        self._config: YouTubeApiGateConfig = config or YouTubeApiGateConfig()
+        gate_config = config or YouTubeApiGateConfig()
+        self._pause: PersistentEscalatingPause = PersistentEscalatingPause(
+            base=gate_config.pause_base,
+            cap=gate_config.pause_cap,
+            keys=PauseKeys(
+                paused_until=_API_GATE_PAUSED_UNTIL_KEY, streak=_API_GATE_STREAK_KEY
+            ),
+            read_value=partial(_state_get, database),
+            write_value=partial(_state_set, database),
+        )
 
     async def ensure_open(self, *, now: datetime) -> None:
         """Raise `YouTubeQuotaExceededError` while the global pause is in effect."""
-        paused_until, streak = await self._load()
-        if paused_until is not None and paused_until > now:
-            when = paused_until.isoformat()
-            message = f"YouTube API paused until {when} (quota-error streak {streak})"
+        state = await self._pause.load()
+        if state.paused_until is not None and state.paused_until > now:
+            when = state.paused_until.isoformat()
+            message = (
+                f"YouTube API paused until {when} (quota-error streak {state.streak})"
+            )
             raise YouTubeQuotaExceededError(message)
 
     async def record_success(self) -> None:
@@ -1050,12 +1067,7 @@ class YouTubeApiGate:
         Read-only in the steady state: only writes when there is prior pause/streak
         to clear, so the common success path stays cheap.
         """
-        raw_until = await _state_get(self._database, _API_GATE_PAUSED_UNTIL_KEY)
-        raw_streak = await _state_get(self._database, _API_GATE_STREAK_KEY)
-        if not raw_until and not raw_streak:
-            return
-        await _state_set(self._database, _API_GATE_PAUSED_UNTIL_KEY, "")
-        await _state_set(self._database, _API_GATE_STREAK_KEY, "0")
+        await self._pause.clear()
 
     async def record_quota_error(
         self, *, now: datetime, retry_after: timedelta | None = None
@@ -1065,18 +1077,7 @@ class YouTubeApiGate:
         The cooldown is `pause_base * 2**(streak-1)` clamped to `pause_cap`, then
         raised to any provider-supplied `retry_after` hint.
         """
-        _, prior_streak = await self._load()
-        streak = prior_streak + 1
-        exponent = max(0, streak - 1)
-        cooldown = min(self._config.pause_base * (2**exponent), self._config.pause_cap)
-        if retry_after is not None and retry_after > cooldown:
-            cooldown = retry_after
-        paused_until = now + cooldown
-        await _state_set(
-            self._database, _API_GATE_PAUSED_UNTIL_KEY, paused_until.isoformat()
-        )
-        await _state_set(self._database, _API_GATE_STREAK_KEY, str(streak))
-        return paused_until
+        return (await self._pause.trip(now=now, retry_after=retry_after)).paused_until
 
     async def paused_until(self, *, now: datetime) -> datetime | None:
         """The instant the global pause lifts, or None when the gate is open.
@@ -1084,18 +1085,10 @@ class YouTubeApiGate:
         Read-only; the status surface uses it to report *why* a sync is stalled
         without itself touching the upstream API.
         """
-        paused_until, _ = await self._load()
-        if paused_until is not None and paused_until > now:
-            return paused_until
+        state = await self._pause.load()
+        if state.paused_until is not None and state.paused_until > now:
+            return state.paused_until
         return None
-
-    async def _load(self) -> tuple[datetime | None, int]:
-        """Read the persisted `(paused_until, streak)`, defaulting to open/0."""
-        raw_until = await _state_get(self._database, _API_GATE_PAUSED_UNTIL_KEY)
-        raw_streak = await _state_get(self._database, _API_GATE_STREAK_KEY)
-        paused_until = datetime.fromisoformat(raw_until) if raw_until else None
-        streak = int(raw_streak) if raw_streak else 0
-        return paused_until, streak
 
 
 class YouTubeApiClient:
@@ -1797,31 +1790,16 @@ def _next_attempt_at(now: datetime, attempts: int, config: TranscriptSyncConfig)
     return (now + delay).isoformat()
 
 
-@dataclass(frozen=True, slots=True)
-class _ProviderPauseState:
-    """The persisted provider-level pause: when the blockable source may run again
-    and how many consecutive IP blocks have escalated the cooldown."""
-
-    paused_until: datetime | None
-    streak: int
-
-    def is_paused(self, now: datetime) -> bool:
-        """Whether the blockable source is still in its cooldown at `now`."""
-        return self.paused_until is not None and self.paused_until > now
-
-
-async def _load_provider_pause(database: Database, source: str) -> _ProviderPauseState:
+async def _load_provider_pause(database: Database, source: str) -> PauseState:
     """Read one source's persisted pause (defaulting to not-paused, streak 0)."""
-    raw_until = await _state_get(database, _paused_until_key(source))
-    raw_streak = await _state_get(database, _block_streak_key(source))
-    paused_until = datetime.fromisoformat(raw_until) if raw_until else None
-    streak = int(raw_streak) if raw_streak else 0
-    return _ProviderPauseState(paused_until=paused_until, streak=streak)
+    return await load_pause_state(
+        partial(_state_get, database), keys=_provider_pause_keys(source)
+    )
 
 
 async def _load_all_provider_pauses(
     database: Database,
-) -> dict[str, _ProviderPauseState]:
+) -> dict[str, PauseState]:
     """Read every blockable source's persisted pause, keyed by source.
 
     Discovers sources from the persisted keys themselves (rather than a hardcoded
@@ -1843,18 +1821,6 @@ async def _load_all_provider_pauses(
         row.key.removeprefix(_TRANSCRIPT_PAUSED_UNTIL_PREFIX) for row in until_rows
     } | {row.key.removeprefix(_TRANSCRIPT_BLOCK_STREAK_PREFIX) for row in streak_rows}
     return {source: await _load_provider_pause(database, source) for source in sources}
-
-
-def _block_cooldown(
-    streak: int, retry_after: timedelta | None, config: TranscriptSyncConfig
-) -> timedelta:
-    """Cooldown for the `streak`-th consecutive block: exponential, capped, then
-    raised to any provider-supplied retry-after hint."""
-    exponent = max(0, streak - 1)
-    cooldown = min(config.block_pause_base * (2**exponent), config.block_pause_cap)
-    if retry_after is not None and retry_after > cooldown:
-        return retry_after
-    return cooldown
 
 
 @dataclass(frozen=True, slots=True)
@@ -2189,11 +2155,7 @@ class TranscriptSyncService:
             source = attempt.source
             if source is not None and source not in state.paused_sources:
                 state.pauses[source] = await self._trip_pause(
-                    source,
-                    now,
-                    state.pauses.get(source),
-                    attempt.retry_after,
-                    logger=logger,
+                    source, now, attempt.retry_after, logger=logger
                 )
                 state.paused_sources = state.paused_sources | {source}
             # else: a deferral (composite skipped an already-paused fallback) or an
@@ -2219,7 +2181,7 @@ class TranscriptSyncService:
 
     @staticmethod
     def _paused_sources(
-        pauses: Mapping[str, _ProviderPauseState], now: datetime
+        pauses: Mapping[str, PauseState], now: datetime
     ) -> frozenset[str]:
         """The set of sources still in their cooldown at `now`."""
         return frozenset(
@@ -2228,55 +2190,49 @@ class TranscriptSyncService:
 
     async def _reset_reachable_streaks(
         self,
-        pauses: dict[str, _ProviderPauseState],
+        pauses: dict[str, PauseState],
         paused_sources: frozenset[str],
     ) -> None:
         """Clear the streak of each unpaused source that had one (its block cleared)."""
         for source, pause in list(pauses.items()):
             if source not in paused_sources and pause.streak > 0:
-                cleared = _ProviderPauseState(paused_until=None, streak=0)
-                pauses[source] = cleared
-                await self._save_provider_pause(source, cleared)
+                await self._provider_pause(source).clear()
+                pauses[source] = PauseState(paused_until=None, streak=0)
 
     async def _trip_pause(
         self,
         source: str,
         now: datetime,
-        pause: _ProviderPauseState | None,
         retry_after: timedelta | None,
         *,
         logger: Logger,
-    ) -> _ProviderPauseState:
+    ) -> PauseState:
         """Escalate a source's pause one block, persist it, and return the new state."""
-        streak = (pause.streak if pause is not None else 0) + 1
-        cooldown = _block_cooldown(streak, retry_after, self.config)
-        tripped = _ProviderPauseState(paused_until=now + cooldown, streak=streak)
-        await self._save_provider_pause(source, tripped)
+        tripped = await self._provider_pause(source).trip(
+            now=now, retry_after=retry_after
+        )
         _info(
             logger,
             "Transcript provider blocked; pausing source",
             source=source,
-            streak=streak,
-            cooldown_seconds=cooldown.total_seconds(),
-            paused_until=tripped.paused_until.isoformat()
-            if tripped.paused_until is not None
-            else None,
+            streak=tripped.streak,
+            cooldown_seconds=(tripped.paused_until - now).total_seconds(),
+            paused_until=tripped.paused_until.isoformat(),
             retry_after_seconds=retry_after.total_seconds()
             if retry_after is not None
             else None,
         )
-        return tripped
+        return tripped.as_state()
 
-    async def _save_provider_pause(
-        self, source: str, pause: _ProviderPauseState
-    ) -> None:
-        """Persist one source's pause so it survives restarts."""
-        await _state_set(
-            self.database,
-            _paused_until_key(source),
-            pause.paused_until.isoformat() if pause.paused_until is not None else "",
+    def _provider_pause(self, source: str) -> PersistentEscalatingPause:
+        """One blockable source's persisted pause, bounded by the worker config."""
+        return PersistentEscalatingPause(
+            base=self.config.block_pause_base,
+            cap=self.config.block_pause_cap,
+            keys=_provider_pause_keys(source),
+            read_value=partial(_state_get, self.database),
+            write_value=partial(_state_set, self.database),
         )
-        await _state_set(self.database, _block_streak_key(source), str(pause.streak))
 
     async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
         """Run transcript sync passes on the given interval until cancelled."""
