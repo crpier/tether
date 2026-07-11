@@ -33,7 +33,7 @@ from snektest import (
 from tether import scheduler as scheduler_module
 from tether.agent_trace import AgentTraceRecorder
 from tether.logging import Logger
-from tether.pi_runtime import PiRuntimeError
+from tether.pi_runtime import AgentEnded, PiRuntimeError, TurnEvent
 from tether.scheduler import (
     EphemeralPiConfig,
     EphemeralPiPromptRunner,
@@ -326,11 +326,15 @@ class FakePiRuntime:
         self.client: FakeRpcClient = FakeRpcClient(accepts_prompt=accepts_prompt)
         self.shutdown_called: bool = False
 
-    async def next_event(
-        self, event_type: str | None = None, *, wait_seconds: float = 5.0
-    ) -> dict[str, Any]:
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
         """Simulate pi going silent past the agent-event timeout."""
+        _ = wait_seconds
         raise TimeoutError("no pi event within the wait")
+        # Unreachable by design: the yield makes this an async generator so
+        # iteration (not the call) raises, matching the production runtime.
+        yield AgentEnded()
 
     async def shutdown(self) -> None:
         """Record that the runner tore the process down."""

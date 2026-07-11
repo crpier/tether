@@ -7,7 +7,7 @@ import contextlib
 import json
 import os
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, Self, cast
@@ -234,6 +234,239 @@ class PiRpcClient:
         self._pending.clear()
 
 
+@dataclass(frozen=True, slots=True)
+class ModelTurnStarted:
+    """pi opened a new assistant message, i.e. one model turn began."""
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta:
+    """One streamed chunk of the assistant's answer text.
+
+    `text` is the extracted chunk for accumulation; `raw_delta` preserves the
+    provider's payload exactly as pi sent it, for verbatim forwarding.
+    """
+
+    content_index: int | None
+    raw_delta: object
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ThinkingDelta:
+    """One streamed chunk of the assistant's reasoning text.
+
+    Kept apart from `TextDelta` so reasoning settles into its own transcript
+    channel and is never merged into the answer.
+    """
+
+    content_index: int | None
+    raw_delta: object
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantStreamNote:
+    """An assistant-stream update the host relays without interpreting.
+
+    Covers channel boundaries and tool-call argument streaming
+    (`text_start`, `thinking_end`, `toolcall_delta`, ...); `kind` names the
+    update so it can be forwarded under its own event name.
+    """
+
+    content_index: int | None
+    kind: str
+    raw_delta: object
+
+
+@dataclass(frozen=True, slots=True)
+class MessageSettled:
+    """pi closed an assistant message; carries its settled text channels.
+
+    `text` joins the message's `text` content items and `reasoning` joins its
+    `thinking` items; either is empty when the settled message carries none
+    (streaming consumers fall back to their accumulated deltas).
+    """
+
+    reasoning: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolStarted:
+    """pi began executing one tool call."""
+
+    args: dict[str, Any]
+    tool_call_id: str | None
+    tool_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSettled:
+    """pi finished one tool call; `result` is always a JSON object."""
+
+    result: dict[str, Any]
+    tool_call_id: str | None
+    tool_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentEnded:
+    """pi finished the whole turn; the terminal event of a turn stream."""
+
+
+def _string_or_none(value: object) -> str | None:
+    """Narrow an optional wire field to a string, dropping malformed values."""
+    return value if isinstance(value, str) else None
+
+
+def _is_assistant_message(message: object) -> bool:
+    """Report whether a pi message envelope is an assistant turn."""
+    if not isinstance(message, dict):
+        return False
+    return cast("dict[str, Any]", message).get("role") == "assistant"
+
+
+def _joined_content_text(message: dict[str, Any], *, item_type: str) -> str:
+    """Join one content channel (`text` or `thinking`) of a settled message.
+
+    Text and thinking items carry their payload under a key named after the
+    item type; encrypted/redacted reasoning has no plaintext key and therefore
+    contributes nothing.
+    """
+    content = message.get("content")
+    if not isinstance(content, list):
+        return ""
+    chunks: list[str] = []
+    for raw_item in cast("list[object]", content):
+        if not isinstance(raw_item, dict):
+            continue
+        item = cast("dict[str, Any]", raw_item)
+        if item.get("type") == item_type and isinstance(item.get(item_type), str):
+            chunks.append(cast("str", item[item_type]))
+    return "".join(chunks)
+
+
+type TurnEvent = (
+    AgentEnded
+    | AssistantStreamNote
+    | MessageSettled
+    | ModelTurnStarted
+    | TextDelta
+    | ThinkingDelta
+    | ToolSettled
+    | ToolStarted
+)
+"""The typed vocabulary of one pi turn as its stream settles."""
+
+
+def _delta_text(assistant_event: dict[str, Any]) -> str:
+    """Extract the text chunk from a pi assistant delta payload.
+
+    Providers stream the delta either as a bare string, an object carrying
+    `text`, or (older shapes) a top-level `text` field; all reduce to the same
+    accumulated chunk.
+    """
+    delta = assistant_event.get("delta")
+    if isinstance(delta, str):
+        return delta
+    if isinstance(delta, dict):
+        text = cast("dict[str, object]", delta).get("text")
+        if isinstance(text, str):
+            return text
+    text = assistant_event.get("text")
+    if isinstance(text, str):
+        return text
+    return ""
+
+
+def _decode_assistant_update(assistant_event: object) -> TurnEvent | None:
+    """Decode a `message_update`'s assistant payload into a typed event.
+
+    Text and thinking deltas carry their extracted chunk; every other update
+    kind becomes an uninterpreted `AssistantStreamNote` so consumers can relay
+    it verbatim.
+    """
+    if not isinstance(assistant_event, dict):
+        return None
+    assistant_event_data = cast("dict[str, Any]", assistant_event)
+    raw_content_index = assistant_event_data.get("contentIndex")
+    content_index = raw_content_index if isinstance(raw_content_index, int) else None
+    raw_delta = cast("object", assistant_event_data.get("delta"))
+    match assistant_event_data.get("type"):
+        case "text_delta":
+            return TextDelta(
+                content_index=content_index,
+                raw_delta=raw_delta,
+                text=_delta_text(assistant_event_data),
+            )
+        case "thinking_delta":
+            return ThinkingDelta(
+                content_index=content_index,
+                raw_delta=raw_delta,
+                text=_delta_text(assistant_event_data),
+            )
+        case str() as kind:
+            return AssistantStreamNote(
+                content_index=content_index, kind=kind, raw_delta=raw_delta
+            )
+        case _:
+            return AssistantStreamNote(
+                content_index=content_index, kind="message_update", raw_delta=raw_delta
+            )
+
+
+def _decode_tool_execution(event: dict[str, Any]) -> ToolStarted | ToolSettled:
+    """Decode a tool execution boundary, defaulting malformed fields safely.
+
+    Missing/malformed args become an empty object and a non-object result is
+    wrapped as `{"value": ...}` so consumers always see JSON objects.
+    """
+    tool_call_id = _string_or_none(event.get("toolCallId"))
+    tool_name = _string_or_none(event.get("toolName"))
+    if event.get("type") == "tool_execution_start":
+        args = event.get("args")
+        return ToolStarted(
+            args=cast("dict[str, Any]", args) if isinstance(args, dict) else {},
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+        )
+    result = cast("object", event.get("result"))
+    return ToolSettled(
+        result=cast("dict[str, Any]", result)
+        if isinstance(result, dict)
+        else {"value": result},
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+    )
+
+
+def decode_turn_event(event: dict[str, Any]) -> TurnEvent | None:
+    """Decode one raw pi RPC protocol event into the typed turn vocabulary.
+
+    Returns `None` for records outside the turn vocabulary — non-assistant
+    message envelopes, malformed payloads, and unrelated protocol records such
+    as `rpc_error` — which streaming consumers simply skip.
+    """
+    match event.get("type"):
+        case "message_start" if _is_assistant_message(event.get("message")):
+            return ModelTurnStarted()
+        case "message_update":
+            return _decode_assistant_update(event.get("assistantMessageEvent"))
+        case "message_end" if _is_assistant_message(event.get("message")):
+            message_data = cast("dict[str, Any]", event["message"])
+            return MessageSettled(
+                reasoning=_joined_content_text(message_data, item_type="thinking"),
+                text=_joined_content_text(message_data, item_type="text"),
+            )
+        case "tool_execution_start" | "tool_execution_end":
+            return _decode_tool_execution(event)
+        case "agent_end":
+            return AgentEnded()
+        case _:
+            return None
+
+
 class PiRuntime:
     """A spawned pi RPC process registered with the host session registry."""
 
@@ -332,6 +565,32 @@ class PiRuntime:
                 raise TimeoutError(message) from None
             if event_type is None or event.get("type") == event_type:
                 return event
+
+    async def stream_turn(
+        self, *, wait_seconds: float = 5.0
+    ) -> AsyncGenerator[TurnEvent]:
+        """Yield one turn's typed events, finishing after `AgentEnded`.
+
+        Raw protocol records outside the turn vocabulary are skipped, so
+        consumers never see pi's wire shapes. A pi gone silent raises the same
+        named `TimeoutError` as `next_event`.
+
+        ```python
+        async for turn_event in runtime.stream_turn(wait_seconds=60.0):
+            match turn_event:
+                case MessageSettled(text=text):
+                    ...
+        ```
+        """
+        while True:
+            turn_event = decode_turn_event(
+                await self.next_event(wait_seconds=wait_seconds)
+            )
+            if turn_event is None:
+                continue
+            yield turn_event
+            if isinstance(turn_event, AgentEnded):
+                return
 
     async def shutdown(self) -> None:
         """Close RPC stdio, stop pi, and unregister the session id."""

@@ -26,7 +26,14 @@ from snektest import (
 
 from tether.agent_trace import AgentTraceRecorder
 from tether.embeddings import FakeEmbedder
-from tether.pi_runtime import PiRpcClient, PiRuntime, PiRuntimeConfig
+from tether.pi_runtime import (
+    AgentEnded,
+    MessageSettled,
+    ModelTurnStarted,
+    PiRpcClient,
+    PiRuntime,
+    PiRuntimeConfig,
+)
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import SessionRegistry
@@ -247,6 +254,43 @@ async def next_event_timeout_names_the_wait_it_exceeded() -> None:
         _ = await runtime.next_event(wait_seconds=0.05)
 
     assert_eq(str(exc_info.exception), "no pi event within 0.05s")
+
+
+@test()
+async def stream_turn_yields_typed_events_until_the_agent_ends() -> None:
+    """The turn stream decodes queued records, skips noise, and ends the turn."""
+    runtime = PiRuntime(
+        client=PiRpcClient(reader=ControlledByteReader(), writer=MemoryByteWriter()),
+        process=cast("asyncio.subprocess.Process", None),
+        session_id=str(uuid4()),
+        session_registry=SessionRegistry(),
+    )
+    for record in (
+        {"type": "message_start", "message": {"role": "assistant"}},
+        {"type": "unrelated_record"},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "done"}],
+            },
+        },
+        {"type": "agent_end"},
+    ):
+        runtime.client.events.put_nowait(record)
+
+    turn_events = [
+        turn_event async for turn_event in runtime.stream_turn(wait_seconds=0.5)
+    ]
+
+    assert_eq(
+        turn_events,
+        [
+            ModelTurnStarted(),
+            MessageSettled(reasoning="", text="done"),
+            AgentEnded(),
+        ],
+    )
 
 
 @test()
