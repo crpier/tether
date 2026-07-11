@@ -187,6 +187,29 @@ def post_transcript_when_provider_blocked_is_503() -> None:
 
 
 @test()
+def post_ignore_then_retry_round_trips_a_video() -> None:
+    """`POST .../ignore` purges a video from browse; `POST .../retry` returns it."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        login(client)
+        _ = client.get("/api/youtube")
+
+        ignored = client.post("/api/youtube/v1/ignore")
+        assert_eq(ignored.status_code, 200)
+        assert_eq(ignored.json()["state"], "ignored")
+
+        after_ignore = client.get("/api/youtube")
+        assert_not_in("v1", {v["video_id"] for v in after_ignore.json()["videos"]})
+
+        retried = client.post("/api/youtube/v1/retry")
+        assert_eq(retried.json()["state"], "active")
+
+        after_retry = client.get("/api/youtube")
+
+    assert_in("v1", {v["video_id"] for v in after_retry.json()["videos"]})
+
+
+@test()
 def post_ignore_unknown_video_is_404() -> None:
     """Ignoring a never-ingested video is a 404."""
     api = InMemoryYouTubeApi()
