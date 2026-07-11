@@ -9,9 +9,10 @@ Two layers, both fake-driven and offline:
   database and a *real* `FallbackTranscriptProvider` composed of fake sources
   (a non-blockable "captions" primary plus blockable "library"/"supadata"
   fallbacks). They assert the external behaviour the issue calls for: fall-through
-  coverage, all-unavailable terminality, the per-source block pause (escalating,
-  retry-after-honoring, restart-surviving, streak-resetting), and that an unpaused
-  source keeps flowing while another is paused.
+  coverage, all-unavailable terminality, the per-source block pause
+  (retry-after-forwarding, restart-surviving, streak-resetting; the escalation
+  math itself is proven once in `test_escalating_pause.py`), and that an
+  unpaused source keeps flowing while another is paused.
 """
 
 from __future__ import annotations
@@ -443,31 +444,9 @@ async def captions_keep_flowing_while_the_library_is_paused() -> None:
 
 
 @test()
-async def the_pause_escalates_across_consecutive_blocks() -> None:
-    """A second consecutive block doubles the cooldown (exponential in the streak)."""
-    captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
-    library = FakeSource({"v1": [Blocked()]}, name="library")
-    env = await load_fixture(make_env(captions, library))
-    await seed(env.db, "v1", liked_at=LATER)
-
-    _ = await env.worker.sync(logger=test_logger())
-    first = await _load_provider_pause(env.db, source="library")
-    assert_eq(first.streak, 1)
-    # base = 10 minutes for the first block.
-    assert_eq(first.paused_until, env.clock.now() + timedelta(minutes=10))
-
-    # Wait out the first cooldown, then block again.
-    env.clock.advance(timedelta(minutes=11))
-    _ = await env.worker.sync(logger=test_logger())
-    second = await _load_provider_pause(env.db, source="library")
-    assert_eq(second.streak, 2)
-    # base * 2**(2-1) = 20 minutes for the second consecutive block.
-    assert_eq(second.paused_until, env.clock.now() + timedelta(minutes=20))
-
-
-@test()
 async def the_pause_honors_a_retry_after_hint() -> None:
-    """A retry-after hint larger than the escalated cooldown wins."""
+    """The block's retry-after hint reaches the pause (the hint-vs-cooldown and
+    escalation math itself is proven once in `test_escalating_pause.py`)."""
     captions = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
     library = FakeSource(
         {"v1": [Blocked(retry_after=timedelta(hours=2))]}, name="library"
