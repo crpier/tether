@@ -2,9 +2,9 @@
 
 This is the seam a pi process calls back into: a set of `/internal/tools/*`
 endpoints, distinct from the public `/memories` REST surface and absent from the
-public OpenAPI document. It wires the same `MemoryService` capabilities the REST
-routes use — capture, browse, search, tether, edit, reject — but presents them
-as tools a weak model can call.
+public OpenAPI document. It mounts the same capability executes the REST routes
+derive from (`tether.memory_capabilities` for the Memory belt) but presents
+them as tools a weak model can call.
 
 Two guarantees shape every handler:
 
@@ -15,8 +15,10 @@ Two guarantees shape every handler:
 * **Past the gate, every response is the envelope.** `success`/`result`/
   `error`/`provenance`/`quota`, success and error paths alike. Malformed tool
   params (a non-UUID id, blank content) yield a well-formed `success:false`
-  envelope and touch no state — a dumb model can never be destructive. `quota`
-  is always null here; `provenance` carries a single Memory's provenance, null
+  envelope and touch no state — a dumb model can never be destructive. Domain
+  failures translate through the capability's `ErrorRule` table onto envelope
+  codes — the same table the REST surface maps onto status codes. `quota` is
+  always null here; `provenance` carries a single Memory's provenance, null
   for collections.
 """
 
@@ -26,8 +28,7 @@ import hmac
 import json
 from collections.abc import Awaitable, Callable
 from time import perf_counter
-from typing import Any, Literal, cast
-from uuid import UUID
+from typing import Any, cast
 
 import structlog
 from pydantic import UUID7, BaseModel, PositiveInt, ValidationError
@@ -36,54 +37,40 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, request_response
 
 from tether.agent_trace import AgentTraceRecorder
-from tether.bucket_items import (
-    BucketItemConflictError,
-    BucketItemNotFoundError,
-    BucketItemProvenance,
-    EmptyBucketSearchQueryError,
-    EmptyIntentContextError,
-    InvalidItemDataError,
+from tether.bucket_items import BucketItemProvenance
+from tether.capabilities import (
+    CapabilityOutcome,
+    ErrorRule,
+    ToolErrorCode,
+    bind_params,
+    catchable_exceptions,
+    match_rule,
 )
-from tether.logging import Logger, get_request_logger
-from tether.memories import (
-    EmptySearchQueryError,
-    Fetched,
-    Memory,
-    MemoryConflictError,
-    MemoryNotFoundError,
-    MemoryProvenance,
-    MemoryState,
+from tether.logging import get_request_logger
+from tether.memories import MemoryProvenance, MemoryState
+from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent
+from tether.memory_capabilities import (
+    browse as browse_memories,
 )
-from tether.recall import (
-    InvalidAnswerError,
-    InvalidPromptError,
-    RecallPromptNotFoundError,
-    StudyItemExistsError,
-    StudyItemNotFoundError,
-    TranscriptNotReadyError,
+from tether.memory_capabilities import (
+    capture as capture_memory,
 )
-from tether.routes import MemoryContent, MemoryRead
-from tether.triggers import (
-    InvalidTriggerSpecError,
-    TriggerConflictError,
-    TriggerNotFoundError,
+from tether.memory_capabilities import (
+    edit as edit_memory,
 )
-from tether.youtube import (
-    CacheMeta,
-    EmptyYouTubeSearchQueryError,
-    QuotaMeta,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
-    YouTubeQuotaExceededError,
-    YouTubeVideoNotFoundError,
+from tether.memory_capabilities import (
+    reject as reject_memory,
 )
+from tether.memory_capabilities import (
+    search as search_memories,
+)
+from tether.memory_capabilities import (
+    tether as tether_memory,
+)
+from tether.youtube import CacheMeta, QuotaMeta
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
 """Header carrying the per-process credential injected into pi at spawn."""
-
-type ToolErrorCode = Literal[
-    "invalid_input", "not_found", "conflict", "quota_exceeded", "upstream_error"
-]
 
 
 class SessionRegistry:
@@ -191,42 +178,20 @@ class ReviewDigestParams(BaseModel):
     """
 
 
-def _memory_reference(memory_id: UUID, version: PositiveInt) -> Memory[Fetched]:
-    """Build a detached Memory carrying only the identity a mutation acts on.
-
-    The service's tether/edit/delete read just `id` and `version` to run their
-    optimistic-concurrency check and re-fetch the live row, so a hand-built
-    reference suffices; `content` is a required column with no role here.
-    """
-    return cast(
-        "Memory[Fetched]",
-        Memory.construct(content="", id=memory_id, version=version),
-    )
-
-
-def _ok_memory(memory: Memory[Fetched]) -> ToolEnvelope:
-    """Envelope a single-Memory result, surfacing its provenance."""
-    return ToolEnvelope(
-        success=True,
-        result=MemoryRead.from_memory(memory).model_dump(mode="json"),
-        provenance=memory.provenance,
-    )
-
-
-def _ok_memories(memories: list[Memory[Fetched]]) -> ToolEnvelope:
-    """Envelope a Memory collection; provenance is null for collections."""
-    return ToolEnvelope(
-        success=True,
-        result=[
-            MemoryRead.from_memory(memory).model_dump(mode="json")
-            for memory in memories
-        ],
-    )
-
-
 def _fail(code: ToolErrorCode, message: str) -> ToolEnvelope:
     """Envelope a failure, leaving `result` null so no state leaks out."""
     return ToolEnvelope(success=False, error=ToolError(code=code, message=message))
+
+
+def _success(outcome: CapabilityOutcome) -> ToolEnvelope:
+    """Envelope a capability outcome, carrying its metadata alongside."""
+    return ToolEnvelope(
+        success=True,
+        result=outcome.result,
+        provenance=outcome.provenance,
+        quota=outcome.quota,
+        cache=outcome.cache,
+    )
 
 
 def _validation_message(error: ValidationError) -> str:
@@ -258,19 +223,24 @@ class ToolRoute(Route):
 class ToolEndpoint:
     """An authorised, envelope-wrapped handler for one tool capability.
 
-    The wrapper owns the cross-cutting contract so each tool body stays a thin
-    call into `MemoryService`: it enforces the secret + session gate (hard
-    `401`), validates the params model into a `success:false` envelope on
-    failure, and translates Memory domain errors onto envelope error codes.
+    The wrapper owns the cross-cutting contract so each capability execute
+    stays a thin call into its service: it enforces the secret + session gate
+    (hard `401`), validates the params model into a `success:false` envelope on
+    failure, translates the capability's `ErrorRule` table onto envelope error
+    codes, and wraps the returned `CapabilityOutcome` in the envelope.
     """
 
     def __init__(
         self,
         params_model: type[BaseModel],
-        handler: Callable[[Request, Any], Awaitable[ToolEnvelope]],
+        handler: Callable[[Request, Any], Awaitable[CapabilityOutcome]],
+        *,
+        errors: tuple[ErrorRule, ...] = (),
     ) -> None:
         self.params_model: type[BaseModel] = params_model
-        self.handler: Callable[[Request, Any], Awaitable[ToolEnvelope]] = handler
+        self.handler: Callable[[Request, Any], Awaitable[CapabilityOutcome]] = handler
+        self.errors: tuple[ErrorRule, ...] = errors
+        self._catchable: tuple[type[Exception], ...] = catchable_exceptions(errors)
 
     async def __call__(self, request: Request) -> Response:
         secret_failure = self._reject_invalid_secret(request)
@@ -372,41 +342,18 @@ class ToolEndpoint:
             return _fail("invalid_input", _validation_message(error))
 
     async def _run_handler(self, request: Request, params: BaseModel) -> ToolEnvelope:
+        """Run the capability, translating its domain failures onto envelope codes.
+
+        Absence is always the flat "not found" message so no identifier detail
+        leaks to the model; other codes carry the exception's own message.
+        """
         try:
-            return await self.handler(request, params)
-        except (
-            MemoryNotFoundError,
-            BucketItemNotFoundError,
-            TriggerNotFoundError,
-            YouTubeVideoNotFoundError,
-            TranscriptUnavailableError,
-            StudyItemNotFoundError,
-            RecallPromptNotFoundError,
-        ):
-            return _fail("not_found", "not found")
-        except (
-            MemoryConflictError,
-            BucketItemConflictError,
-            TriggerConflictError,
-            StudyItemExistsError,
-        ) as error:
-            return _fail("conflict", str(error))
-        except YouTubeQuotaExceededError as error:
-            return _fail("quota_exceeded", str(error))
-        except TranscriptTransientError as error:
-            return _fail("upstream_error", str(error))
-        except (
-            EmptySearchQueryError,
-            EmptyBucketSearchQueryError,
-            EmptyIntentContextError,
-            InvalidItemDataError,
-            InvalidTriggerSpecError,
-            EmptyYouTubeSearchQueryError,
-            TranscriptNotReadyError,
-            InvalidPromptError,
-            InvalidAnswerError,
-        ) as error:
-            return _fail("invalid_input", str(error))
+            outcome = await self.handler(request, params)
+        except self._catchable as error:
+            rule = match_rule(self.errors, error)
+            message = "not found" if rule.code == "not_found" else str(error)
+            return _fail(rule.code, message)
+        return _success(outcome)
 
 
 def _elapsed_ms(started: float) -> float:
@@ -423,69 +370,12 @@ def _trace_recorder(request: Request) -> AgentTraceRecorder | None:
     return getattr(request.app.state, "trace_recorder", None)
 
 
-def _tool_logger(request: Request) -> Logger:
-    """Return the request logging context installed by middleware."""
-    return get_request_logger(request)
-
-
-async def _capture(request: Request, params: CaptureParams) -> ToolEnvelope:
-    """Capture a loose Memory."""
-    memory = await request.app.state.memory_service.capture(
-        params.content, logger=_tool_logger(request)
-    )
-    return _ok_memory(memory)
-
-
-async def _browse(request: Request, params: BrowseParams) -> ToolEnvelope:
-    """Filter the review queue (`loose`) or browse the corpus (`tethered`)."""
-    memories = await request.app.state.memory_service.browse_by_state(
-        params.state, limit=params.limit, logger=_tool_logger(request)
-    )
-    return _ok_memories(memories)
-
-
-async def _search(request: Request, params: SearchParams) -> ToolEnvelope:
-    """Keyword Search over tethered Memories."""
-    memories = await request.app.state.memory_service.search(
-        params.q, limit=params.limit, logger=_tool_logger(request)
-    )
-    return _ok_memories(memories)
-
-
-async def _review_digest(request: Request, _params: ReviewDigestParams) -> ToolEnvelope:
+async def _review_digest(request: Request) -> CapabilityOutcome:
     """Compute the read-only AI-assisted Review digest over the live queue."""
     digest = await request.app.state.review_service.review_digest(
-        logger=_tool_logger(request)
+        logger=get_request_logger(request)
     )
-    return ToolEnvelope(success=True, result=digest.model_dump(mode="json"))
-
-
-async def _tether(request: Request, params: TetherParams) -> ToolEnvelope:
-    """Promote a loose Memory to tethered."""
-    memory = await request.app.state.memory_service.tether(
-        _memory_reference(params.memory_id, params.version),
-        logger=_tool_logger(request),
-    )
-    return _ok_memory(memory)
-
-
-async def _edit(request: Request, params: EditParams) -> ToolEnvelope:
-    """Edit a Memory's content; a human-authored edit keeps trust."""
-    memory = await request.app.state.memory_service.edit_content(
-        _memory_reference(params.memory_id, params.version),
-        params.content,
-        logger=_tool_logger(request),
-    )
-    return _ok_memory(memory)
-
-
-async def _reject(request: Request, params: RejectParams) -> ToolEnvelope:
-    """Soft-delete (reject) a Memory."""
-    memory = await request.app.state.memory_service.delete(
-        _memory_reference(params.memory_id, params.version),
-        logger=_tool_logger(request),
-    )
-    return _ok_memory(memory)
+    return CapabilityOutcome(result=digest.model_dump(mode="json"))
 
 
 def internal_tool_routes() -> list[Route]:
@@ -498,37 +388,47 @@ def internal_tool_routes() -> list[Route]:
     return [
         ToolRoute(
             "/internal/tools/capture",
-            ToolEndpoint(CaptureParams, _capture),
+            ToolEndpoint(
+                CaptureParams, bind_params(capture_memory), errors=MEMORY_ERRORS
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/browse",
-            ToolEndpoint(BrowseParams, _browse),
+            ToolEndpoint(
+                BrowseParams, bind_params(browse_memories), errors=MEMORY_ERRORS
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/search",
-            ToolEndpoint(SearchParams, _search),
+            ToolEndpoint(
+                SearchParams, bind_params(search_memories), errors=MEMORY_ERRORS
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/review_digest",
-            ToolEndpoint(ReviewDigestParams, _review_digest),
+            ToolEndpoint(ReviewDigestParams, bind_params(_review_digest)),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/tether",
-            ToolEndpoint(TetherParams, _tether),
+            ToolEndpoint(
+                TetherParams, bind_params(tether_memory), errors=MEMORY_ERRORS
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/edit",
-            ToolEndpoint(EditParams, _edit),
+            ToolEndpoint(EditParams, bind_params(edit_memory), errors=MEMORY_ERRORS),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/reject",
-            ToolEndpoint(RejectParams, _reject),
+            ToolEndpoint(
+                RejectParams, bind_params(reject_memory), errors=MEMORY_ERRORS
+            ),
             methods=["POST"],
         ),
     ]

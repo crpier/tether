@@ -2,10 +2,10 @@
 
 `triage_report` mounts alongside the Bucket item tools under
 `/internal/tools/*` — the loopback seam a pi process calls back into — reusing
-the same auth gate, params-to-envelope validation, and domain-error translation
-(`tether.tools`). It is the agent's entry point for the Triage report, callable
-on demand or from an agent-prompt Scheduled trigger (#18); either way it runs the
-same host computation and stores nothing.
+the same auth gate, params-to-envelope validation, and rule-driven domain-error
+translation (`tether.tools`). It is the agent's entry point for the Triage
+report, callable on demand or from an agent-prompt Scheduled trigger (#18);
+either way it runs the same host computation and stores nothing.
 """
 
 from __future__ import annotations
@@ -14,8 +14,9 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.routing import Route
 
-from tether.logging import Logger, get_request_logger
-from tether.tools import ToolEndpoint, ToolEnvelope, ToolRoute
+from tether.capabilities import CapabilityOutcome, bind_params
+from tether.logging import get_request_logger
+from tether.tools import ToolEndpoint, ToolRoute
 
 
 class TriageReportParams(BaseModel):
@@ -26,17 +27,12 @@ class TriageReportParams(BaseModel):
     """
 
 
-def _tool_logger(request: Request) -> Logger:
-    """Return the request logging context installed by middleware."""
-    return get_request_logger(request)
-
-
-async def _triage_report(request: Request, _params: TriageReportParams) -> ToolEnvelope:
+async def _triage_report(request: Request) -> CapabilityOutcome:
     """Compute the read-only Triage report over the live active Bucket list."""
     report = await request.app.state.triage_service.triage_report(
-        logger=_tool_logger(request)
+        logger=get_request_logger(request)
     )
-    return ToolEnvelope(success=True, result=report.model_dump(mode="json"))
+    return CapabilityOutcome(result=report.model_dump(mode="json"))
 
 
 def internal_triage_tool_routes() -> list[Route]:
@@ -48,7 +44,7 @@ def internal_triage_tool_routes() -> list[Route]:
     return [
         ToolRoute(
             "/internal/tools/triage_report",
-            ToolEndpoint(TriageReportParams, _triage_report),
+            ToolEndpoint(TriageReportParams, bind_params(_triage_report)),
             methods=["POST"],
         ),
     ]

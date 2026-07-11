@@ -2,46 +2,38 @@
 
 Each handler adapts one `YouTubeService` capability to HTTP: `endpoint`
 validates the query string with Pydantic, the handler calls
-`request.app.state.youtube_service`, and the result is serialised as a
-`YouTubeVideoRead` (or a list/transcript response that also carries the call's
-quota + cache metadata, mirroring the tool envelope). Domain exceptions
-translate to status codes at this boundary — `YouTubeVideoNotFoundError` and
-`TranscriptUnavailableError` -> 404, `EmptyYouTubeSearchQueryError` -> 400, and a
-depleted quota budget (`YouTubeQuotaExceededError`) -> 429.
+`request.app.state.youtube_service` (or, for ignore/retry, binds the path id
+onto the shared execute in `tether.youtube_capabilities`), and the result is
+serialised as a `YouTubeVideoRead` (or a list/transcript response that also
+carries the call's quota + cache metadata, mirroring the tool envelope).
+Domain exceptions translate to status codes through the domain's `ErrorRule`
+table (`YOUTUBE_ERRORS`) — the same table the internal tool surface maps onto
+envelope codes.
 """
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Awaitable, Callable
 from datetime import datetime
 
-from pydantic import UUID7, BaseModel
+from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.logging import Logger, get_request_logger
+from tether import youtube_capabilities
+from tether.capabilities import rest_response, translate_domain_errors
+from tether.logging import get_request_logger
 from tether.openapi import EndpointRoute, endpoint
 from tether.youtube import (
     BrowseResult,
     CacheMeta,
-    EmptyYouTubeSearchQueryError,
-    IngestedVideo,
-    IngestState,
     QuotaMeta,
     SearchResult,
-    TranscriptBlockedError,
     TranscriptResult,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
-    YouTubeQuotaExceededError,
     YouTubeSource,
     YouTubeSyncStatus,
-    YouTubeVideoNotFoundError,
-    derive_ingest_state,
 )
-from tether.youtube import Fetched as YouTubeFetched
+from tether.youtube_capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
 
 
 class BrowseYouTubeQuery(BaseModel):
@@ -63,59 +55,6 @@ class SearchYouTubeQuery(BaseModel):
     """
 
     q: str
-
-
-class YouTubeVideoRead(BaseModel):
-    """HTTP representation of an ingested video, exposing its derived state.
-
-    >>> read = YouTubeVideoRead(
-    ...     id="018f0000-0000-7000-8000-000000000000",
-    ...     video_id="v1",
-    ...     source="liked",
-    ...     state="active",
-    ...     title="Talk",
-    ...     channel="PyConf",
-    ...     topic="python",
-    ...     description="",
-    ...     transcript=None,
-    ...     created_at=datetime(2026, 1, 1),
-    ...     updated_at=datetime(2026, 1, 1),
-    ...     ignored_at=None,
-    ... )
-    >>> read.state
-    'active'
-    """
-
-    id: UUID7
-    video_id: str
-    source: YouTubeSource
-    state: IngestState
-    title: str
-    channel: str
-    topic: str
-    description: str
-    transcript: str | None
-    created_at: datetime
-    updated_at: datetime
-    ignored_at: datetime | None
-
-    @classmethod
-    def from_video(cls, video: IngestedVideo[YouTubeFetched]) -> YouTubeVideoRead:
-        """Render a stored ingested video as its HTTP representation."""
-        return cls(
-            id=video.id,
-            video_id=video.video_id,
-            source=video.source,
-            state=derive_ingest_state(video),
-            title=video.title,
-            channel=video.channel,
-            topic=video.topic,
-            description=video.description,
-            transcript=video.transcript,
-            created_at=video.created_at,
-            updated_at=video.updated_at,
-            ignored_at=video.ignored_at,
-        )
 
 
 class YouTubeVideoListResponse(BaseModel):
@@ -209,40 +148,12 @@ class YouTubeSyncStatusRead(BaseModel):
         )
 
 
-def _request_logger(request: Request) -> Logger:
-    """Return the request logging context installed by middleware."""
-    return get_request_logger(request)
-
-
 def _path_video_id(request: Request) -> str:
     """Return the `{video_id}` path segment."""
     return request.path_params["video_id"]
 
 
-def _translate_domain_errors(
-    handler: Callable[..., Awaitable[Response]],
-) -> Callable[..., Awaitable[Response]]:
-    """Map YouTube ingestion failures onto HTTP status codes at the boundary.
-
-    Absence (an unknown video, or a permanently unavailable/excluded transcript)
-    is a 404; a blank keyword query is a 400; a depleted quota budget is a 429; a
-    transient transcript failure or a blocked provider is a 503 (retry later).
-    """
-
-    @functools.wraps(handler)
-    async def translated(*arguments: object) -> Response:
-        try:
-            return await handler(*arguments)
-        except YouTubeVideoNotFoundError, TranscriptUnavailableError:
-            return JSONResponse({"detail": "youtube video not found"}, status_code=404)
-        except EmptyYouTubeSearchQueryError as error:
-            return JSONResponse({"detail": str(error)}, status_code=400)
-        except YouTubeQuotaExceededError as error:
-            return JSONResponse({"detail": str(error)}, status_code=429)
-        except (TranscriptTransientError, TranscriptBlockedError) as error:
-            return JSONResponse({"detail": str(error)}, status_code=503)
-
-    return translated
+_translate_domain_errors = translate_domain_errors(YOUTUBE_ERRORS)
 
 
 @endpoint(query=BrowseYouTubeQuery, response=YouTubeVideoListResponse)
@@ -252,7 +163,7 @@ async def browse_youtube(request: Request, query: BrowseYouTubeQuery) -> Respons
     result = await request.app.state.youtube_service.browse(
         topic=query.topic,
         source=query.source,
-        logger=_request_logger(request),
+        logger=get_request_logger(request),
     )
     return JSONResponse(
         YouTubeVideoListResponse.from_result(result).model_dump(mode="json")
@@ -263,7 +174,7 @@ async def browse_youtube(request: Request, query: BrowseYouTubeQuery) -> Respons
 async def youtube_sync_status(request: Request) -> Response:
     """Report the background ingestion's progress and health (local read only)."""
     status = await request.app.state.youtube_service.sync_status(
-        logger=_request_logger(request),
+        logger=get_request_logger(request),
     )
     return JSONResponse(
         YouTubeSyncStatusRead.from_status(status).model_dump(mode="json")
@@ -276,7 +187,7 @@ async def search_youtube(request: Request, query: SearchYouTubeQuery) -> Respons
     """Keyword Search across saved content and transcript text."""
     result = await request.app.state.youtube_service.search(
         query.q,
-        logger=_request_logger(request),
+        logger=get_request_logger(request),
     )
     return JSONResponse(
         YouTubeVideoListResponse.from_result(result).model_dump(mode="json")
@@ -289,7 +200,7 @@ async def fetch_youtube_transcript(request: Request) -> Response:
     """Fetch and persist a transcript for an ingested video."""
     result = await request.app.state.youtube_service.fetch_transcript(
         _path_video_id(request),
-        logger=_request_logger(request),
+        logger=get_request_logger(request),
     )
     return JSONResponse(
         YouTubeTranscriptResponse.from_result(result).model_dump(mode="json")
@@ -300,22 +211,16 @@ async def fetch_youtube_transcript(request: Request) -> Response:
 @_translate_domain_errors
 async def ignore_youtube_video(request: Request) -> Response:
     """Purge a video from ingestion."""
-    video = await request.app.state.youtube_service.ignore(
-        _path_video_id(request),
-        logger=_request_logger(request),
-    )
-    return JSONResponse(YouTubeVideoRead.from_video(video).model_dump(mode="json"))
+    outcome = await youtube_capabilities.ignore(request, _path_video_id(request))
+    return rest_response(outcome)
 
 
 @endpoint(response=YouTubeVideoRead)
 @_translate_domain_errors
 async def retry_youtube_video(request: Request) -> Response:
     """Un-ignore a previously purged video."""
-    video = await request.app.state.youtube_service.retry(
-        _path_video_id(request),
-        logger=_request_logger(request),
-    )
-    return JSONResponse(YouTubeVideoRead.from_video(video).model_dump(mode="json"))
+    outcome = await youtube_capabilities.retry(request, _path_video_id(request))
+    return rest_response(outcome)
 
 
 # `/api/youtube/search` precedes `/api/youtube/{video_id}/...` so the literal

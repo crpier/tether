@@ -1,17 +1,15 @@
-"""REST behavior tests for the Recall surface.
+"""Dual-surface behaviour tests for the Recall tethering path.
 
-These drive the mounted Starlette app through `TestClient` — request parsing,
-route wiring, service behavior, and serialization together — with a seeded
+One app, both shells: the REST routes assert request parsing, status codes,
+and response serialisation; the `/internal/tools/*` endpoints assert the
+uniform envelope. Both derive from `tether.recall_capabilities`, with a seeded
 `InMemoryYouTubeApi` for the source video and an injected fake study-item
-generator, so no live YouTube call or model run ever happens. The browser
-surface is authenticated, so each test logs in first.
+generator, so no live YouTube call or model run ever happens.
 
 The recall surface must never leak an answer key: a prompt read carries its
-`choices` but not `correct_index`, and these tests assert that.
+`choices` but not `correct_index`, and these tests assert that on both shells.
 """
 
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -19,13 +17,9 @@ from typing import Any
 from snektest import assert_eq, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
+from tests.surfaces import SESSION, call_tool, login, surface_client
 from tether.recall import GeneratedPrompt, GeneratedStudyItem
-from tether.server import AppConfig, create_app
-from tether.telemetry import TelemetrySettings
 from tether.youtube import InMemoryYouTubeApi, RawYouTubeVideo
-
-APP_PASSWORD = "test-app-password"
-SESSION_SECRET = "test-session-secret"
 
 
 class FakeGenerator:
@@ -53,45 +47,6 @@ def one_prompt_distillation() -> GeneratedStudyItem:
     )
 
 
-@contextmanager
-def make_client(
-    root: Path,
-    *,
-    api: InMemoryYouTubeApi,
-    distillation: GeneratedStudyItem | None = None,
-) -> Generator[TestClient]:
-    """A test app with a seeded YouTube API and an injected fake generator.
-
-    Yields the client only after the deferred boot sync mirror has completed
-    (see #122), so the seeded source video exists when recall routes run.
-    """
-    app = create_app(
-        config=AppConfig(
-            app_password=APP_PASSWORD,
-            database_path=root / "tether.sqlite3",
-            kb_root=root / ".tether",
-            session_secret=SESSION_SECRET,
-            youtube_api=api,
-            study_item_generator=FakeGenerator(
-                distillation or one_prompt_distillation()
-            ),
-        ),
-        telemetry_settings=TelemetrySettings(install_global_provider=False),
-    )
-    with TestClient(app) as client:
-        boot_done = getattr(app.state, "youtube_boot_done", None)
-        portal = client.portal
-        if boot_done is not None and portal is not None:
-            portal.call(boot_done.wait)
-        yield client
-
-
-def login(client: TestClient) -> None:
-    """Authenticate the test browser."""
-    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
-    assert_eq(response.status_code, 204)
-
-
 def seeded_api() -> InMemoryYouTubeApi:
     """A YouTube API holding one liked video with a transcript."""
     return InMemoryYouTubeApi(
@@ -104,6 +59,15 @@ def seeded_api() -> InMemoryYouTubeApi:
             )
         ],
         transcripts={"v1": "Async IO multiplexes one thread over many awaited waits."},
+    )
+
+
+def make_client(root: Path, api: InMemoryYouTubeApi) -> Any:
+    """A dual-surface app with a seeded YouTube API and a fake generator."""
+    return surface_client(
+        root,
+        youtube_api=api,
+        study_item_generator=FakeGenerator(one_prompt_distillation()),
     )
 
 
@@ -132,7 +96,7 @@ def due_prompts(client: TestClient) -> list[dict[str, Any]]:
 def starting_recall_creates_a_studying_item_from_a_transcribed_video() -> None:
     """`POST /api/recall/study-items` distils a transcribed video into a study item."""
     api = seeded_api()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api=api) as c:
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
         login(c)
         ingest_with_transcript(c)
         item = start_recall(c)
@@ -147,7 +111,7 @@ def starting_recall_creates_a_studying_item_from_a_transcribed_video() -> None:
 def starting_recall_without_a_transcript_is_unprocessable() -> None:
     """A source whose transcript was never fetched cannot be distilled (422)."""
     api = seeded_api()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api=api) as c:
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
         login(c)
         assert_eq(c.get("/api/youtube").status_code, 200)  # mirror, but no transcript
         response = c.post("/api/recall/study-items", json={"video_id": "v1"})
@@ -159,7 +123,7 @@ def starting_recall_without_a_transcript_is_unprocessable() -> None:
 def starting_recall_twice_for_one_source_conflicts() -> None:
     """A source becomes a study item at most once (409)."""
     api = seeded_api()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api=api) as c:
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
         login(c)
         ingest_with_transcript(c)
         _ = start_recall(c)
@@ -172,7 +136,7 @@ def starting_recall_twice_for_one_source_conflicts() -> None:
 def due_prompts_are_listed_without_the_answer_key() -> None:
     """`GET /api/recall/prompts` lists outstanding prompts but hides `correct_index`."""
     api = seeded_api()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api=api) as c:
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
         login(c)
         ingest_with_transcript(c)
         _ = start_recall(c)
@@ -189,7 +153,7 @@ def due_prompts_are_listed_without_the_answer_key() -> None:
 def answering_correctly_grades_and_reschedules_the_prompt() -> None:
     """`POST .../answer` grades the choice and pushes the prompt off the due list."""
     api = seeded_api()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api=api) as c:
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
         login(c)
         ingest_with_transcript(c)
         _ = start_recall(c)
@@ -206,3 +170,82 @@ def answering_correctly_grades_and_reschedules_the_prompt() -> None:
     assert_true(outcome["correct"])
     assert_eq(outcome["completed"], False)
     assert_eq(len(remaining), 0)
+
+
+@test()
+def the_recall_tool_belt_drives_the_full_flow() -> None:
+    """start, list-due, and answer all work through the tool seam's envelopes.
+
+    One flow exercises every Recall tool binding: the study item lands
+    `studying`, the due prompt hides `correct_index`, and answering grades the
+    chosen option.
+    """
+    api = seeded_api()
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
+        _ = call_tool(c, "browse_youtube")
+        _ = call_tool(c, "fetch_youtube_transcript", video_id="v1")
+
+        started = call_tool(c, "start_recall", video_id="v1")
+        assert_true(started["success"])
+        assert_eq(started["result"]["state"], "studying")
+        assert_eq(started["result"]["source_video_id"], "v1")
+
+        due = call_tool(c, "list_due_recall_prompts")
+        assert_true(due["success"])
+        assert_eq(len(due["result"]), 1)
+        prompt = due["result"][0]["prompt"]
+        assert_not_in("correct_index", prompt)
+
+        answered = call_tool(
+            c,
+            "answer_recall_prompt",
+            prompt_id=prompt["id"],
+            selected_index=0,
+            response_ms=1200,
+        )
+
+    assert_true(answered["success"])
+    assert_true(answered["result"]["correct"])
+    assert_eq(answered["result"]["completed"], False)
+
+
+@test()
+def start_recall_without_a_transcript_fails_with_invalid_input() -> None:
+    """Starting Recall on a source with no transcript is a clean envelope failure."""
+    api = seeded_api()
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
+        _ = call_tool(c, "browse_youtube")  # mirror only, no transcript fetched
+        envelope = call_tool(c, "start_recall", video_id="v1")
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "invalid_input")
+
+
+@test()
+def answering_an_unknown_prompt_is_not_found() -> None:
+    """Answering a non-existent prompt yields a `not_found` envelope."""
+    api = seeded_api()
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
+        envelope = call_tool(
+            c,
+            "answer_recall_prompt",
+            prompt_id="018f0000-0000-7000-8000-000000000000",
+            selected_index=0,
+            response_ms=1000,
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "not_found")
+
+
+@test()
+def the_tool_gate_rejects_a_missing_secret() -> None:
+    """A Recall tool call without the process secret is a hard 401, not an envelope."""
+    api = seeded_api()
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
+        response = c.post(
+            "/internal/tools/list_due_recall_prompts",
+            json={"session_id": SESSION},
+        )
+
+    assert_eq(response.status_code, 401)

@@ -2,8 +2,11 @@
 
 These mount alongside the Memory and Bucket item tools under
 `/internal/tools/*` — the loopback seam a pi process calls back into — reusing
-the same auth gate, params-to-envelope validation, and domain-error translation
-(`tether.tools`).
+the same auth gate, params-to-envelope validation, and rule-driven domain-error
+translation (`tether.tools`, with the table in `tether.youtube_capabilities`).
+Ignore/retry mount the executes shared with the REST routes; browse, search,
+and transcript fetch keep tool-specific bodies because their payloads are
+deliberately compact for the model's context, not the REST read models.
 
 Unlike the Memory and Bucket tools, these front an external, quota-metered API,
 so their envelopes populate the `quota` and `cache` fields: every browse,
@@ -17,18 +20,19 @@ from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.routing import Route
 
-from tether.logging import Logger, get_request_logger
-from tether.tools import ToolEndpoint, ToolEnvelope, ToolRoute
+from tether import youtube_capabilities
+from tether.capabilities import CapabilityOutcome, bind_params
+from tether.logging import get_request_logger
+from tether.tools import ToolEndpoint, ToolRoute
 from tether.youtube import (
     BrowseResult,
     Fetched,
     IngestedVideo,
     SearchResult,
-    TranscriptResult,
     YouTubeSource,
     derive_ingest_state,
 )
-from tether.youtube_routes import YouTubeVideoRead
+from tether.youtube_capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
 
 # Assistant-facing browse/search default page size. Caps how many rows a single
 # tool call can pour into the model's context (the corpus can hold thousands).
@@ -77,11 +81,6 @@ class RetryYouTubeVideoParams(BaseModel):
     video_id: str
 
 
-def _tool_logger(request: Request) -> Logger:
-    """Return the request logging context installed by middleware."""
-    return get_request_logger(request)
-
-
 def _description_preview(description: str) -> str | None:
     """A truncated description for a list row, or None when there's nothing to show.
 
@@ -123,11 +122,10 @@ def _compact_video(
     return row
 
 
-def _ok_videos(result: BrowseResult | SearchResult) -> ToolEnvelope:
-    """Envelope a compact video collection with the call's quota + cache."""
+def _compact_videos(result: BrowseResult | SearchResult) -> CapabilityOutcome:
+    """Render a compact video collection with the call's quota + cache."""
     snippets = result.snippets if isinstance(result, SearchResult) else {}
-    return ToolEnvelope(
-        success=True,
+    return CapabilityOutcome(
         result=[
             _compact_video(video, snippet=snippets.get(video.video_id))
             for video in result.videos
@@ -137,10 +135,38 @@ def _ok_videos(result: BrowseResult | SearchResult) -> ToolEnvelope:
     )
 
 
-def _ok_transcript(result: TranscriptResult) -> ToolEnvelope:
-    """Envelope a fetched transcript with the call's quota + cache metadata."""
-    return ToolEnvelope(
-        success=True,
+async def _browse(
+    request: Request,
+    topic: str | None = None,
+    source: YouTubeSource | None = None,
+    limit: int = _DEFAULT_LIST_LIMIT,
+) -> CapabilityOutcome:
+    """Browse ingested videos, optionally filtered by topic and source."""
+    result = await request.app.state.youtube_service.browse(
+        topic=topic,
+        source=source,
+        limit=limit,
+        logger=get_request_logger(request),
+    )
+    return _compact_videos(result)
+
+
+async def _search(
+    request: Request, q: str, limit: int = _DEFAULT_LIST_LIMIT
+) -> CapabilityOutcome:
+    """Keyword Search across saved content and transcript text."""
+    result = await request.app.state.youtube_service.search(
+        q, limit=limit, logger=get_request_logger(request)
+    )
+    return _compact_videos(result)
+
+
+async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcome:
+    """Fetch and persist a transcript for an ingested video."""
+    result = await request.app.state.youtube_service.fetch_transcript(
+        video_id, logger=get_request_logger(request)
+    )
+    return CapabilityOutcome(
         result={
             "video": YouTubeVideoRead.from_video(result.video).model_dump(mode="json"),
             "transcript": result.transcript,
@@ -148,59 +174,6 @@ def _ok_transcript(result: TranscriptResult) -> ToolEnvelope:
         quota=result.quota,
         cache=result.cache,
     )
-
-
-def _ok_video(video: IngestedVideo[Fetched]) -> ToolEnvelope:
-    """Envelope a single ingested video (ignore/retry carry no quota/cache)."""
-    return ToolEnvelope(
-        success=True,
-        result=YouTubeVideoRead.from_video(video).model_dump(mode="json"),
-    )
-
-
-async def _browse(request: Request, params: BrowseYouTubeParams) -> ToolEnvelope:
-    """Browse ingested videos, optionally filtered by topic and source."""
-    result = await request.app.state.youtube_service.browse(
-        topic=params.topic,
-        source=params.source,
-        limit=params.limit,
-        logger=_tool_logger(request),
-    )
-    return _ok_videos(result)
-
-
-async def _search(request: Request, params: SearchYouTubeParams) -> ToolEnvelope:
-    """Keyword Search across saved content and transcript text."""
-    result = await request.app.state.youtube_service.search(
-        params.q, limit=params.limit, logger=_tool_logger(request)
-    )
-    return _ok_videos(result)
-
-
-async def _fetch_transcript(
-    request: Request, params: FetchYouTubeTranscriptParams
-) -> ToolEnvelope:
-    """Fetch and persist a transcript for an ingested video."""
-    result = await request.app.state.youtube_service.fetch_transcript(
-        params.video_id, logger=_tool_logger(request)
-    )
-    return _ok_transcript(result)
-
-
-async def _ignore(request: Request, params: IgnoreYouTubeVideoParams) -> ToolEnvelope:
-    """Purge a video from ingestion."""
-    video = await request.app.state.youtube_service.ignore(
-        params.video_id, logger=_tool_logger(request)
-    )
-    return _ok_video(video)
-
-
-async def _retry(request: Request, params: RetryYouTubeVideoParams) -> ToolEnvelope:
-    """Return a previously purged video to ingestion."""
-    video = await request.app.state.youtube_service.retry(
-        params.video_id, logger=_tool_logger(request)
-    )
-    return _ok_video(video)
 
 
 def internal_youtube_tool_routes() -> list[Route]:
@@ -212,27 +185,43 @@ def internal_youtube_tool_routes() -> list[Route]:
     return [
         ToolRoute(
             "/internal/tools/browse_youtube",
-            ToolEndpoint(BrowseYouTubeParams, _browse),
+            ToolEndpoint(
+                BrowseYouTubeParams, bind_params(_browse), errors=YOUTUBE_ERRORS
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/search_youtube",
-            ToolEndpoint(SearchYouTubeParams, _search),
+            ToolEndpoint(
+                SearchYouTubeParams, bind_params(_search), errors=YOUTUBE_ERRORS
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/fetch_youtube_transcript",
-            ToolEndpoint(FetchYouTubeTranscriptParams, _fetch_transcript),
+            ToolEndpoint(
+                FetchYouTubeTranscriptParams,
+                bind_params(_fetch_transcript),
+                errors=YOUTUBE_ERRORS,
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/ignore_youtube_video",
-            ToolEndpoint(IgnoreYouTubeVideoParams, _ignore),
+            ToolEndpoint(
+                IgnoreYouTubeVideoParams,
+                bind_params(youtube_capabilities.ignore),
+                errors=YOUTUBE_ERRORS,
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/retry_youtube_video",
-            ToolEndpoint(RetryYouTubeVideoParams, _retry),
+            ToolEndpoint(
+                RetryYouTubeVideoParams,
+                bind_params(youtube_capabilities.retry),
+                errors=YOUTUBE_ERRORS,
+            ),
             methods=["POST"],
         ),
     ]

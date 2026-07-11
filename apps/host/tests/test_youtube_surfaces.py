@@ -1,21 +1,20 @@
-"""REST behaviour tests for YouTube ingestion.
+"""Dual-surface behaviour tests for YouTube ingestion.
 
-These drive the mounted Starlette app through `TestClient` — request parsing,
-route wiring, service behaviour, and response serialisation together — with a
-seeded `InMemoryYouTubeApi` so no live YouTube call is ever made. The browser
-surface is authenticated, so each test logs in first.
+One app, both shells, seeded with an `InMemoryYouTubeApi` so no live YouTube
+call is ever made. The REST routes serve full read models with quota + cache in
+the body; the `/internal/tools/*` endpoints serve deliberately compact,
+context-budgeted rows with quota + cache on the envelope. Both translate
+failures through `tether.youtube_capabilities.YOUTUBE_ERRORS`, and ignore/retry
+share one capability execute outright.
 """
 
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
-from snektest import assert_eq, assert_in, assert_not_in, test
-from starlette.testclient import TestClient
+from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 
-from tether.server import AppConfig, create_app
-from tether.telemetry import TelemetrySettings
+from tests.surfaces import call_tool, login, surface_client
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
     FetchedTranscript,
@@ -24,9 +23,6 @@ from tether.youtube import (
     TranscriptBlockedError,
     TranscriptProvider,
 )
-
-APP_PASSWORD = "test-app-password"
-SESSION_SECRET = "test-session-secret"
 
 
 def video(
@@ -47,49 +43,25 @@ def video(
     )
 
 
-@contextmanager
 def make_client(
     root: Path,
     api: InMemoryYouTubeApi,
     *,
     quota_limit: int = 1000,
     provider: TranscriptProvider | None = None,
-) -> Generator[TestClient]:
-    """A test app whose YouTube service is backed by the given in-memory API.
+) -> Any:
+    """A dual-surface app whose YouTube service is backed by the in-memory API.
 
-    Yields the client only after the deferred boot sync mirror has completed
-    (see #122), so tests observe the seeded liked videos deterministically.
+    The background transcript sync is disabled so quota spend and cache hits
+    stay deterministic; `surface_client` waits for the deferred boot mirror.
     """
-    app = create_app(
-        config=AppConfig(
-            app_password=APP_PASSWORD,
-            database_path=root / "tether.sqlite3",
-            kb_root=root / ".tether",
-            session_secret=SESSION_SECRET,
-            youtube_api=api,
-            youtube_daily_quota_limit=quota_limit,
-            transcript_provider=provider,
-            transcript_sync_enabled=False,
-        ),
-        telemetry_settings=TelemetrySettings(install_global_provider=False),
+    return surface_client(
+        root,
+        youtube_api=api,
+        youtube_daily_quota_limit=quota_limit,
+        transcript_provider=provider,
+        transcript_sync_enabled=False,
     )
-    with TestClient(app) as client:
-        _wait_for_boot(client, app)
-        yield client
-
-
-def _wait_for_boot(client: TestClient, app: object) -> None:
-    """Block the test until the app's deferred YouTube boot sync has finished."""
-    boot_done = getattr(getattr(app, "state", None), "youtube_boot_done", None)
-    portal = client.portal
-    if boot_done is not None and portal is not None:
-        portal.call(boot_done.wait)
-
-
-def login(client: TestClient) -> None:
-    """Authenticate the test browser."""
-    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
-    assert_eq(response.status_code, 204)
 
 
 @test()
@@ -216,7 +188,7 @@ def post_transcript_when_provider_blocked_is_503() -> None:
 
 @test()
 def post_ignore_then_retry_round_trips_a_video() -> None:
-    """Ignore purges a video from browse; retry returns it."""
+    """`POST .../ignore` purges a video from browse; `POST .../retry` returns it."""
     api = InMemoryYouTubeApi(liked=[video("v1")])
     with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
         login(client)
@@ -292,3 +264,182 @@ def get_youtube_requires_authentication() -> None:
         response = client.get("/api/youtube")
 
     assert_eq(response.status_code, 401)
+
+
+@test()
+def browse_returns_videos_with_quota_and_cache_metadata() -> None:
+    """A successful browse conforms to the envelope and exposes quota + cache.
+
+    The boot sync mirrors the seeded liked videos; the browse reads local state,
+    so the envelope reports a cache hit and the day's persisted spend.
+    """
+    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "browse_youtube")
+
+    assert_eq(envelope["success"], True)
+    found = {item["video_id"] for item in envelope["result"]}
+    assert_in("v1", found)
+    assert_in("v2", found)
+    assert_eq(envelope["cache"]["hit"], True)
+    assert_eq(envelope["cache"]["source"], "cache")
+    assert_eq(envelope["quota"]["limit"], 1000)
+    assert_eq(envelope["quota"]["used"], 2)
+
+
+@test()
+def browse_rows_are_compact_and_omit_the_transcript() -> None:
+    """List rows carry only pick fields — never the (context-heavy) transcript.
+
+    Even after a transcript is fetched and stored, browse must not echo it back:
+    the model fetches a specific transcript on demand.
+    """
+    api = InMemoryYouTubeApi(
+        liked=[video("v1", title="Talk")],
+        transcripts={"v1": "today we cover coroutines"},
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        _ = call_tool(client, "fetch_youtube_transcript", video_id="v1")
+        envelope = call_tool(client, "browse_youtube")
+
+    row = envelope["result"][0]
+    assert_not_in("transcript", row)
+    # This video has no description, so the optional field is absent.
+    assert_not_in("description", row)
+    assert_eq(
+        set(row),
+        {"video_id", "title", "channel", "topic", "source", "state"},
+    )
+
+
+@test()
+def list_rows_carry_a_truncated_description() -> None:
+    """A row exposes a truncated description so the list self-disambiguates.
+
+    Near-duplicate titles can be told apart from the list alone, without a
+    transcript fetch or a reworded re-search.
+    """
+    long_description = "word " * 200  # ~1000 chars, well over the preview cap.
+    api = InMemoryYouTubeApi(
+        liked=[video("v1", description=long_description)],
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "browse_youtube")
+
+    description = envelope["result"][0]["description"]
+    assert_eq(description.endswith("…"), True)
+    assert_eq(len(description) <= 201, True)
+
+
+@test()
+def list_rows_omit_the_description_when_blank() -> None:
+    """An empty description leaves the optional field off the row entirely."""
+    api = InMemoryYouTubeApi(liked=[video("v1", description="   ")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "browse_youtube")
+
+    assert_not_in("description", envelope["result"][0])
+
+
+@test()
+def browse_caps_rows_at_the_limit() -> None:
+    """A browse returns at most `limit` rows."""
+    api = InMemoryYouTubeApi(liked=[video(f"v{n}") for n in range(5)])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "browse_youtube", limit=2)
+
+    assert_eq(len(envelope["result"]), 2)
+
+
+@test()
+def search_caps_rows_at_the_limit() -> None:
+    """A keyword search returns at most `limit` rows."""
+    api = InMemoryYouTubeApi(
+        liked=[video(f"v{n}", title="async python") for n in range(5)]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "search_youtube", q="async", limit=2)
+
+    assert_eq(len(envelope["result"]), 2)
+
+
+@test()
+def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
+    """A depleted budget surfaces as a well-formed quota_exceeded envelope.
+
+    The boot sync spends the whole day's budget (list + detail) mirroring the one
+    liked video, so the upstream transcript fetch has nothing left and the guard
+    refuses it before calling out.
+    """
+    api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, quota_limit=2) as client,
+    ):
+        envelope = call_tool(client, "fetch_youtube_transcript", video_id="v1")
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "quota_exceeded")
+    assert_is_none(envelope["result"])
+
+
+@test()
+def ignore_then_retry_round_trips_a_video() -> None:
+    """Ignoring purges a video from browse; retry returns it."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        _ = call_tool(client, "browse_youtube")
+
+        ignored = call_tool(client, "ignore_youtube_video", video_id="v1")
+        assert_eq(ignored["result"]["state"], "ignored")
+
+        after_ignore = call_tool(client, "browse_youtube")
+        assert_not_in("v1", {v["video_id"] for v in after_ignore["result"]})
+
+        retried = call_tool(client, "retry_youtube_video", video_id="v1")
+        assert_eq(retried["result"]["state"], "active")
+
+        after_retry = call_tool(client, "browse_youtube")
+
+    assert_in("v1", {v["video_id"] for v in after_retry["result"]})
+
+
+@test()
+def ignoring_an_unknown_video_yields_a_not_found_envelope() -> None:
+    """Purging a never-ingested video is a well-formed not-found envelope."""
+    api = InMemoryYouTubeApi()
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "ignore_youtube_video", video_id="nope")
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "not_found")
+
+
+@test()
+def fetch_transcript_returns_text_and_makes_it_searchable() -> None:
+    """Fetching a transcript returns its text and feeds transcript Search."""
+    api = InMemoryYouTubeApi(
+        liked=[video("v1", title="Talk")],
+        transcripts={"v1": "today we cover coroutines"},
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        _ = call_tool(client, "browse_youtube")
+
+        fetched = call_tool(client, "fetch_youtube_transcript", video_id="v1")
+        assert_eq(fetched["result"]["transcript"], "today we cover coroutines")
+        assert_eq(fetched["cache"]["hit"], False)
+
+        found = call_tool(client, "search_youtube", q="coroutines")
+
+    assert_in("v1", {item["video_id"] for item in found["result"]})
+
+
+@test()
+def search_rejects_a_blank_query() -> None:
+    """A blank Search query is a well-formed invalid_input envelope."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        envelope = call_tool(client, "search_youtube", q="   ")
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "invalid_input")

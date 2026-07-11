@@ -1,42 +1,23 @@
-"""REST behavior tests for Bucket items.
+"""Dual-surface behaviour tests for Bucket items.
 
-These drive the mounted Starlette app through `TestClient`, so request parsing,
-route wiring, service behavior, and response serialization are checked together.
+One app, both shells: the REST routes assert request parsing, status codes,
+and response serialisation; the `/internal/tools/*` endpoints assert the
+per-type Add spellings and the uniform envelope. Both derive from
+`tether.bucket_capabilities`, so shared service behaviour (dedup advisory,
+active-only search, terminal history) is exercised once through whichever
+shell states it most directly.
 """
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snektest import assert_eq, assert_in, assert_not_in, test
+from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 from starlette.testclient import TestClient
 
-from tether.server import AppConfig, create_app
-from tether.telemetry import TelemetrySettings
+from tests.surfaces import call_tool, login, surface_client
 
-APP_PASSWORD = "test-app-password"
-SESSION_SECRET = "test-session-secret"
-
-
-def make_client(root: Path) -> TestClient:
-    """Create a test app with isolated persistent DB and `.tether` root."""
-    return TestClient(
-        create_app(
-            config=AppConfig(
-                app_password=APP_PASSWORD,
-                database_path=root / "tether.sqlite3",
-                kb_root=root / ".tether",
-                session_secret=SESSION_SECRET,
-            ),
-            telemetry_settings=TelemetrySettings(install_global_provider=False),
-        )
-    )
-
-
-def login(client: TestClient) -> None:
-    """Authenticate the test browser."""
-    response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
-    assert_eq(response.status_code, 204)
+make_client = surface_client
 
 
 def add_item(
@@ -245,3 +226,121 @@ def browse_deleted_returns_retained_history() -> None:
 
     found = [item["id"] for item in response.json()]
     assert_in(gone["item"]["id"], found)
+
+
+@test()
+def add_movie_returns_a_well_formed_success_envelope() -> None:
+    """A successful Add conforms to the envelope; quota is null internally."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "add_movie",
+            title="Dune",
+            year=2021,
+            intent_context="a friend raved",
+        )
+
+    assert_eq(envelope["success"], True)
+    item = envelope["result"]["item"]
+    assert_eq(item["item_type"], "movie")
+    assert_eq(item["state"], "active")
+    assert_eq(item["data"], {"title": "Dune", "year": 2021})
+    assert_eq(item["intent_context"], "a friend raved")
+    assert_eq(envelope["result"]["dedup"]["severity"], "none")
+    assert_eq(envelope["provenance"], {"kind": "manual"})
+    assert_is_none(envelope["quota"])
+
+
+@test()
+def add_movie_without_year_stores_a_null_year() -> None:
+    """Year is optional at the tool seam; the stored payload is the full type."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client, "add_movie", title="Arrival", intent_context="sci-fi"
+        )
+
+    assert_eq(envelope["result"]["item"]["data"], {"title": "Arrival", "year": None})
+
+
+@test()
+def add_place_carries_its_own_fields() -> None:
+    """A place Add carries differently-shaped payload fields than a movie."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "add_place",
+            name="Lisbon",
+            location="Portugal",
+            intent_context="want to visit",
+        )
+
+    item = envelope["result"]["item"]
+    assert_eq(item["item_type"], "place")
+    assert_eq(item["data"], {"name": "Lisbon", "location": "Portugal"})
+
+
+@test()
+def add_blank_intent_yields_a_success_false_envelope() -> None:
+    """Blank intent context is rejected as a well-formed envelope, adding nothing."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(client, "add_movie", title="Dune", intent_context="   ")
+
+        assert_eq(envelope["success"], False)
+        assert_eq(envelope["error"]["code"], "invalid_input")
+        assert_is_none(envelope["result"])
+
+        found = call_tool(client, "search_bucket_items", q="Dune")
+
+    assert_eq(found["result"], [])
+
+
+@test()
+def completing_a_terminal_item_yields_a_conflict_envelope() -> None:
+    """A complete succeeds through the tool seam; a second one is a conflict."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        added = call_tool(client, "add_movie", title="Dune", intent_context="watch")
+        item = added["result"]["item"]
+        first = call_tool(
+            client,
+            "complete_bucket_item",
+            bucket_item_id=item["id"],
+            version=item["version"],
+        )
+        assert_eq(first["success"], True)
+        assert_eq(first["result"]["state"], "completed")
+
+        envelope = call_tool(
+            client,
+            "complete_bucket_item",
+            bucket_item_id=item["id"],
+            version=item["version"],
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "conflict")
+
+
+@test()
+def tool_search_excludes_items_deleted_through_the_tool_seam() -> None:
+    """Delete and Search work through the tool seam: terminal items drop out."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        active = call_tool(
+            client, "add_movie", title="Blade Runner", intent_context="a"
+        )
+        done = call_tool(
+            client, "add_movie", title="Blade of Glory", intent_context="b"
+        )
+        done_item = done["result"]["item"]
+        deleted = call_tool(
+            client,
+            "delete_bucket_item",
+            bucket_item_id=done_item["id"],
+            version=done_item["version"],
+        )
+        assert_eq(deleted["result"]["state"], "deleted")
+
+        found = call_tool(client, "search_bucket_items", q="Blade")
+
+    found_ids = [item["id"] for item in found["result"]]
+    assert_in(active["result"]["item"]["id"], found_ids)
+    assert_not_in(done_item["id"], found_ids)

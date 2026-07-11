@@ -2,7 +2,10 @@
 
 These mount alongside the Memory and Bucket tools under `/internal/tools/*` —
 the loopback seam a pi process calls back into — reusing the same auth gate,
-params-to-envelope validation, and domain-error translation (`tether.tools`).
+params-to-envelope validation, and rule-driven domain-error translation
+(`tether.tools`). The capability executes live in
+`tether.trigger_capabilities`, shared with the REST routes; this module only
+names each tool's params model and mounts it.
 
 The agent can set up a reminder (`create_trigger`), see what is scheduled
 (`list_triggers`), and cancel one (`delete_trigger`). Editing an existing
@@ -12,41 +15,23 @@ concurrency on a freshly-read version is natural.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import cast
-from uuid import UUID
-
-from pydantic import UUID7, AwareDatetime, BaseModel, PositiveInt
+from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.routing import Route
 
-from tether.logging import Logger, get_request_logger
-from tether.tools import ToolEndpoint, ToolEnvelope, ToolRoute
-from tether.trigger_routes import TriggerRead
-from tether.triggers import (
-    Fetched,
-    ScheduledTrigger,
-    TriggerActionKind,
-    TriggerRecurrence,
-    TriggerSpec,
-)
+from tether import trigger_capabilities
+from tether.capabilities import CapabilityOutcome, bind_params
+from tether.tools import ToolEndpoint, ToolRoute
+from tether.trigger_capabilities import TRIGGER_ERRORS, TriggerSpecBody
 
 
-class CreateTriggerParams(BaseModel):
+class CreateTriggerParams(TriggerSpecBody):
     """Params for scheduling a trigger.
 
     `once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and
     `time_of_day` (and a `weekday` for weekly). Mismatched fields are rejected
     as a well-formed `invalid_input` envelope, never a corrupt row.
     """
-
-    recurrence: TriggerRecurrence
-    action_kind: TriggerActionKind
-    payload: str
-    timezone: str | None = None
-    time_of_day: str | None = None
-    weekday: int | None = None
-    fire_at: AwareDatetime | None = None
 
 
 class ListTriggersParams(BaseModel):
@@ -62,87 +47,11 @@ class DeleteTriggerParams(BaseModel):
     version: PositiveInt
 
 
-def _trigger_reference(
-    trigger_id: UUID, version: PositiveInt
-) -> ScheduledTrigger[Fetched]:
-    """Build a detached trigger carrying only the identity a delete acts on."""
-    return cast(
-        "ScheduledTrigger[Fetched]",
-        ScheduledTrigger.construct(
-            id=trigger_id,
-            version=version,
-            recurrence="once",
-            action_kind="message",
-            payload="",
-            timezone="UTC",
-            next_fire_at=datetime(1970, 1, 1, tzinfo=UTC),
-            status="active",
-            attempts=0,
-        ),
-    )
-
-
-def _ok_trigger(trigger: ScheduledTrigger[Fetched]) -> ToolEnvelope:
-    """Envelope a single-trigger result."""
-    return ToolEnvelope(
-        success=True,
-        result=TriggerRead.from_trigger(trigger).model_dump(mode="json"),
-    )
-
-
-def _ok_triggers(triggers: list[ScheduledTrigger[Fetched]]) -> ToolEnvelope:
-    """Envelope a trigger collection."""
-    return ToolEnvelope(
-        success=True,
-        result=[
-            TriggerRead.from_trigger(trigger).model_dump(mode="json")
-            for trigger in triggers
-        ],
-    )
-
-
-def _tool_logger(request: Request) -> Logger:
-    """Return the request logging context installed by middleware."""
-    return get_request_logger(request)
-
-
 async def _create_trigger(
     request: Request, params: CreateTriggerParams
-) -> ToolEnvelope:
-    """Schedule a new trigger."""
-    spec = TriggerSpec(
-        recurrence=params.recurrence,
-        action_kind=params.action_kind,
-        payload=params.payload,
-        timezone=params.timezone,
-        time_of_day=params.time_of_day,
-        weekday=params.weekday,
-        fire_at=params.fire_at,
-    )
-    trigger = await request.app.state.trigger_service.create(
-        spec, now=datetime.now(UTC), logger=_tool_logger(request)
-    )
-    return _ok_trigger(trigger)
-
-
-async def _list_triggers(request: Request, params: ListTriggersParams) -> ToolEnvelope:
-    """List live Scheduled triggers."""
-    triggers = await request.app.state.trigger_service.list_triggers(
-        limit=params.limit, logger=_tool_logger(request)
-    )
-    return _ok_triggers(triggers)
-
-
-async def _delete_trigger(
-    request: Request, params: DeleteTriggerParams
-) -> ToolEnvelope:
-    """Delete a Scheduled trigger."""
-    trigger = await request.app.state.trigger_service.delete(
-        _trigger_reference(params.trigger_id, params.version),
-        now=datetime.now(UTC),
-        logger=_tool_logger(request),
-    )
-    return _ok_trigger(trigger)
+) -> CapabilityOutcome:
+    """Project the flat tool params onto the shared create capability."""
+    return await trigger_capabilities.create(request, params.to_spec())
 
 
 def internal_trigger_tool_routes() -> list[Route]:
@@ -154,17 +63,25 @@ def internal_trigger_tool_routes() -> list[Route]:
     return [
         ToolRoute(
             "/internal/tools/create_trigger",
-            ToolEndpoint(CreateTriggerParams, _create_trigger),
+            ToolEndpoint(CreateTriggerParams, _create_trigger, errors=TRIGGER_ERRORS),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/list_triggers",
-            ToolEndpoint(ListTriggersParams, _list_triggers),
+            ToolEndpoint(
+                ListTriggersParams,
+                bind_params(trigger_capabilities.list_triggers),
+                errors=TRIGGER_ERRORS,
+            ),
             methods=["POST"],
         ),
         ToolRoute(
             "/internal/tools/delete_trigger",
-            ToolEndpoint(DeleteTriggerParams, _delete_trigger),
+            ToolEndpoint(
+                DeleteTriggerParams,
+                bind_params(trigger_capabilities.delete),
+                errors=TRIGGER_ERRORS,
+            ),
             methods=["POST"],
         ),
     ]
