@@ -1,17 +1,13 @@
-"""The TranscriptIndex adapter: a hybrid retriever over transcript chunks.
+"""The TranscriptIndex adapter: the chunk-shaped projection of `HybridLanceTable`.
 
-A sibling of `SearchIndex` (Memories), this owns a second embedded LanceDB table
-at `<index_dir>/` shaped for transcript chunks. Each row carries four columns —
-`id` (a chunk uuid), `video_id` (the parent video), `content` (the chunk text),
-and a fixed-size `vector`. A hit returns the parent `video_id` plus the chunk
-text as a snippet, so the search path can dedupe chunks to videos and show why
-each matched without re-fetching the transcript.
-
-It is a deliberate twin rather than a generalization of `SearchIndex`: the two
-stay domain-shaped (Memory ids in/out there, video ids + snippets here) so
-neither carries the other's concerns. Design choices match `SearchIndex` — native
-FTS only (no vector ANN index; exact flat-scan cosine wins at single-user scale),
-RRF hybrid fusion, and a disposable projection rebuilt from canonical SQLite.
+A sibling of `SearchIndex` (Memories) over the same generic hybrid retriever in
+`tether.hybrid_lance_table`, which owns the LanceDB mechanics (native FTS +
+flat-scan cosine fused by RRF, merge-insert upserts, the self-healing
+`optimize`). This module fixes the transcript column set — `id` (a chunk uuid),
+a `video_id` payload column, `content`, and the vector — and translates at the
+boundary: `ChunkDocument` in, `ChunkCandidate` out. A hit returns the parent
+`video_id` plus the chunk text as a snippet, so the search path can dedupe
+chunks to videos and show why each matched without re-fetching the transcript.
 
 >>> index = await TranscriptIndex.open(index_dir=Path(".tether/yt-index"), vector_dim=384)
 >>> await index.upsert([ChunkDocument(id=chunk_id, video_id="abc", content=text, vector=vec)])
@@ -24,34 +20,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid5
 
-import pyarrow as pa
-from lancedb import connect_async
-from lancedb.index import FTS
-from lancedb.rerankers import RRFReranker
+from tether.hybrid_lance_table import HybridLanceTable, TableDocument
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from lancedb.db import AsyncConnection
-    from lancedb.table import AsyncTable
-
     from tether.logging import Logger
-
-# Marker lance stamps on the "file a bug report" class of internal errors — the
-# recoverable-by-rewrite failures (e.g. a fragment whose compaction batch-decode
-# overruns its values buffer). Matched case-insensitively on the message.
-_LANCE_INTERNAL_ERROR_MARKER = "encountered internal error"
 
 _TABLE = "transcript_chunks"
 """The single table name inside the transcript index dataset."""
 
-_ID_COLUMN = "id"
 _VIDEO_COLUMN = "video_id"
-_CONTENT_COLUMN = "content"
-_VECTOR_COLUMN = "vector"
-_SCORE_COLUMN = "_relevance_score"
-"""Column LanceDB attaches to reranked hybrid results (the RRF score)."""
+"""Payload column carrying each chunk's parent video id."""
 
 _CHUNK_NAMESPACE = UUID("6f3c0a1e-2b7d-5e84-9a1f-0c4d8e2b6f10")
 """Fixed namespace for deterministic chunk ids (uuid5)."""
@@ -70,21 +51,6 @@ def chunk_id(
     re-embeds only the chunks whose text actually changed."""
     key = f"{model}\x00{vector_dim}\x00{video_id}\x00{index}\x00{content}"
     return uuid5(_CHUNK_NAMESPACE, key)
-
-
-def _is_lance_internal_error(error: Exception) -> bool:
-    """Whether `error` is the lance-internal ("file a bug report") failure class.
-
-    Scoped to that marker on purpose: unrelated runtime failures (a full disk, a
-    permissions error) must propagate rather than trigger a table rewrite."""
-    return _LANCE_INTERNAL_ERROR_MARKER in str(error).lower()
-
-
-class VectorDimMismatchError(Exception):
-    """Raised when an existing index's vector width disagrees with the request.
-
-    The adapter never silently reshapes an index; resolving a dimension change
-    (a different embedding model) is the reconciler's job via drop-and-rebuild."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,35 +73,26 @@ class ChunkCandidate:
     score: float
 
 
-def _schema(vector_dim: int) -> pa.Schema:
-    return pa.schema(
-        [
-            pa.field(_ID_COLUMN, pa.string()),
-            pa.field(_VIDEO_COLUMN, pa.string()),
-            pa.field(_CONTENT_COLUMN, pa.string()),
-            pa.field(_VECTOR_COLUMN, pa.list_(pa.float32(), vector_dim)),
-        ]
+def _to_table_document(document: ChunkDocument) -> TableDocument:
+    """Project a transcript chunk onto the generic table row shape."""
+    return TableDocument(
+        id=document.id,
+        content=document.content,
+        vector=document.vector,
+        payload={_VIDEO_COLUMN: document.video_id},
     )
 
 
 class TranscriptIndex:
-    """Async hybrid retriever over an embedded LanceDB table of chunks."""
+    """Async hybrid retriever over the embedded LanceDB table of chunks."""
 
-    def __init__(
-        self,
-        *,
-        connection: AsyncConnection,
-        table: AsyncTable,
-        vector_dim: int,
-    ) -> None:
-        self._connection: AsyncConnection = connection
-        self._table: AsyncTable = table
-        self._vector_dim: int = vector_dim
+    def __init__(self, *, table: HybridLanceTable) -> None:
+        self._table: HybridLanceTable = table
 
     @property
     def vector_dim(self) -> int:
         """Width of the vectors this index stores; fixes its schema."""
-        return self._vector_dim
+        return self._table.vector_dim
 
     @classmethod
     async def open(cls, *, index_dir: Path, vector_dim: int) -> TranscriptIndex:
@@ -144,92 +101,38 @@ class TranscriptIndex:
         Idempotent: an existing dataset is reused as-is. If its vector width
         disagrees with `vector_dim`, raises `VectorDimMismatchError` rather than
         corrupting the projection."""
-        connection = await connect_async(str(index_dir))
-        existing_tables = (await connection.list_tables()).tables
-        if _TABLE in existing_tables:
-            table = await connection.open_table(_TABLE)
-            await cls._verify_dimension(table, vector_dim)
-        else:
-            table = await cls._create_table(connection, vector_dim)
-        return cls(connection=connection, table=table, vector_dim=vector_dim)
-
-    @staticmethod
-    async def _create_table(connection: AsyncConnection, vector_dim: int) -> AsyncTable:
-        table = await connection.create_table(_TABLE, schema=_schema(vector_dim))
-        # FTS index built once on the empty table; later rows are flat-scanned.
-        # `with_position` stores token offsets so phrase queries (quoted terms,
-        # which the model emits freely) resolve instead of raising "position is
-        # not found but required for phrase queries".
-        await table.create_index(
-            _CONTENT_COLUMN,
-            # lancedb ships no py.typed, so pyright can't see FTS's dataclass
-            # fields and reads its init as no-arg; the kwarg is valid at runtime.
-            config=FTS(with_position=True),  # pyright: ignore[reportCallIssue]
-        )
-        return table
-
-    @staticmethod
-    async def _verify_dimension(table: AsyncTable, vector_dim: int) -> None:
-        schema = await table.schema()
-        field_type = schema.field(_VECTOR_COLUMN).type
-        if not pa.types.is_fixed_size_list(field_type):  # pragma: no cover - defensive
-            message = f"index column {_VECTOR_COLUMN!r} is not a fixed-size vector"
-            raise VectorDimMismatchError(message)
-        existing = field_type.list_size
-        if existing != vector_dim:
-            message = (
-                f"index vector width {existing} does not match requested {vector_dim}"
+        return cls(
+            table=await HybridLanceTable.open(
+                index_dir=index_dir,
+                table_name=_TABLE,
+                vector_dim=vector_dim,
+                payload_columns=(_VIDEO_COLUMN,),
             )
-            raise VectorDimMismatchError(message)
+        )
 
     async def upsert(self, documents: Sequence[ChunkDocument]) -> None:
         """Insert or replace chunks by id (video_id + content + vector)."""
-        rows = [
-            {
-                _ID_COLUMN: str(document.id),
-                _VIDEO_COLUMN: document.video_id,
-                _CONTENT_COLUMN: document.content,
-                _VECTOR_COLUMN: list(document.vector),
-            }
-            for document in documents
-        ]
-        if not rows:
-            return
-        _ = await (
-            self._table.merge_insert(_ID_COLUMN)
-            .when_matched_update_all()
-            .when_not_matched_insert_all()
-            .execute(rows)
+        await self._table.upsert(
+            [_to_table_document(document) for document in documents]
         )
 
     async def remove(self, ids: Sequence[UUID]) -> None:
         """Delete chunks by id; ids absent from the index are ignored."""
-        if not ids:
-            return
-        # UUIDs are hex+dashes, so direct interpolation is injection-safe.
-        quoted = ", ".join(f"'{identifier}'" for identifier in ids)
-        await self._table.delete(f"{_ID_COLUMN} IN ({quoted})")
+        await self._table.remove(ids)
 
     async def search(
         self, *, text: str, vector: Sequence[float], limit: int
     ) -> list[ChunkCandidate]:
         """Hybrid search: native FTS on `text` + cosine on `vector`, fused by RRF."""
-        rows = await (
-            self._table.query()
-            .nearest_to(list(vector))
-            .nearest_to_text(text)
-            .rerank(RRFReranker())
-            .limit(limit)
-            .to_list()
-        )
+        hits = await self._table.search(text=text, vector=vector, limit=limit)
         return [
             ChunkCandidate(
-                chunk_id=UUID(str(row[_ID_COLUMN])),
-                video_id=str(row[_VIDEO_COLUMN]),
-                snippet=str(row[_CONTENT_COLUMN]),
-                score=float(row[_SCORE_COLUMN]),
+                chunk_id=hit.id,
+                video_id=hit.payload[_VIDEO_COLUMN],
+                snippet=hit.content,
+                score=hit.score,
             )
-            for row in rows
+            for hit in hits
         ]
 
     async def rebuild(self, documents: Sequence[ChunkDocument]) -> None:
@@ -238,58 +141,22 @@ class TranscriptIndex:
         Used when the embedding model changes (incomparable vector spaces) or to
         repopulate a wiped index; chunks are re-derived and re-embedded from the
         canonical transcripts upstream."""
-        await self._connection.drop_table(_TABLE)
-        self._table = await self._create_table(self._connection, self._vector_dim)
-        await self.upsert(documents)
+        await self._table.rebuild(
+            [_to_table_document(document) for document in documents]
+        )
 
     async def count(self) -> int:
         """Number of chunks currently indexed."""
-        return await self._table.count_rows()
+        return await self._table.count()
 
     async def list_ids(self) -> set[UUID]:
         """Every chunk id currently in the index, for orphan diffing."""
-        rows = await self._table.query().select([_ID_COLUMN]).to_list()
-        return {UUID(str(row[_ID_COLUMN])) for row in rows}
+        return await self._table.list_ids()
 
     async def optimize(self, *, logger: Logger) -> None:
         """Run LanceDB's background hygiene (compaction, index maintenance).
 
-        Self-heals a class of upstream lance bug: a corrupt fragment whose
-        compaction batch-decode overruns its values buffer ("Encountered internal
-        error … Error decoding batch"). Every reconcile tick calls this, so an
-        unhandled failure wedges the loop forever. The rows still read (only the
-        wide compaction decode trips the bug), and this projection is disposable,
-        so we salvage in place: read every row back out, recreate the table, and
-        re-add them — no data lost and no re-embedding, since the vectors survive
-        the round-trip. Any other failure propagates untouched."""
-        try:
-            _ = await self._table.optimize()
-        except RuntimeError as error:
-            if not _is_lance_internal_error(error):
-                raise
-            logger.warning(
-                "Transcript index optimize hit a lance internal error; salvaging",
-                error=str(error),
-            )
-            await self._salvage_rewrite()
-            logger.info("Transcript index salvaged after lance internal error")
-
-    async def _salvage_rewrite(self) -> None:
-        """Rebuild the table from its own readable rows, then compact once.
-
-        Reads survive the fragment corruption that compaction cannot, so the rows
-        (id, video_id, content, vector) round-trip losslessly into a fresh table.
-        The final optimize runs on the wrapped table directly, not through the
-        self-healing entrypoint, so a still-broken rewrite raises instead of
-        looping."""
-        rows = await self._table.query().to_list()
-        await self._connection.drop_table(_TABLE)
-        self._table = await self._create_table(self._connection, self._vector_dim)
-        if rows:
-            _ = await (
-                self._table.merge_insert(_ID_COLUMN)
-                .when_matched_update_all()
-                .when_not_matched_insert_all()
-                .execute(rows)
-            )
-        _ = await self._table.optimize()
+        Delegates to the self-healing `HybridLanceTable.optimize`, which
+        salvages the known lance compaction corruption in place instead of
+        wedging the reconcile loop that drives this on every tick."""
+        await self._table.optimize(logger=logger)
