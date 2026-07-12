@@ -5,7 +5,7 @@ with SQLite, the canonical store. It governs the two non-markdown derived
 artifacts of a tethered Memory together — the embedding vector (a SQLite BLOB)
 and the LanceDB index entry — at the same trigger points.
 
-Two paths are exercised here:
+Three paths are exercised here:
 
 - `reconcile()` — the idempotent, marker-driven full pass (startup + periodic):
   embed any owed `tethered ∧ ¬deleted` Memory, upsert the desired set, drop
@@ -14,6 +14,8 @@ Two paths are exercised here:
 - `index_memory` / `deindex_memory` — the per-Memory latency hooks slice 5 wires
   into tether / edit / delete so a change is searchable without waiting for a
   pass.
+- `candidates()` — the read path the Memory spine searches through: embed the
+  query, run hybrid retrieval, return the RRF-ranked candidates unchanged.
 
 These run against a real in-memory SQLite database with a `FakeSearchIndex`
 (records writes) and a `CountingEmbedder` (proves what was re-embedded), plus one
@@ -62,7 +64,7 @@ from tether.embeddings import (
 from tether.logging import Logger
 from tether.memories import Memory, create_memory_schema
 from tether.reconciler import SearchReconciler
-from tether.search_index import SearchDocument, SearchIndex
+from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
 
 _DIM = 16
@@ -85,10 +87,18 @@ class FakeSearchIndex:
         self.docs: dict[UUID, SearchDocument] = {}
         self.optimize_calls: int = 0
         self.rebuilds: int = 0
+        self.search_results: list[SearchCandidate] = []
+        self.search_calls: list[tuple[str, Sequence[float], int]] = []
 
     @property
     def vector_dim(self) -> int:
         return self._vector_dim
+
+    async def search(
+        self, *, text: str, vector: Sequence[float], limit: int
+    ) -> list[SearchCandidate]:
+        self.search_calls.append((text, vector, limit))
+        return self.search_results
 
     async def upsert(self, documents: Sequence[SearchDocument]) -> None:
         for document in documents:
@@ -452,3 +462,33 @@ async def reconcile_converges_the_real_search_index() -> None:
         assert_not_in(loose.id, found)
         assert_not_in(deleted.id, found)
         await db.close()
+
+
+@test()
+async def candidates_embeds_the_query_and_forwards_it_to_the_index() -> None:
+    """The read path embeds the query once and hands it to the index with limit."""
+    h = await load_fixture(harness())
+
+    _ = await h.reconciler.candidates("aisle seats", limit=7, logger=_logger())
+
+    assert_eq(len(h.index.search_calls), 1)
+    text, vector, limit = h.index.search_calls[0]
+    assert_eq(text, "aisle seats")
+    assert_eq(limit, 7)
+    expected = await h.embedder.embed_query("aisle seats")
+    assert_eq(list(vector), expected)
+
+
+@test()
+async def candidates_returns_the_index_ranking_unchanged() -> None:
+    """The read path is a pass-through for ranking; it never reorders candidates."""
+    h = await load_fixture(harness())
+    ranked = [
+        SearchCandidate(id=uuid4(), score=0.9),
+        SearchCandidate(id=uuid4(), score=0.4),
+    ]
+    h.index.search_results = ranked
+
+    result = await h.reconciler.candidates("anything", limit=10, logger=_logger())
+
+    assert_eq([candidate.id for candidate in result], [c.id for c in ranked])
