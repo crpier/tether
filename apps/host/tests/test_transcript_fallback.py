@@ -33,6 +33,7 @@ from snektest import (
 )
 
 from tether.logging import Logger
+from tether.transcript_worker import TranscriptSyncService
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
     DailyQuota,
@@ -44,7 +45,6 @@ from tether.youtube import (
     TranscriptExcludedError,
     TranscriptProvider,
     TranscriptSyncConfig,
-    TranscriptSyncService,
     TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeApiClient,
