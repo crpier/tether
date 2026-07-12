@@ -3,7 +3,7 @@
 Phase 1: investigation only. No code changed. This is a notes/plan artifact.
 
 Sources: `~/Projects/t3code` (React/Effect agent GUI), Tether's current chat
-(`apps/web/src/app.tsx` `ChatView`, `apps/web/src/chat-bus.ts`,
+(`apps/web/src/chat-view.tsx` `ChatView`, `apps/web/src/chat-bus.ts`,
 `apps/host/tether/chat_ws.py`, `pi_runtime.py`, `chat_engine.py`), plus a live
 probe of `pi --mode rpc` (see "pi RPC protocol facts").
 
@@ -209,8 +209,8 @@ Key facts:
 ### 3.3 Experience gaps (web side)
 
 9. **No markdown.** Assistant text is `whitespace-pre-wrap` plain text
-   (`app.tsx` `MessageRows`). Code, lists, tables, links all render raw. This is
-   the most visible quality gap vs t3code.
+   (`chat-view.tsx` `MessageRows`). Code, lists, tables, links all render raw.
+   This is the most visible quality gap vs t3code.
 10. **No autoscroll / anchoring.** The transcript `<section>` has
     `overflow-y-auto` and nothing scrolls it; during a stream the user watches
     text grow off-screen and must scroll manually. No "jump to latest."
