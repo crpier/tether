@@ -27,7 +27,7 @@ from tether.bucket_capabilities import (
     search,
 )
 from tether.capabilities import bind_params
-from tether.tools import ToolEndpoint, ToolRoute
+from tether.tools import ToolSpec
 
 
 class AddMovieParams(BaseModel):
@@ -67,42 +67,35 @@ class SearchBucketItemsParams(BaseModel):
     limit: PositiveInt = 50
 
 
+BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec("add_movie", AddMovieParams, bind_params(add_movie), BUCKET_ERRORS),
+    ToolSpec("add_place", AddPlaceParams, bind_params(add_place), BUCKET_ERRORS),
+    ToolSpec(
+        "complete_bucket_item",
+        CompleteBucketItemParams,
+        bind_params(complete),
+        BUCKET_ERRORS,
+    ),
+    ToolSpec(
+        "delete_bucket_item",
+        DeleteBucketItemParams,
+        bind_params(delete),
+        BUCKET_ERRORS,
+    ),
+    ToolSpec(
+        "search_bucket_items",
+        SearchBucketItemsParams,
+        bind_params(search),
+        BUCKET_ERRORS,
+    ),
+)
+"""The Bucket item capabilities exposed as internal tools, in generated order."""
+
+
 def internal_bucket_tool_routes() -> list[Route]:
     """Mount the Bucket item capabilities as `/internal/tools/*` POST endpoints.
 
     Returned separately from the public Bucket routes (and the Memory tools) so
     they stay absent from the public OpenAPI document and generated client.
     """
-    return [
-        ToolRoute(
-            "/internal/tools/add_movie",
-            ToolEndpoint(AddMovieParams, bind_params(add_movie), errors=BUCKET_ERRORS),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/add_place",
-            ToolEndpoint(AddPlaceParams, bind_params(add_place), errors=BUCKET_ERRORS),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/complete_bucket_item",
-            ToolEndpoint(
-                CompleteBucketItemParams, bind_params(complete), errors=BUCKET_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/delete_bucket_item",
-            ToolEndpoint(
-                DeleteBucketItemParams, bind_params(delete), errors=BUCKET_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/search_bucket_items",
-            ToolEndpoint(
-                SearchBucketItemsParams, bind_params(search), errors=BUCKET_ERRORS
-            ),
-            methods=["POST"],
-        ),
-    ]
+    return [spec.route() for spec in BUCKET_TOOL_SPECS]

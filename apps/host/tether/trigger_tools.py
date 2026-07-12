@@ -21,7 +21,7 @@ from starlette.routing import Route
 
 from tether import trigger_capabilities
 from tether.capabilities import CapabilityOutcome, bind_params
-from tether.tools import ToolEndpoint, ToolRoute
+from tether.tools import ToolSpec
 from tether.trigger_capabilities import TRIGGER_ERRORS, TriggerSpecBody
 
 
@@ -54,34 +54,28 @@ async def _create_trigger(
     return await trigger_capabilities.create(request, params.to_spec())
 
 
+TRIGGER_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec("create_trigger", CreateTriggerParams, _create_trigger, TRIGGER_ERRORS),
+    ToolSpec(
+        "list_triggers",
+        ListTriggersParams,
+        bind_params(trigger_capabilities.list_triggers),
+        TRIGGER_ERRORS,
+    ),
+    ToolSpec(
+        "delete_trigger",
+        DeleteTriggerParams,
+        bind_params(trigger_capabilities.delete),
+        TRIGGER_ERRORS,
+    ),
+)
+"""The Scheduled-trigger capabilities exposed as internal tools, in order."""
+
+
 def internal_trigger_tool_routes() -> list[Route]:
     """Mount the trigger capabilities as `/internal/tools/*` POST endpoints.
 
     Returned separately from the public trigger routes so they stay absent from
     the public OpenAPI document and generated client.
     """
-    return [
-        ToolRoute(
-            "/internal/tools/create_trigger",
-            ToolEndpoint(CreateTriggerParams, _create_trigger, errors=TRIGGER_ERRORS),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/list_triggers",
-            ToolEndpoint(
-                ListTriggersParams,
-                bind_params(trigger_capabilities.list_triggers),
-                errors=TRIGGER_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/delete_trigger",
-            ToolEndpoint(
-                DeleteTriggerParams,
-                bind_params(trigger_capabilities.delete),
-                errors=TRIGGER_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-    ]
+    return [spec.route() for spec in TRIGGER_TOOL_SPECS]

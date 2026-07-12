@@ -4,7 +4,13 @@ from typing import Any, cast
 
 from snektest import assert_eq, assert_in, test
 
+from tether.bucket_tools import internal_bucket_tool_routes
+from tether.recall_tools import internal_recall_tool_routes
 from tether.tool_schemas import build_tool_schema_document
+from tether.tools import internal_tool_routes
+from tether.triage_tools import internal_triage_tool_routes
+from tether.trigger_tools import internal_trigger_tool_routes
+from tether.youtube_tools import internal_youtube_tool_routes
 
 
 @test()
@@ -59,6 +65,33 @@ def tool_schema_document_describes_the_internal_tools() -> None:
     )
     assert_eq(search_schema["properties"]["limit"]["default"], 50)
     assert_in("memory_id", tether_schema["required"])
+
+
+@test()
+def schema_document_covers_every_mounted_tool_route() -> None:
+    """The codegen document describes exactly the tools the host mounts.
+
+    Routes and schema entries both derive from the one `ToolSpec` registry, so a
+    tool can never be mounted without a generated shim (or shimmed without a
+    live endpoint) — the drift the split spec list used to permit.
+    """
+    mounted_endpoints = {
+        route.path
+        for routes in (
+            internal_tool_routes(),
+            internal_bucket_tool_routes(),
+            internal_triage_tool_routes(),
+            internal_youtube_tool_routes(),
+            internal_trigger_tool_routes(),
+            internal_recall_tool_routes(),
+        )
+        for route in routes
+    }
+    document_endpoints = {
+        tool["endpoint"] for tool in build_tool_schema_document()["tools"]
+    }
+
+    assert_eq(mounted_endpoints, document_endpoints)
 
 
 @test()
