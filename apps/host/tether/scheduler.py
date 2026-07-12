@@ -201,11 +201,7 @@ class EphemeralPiPromptRunner:
     async def _drive(self, runtime: PiRuntime, prompt: str, session_id: str) -> str:
         """Set the model, send the prompt, and drain pi to its final text."""
         if self.config.model is not None:
-            _ = await runtime.client.request(
-                "set_model",
-                provider=self.config.model.provider,
-                modelId=self.config.model.model_id,
-            )
+            await runtime.apply_model(self.config.model)
         response = await runtime.client.request("prompt", message=prompt)
         if response.get("success") is not True:
             message = "agent prompt was rejected by pi"

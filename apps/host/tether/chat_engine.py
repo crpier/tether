@@ -14,7 +14,11 @@ from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
 from tether.conversations import Conversation
-from tether.model_selection import AgentModelCatalog, ModelNotAllowedError
+from tether.model_selection import (
+    AgentModelCatalog,
+    AgentModelConfig,
+    ModelNotAllowedError,
+)
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig
 from tether.tools import SessionRegistry
 
@@ -74,6 +78,23 @@ class ConversationRuntimeRegistry:
         slot.last_used = self._now()
         return slot.runtime
 
+    async def set_model(self, conversation_id: object, model: AgentModelConfig) -> None:
+        """Apply a model to the conversation's live runtime, if one exists.
+
+        A no-op when no process is bound to the conversation: the selection is
+        persisted by the caller and reapplied on the next spawn. Propagates
+        `PiRuntimeError` when a live pi rejects the switch.
+        """
+        runtime = self.current_for(conversation_id)
+        if runtime is not None:
+            await runtime.apply_model(model)
+
+    async def discard(self, conversation_id: object) -> None:
+        """Tear down and forget the runtime bound to a conversation, if any."""
+        slot = self._runtimes.pop(str(conversation_id), None)
+        if slot is not None:
+            await slot.runtime.shutdown()
+
     async def runtime_for(self, conversation: Conversation[Fetched]) -> PiRuntime:
         """Return the live runtime for a conversation, spawning lazily."""
         conversation_key = str(conversation.id)
@@ -107,11 +128,13 @@ class ConversationRuntimeRegistry:
         except ModelNotAllowedError:
             selected_model = self.config.model_catalog.default_config
         if selected_model is not None:
-            _ = await runtime.client.request(
-                "set_model",
-                provider=selected_model.provider,
-                modelId=selected_model.model_id,
-            )
+            try:
+                await runtime.apply_model(selected_model)
+            except Exception:
+                # The spawn never made it into the registry; tear it down here
+                # or the pi subprocess outlives every reference to it.
+                await runtime.shutdown()
+                raise
         self._runtimes[conversation_key] = _RuntimeSlot(
             last_used=self._now(), runtime=runtime
         )

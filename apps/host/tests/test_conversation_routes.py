@@ -23,6 +23,7 @@ from tether.pi_runtime import (
     AssistantStreamNote,
     MessageSettled,
     ModelTurnStarted,
+    PiRuntimeError,
     TextDelta,
     ThinkingDelta,
     ToolSettled,
@@ -135,6 +136,8 @@ class FakeRuntimeRegistry:
 
     def __init__(self, runtime: object) -> None:
         self.runtime: object = runtime
+        self.applied_models: list[tuple[object, AgentModelConfig]] = []
+        self.discarded: list[object] = []
 
     def current_for(self, conversation_id: object) -> object:
         """Return the configured fake runtime without spawning."""
@@ -145,6 +148,14 @@ class FakeRuntimeRegistry:
         """Return the configured fake runtime."""
         _ = conversation
         return self.runtime
+
+    async def set_model(self, conversation_id: object, model: AgentModelConfig) -> None:
+        """Record the model applied to a conversation's live runtime."""
+        self.applied_models.append((conversation_id, model))
+
+    async def discard(self, conversation_id: object) -> None:
+        """Record the conversation whose runtime was torn down."""
+        self.discarded.append(conversation_id)
 
     async def shutdown_all(self) -> None:
         """Match the production registry shutdown hook."""
@@ -383,15 +394,14 @@ def configured_default_model_is_stored_on_new_conversations() -> None:
 
 @test()
 def setting_model_persists_and_updates_live_runtime() -> None:
-    """Changing the model stores the selection and dispatches `set_model`."""
+    """Changing the model stores the selection and applies it via the registry."""
     fake_runtime = FakeRuntime([])
+    registry = FakeRuntimeRegistry(fake_runtime)
     with (
         TemporaryDirectory() as directory,
         make_model_client(Path(directory)) as client,
     ):
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        cast("Starlette", client.app).state.conversation_runtime_registry = registry
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -404,15 +414,44 @@ def setting_model_persists_and_updates_live_runtime() -> None:
     assert_eq(response.status_code, 200)
     assert_eq(response.json()["selected_model"], "smart")
     assert_eq(stored["selected_model"], "smart")
-    assert_eq(
-        fake_runtime.client.requests,
-        [
-            (
-                "set_model",
-                {"provider": "faux", "modelId": "tether-chat-smart-faux"},
-            )
-        ],
-    )
+    assert_len(registry.applied_models, 1)
+    applied_conversation_id, applied_model = registry.applied_models[0]
+    assert_eq(str(applied_conversation_id), conversation_id)
+    assert_eq(applied_model.provider, "faux")
+    assert_eq(applied_model.model_id, "tether-chat-smart-faux")
+
+
+class RejectingRuntimeRegistry(FakeRuntimeRegistry):
+    """Registry double whose live runtime rejects a model switch."""
+
+    async def set_model(self, conversation_id: object, model: AgentModelConfig) -> None:
+        """Reject the switch the way a live pi does when set_model fails."""
+        _ = (conversation_id, model)
+        message = "pi rejected set_model"
+        raise PiRuntimeError(message)
+
+
+@test()
+def setting_model_returns_502_when_pi_rejects_the_switch() -> None:
+    """A live runtime rejecting `set_model` surfaces as a 502."""
+    registry = RejectingRuntimeRegistry(FakeRuntime([]))
+    with (
+        TemporaryDirectory() as directory,
+        make_model_client(Path(directory)) as client,
+    ):
+        cast("Starlette", client.app).state.conversation_runtime_registry = registry
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        response = client.post(
+            f"/api/conversations/{conversation_id}/model",
+            json={"selected_model": "smart"},
+        )
+        stored = client.get("/api/conversations").json()[0]
+
+    assert_eq(response.status_code, 502)
+    # The selection is still persisted; only the live-runtime push failed.
+    assert_eq(stored["selected_model"], "smart")
 
 
 @test()
@@ -1094,10 +1133,9 @@ def clearing_a_conversation_empties_the_transcript() -> None:
             AgentEnded(),
         ]
     )
+    registry = FakeRuntimeRegistry(fake_runtime)
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        cast("Starlette", client.app).state.conversation_runtime_registry = registry
         login(client)
         conversation = client.get("/api/conversations").json()[0]
         conversation_id = conversation["id"]
@@ -1115,6 +1153,8 @@ def clearing_a_conversation_empties_the_transcript() -> None:
         assert_true(cleared["pi_session_id"] != conversation["pi_session_id"])
         after = client.get(f"/api/conversations/{conversation_id}/messages").json()
         assert_eq(after, [])
+    assert_len(registry.discarded, 1)
+    assert_eq(str(registry.discarded[0]), conversation_id)
 
 
 @test()

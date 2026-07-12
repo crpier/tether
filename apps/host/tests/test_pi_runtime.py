@@ -26,6 +26,7 @@ from snektest import (
 
 from tether.agent_trace import AgentTraceRecorder
 from tether.embeddings import FakeEmbedder
+from tether.model_selection import AgentModelConfig
 from tether.pi_runtime import (
     AgentEnded,
     MessageSettled,
@@ -33,6 +34,7 @@ from tether.pi_runtime import (
     PiRpcClient,
     PiRuntime,
     PiRuntimeConfig,
+    PiRuntimeError,
 )
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
@@ -234,6 +236,60 @@ async def client_correlates_out_of_order_responses_by_id() -> None:
 
     assert_eq(state_response["data"], {"sessionId": "first"})
     assert_eq(models_response["data"], {"models": ["second"]})
+
+
+class ScriptedRpcClient:
+    """RPC client double returning one canned response and logging requests."""
+
+    def __init__(self, *, success: bool) -> None:
+        self._success: bool = success
+        self.requests: list[tuple[str, dict[str, object]]] = []
+
+    async def request(self, command_type: str, **fields: object) -> dict[str, object]:
+        """Log the command and answer with the scripted success flag."""
+        self.requests.append((command_type, fields))
+        return {"success": self._success}
+
+
+_TEST_MODEL = AgentModelConfig(
+    display_name="Cheap Faux",
+    id="cheap",
+    model_id="tether-chat-cheap-faux",
+    provider="faux",
+)
+
+
+def _runtime_with_client(client: ScriptedRpcClient) -> PiRuntime:
+    """Wrap a scripted client in a runtime with no live subprocess."""
+    return PiRuntime(
+        client=cast("PiRpcClient", client),
+        process=cast("asyncio.subprocess.Process", None),
+        session_id=str(uuid4()),
+        session_registry=SessionRegistry(),
+    )
+
+
+@test()
+async def apply_model_sends_the_resolved_set_model_command() -> None:
+    """`apply_model` issues one `set_model` carrying the model's provider/id."""
+    client = ScriptedRpcClient(success=True)
+    runtime = _runtime_with_client(client)
+
+    await runtime.apply_model(_TEST_MODEL)
+
+    assert_eq(
+        client.requests,
+        [("set_model", {"provider": "faux", "modelId": "tether-chat-cheap-faux"})],
+    )
+
+
+@test()
+async def apply_model_raises_when_pi_rejects_the_switch() -> None:
+    """A non-success `set_model` response surfaces as a `PiRuntimeError`."""
+    runtime = _runtime_with_client(ScriptedRpcClient(success=False))
+
+    with assert_raises(PiRuntimeError):
+        await runtime.apply_model(_TEST_MODEL)
 
 
 @test()
