@@ -85,7 +85,7 @@ class EmptySearchQueryError(Exception):
 class SearchUnavailableError(Exception):
     """Raised when `search` is called on a MemoryService wired without a searcher.
 
-    Search needs the embedder + index seam (`MemorySearchService`). A bare
+    Search needs the embedder + index seam (the `SearchReconciler`). A bare
     MemoryService (e.g. some tests, the Recall path) never calls `search`, so the
     dependency is optional; reaching `search` without it is a wiring bug."""
 
@@ -242,9 +242,9 @@ class KnowledgeBaseService:
 class MemorySearcher(Protocol):
     """The search seam the spine needs: the query read-path plus the index hooks.
 
-    A structural Protocol (satisfied by `MemorySearchService`) so the spine does
-    not import the concrete facade — that import would close a cycle, since the
-    facade depends on `Memory`."""
+    A structural Protocol (satisfied by `SearchReconciler`) so the spine does not
+    import the concrete reconciler — that import would close a cycle, since the
+    reconciler depends on `Memory`."""
 
     async def candidates(
         self, query: str, *, limit: int, logger: Logger

@@ -7,7 +7,12 @@ owns the latter two together. SQLite is canonical; LanceDB is disposable and
 rebuildable, so a second derived store that can't share SQLite's transaction is
 reconciled rather than dual-written.
 
-Two paths keep the index honest:
+The reconciler is also the single search seam the Memory spine reads through:
+`candidates` embeds a query and runs hybrid retrieval, so the spine depends on one
+collaborator that both reads and writes the index rather than a facade wrapping
+the writer.
+
+Three paths keep the index honest and readable:
 
 - `reconcile` is the idempotent full pass run at startup and periodically. It
   embeds any owed `tethered ∧ ¬deleted` Memory (storing the vector in SQLite),
@@ -20,6 +25,13 @@ Two paths keep the index honest:
 - `index_memory` / `deindex_memory` are the per-Memory latency hooks the Review
   spine calls at tether / edit / delete so a change is searchable immediately,
   without waiting for the next pass. The pass is their correctness backstop.
+- `candidates` is the read path: embed the query, run hybrid search, return the
+  RRF-ranked `(id, score)` candidates. It deliberately does *not* filter by
+  tether/delete state — `MemoryService` re-filters the candidates against SQLite,
+  which is where the invariant that the assistant searches only
+  `tethered ∧ ¬deleted` Memories is enforced. Enforcing it upstream of the index
+  means a drifted index (an orphan a missed event left behind) can never leak a
+  loose or deleted Memory into a result.
 
 The reconciler talks to the index only through `SearchIndexPort` and to the model
 only through `Embedder`, so it is fully testable against fakes of both.
@@ -53,6 +65,7 @@ if TYPE_CHECKING:
 
     from tether.embeddings import Embedder, Vector
     from tether.logging import Logger
+    from tether.search_index import SearchCandidate
     from tether.search_meta import SearchMetaService
 
 
@@ -73,7 +86,7 @@ class MissingEmbeddingError(Exception):
 
 
 class SearchIndexPort(Protocol):
-    """The slice of `SearchIndex` the reconciler writes through.
+    """The slice of `SearchIndex` the reconciler reads and writes through.
 
     A Protocol, not the concrete class, so the reconciler can be driven by a
     fake in tests; `SearchIndex` satisfies it structurally."""
@@ -85,6 +98,9 @@ class SearchIndexPort(Protocol):
     async def rebuild(self, documents: Sequence[SearchDocument]) -> None: ...
     async def list_ids(self) -> set[UUID]: ...
     async def optimize(self) -> None: ...
+    async def search(
+        self, *, text: str, vector: Sequence[float], limit: int
+    ) -> list[SearchCandidate]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +253,18 @@ class SearchReconciler:
         """Drop a single Memory from the index (the delete hook)."""
         logger.debug("Deindexing Memory", memory_id=str(memory_id))
         await self.index.remove([memory_id])
+
+    async def candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[SearchCandidate]:
+        """Embed the query and return RRF-ranked candidates, unfiltered by state.
+
+        The read complement to the write hooks: the Memory spine calls this and
+        re-filters the returned ids against SQLite, so the index's tether/delete
+        drift can never surface a forbidden Memory."""
+        logger.debug("Embedding search query", query_length=len(query), limit=limit)
+        vector = await self.embedder.embed_query(query)
+        return await self.index.search(text=query, vector=vector, limit=limit)
 
     async def _embed_owed(self, owed: Sequence[Memory[Fetched]]) -> dict[UUID, Vector]:
         """Embed the owed Memories in one batch and persist each vector.

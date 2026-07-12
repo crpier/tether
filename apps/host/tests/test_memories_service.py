@@ -61,7 +61,6 @@ from tether.memories import (
     MemoryState,
     create_memory_schema,
 )
-from tether.memory_search import MemorySearchService
 from tether.reconciler import SearchReconciler
 from tether.search_index import SearchDocument, SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
@@ -229,9 +228,7 @@ async def searchable_memory_service() -> AsyncGenerator[SearchableHarness]:
             database=db,
             kb_service=KnowledgeBaseService(kb_root=kb_root),
             tracer=noop_tracer(),
-            searcher=MemorySearchService(
-                embedder=embedder, index=index, writer=reconciler
-            ),
+            searcher=reconciler,
         )
         yield SearchableHarness(
             service=LoggedMemoryService(service, logger=logger),

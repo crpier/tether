@@ -47,7 +47,6 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
-from tether.memory_search import MemorySearchService
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.notifications import NotificationService, create_notification_schema
 from tether.openapi import openapi_routes
@@ -602,16 +601,16 @@ async def _build_search(
     embedder: Embedder | None,
     index_dir: Path,
     logger: Logger,
-) -> tuple[MemorySearchService | None, SearchReconciler | None]:
+) -> SearchReconciler | None:
     """Wire the search subsystem when an embedder is supplied, else disable it.
 
     Opens the index, converges it with SQLite once on boot (embedding any owed
     tethered Memory and dropping orphans — a no-op, and no model load, on an
-    empty corpus), and returns the searcher for `MemoryService` alongside the
-    reconciler the lifespan drives on a periodic pass. With no embedder returns
-    `(None, None)`: the index is never opened and no model loads."""
+    empty corpus), and returns the reconciler: the single search seam that both
+    reads for `MemoryService` and is driven by the lifespan's periodic pass. With
+    no embedder returns `None`: the index is never opened and no model loads."""
     if embedder is None:
-        return None, None
+        return None
     search_index = await SearchIndex.open(
         index_dir=index_dir, vector_dim=embedder.vector_dim
     )
@@ -622,10 +621,7 @@ async def _build_search(
         meta=SearchMetaService(database=database),
     )
     _ = await reconciler.reconcile(logger=logger)
-    searcher = MemorySearchService(
-        embedder=embedder, index=search_index, writer=reconciler
-    )
-    return searcher, reconciler
+    return reconciler
 
 
 async def _build_transcript_search(
@@ -740,7 +736,7 @@ def _lifespan(
             # (`create_app_from_environment`) passes a `FastEmbedder`; tests that
             # exercise search pass a `FakeEmbedder`; everything else runs with
             # search disabled and never opens the index or loads a model.
-            searcher, search_reconciler = await _build_search(
+            search_reconciler = await _build_search(
                 database=db,
                 embedder=embedder,
                 index_dir=configured_kb_root / "index",
@@ -759,7 +755,7 @@ def _lifespan(
                 event_publisher=event_hub,
                 kb_service=kb_service,
                 tracer=telemetry.tracer,
-                searcher=searcher,
+                searcher=search_reconciler,
             )
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
