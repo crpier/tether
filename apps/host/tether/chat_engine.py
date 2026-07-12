@@ -128,7 +128,13 @@ class ConversationRuntimeRegistry:
         except ModelNotAllowedError:
             selected_model = self.config.model_catalog.default_config
         if selected_model is not None:
-            await runtime.apply_model(selected_model)
+            try:
+                await runtime.apply_model(selected_model)
+            except Exception:
+                # The spawn never made it into the registry; tear it down here
+                # or the pi subprocess outlives every reference to it.
+                await runtime.shutdown()
+                raise
         self._runtimes[conversation_key] = _RuntimeSlot(
             last_used=self._now(), runtime=runtime
         )

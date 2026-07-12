@@ -6,7 +6,7 @@ from typing import cast
 from uuid import UUID, uuid7
 
 from snekql.sqlite import Fetched
-from snektest import assert_eq, assert_true, test
+from snektest import assert_eq, assert_raises, assert_true, test
 
 from tether.chat_engine import (
     ConversationRuntimeRegistry,
@@ -15,7 +15,7 @@ from tether.chat_engine import (
 )
 from tether.conversations import Conversation
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
-from tether.pi_runtime import PiRuntime, PiRuntimeConfig
+from tether.pi_runtime import PiRuntime, PiRuntimeConfig, PiRuntimeError
 from tether.tools import SessionRegistry
 
 
@@ -132,6 +132,44 @@ async def runtime_for_applies_the_resolved_model_on_spawn() -> None:
         )
 
     assert_eq(cast("FakeRuntime", runtime).applied_models, [_CHEAP_MODEL])
+
+
+class ModelRejectingRuntime(FakeRuntime):
+    """Runtime double whose pi rejects every model switch."""
+
+    async def apply_model(self, model: AgentModelConfig) -> None:
+        """Refuse the switch the way a live pi does on a failed set_model."""
+        _ = model
+        message = "pi rejected set_model"
+        raise PiRuntimeError(message)
+
+
+class ModelRejectingSpawner(RecordingSpawner):
+    """Spawn seam producing runtimes that reject model switches."""
+
+    async def __call__(
+        self, config: PiRuntimeConfig, *, session_registry: SessionRegistry
+    ) -> PiRuntime:
+        """Return a model-rejecting fake tagged with the spawned session id."""
+        _ = session_registry
+        runtime = ModelRejectingRuntime(session_id=str(config.session_id))
+        self.spawned.append(runtime)
+        return cast("PiRuntime", runtime)
+
+
+@test()
+async def runtime_for_shuts_down_the_spawn_when_the_model_is_rejected() -> None:
+    """A spawn whose model push fails is torn down, not leaked as an orphan."""
+    conversation = FakeConversation(uuid7())
+    spawner = ModelRejectingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_model_registry(directory, spawner)
+        with assert_raises(PiRuntimeError):
+            _ = await registry.runtime_for(cast("Conversation[Fetched]", conversation))
+
+    assert_eq(len(spawner.spawned), 1)
+    assert_eq(spawner.spawned[0].shutdown_count, 1)
+    assert_eq(registry.current_for(conversation.id), None)
 
 
 @test()
