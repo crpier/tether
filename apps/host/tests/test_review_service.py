@@ -21,6 +21,7 @@ from snektest import (
     assert_eq,
     assert_in,
     assert_not_in,
+    assert_raises,
     fixture,
     load_fixture,
     test,
@@ -35,7 +36,8 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
-from tether.review import ReviewDigest, ReviewService
+from tether.review import EmbeddingBatchMismatchError, ReviewDigest, ReviewService
+from tether.search_meta import SearchMetaService, create_search_meta_schema
 
 
 def noop_tracer() -> Tracer:
@@ -69,6 +71,28 @@ class StubEmbedder:
 
     async def embed_query(self, text: str) -> Vector:
         return self._vectors[text]
+
+
+class ShortBatchEmbedder:
+    """Misbehaving embedder double: always returns one vector too few.
+
+    Exists to prove the digest refuses a batch that does not line up with its
+    inputs instead of crashing mid-iteration.
+    """
+
+    @property
+    def model_name(self) -> str:
+        return "short-batch"
+
+    @property
+    def vector_dim(self) -> int:
+        return 4
+
+    async def embed_documents(self, texts: Sequence[str]) -> list[Vector]:
+        return [[1.0, 0.0, 0.0, 0.0] for _ in texts[:-1]]
+
+    async def embed_query(self, text: str) -> Vector:
+        return [1.0, 0.0, 0.0, 0.0]
 
 
 class ReviewHarness:
@@ -111,12 +135,21 @@ class ReviewHarness:
         return await self.review_service.review_digest(logger=self.logger)
 
     async def store_embedding(
-        self, memory: Memory[Fetched], vector: Vector, *, embedded_version: int
+        self,
+        memory: Memory[Fetched],
+        vector: Vector,
+        *,
+        embedded_version: int,
+        embedding_model: str = "stub",
+        vector_dim: int = 4,
     ) -> None:
         """Stamp a canonical embedding BLOB onto a Memory row.
 
         Stands in for the search reconciler (unwired here) so tests control
-        exactly which stored vector and version the digest finds.
+        exactly which stored vector and version the digest finds. Like the
+        reconciler, it also records the search-metadata marker — defaulting to
+        the `StubEmbedder`'s identity so stored vectors read as reusable unless
+        a test claims another model.
         """
         async with self.database.transaction() as tx:
             _ = await tx.execute(
@@ -125,6 +158,9 @@ class ReviewHarness:
                 .set(Memory.embedded_version.to(embedded_version))
                 .where(Memory.id.eq(memory.id))
             )
+        _ = await SearchMetaService(database=self.database).set(
+            model=embedding_model, vector_dim=vector_dim, logger=self.logger
+        )
 
 
 @fixture
@@ -134,6 +170,7 @@ async def review_harness(
     """A fresh isolated database with a Memory service and a Review service."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
+    await create_search_meta_schema(db)
     async with TemporaryDirectory() as kb_root:
         kb_service = KnowledgeBaseService(kb_root=Path(kb_root))
         yield ReviewHarness(
@@ -290,8 +327,8 @@ async def dedup_groups_exclude_distinct_memories() -> None:
 
 
 @test()
-async def dedup_ignores_tethered_memories() -> None:
-    """Dedup clusters the loose queue only — tethered corpus is left alone."""
+async def keyword_dedup_ignores_tethered_memories() -> None:
+    """The keyword fallback clusters the loose queue only, never the corpus."""
     harness = await load_fixture(review_harness())
     loose = await harness.capture("I prefer aisle seats on flights")
     _ = await harness.capture_tethered("I prefer aisle seats on flights please")
@@ -383,6 +420,55 @@ async def semantic_dedup_excludes_dissimilar_memories() -> None:
     assert_eq(
         [group for group in digest.dedup_groups if seats.id in group.memory_ids], []
     )
+
+
+@test()
+async def semantic_dedup_surfaces_loose_recapture_of_tethered_fact() -> None:
+    """A loose restatement of an already-tethered fact clusters with it."""
+    harness = await load_fixture(
+        review_harness(
+            StubEmbedder(
+                {
+                    "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
+                    "Berlin is where I live": [1.0, 0.1, 0.0, 0.0],
+                }
+            )
+        )
+    )
+    tethered = await harness.capture_tethered("my home is Berlin")
+    loose = await harness.capture("Berlin is where I live")
+
+    digest = await harness.digest()
+
+    clustered = [
+        set(group.memory_ids)
+        for group in digest.dedup_groups
+        if loose.id in group.memory_ids
+    ]
+    assert_eq(clustered, [{loose.id, tethered.id}])
+
+
+@test()
+async def semantic_dedup_excludes_tethered_only_clusters() -> None:
+    """Near-identical tethered facts alone are not reviewable — no group."""
+    harness = await load_fixture(
+        review_harness(
+            StubEmbedder(
+                {
+                    "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
+                    "Berlin is my home": [1.0, 0.1, 0.0, 0.0],
+                    "penicillin triggers my allergies": [0.0, 1.0, 0.0, 0.0],
+                }
+            )
+        )
+    )
+    _ = await harness.capture_tethered("my home is Berlin")
+    _ = await harness.capture_tethered("Berlin is my home")
+    _ = await harness.capture("penicillin triggers my allergies")
+
+    digest = await harness.digest()
+
+    assert_eq(digest.dedup_groups, [])
 
 
 @test()
@@ -519,16 +605,13 @@ async def semantic_contradictions_rank_candidates_by_similarity() -> None:
 @test()
 async def digest_reuses_stored_tethered_embedding() -> None:
     """A tethered Memory with a fresh canonical vector is never re-embedded."""
-    harness = await load_fixture(
-        review_harness(
-            StubEmbedder(
-                {
-                    "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
-                    "these days the flat sits in Munich": [1.0, 0.2, 0.0, 0.0],
-                }
-            )
-        )
+    stub = StubEmbedder(
+        {
+            "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
+            "these days the flat sits in Munich": [1.0, 0.2, 0.0, 0.0],
+        }
     )
+    harness = await load_fixture(review_harness(stub))
     tethered = await harness.capture_tethered("my home is Berlin")
     await harness.store_embedding(
         tethered, [1.0, 0.0, 0.0, 0.0], embedded_version=tethered.version
@@ -539,9 +622,7 @@ async def digest_reuses_stored_tethered_embedding() -> None:
 
     pairs = {(c.loose_id, c.tethered_id) for c in digest.contradictions}
     assert_in((loose.id, tethered.id), pairs)
-    embedder = harness.review_service.embedder
-    assert isinstance(embedder, StubEmbedder)
-    assert_not_in("my home is Berlin", embedder.embedded_texts)
+    assert_not_in("my home is Berlin", stub.embedded_texts)
 
 
 @test()
@@ -567,6 +648,96 @@ async def digest_re_embeds_stale_tethered_embedding() -> None:
 
     pairs = {(c.loose_id, c.tethered_id) for c in digest.contradictions}
     assert_in((loose.id, tethered.id), pairs)
+
+
+@test()
+async def digest_reuses_stored_loose_embedding() -> None:
+    """A loose Memory with a fresh canonical vector is never re-embedded."""
+    stub = StubEmbedder(
+        {
+            "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
+            "these days the flat sits in Munich": [1.0, 0.2, 0.0, 0.0],
+        }
+    )
+    harness = await load_fixture(review_harness(stub))
+    tethered = await harness.capture_tethered("my home is Berlin")
+    loose = await harness.capture("these days the flat sits in Munich")
+    await harness.store_embedding(
+        loose, [1.0, 0.2, 0.0, 0.0], embedded_version=loose.version
+    )
+
+    digest = await harness.digest()
+
+    pairs = {(c.loose_id, c.tethered_id) for c in digest.contradictions}
+    assert_in((loose.id, tethered.id), pairs)
+    assert_not_in("these days the flat sits in Munich", stub.embedded_texts)
+
+
+@test()
+async def digest_ignores_stored_vector_from_another_model() -> None:
+    """A vector recorded under a different embedding model is embedded afresh.
+
+    The stored vector is orthogonal to the loose Memory's, so reusing it would
+    hide the contradiction pair; the marker mismatch forces a re-embed instead.
+    """
+    stub = StubEmbedder(
+        {
+            "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
+            "these days the flat sits in Munich": [1.0, 0.2, 0.0, 0.0],
+        }
+    )
+    harness = await load_fixture(review_harness(stub))
+    tethered = await harness.capture_tethered("my home is Berlin")
+    await harness.store_embedding(
+        tethered,
+        [0.0, 1.0, 0.0, 0.0],
+        embedded_version=tethered.version,
+        embedding_model="another-model",
+    )
+    loose = await harness.capture("these days the flat sits in Munich")
+
+    digest = await harness.digest()
+
+    pairs = {(c.loose_id, c.tethered_id) for c in digest.contradictions}
+    assert_in((loose.id, tethered.id), pairs)
+    assert_in("my home is Berlin", stub.embedded_texts)
+
+
+@test()
+async def digest_ignores_stored_vector_of_another_width() -> None:
+    """A stored vector of another dimension never reaches cosine — no crash."""
+    stub = StubEmbedder(
+        {
+            "my home is Berlin": [1.0, 0.0, 0.0, 0.0],
+            "these days the flat sits in Munich": [1.0, 0.2, 0.0, 0.0],
+        }
+    )
+    harness = await load_fixture(review_harness(stub))
+    tethered = await harness.capture_tethered("my home is Berlin")
+    await harness.store_embedding(
+        tethered,
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        embedded_version=tethered.version,
+        embedding_model="wide-model",
+        vector_dim=8,
+    )
+    loose = await harness.capture("these days the flat sits in Munich")
+
+    digest = await harness.digest()
+
+    pairs = {(c.loose_id, c.tethered_id) for c in digest.contradictions}
+    assert_in((loose.id, tethered.id), pairs)
+
+
+@test()
+async def digest_refuses_short_embedding_batch() -> None:
+    """An embedder returning fewer vectors than texts raises a domain error."""
+    harness = await load_fixture(review_harness(ShortBatchEmbedder()))
+    _ = await harness.capture("I adore corridor seating")
+    _ = await harness.capture("penicillin triggers my allergies")
+
+    with assert_raises(EmbeddingBatchMismatchError):
+        _ = await harness.digest()
 
 
 @test()

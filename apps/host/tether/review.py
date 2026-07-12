@@ -11,9 +11,11 @@ review queue, tether/edit/reject, and the trusted corpus are all unchanged.
 The digest is recomputed from live SQLite on each call: no new tables, no
 persisted flags, nothing to invalidate. Dedup and contradiction detection are
 inherently semantic, so when the host is wired with an `Embedder` the digest
-recalls and ranks candidates by cosine similarity over Memory vectors — reusing
-each tethered Memory's canonical stored vector when it is fresh and embedding
-the rest on the fly, never writing any vector back. Without an embedder both
+recalls and ranks candidates by cosine similarity over Memory vectors — dedup
+then also spans loose vs. tethered, so a re-capture of an already-tethered fact
+surfaces. A Memory's canonical stored vector is reused when it is fresh and the
+search-metadata marker confirms it came from the live model; the rest are
+embedded on the fly, never writing any vector back. Without an embedder both
 fall back to keyword overlap. Either way the host only surfaces *candidates*:
 the model decides which truly conflict, and the human decides what happens.
 """
@@ -32,6 +34,7 @@ from tether.embeddings import Embedder, Vector, vector_from_bytes
 from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.memory_capabilities import MemoryRead
+from tether.search_meta import SearchMetaService
 
 DEDUP_THRESHOLD = 0.6
 """Token-overlap ratio above which two loose Memories are near-duplicates.
@@ -79,6 +82,16 @@ type Scrutiny = Literal["normal", "elevated"]
 """Whether a queued Memory warrants closer human attention than the default."""
 
 
+class EmbeddingBatchMismatchError(Exception):
+    """Raised when the embedder returns a different vector count than texts sent.
+
+    `Embedder.embed_documents` promises one vector per input in order; the
+    digest pairs vectors back to Memories positionally, so a short (or long)
+    batch would silently mis-assign every vector after the gap. Refusing the
+    batch outright turns a broken embedder into a clear error instead of a
+    mis-ranked digest."""
+
+
 class ReviewQueueItem(MemoryRead):
     """A loose Memory awaiting Review, annotated with its computed scrutiny.
 
@@ -98,7 +111,13 @@ class ReviewQueueItem(MemoryRead):
 
 
 class DedupGroup(BaseModel):
-    """A cluster of two or more near-duplicate loose Memories."""
+    """A cluster of two or more near-duplicate Memories, at least one loose.
+
+    On the semantic path tethered Memories join the clustering so a loose
+    re-capture of an already-tethered fact surfaces as a duplicate; a cluster
+    with no loose member is never emitted, because only loose Memories can be
+    acted on in Review. The keyword fallback clusters loose Memories only.
+    """
 
     memory_ids: list[UUID7]
 
@@ -232,12 +251,29 @@ def _dedup_groups(loose: list[Memory[Fetched]]) -> list[DedupGroup]:
 
 
 def _semantic_dedup_groups(
-    loose: list[Memory[Fetched]], vectors: list[Vector]
+    loose: list[Memory[Fetched]],
+    loose_vectors: list[Vector],
+    tethered: list[Memory[Fetched]],
+    tethered_vectors: list[Vector],
 ) -> list[DedupGroup]:
-    """Cluster loose Memories whose vectors sit close enough to be restatements."""
-    return _cluster_duplicates(
-        loose, lambda i, j: _cosine(vectors[i], vectors[j]) >= SEMANTIC_DEDUP_THRESHOLD
-    )
+    """Cluster near-duplicate Memories across the queue and the trusted corpus.
+
+    Tethered Memories join the clustering so a loose re-capture of an
+    already-tethered fact surfaces as a duplicate, not only loose-vs-loose
+    restatements. Clusters with no loose member are dropped: a tethered-only
+    cluster contains nothing the human can act on in Review.
+    """
+    memories = loose + tethered
+    vectors = loose_vectors + tethered_vectors
+    loose_ids = {memory.id for memory in loose}
+    return [
+        group
+        for group in _cluster_duplicates(
+            memories,
+            lambda i, j: _cosine(vectors[i], vectors[j]) >= SEMANTIC_DEDUP_THRESHOLD,
+        )
+        if any(memory_id in loose_ids for memory_id in group.memory_ids)
+    ]
 
 
 def _bulk_groups(loose: list[Memory[Fetched]]) -> list[BulkGroup]:
@@ -321,6 +357,12 @@ class ReviewService:
 
         `None` when the host runs without search; the digest then falls back to
         keyword overlap, so Review works identically minus semantic recall."""
+        self._search_meta: SearchMetaService = SearchMetaService(database=database)
+        """Reads the marker naming the model behind the stored canonical vectors.
+
+        The digest reuses a stored vector only when that marker matches the
+        live embedder — vectors from different models share no comparable
+        space, so mixing them would mis-rank or crash on a width mismatch."""
 
     async def review_digest(self, *, logger: Logger) -> ReviewDigest:
         """Compute dedup, bulk, contradiction, and scrutiny over the live queue.
@@ -342,9 +384,16 @@ class ReviewService:
             contradictions = _contradictions(loose, tethered)
         else:
             loose_vectors, tethered_vectors = await self._digest_vectors(
-                self.embedder, loose=loose, tethered=tethered
+                self.embedder,
+                loose=loose,
+                tethered=tethered,
+                reuse_stored=await self._stored_vectors_reusable(
+                    self.embedder, logger=logger
+                ),
             )
-            dedup_groups = _semantic_dedup_groups(loose, loose_vectors)
+            dedup_groups = _semantic_dedup_groups(
+                loose, loose_vectors, tethered, tethered_vectors
+            )
             contradictions = _semantic_contradictions(
                 loose, loose_vectors, tethered, tethered_vectors
             )
@@ -363,39 +412,64 @@ class ReviewService:
         )
         return digest
 
+    async def _stored_vectors_reusable(
+        self, embedder: Embedder, *, logger: Logger
+    ) -> bool:
+        """Whether stored canonical vectors share the live embedder's space.
+
+        The search-metadata marker names the model (and width) that produced
+        every stored vector. A missing or disagreeing marker means the store
+        predates this embedder — those vectors would mis-rank against freshly
+        embedded ones, or crash cosine on a width mismatch, so the digest
+        re-embeds everything instead of reusing them.
+        """
+        marker = await self._search_meta.fetch(logger=logger)
+        return (
+            marker is not None
+            and marker.embedding_model == embedder.model_name
+            and marker.vector_dim == embedder.vector_dim
+        )
+
     @staticmethod
     async def _digest_vectors(
         embedder: Embedder,
         *,
         loose: list[Memory[Fetched]],
         tethered: list[Memory[Fetched]],
+        reuse_stored: bool,
     ) -> tuple[list[Vector], list[Vector]]:
         """Resolve one vector per Memory without ever writing one back.
 
-        A tethered Memory reuses its canonical stored vector when it matches the
-        current content version; loose Memories (which the search reconciler
-        never embeds) and stale tethered rows are embedded on the fly in a
-        single batch. The fresh vectors are used for this digest and dropped —
-        persisting them is the reconciler's job, keeping the digest read-only.
+        Any Memory — loose or tethered — reuses its canonical stored vector
+        when `reuse_stored` says the store matches the live embedder and the
+        vector matches the current content version; the rest are embedded on
+        the fly in a single batch. The fresh vectors are used for this digest
+        and dropped — persisting them is the reconciler's job, keeping the
+        digest read-only.
         """
-        stored_tethered = [
+        memories = loose + tethered
+        stored_vectors = [
             vector_from_bytes(memory.embedding)
-            if memory.embedding is not None
+            if reuse_stored
+            and memory.embedding is not None
             and memory.embedded_version == memory.version
             else None
-            for memory in tethered
+            for memory in memories
         ]
-        owed_contents = [memory.content for memory in loose] + [
+        owed_contents = [
             memory.content
-            for memory, stored in zip(tethered, stored_tethered, strict=True)
+            for memory, stored in zip(memories, stored_vectors, strict=True)
             if stored is None
         ]
-        fresh_vectors = iter(
-            await embedder.embed_documents(owed_contents) if owed_contents else []
-        )
-        loose_vectors = [next(fresh_vectors) for _ in loose]
-        tethered_vectors = [
+        fresh = await embedder.embed_documents(owed_contents) if owed_contents else []
+        if len(fresh) != len(owed_contents):
+            message = (
+                f"embedder returned {len(fresh)} vectors for {len(owed_contents)} texts"
+            )
+            raise EmbeddingBatchMismatchError(message)
+        fresh_vectors = iter(fresh)
+        vectors = [
             stored if stored is not None else next(fresh_vectors)
-            for stored in stored_tethered
+            for stored in stored_vectors
         ]
-        return loose_vectors, tethered_vectors
+        return vectors[: len(loose)], vectors[len(loose) :]
