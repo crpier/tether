@@ -17,6 +17,19 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from tether.agent_trace import AgentTraceRecorder, record_run
 from tether.auth import SESSION_COOKIE, verify_session_cookie
+from tether.chat_frames import (
+    AbortAckFrame,
+    AgentEndFrame,
+    ErrorFrame,
+    InvalidateFrame,
+    MessageEndFrame,
+    MessageStartFrame,
+    NotifyFrame,
+    StreamUpdateFrame,
+    ToolEndFrame,
+    ToolStartFrame,
+    UserMessageFrame,
+)
 from tether.conversations import ConversationNotFoundError, MessageDraft
 from tether.events import HubEvent, NotifyEvent
 from tether.pi_runtime import (
@@ -126,10 +139,9 @@ async def _send_error(
     conversation_id: UUID | None = None,
 ) -> None:
     """Send a tagged chat error frame."""
-    frame: dict[str, object] = {"type": "chat", "event": "error", "detail": detail}
-    if conversation_id is not None:
-        frame["conversation_id"] = str(conversation_id)
-    await websocket.send_json(frame)
+    await websocket.send_json(
+        ErrorFrame(detail=detail, conversation_id=conversation_id).wire()
+    )
 
 
 async def _relay_stream_update(
@@ -156,13 +168,12 @@ async def _relay_stream_update(
         case AssistantStreamNote(kind=kind):
             event_name = kind
     await websocket.send_json(
-        {
-            "type": "chat",
-            "conversation_id": str(conversation_id),
-            "event": event_name,
-            "delta": update.raw_delta,
-            "content_index": update.content_index,
-        }
+        StreamUpdateFrame(
+            conversation_id=conversation_id,
+            event=event_name,
+            delta=update.raw_delta,
+            content_index=update.content_index,
+        ).wire()
     )
 
 
@@ -199,13 +210,7 @@ async def _settle_message_end(
                 role="assistant",
             )
         )
-    await websocket.send_json(
-        {
-            "type": "chat",
-            "conversation_id": str(conversation_id),
-            "event": "message_end",
-        }
-    )
+    await websocket.send_json(MessageEndFrame(conversation_id=conversation_id).wire())
 
 
 async def _forward_tool_start(
@@ -219,14 +224,12 @@ async def _forward_tool_start(
     if started.tool_call_id is not None:
         pending_tool_args[started.tool_call_id] = started.args
     await websocket.send_json(
-        {
-            "type": "chat",
-            "conversation_id": str(conversation_id),
-            "event": "tool_start",
-            "tool_name": started.tool_name,
-            "tool_id": started.tool_call_id,
-            "tool_args": started.args,
-        }
+        ToolStartFrame(
+            conversation_id=conversation_id,
+            tool_name=started.tool_name,
+            tool_id=started.tool_call_id,
+            tool_args=started.args,
+        ).wire()
     )
 
 
@@ -251,14 +254,12 @@ async def _settle_tool_end(
             )
         )
     await websocket.send_json(
-        {
-            "type": "chat",
-            "conversation_id": str(conversation_id),
-            "event": "tool_end",
-            "tool_name": settled.tool_name,
-            "tool_id": settled.tool_call_id,
-            "tool_result": settled.result,
-        }
+        ToolEndFrame(
+            conversation_id=conversation_id,
+            tool_name=settled.tool_name,
+            tool_id=settled.tool_call_id,
+            tool_result=settled.result,
+        ).wire()
     )
 
 
@@ -291,11 +292,7 @@ async def _stream_runtime(
                 if recorder is not None and session_id is not None:
                     recorder.record_model_turn(session_id=session_id)
                 await websocket.send_json(
-                    {
-                        "type": "chat",
-                        "conversation_id": str(conversation_id),
-                        "event": "message_start",
-                    }
+                    MessageStartFrame(conversation_id=conversation_id).wire()
                 )
             case TextDelta() | ThinkingDelta() | AssistantStreamNote():
                 await _relay_stream_update(
@@ -331,11 +328,7 @@ async def _stream_runtime(
                 )
             case AgentEnded():
                 await websocket.send_json(
-                    {
-                        "type": "chat",
-                        "conversation_id": str(conversation_id),
-                        "event": "agent_end",
-                    }
+                    AgentEndFrame(conversation_id=conversation_id).wire()
                 )
 
 
@@ -370,13 +363,11 @@ async def _run_prompt(
         )
         return
     await websocket.send_json(
-        {
-            "type": "chat",
-            "conversation_id": str(conversation_id),
-            "event": "user_message",
-            "message_id": str(message.id),
-            "seq": message.seq,
-        }
+        UserMessageFrame(
+            conversation_id=conversation_id,
+            message_id=message.id,
+            seq=message.seq,
+        ).wire()
     )
     recorder = cast(
         "AgentTraceRecorder | None",
@@ -478,11 +469,7 @@ async def _handle_frame(
             if runtime is not None:
                 _ = await runtime.client.request("abort")
             await websocket.send_json(
-                {
-                    "type": "chat",
-                    "conversation_id": str(frame.conversation_id),
-                    "event": "abort_ack",
-                }
+                AbortAckFrame(conversation_id=frame.conversation_id).wire()
             )
 
 
@@ -495,15 +482,14 @@ async def _event_pump(
         event = await subscription.get()
         if isinstance(event, NotifyEvent):
             await websocket.send_json(
-                {
-                    "type": "notify",
-                    "trigger_id": event.trigger_id,
-                    "title": event.title,
-                    "body": event.body,
-                }
+                NotifyFrame(
+                    trigger_id=event.trigger_id,
+                    title=event.title,
+                    body=event.body,
+                ).wire()
             )
             continue
-        await websocket.send_json({"type": "invalidate", "keys": event.keys})
+        await websocket.send_json(InvalidateFrame(keys=event.keys).wire())
 
 
 async def websocket_bus(websocket: WebSocket) -> None:
