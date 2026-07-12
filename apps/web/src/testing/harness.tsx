@@ -12,6 +12,7 @@ import type {
   PushStatus,
   TetherApi,
   Trigger,
+  UpdateTrigger,
   YouTubeSyncStatus,
 } from "../api";
 import { App } from "../app";
@@ -129,9 +130,10 @@ export function notification(overrides: Partial<Notification>): Notification {
 export class FakeApi implements TetherApi {
   authenticated: boolean;
   createTriggerCalls: CreateTrigger[] = [];
+  updateTriggerCalls: { body: UpdateTrigger; triggerId: string }[] = [];
   deleteTriggerCalls: { triggerId: string; version: number }[] = [];
-  // Per-trigger version the fake "server" will accept on delete; a mismatch
-  // (e.g. after the trigger fired) is rejected with a 409, like the host.
+  // Per-trigger version the fake "server" will accept on update/delete; a
+  // mismatch (e.g. after the trigger fired) is rejected with a 409, like the host.
   serverTriggerVersions: Record<string, number> = {};
   dismissNotificationCalls: string[] = [];
   clearNotificationsCalls = 0;
@@ -231,6 +233,45 @@ export class FakeApi implements TetherApi {
     });
     this.storedTriggers = [...this.storedTriggers, created];
     return Promise.resolve(created);
+  }
+
+  updateTrigger(triggerId: string, body: UpdateTrigger) {
+    this.updateTriggerCalls.push({ body, triggerId });
+    const serverVersion = this.serverTriggerVersions[triggerId];
+    if (
+      Object.hasOwn(this.serverTriggerVersions, triggerId) &&
+      serverVersion !== body.version
+    ) {
+      // The server bumped the version (e.g. the trigger fired). Reveal the fresh
+      // state to future list fetches, then reject exactly as the host does.
+      this.storedTriggers = this.storedTriggers.map((existing) =>
+        existing.id === triggerId
+          ? { ...existing, version: serverVersion }
+          : existing,
+      );
+      return Promise.reject(new ApiError(409));
+    }
+    const current = this.storedTriggers.find(
+      (existing) => existing.id === triggerId,
+    );
+    if (current === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    const updated: Trigger = {
+      ...current,
+      action_kind: body.action_kind,
+      payload: body.payload,
+      recurrence: body.recurrence,
+      timezone: body.timezone ?? "UTC",
+      version: body.version + 1,
+      wall_time: body.time_of_day,
+      weekday: body.weekday,
+    };
+    this.serverTriggerVersions[triggerId] = updated.version;
+    this.storedTriggers = this.storedTriggers.map((existing) =>
+      existing.id === triggerId ? updated : existing,
+    );
+    return Promise.resolve(updated);
   }
 
   deleteTrigger(triggerId: string, version: number) {

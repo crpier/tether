@@ -9,6 +9,7 @@ import type {
   Trigger,
   TriggerActionKind,
   TriggerRecurrence,
+  UpdateTrigger,
 } from "../api";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -74,10 +75,41 @@ export function TriggersPanel(props: { api: TetherApi }) {
   const [timezone, setTimezone] = createSignal(browserTimezone());
   const [weekday, setWeekday] = createSignal(0);
   const [error, setError] = createSignal<string | undefined>();
+  // The row being edited (with the version observed at click time), or
+  // undefined when the form is in create mode.
+  const [editing, setEditing] = createSignal<
+    { id: string; version: number } | undefined
+  >();
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.triggers });
     void queryClient.refetchQueries({ queryKey: queryKeys.triggers });
+  };
+
+  const resetForm = () => {
+    setEditing(undefined);
+    setPayload("");
+    setFireAt("");
+    setRecurrence("once");
+    setActionKind("message");
+    setTimeOfDay("09:00");
+    setTimezone(browserTimezone());
+    setWeekday(0);
+  };
+
+  const startEdit = (trigger: Trigger) => {
+    setEditing({ id: trigger.id, version: trigger.version });
+    setPayload(trigger.payload);
+    setRecurrence(trigger.recurrence);
+    setActionKind(trigger.action_kind);
+    if (trigger.recurrence === "once") {
+      setFireAt(localDateTimeStamp(new Date(trigger.next_fire_at)));
+    } else {
+      setTimeOfDay(trigger.wall_time ?? "09:00");
+      setTimezone(trigger.timezone);
+      setWeekday(trigger.weekday ?? 0);
+    }
+    setError(undefined);
   };
 
   const submit = () => {
@@ -108,21 +140,69 @@ export function TriggersPanel(props: { api: TetherApi }) {
       timezone: rec === "once" ? null : timezone(),
       weekday: rec === "weekly" ? weekday() : null,
     };
+    const target = editing();
     void (async () => {
       setError(undefined);
       try {
-        await props.api.createTrigger(body);
-        setPayload("");
-        setFireAt("");
+        if (target === undefined) {
+          await props.api.createTrigger(body);
+          setPayload("");
+          setFireAt("");
+        } else {
+          await props.api.updateTrigger(target.id, {
+            ...body,
+            version: target.version,
+          });
+          resetForm();
+        }
         refresh();
       } catch (caught) {
+        // Same stale-version race as delete: the trigger fired after we loaded
+        // the row, so the server's version moved on. Refetch and retry once
+        // with the fresh version instead of dead-ending on a bare 409.
+        if (
+          target !== undefined &&
+          caught instanceof ApiError &&
+          caught.status === 409
+        ) {
+          const recovered = await retryUpdateWithFreshVersion(target.id, body);
+          if (recovered) {
+            return;
+          }
+        }
         setError(
           caught instanceof Error
             ? caught.message
-            : "Could not create reminder",
+            : target === undefined
+              ? "Could not create reminder"
+              : "Could not update reminder",
         );
       }
     })();
+  };
+
+  // Refetch triggers, then retry the update with the current version. Returns
+  // whether the save landed; a vanished trigger means it cannot land.
+  const retryUpdateWithFreshVersion = async (
+    triggerId: string,
+    body: CreateTrigger,
+  ): Promise<boolean> => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.triggers });
+    const fresh = (
+      queryClient.getQueryData<Trigger[]>(queryKeys.triggers) ?? []
+    ).find((candidate) => candidate.id === triggerId);
+    if (fresh === undefined) {
+      return false;
+    }
+    const retryBody: UpdateTrigger = { ...body, version: fresh.version };
+    try {
+      await props.api.updateTrigger(triggerId, retryBody);
+      resetForm();
+      refresh();
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const remove = (triggerId: string, version: number) => {
@@ -258,7 +338,16 @@ export function TriggersPanel(props: { api: TetherApi }) {
             </select>
           </label>
         </Show>
-        <Button type="submit">Add reminder</Button>
+        <div class="flex gap-2">
+          <Button type="submit">
+            {editing() === undefined ? "Add reminder" : "Save reminder"}
+          </Button>
+          <Show when={editing()}>
+            <Button onClick={resetForm} type="button" variant="ghost">
+              Cancel
+            </Button>
+          </Show>
+        </div>
       </form>
       <Show when={error()}>
         {(message) => (
@@ -279,6 +368,16 @@ export function TriggersPanel(props: { api: TetherApi }) {
               <span class="text-muted-foreground text-xs">{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
               <Button
                 class="ml-auto"
+                onClick={() => {
+                  startEdit(trigger);
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Edit
+              </Button>
+              <Button
                 onClick={() => {
                   remove(trigger.id, trigger.version);
                 }}
