@@ -759,7 +759,9 @@ def _lifespan(
             )
             await memory_service.regenerate_knowledge_base(logger=app_logger)
             app.state.memory_service = memory_service
-            app.state.review_service = ReviewService(database=db)
+            # The digest reuses the same embedder as search: semantic dedup and
+            # contradiction recall when it is wired, keyword fallback when not.
+            app.state.review_service = ReviewService(database=db, embedder=embedder)
             app.state.triage_service = TriageService(database=db)
             app.state.bucket_item_service = BucketItemService(
                 database=db,
