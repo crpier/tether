@@ -51,9 +51,9 @@ from tether.youtube import (
     YouTubeTranscriptState,
     YouTubeVideoNotFoundError,
     _decode_skipped_ids,
-    _state_get,
     create_youtube_schema,
     derive_ingest_state,
+    state_get,
     upsert_ingested_video,
 )
 
@@ -340,7 +340,7 @@ async def _drain_backfill(env: Env) -> None:
     """Run sync passes until the backfill reaches the end of history (completes)."""
     for _ in range(10):
         _ = await env.sync.sync(logger=test_logger())
-        if await _state_get(env.db, _BACKFILL_COMPLETED_AT_KEY):
+        if await state_get(env.db, _BACKFILL_COMPLETED_AT_KEY):
             return
     message = "backfill did not complete within the pass budget"
     raise AssertionError(message)
@@ -431,7 +431,7 @@ async def known_skipped_videos_do_not_trip_drift() -> None:
     # Upstream total is 3; only v1 ingests, m1/m2 are known-skipped, so the gap
     # is fully accounted and drift does not fire even with a zero margin.
     assert_eq(
-        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        sorted(_decode_skipped_ids(await state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
         ["m1", "m2"],
     )
 
@@ -474,7 +474,7 @@ async def a_repeatedly_skipped_video_is_counted_once() -> None:
     _ = await env.sync.sync(logger=test_logger())
 
     assert_eq(
-        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        sorted(_decode_skipped_ids(await state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
         ["m1"],
     )
 
@@ -487,7 +487,7 @@ async def a_later_ingested_video_leaves_the_skipped_set() -> None:
     env = await load_fixture(make_env(api, config=config))
     _ = await env.sync.sync(logger=test_logger())
     assert_eq(
-        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        sorted(_decode_skipped_ids(await state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
         ["m1"],
     )
 
@@ -500,7 +500,7 @@ async def a_later_ingested_video_leaves_the_skipped_set() -> None:
     _ = await sync2.sync(logger=test_logger())
 
     assert_eq(
-        sorted(_decode_skipped_ids(await _state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
+        sorted(_decode_skipped_ids(await state_get(env.db, _KNOWN_SKIPPED_IDS_KEY))),
         [],
     )
 
@@ -580,9 +580,9 @@ async def a_completed_backfill_records_its_completion_time() -> None:
     _ = await env.sync.sync(logger=test_logger())
 
     assert_eq(
-        await _state_get(env.db, _BACKFILL_COMPLETED_AT_KEY), clock.now().isoformat()
+        await state_get(env.db, _BACKFILL_COMPLETED_AT_KEY), clock.now().isoformat()
     )
-    assert_eq(await _state_get(env.db, _BACKFILL_CURSOR_KEY), "")
+    assert_eq(await state_get(env.db, _BACKFILL_CURSOR_KEY), "")
 
 
 async def _seed_terminal_video(
@@ -723,7 +723,7 @@ async def sync_marks_last_run_from_the_injected_clock() -> None:
 
     _ = await env.sync.sync(logger=test_logger())
 
-    last_run = await _state_get(env.db, _LIKES_LAST_RUN_KEY)
+    last_run = await state_get(env.db, _LIKES_LAST_RUN_KEY)
     assert_eq(last_run, clock.now().isoformat())
 
 

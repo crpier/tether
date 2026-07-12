@@ -93,6 +93,7 @@ from tether.transcript_supadata import (
     SupadataTranscriptProvider,
     bind_supadata_spend_guard,
 )
+from tether.transcript_worker import TranscriptSyncService
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
@@ -104,7 +105,6 @@ from tether.youtube import (
     NullTranscriptProvider,
     TranscriptProvider,
     TranscriptSyncConfig,
-    TranscriptSyncService,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeApiGate,
