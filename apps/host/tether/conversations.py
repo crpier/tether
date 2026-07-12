@@ -35,6 +35,7 @@ from tether.model_selection import (
     ModelNotAllowedError,
 )
 from tether.openapi import EndpointRoute, endpoint
+from tether.pi_runtime import PiRuntimeError
 
 type MessageRole = Literal["user", "assistant", "tool", "reasoning"]
 type JsonValue = (
@@ -430,17 +431,12 @@ async def set_conversation_model(
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     except ModelNotAllowedError:
         return JSONResponse({"detail": "model not allowed"}, status_code=422)
-    runtime = request.app.state.conversation_runtime_registry.current_for(
-        conversation.id
-    )
-    if runtime is not None:
-        response = await runtime.client.request(
-            "set_model",
-            provider=selected_model.provider,
-            modelId=selected_model.model_id,
+    try:
+        await request.app.state.conversation_runtime_registry.set_model(
+            conversation.id, selected_model
         )
-        if response.get("success") is not True:
-            return JSONResponse({"detail": "set_model failed"}, status_code=502)
+    except PiRuntimeError:
+        return JSONResponse({"detail": "set_model failed"}, status_code=502)
     return JSONResponse(
         ConversationRead.from_conversation(conversation).model_dump(mode="json")
     )
@@ -473,11 +469,7 @@ async def clear_messages(request: Request) -> Response:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     # Tear down any live runtime bound to the now-rotated session so the next
     # turn spawns clean against the fresh pi session instead of replaying it.
-    runtime = request.app.state.conversation_runtime_registry.current_for(
-        conversation.id
-    )
-    if runtime is not None:
-        await runtime.shutdown()
+    await request.app.state.conversation_runtime_registry.discard(conversation.id)
     return JSONResponse(
         ConversationRead.from_conversation(conversation).model_dump(mode="json")
     )

@@ -14,7 +14,7 @@ from tether.chat_engine import (
     _RuntimeSlot,
 )
 from tether.conversations import Conversation
-from tether.model_selection import AgentModelCatalog
+from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig
 from tether.tools import SessionRegistry
 
@@ -27,12 +27,17 @@ class FakeProcess:
 
 
 class FakeRuntime:
-    """Runtime double recording shutdown and its bound pi session id."""
+    """Runtime double recording shutdown, applied models, and pi session id."""
 
     def __init__(self, session_id: str = "session") -> None:
         self.process: FakeProcess = FakeProcess()
         self.session_id: str = session_id
         self.shutdown_count: int = 0
+        self.applied_models: list[AgentModelConfig] = []
+
+    async def apply_model(self, model: AgentModelConfig) -> None:
+        """Record the model the registry asked this runtime to adopt."""
+        self.applied_models.append(model)
 
     async def shutdown(self) -> None:
         """Mark the runtime as stopped."""
@@ -83,6 +88,107 @@ def make_registry(
         now=lambda: 0.0,
         spawn=spawner,
     )
+
+
+_CHEAP_MODEL = AgentModelConfig(
+    display_name="Cheap Faux",
+    id="cheap",
+    model_id="tether-chat-cheap-faux",
+    provider="faux",
+)
+
+
+def make_model_registry(
+    directory: str, spawner: RecordingSpawner
+) -> ConversationRuntimeRegistry:
+    """Build a registry whose catalog carries a curated default model."""
+    return ConversationRuntimeRegistry(
+        RuntimeRegistryConfig(
+            extra_extension_paths=(),
+            model_catalog=AgentModelCatalog(
+                default_model="cheap", models=(_CHEAP_MODEL,)
+            ),
+            idle_seconds=30 * 60,
+            pi_binary=None,
+            session_registry=SessionRegistry(),
+            session_root=Path(directory),
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="secret",
+        ),
+        now=lambda: 0.0,
+        spawn=spawner,
+    )
+
+
+@test()
+async def runtime_for_applies_the_resolved_model_on_spawn() -> None:
+    """A freshly spawned runtime adopts the conversation's resolved model."""
+    conversation = FakeConversation(uuid7())
+    spawner = RecordingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_model_registry(directory, spawner)
+        runtime = await registry.runtime_for(
+            cast("Conversation[Fetched]", conversation)
+        )
+
+    assert_eq(cast("FakeRuntime", runtime).applied_models, [_CHEAP_MODEL])
+
+
+@test()
+async def set_model_applies_to_a_live_runtime() -> None:
+    """`set_model` forwards the model to the conversation's live runtime."""
+    conversation_id = uuid7()
+    spawner = RecordingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_registry(directory, spawner)
+        live = FakeRuntime(session_id="live")
+        registry._runtimes[str(conversation_id)] = _RuntimeSlot(
+            last_used=0.0, runtime=cast("PiRuntime", live)
+        )
+
+        await registry.set_model(conversation_id, _CHEAP_MODEL)
+
+    assert_eq(live.applied_models, [_CHEAP_MODEL])
+
+
+@test()
+async def set_model_is_a_no_op_without_a_live_runtime() -> None:
+    """`set_model` skips silently when no runtime is bound to the conversation."""
+    spawner = RecordingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_registry(directory, spawner)
+        await registry.set_model(uuid7(), _CHEAP_MODEL)
+
+    assert_eq(len(spawner.spawned), 0)
+
+
+@test()
+async def discard_tears_down_and_forgets_the_runtime() -> None:
+    """`discard` shuts down the bound runtime and drops it from the registry."""
+    conversation_id = uuid7()
+    spawner = RecordingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_registry(directory, spawner)
+        live = FakeRuntime(session_id="live")
+        registry._runtimes[str(conversation_id)] = _RuntimeSlot(
+            last_used=0.0, runtime=cast("PiRuntime", live)
+        )
+
+        await registry.discard(conversation_id)
+
+        assert_eq(live.shutdown_count, 1)
+        assert_eq(registry.current_for(conversation_id), None)
+
+
+@test()
+async def discard_is_a_no_op_without_a_live_runtime() -> None:
+    """`discard` tolerates a conversation with no bound runtime."""
+    spawner = RecordingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_registry(directory, spawner)
+        await registry.discard(uuid7())
+
+    assert_eq(len(spawner.spawned), 0)
 
 
 @test()

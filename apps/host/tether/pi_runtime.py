@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Protocol, Self, cast
 from uuid import UUID
 
+from tether.model_selection import AgentModelConfig
 from tether.tools import SessionRegistry
 
 _JSONL_READ_LIMIT = 65536
@@ -541,6 +542,20 @@ class PiRuntime:
             return False
         response = await self.client.request("get_state")
         return response.get("success") is True
+
+    async def apply_model(self, model: AgentModelConfig) -> None:
+        """Select the provider model for later turns, raising if pi rejects it.
+
+        The one place the `set_model` RPC lives; callers hand it an already
+        resolved `AgentModelConfig` so the raw command shape and its
+        success check never leak past the runtime.
+        """
+        response = await self.client.request(
+            "set_model", provider=model.provider, modelId=model.model_id
+        )
+        if response.get("success") is not True:
+            message = "pi rejected set_model"
+            raise PiRuntimeError(message)
 
     def drain_events(self) -> int:
         """Discard pending events left over from a previous turn."""
