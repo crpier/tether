@@ -19,7 +19,7 @@ from starlette.routing import Route
 from tether import recall_capabilities
 from tether.capabilities import bind_params
 from tether.recall_capabilities import RECALL_ERRORS
-from tether.tools import ToolEndpoint, ToolRoute
+from tether.tools import ToolSpec
 
 
 class StartRecallParams(BaseModel):
@@ -46,38 +46,33 @@ class ListDueRecallPromptsParams(BaseModel):
     limit: PositiveInt = 50
 
 
+RECALL_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        "start_recall",
+        StartRecallParams,
+        bind_params(recall_capabilities.start_recall),
+        RECALL_ERRORS,
+    ),
+    ToolSpec(
+        "list_due_recall_prompts",
+        ListDueRecallPromptsParams,
+        bind_params(recall_capabilities.list_due_prompts),
+        RECALL_ERRORS,
+    ),
+    ToolSpec(
+        "answer_recall_prompt",
+        AnswerRecallPromptParams,
+        bind_params(recall_capabilities.answer_prompt),
+        RECALL_ERRORS,
+    ),
+)
+"""The Recall capabilities exposed as internal tools, in generated order."""
+
+
 def internal_recall_tool_routes() -> list[Route]:
     """Mount the Recall capabilities as `/internal/tools/*` POST endpoints.
 
     Returned separately from the public Recall routes so they stay absent from
     the public OpenAPI document and generated client.
     """
-    return [
-        ToolRoute(
-            "/internal/tools/start_recall",
-            ToolEndpoint(
-                StartRecallParams,
-                bind_params(recall_capabilities.start_recall),
-                errors=RECALL_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/list_due_recall_prompts",
-            ToolEndpoint(
-                ListDueRecallPromptsParams,
-                bind_params(recall_capabilities.list_due_prompts),
-                errors=RECALL_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/answer_recall_prompt",
-            ToolEndpoint(
-                AnswerRecallPromptParams,
-                bind_params(recall_capabilities.answer_prompt),
-                errors=RECALL_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-    ]
+    return [spec.route() for spec in RECALL_TOOL_SPECS]

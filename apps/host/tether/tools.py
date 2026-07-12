@@ -27,6 +27,7 @@ from __future__ import annotations
 import hmac
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, cast
 
@@ -356,6 +357,43 @@ class ToolEndpoint:
         return _success(outcome)
 
 
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    """One internal tool: its name, params model, handler, and error table.
+
+    The single source of truth for a tool. `route()` mounts it as a POST
+    endpoint and `tether.tool_schemas` derives its codegen schema from the same
+    spec, so a tool's name/endpoint/params can never drift between the mounted
+    surface and the generated shim. The endpoint is always
+    `/internal/tools/{name}`.
+
+    >>> class PokeParams(BaseModel):
+    ...     pass
+    >>> async def poke(request: Request, params: PokeParams) -> CapabilityOutcome:
+    ...     return CapabilityOutcome(result=None)
+    >>> ToolSpec("poke", PokeParams, poke).endpoint
+    '/internal/tools/poke'
+    """
+
+    name: str
+    params_model: type[BaseModel]
+    handler: Callable[[Request, Any], Awaitable[CapabilityOutcome]]
+    errors: tuple[ErrorRule, ...] = ()
+
+    @property
+    def endpoint(self) -> str:
+        """The loopback path this tool mounts at."""
+        return f"/internal/tools/{self.name}"
+
+    def route(self) -> ToolRoute:
+        """Mount this spec as its POST `/internal/tools/*` endpoint."""
+        return ToolRoute(
+            self.endpoint,
+            ToolEndpoint(self.params_model, self.handler, errors=self.errors),
+            methods=["POST"],
+        )
+
+
 def _elapsed_ms(started: float) -> float:
     """Milliseconds elapsed since a `perf_counter` reading."""
     return round((perf_counter() - started) * 1000, 3)
@@ -378,57 +416,23 @@ async def _review_digest(request: Request) -> CapabilityOutcome:
     return CapabilityOutcome(result=digest.model_dump(mode="json"))
 
 
+MEMORY_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec("capture", CaptureParams, bind_params(capture_memory), MEMORY_ERRORS),
+    ToolSpec("browse", BrowseParams, bind_params(browse_memories), MEMORY_ERRORS),
+    ToolSpec("search", SearchParams, bind_params(search_memories), MEMORY_ERRORS),
+    ToolSpec("review_digest", ReviewDigestParams, bind_params(_review_digest)),
+    ToolSpec("tether", TetherParams, bind_params(tether_memory), MEMORY_ERRORS),
+    ToolSpec("edit", EditParams, bind_params(edit_memory), MEMORY_ERRORS),
+    ToolSpec("reject", RejectParams, bind_params(reject_memory), MEMORY_ERRORS),
+)
+"""The Memory capabilities exposed as internal tools, in generated-file order."""
+
+
 def internal_tool_routes() -> list[Route]:
-    """Mount the six Memory capabilities as `/internal/tools/*` POST endpoints.
+    """Mount the Memory capabilities as `/internal/tools/*` POST endpoints.
 
     These are returned separately from the public routes so they can be mounted
     on the app without being handed to `openapi_routes` — the tool surface is
     deliberately absent from the public OpenAPI document and generated client.
     """
-    return [
-        ToolRoute(
-            "/internal/tools/capture",
-            ToolEndpoint(
-                CaptureParams, bind_params(capture_memory), errors=MEMORY_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/browse",
-            ToolEndpoint(
-                BrowseParams, bind_params(browse_memories), errors=MEMORY_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/search",
-            ToolEndpoint(
-                SearchParams, bind_params(search_memories), errors=MEMORY_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/review_digest",
-            ToolEndpoint(ReviewDigestParams, bind_params(_review_digest)),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/tether",
-            ToolEndpoint(
-                TetherParams, bind_params(tether_memory), errors=MEMORY_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/edit",
-            ToolEndpoint(EditParams, bind_params(edit_memory), errors=MEMORY_ERRORS),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/reject",
-            ToolEndpoint(
-                RejectParams, bind_params(reject_memory), errors=MEMORY_ERRORS
-            ),
-            methods=["POST"],
-        ),
-    ]
+    return [spec.route() for spec in MEMORY_TOOL_SPECS]

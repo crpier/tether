@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.logging import get_request_logger
-from tether.tools import ToolEndpoint, ToolRoute
+from tether.tools import ToolSpec
 
 
 class TriageReportParams(BaseModel):
@@ -35,16 +35,16 @@ async def _triage_report(request: Request) -> CapabilityOutcome:
     return CapabilityOutcome(result=report.model_dump(mode="json"))
 
 
+TRIAGE_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec("triage_report", TriageReportParams, bind_params(_triage_report)),
+)
+"""The Triage report exposed as an internal tool."""
+
+
 def internal_triage_tool_routes() -> list[Route]:
     """Mount the Triage report as an `/internal/tools/*` POST endpoint.
 
     Returned separately from the public routes (and the other tools) so it stays
     absent from the public OpenAPI document and generated client.
     """
-    return [
-        ToolRoute(
-            "/internal/tools/triage_report",
-            ToolEndpoint(TriageReportParams, bind_params(_triage_report)),
-            methods=["POST"],
-        ),
-    ]
+    return [spec.route() for spec in TRIAGE_TOOL_SPECS]

@@ -23,7 +23,7 @@ from starlette.routing import Route
 from tether import youtube_capabilities
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.logging import get_request_logger
-from tether.tools import ToolEndpoint, ToolRoute
+from tether.tools import ToolSpec
 from tether.youtube import (
     BrowseResult,
     Fetched,
@@ -176,52 +176,39 @@ async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcom
     )
 
 
+YOUTUBE_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        "browse_youtube", BrowseYouTubeParams, bind_params(_browse), YOUTUBE_ERRORS
+    ),
+    ToolSpec(
+        "search_youtube", SearchYouTubeParams, bind_params(_search), YOUTUBE_ERRORS
+    ),
+    ToolSpec(
+        "fetch_youtube_transcript",
+        FetchYouTubeTranscriptParams,
+        bind_params(_fetch_transcript),
+        YOUTUBE_ERRORS,
+    ),
+    ToolSpec(
+        "ignore_youtube_video",
+        IgnoreYouTubeVideoParams,
+        bind_params(youtube_capabilities.ignore),
+        YOUTUBE_ERRORS,
+    ),
+    ToolSpec(
+        "retry_youtube_video",
+        RetryYouTubeVideoParams,
+        bind_params(youtube_capabilities.retry),
+        YOUTUBE_ERRORS,
+    ),
+)
+"""The YouTube ingestion capabilities exposed as internal tools, in order."""
+
+
 def internal_youtube_tool_routes() -> list[Route]:
     """Mount the YouTube ingestion capabilities as `/internal/tools/*` POSTs.
 
     Returned separately from the public YouTube routes (and the Memory/Bucket
     tools) so they stay absent from the public OpenAPI document and client.
     """
-    return [
-        ToolRoute(
-            "/internal/tools/browse_youtube",
-            ToolEndpoint(
-                BrowseYouTubeParams, bind_params(_browse), errors=YOUTUBE_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/search_youtube",
-            ToolEndpoint(
-                SearchYouTubeParams, bind_params(_search), errors=YOUTUBE_ERRORS
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/fetch_youtube_transcript",
-            ToolEndpoint(
-                FetchYouTubeTranscriptParams,
-                bind_params(_fetch_transcript),
-                errors=YOUTUBE_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/ignore_youtube_video",
-            ToolEndpoint(
-                IgnoreYouTubeVideoParams,
-                bind_params(youtube_capabilities.ignore),
-                errors=YOUTUBE_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-        ToolRoute(
-            "/internal/tools/retry_youtube_video",
-            ToolEndpoint(
-                RetryYouTubeVideoParams,
-                bind_params(youtube_capabilities.retry),
-                errors=YOUTUBE_ERRORS,
-            ),
-            methods=["POST"],
-        ),
-    ]
+    return [spec.route() for spec in YOUTUBE_TOOL_SPECS]

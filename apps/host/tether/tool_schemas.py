@@ -4,46 +4,10 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
 
-from pydantic import BaseModel
-
-from tether.bucket_tools import (
-    AddMovieParams,
-    AddPlaceParams,
-    CompleteBucketItemParams,
-    DeleteBucketItemParams,
-    SearchBucketItemsParams,
-)
-from tether.recall_tools import (
-    AnswerRecallPromptParams,
-    ListDueRecallPromptsParams,
-    StartRecallParams,
-)
-from tether.tools import (
-    BrowseParams,
-    CaptureParams,
-    EditParams,
-    RejectParams,
-    ReviewDigestParams,
-    SearchParams,
-    TetherParams,
-)
-from tether.triage_tools import TriageReportParams
-from tether.trigger_tools import (
-    CreateTriggerParams,
-    DeleteTriggerParams,
-    ListTriggersParams,
-)
-from tether.youtube_tools import (
-    BrowseYouTubeParams,
-    FetchYouTubeTranscriptParams,
-    IgnoreYouTubeVideoParams,
-    RetryYouTubeVideoParams,
-    SearchYouTubeParams,
-)
+from tether.tool_registry import all_tool_specs
 
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
@@ -65,92 +29,13 @@ class ToolSchemaDocument(TypedDict):
     tools: list[ToolSchema]
 
 
-@dataclass(frozen=True, slots=True)
-class ToolSchemaSpec:
-    """The stable metadata that Pydantic does not know about."""
-
-    endpoint: str
-    name: str
-    params_model: type[BaseModel]
-
-
-TOOL_SCHEMA_SPECS = (
-    ToolSchemaSpec("/internal/tools/capture", "capture", CaptureParams),
-    ToolSchemaSpec("/internal/tools/browse", "browse", BrowseParams),
-    ToolSchemaSpec("/internal/tools/search", "search", SearchParams),
-    ToolSchemaSpec(
-        "/internal/tools/review_digest", "review_digest", ReviewDigestParams
-    ),
-    ToolSchemaSpec("/internal/tools/tether", "tether", TetherParams),
-    ToolSchemaSpec("/internal/tools/edit", "edit", EditParams),
-    ToolSchemaSpec("/internal/tools/reject", "reject", RejectParams),
-    ToolSchemaSpec("/internal/tools/add_movie", "add_movie", AddMovieParams),
-    ToolSchemaSpec("/internal/tools/add_place", "add_place", AddPlaceParams),
-    ToolSchemaSpec(
-        "/internal/tools/complete_bucket_item",
-        "complete_bucket_item",
-        CompleteBucketItemParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/delete_bucket_item",
-        "delete_bucket_item",
-        DeleteBucketItemParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/search_bucket_items",
-        "search_bucket_items",
-        SearchBucketItemsParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/triage_report", "triage_report", TriageReportParams
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/browse_youtube", "browse_youtube", BrowseYouTubeParams
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/search_youtube", "search_youtube", SearchYouTubeParams
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/fetch_youtube_transcript",
-        "fetch_youtube_transcript",
-        FetchYouTubeTranscriptParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/ignore_youtube_video",
-        "ignore_youtube_video",
-        IgnoreYouTubeVideoParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/retry_youtube_video",
-        "retry_youtube_video",
-        RetryYouTubeVideoParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/create_trigger", "create_trigger", CreateTriggerParams
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/list_triggers", "list_triggers", ListTriggersParams
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/delete_trigger", "delete_trigger", DeleteTriggerParams
-    ),
-    ToolSchemaSpec("/internal/tools/start_recall", "start_recall", StartRecallParams),
-    ToolSchemaSpec(
-        "/internal/tools/list_due_recall_prompts",
-        "list_due_recall_prompts",
-        ListDueRecallPromptsParams,
-    ),
-    ToolSchemaSpec(
-        "/internal/tools/answer_recall_prompt",
-        "answer_recall_prompt",
-        AnswerRecallPromptParams,
-    ),
-)
-"""Internal Memory and Bucket item tools exposed to pi, in generated-file order."""
-
-
 def build_tool_schema_document() -> ToolSchemaDocument:
-    """Build the schema artifact from the live Pydantic param models."""
+    """Build the schema artifact from the live `ToolSpec` registry.
+
+    Each tool's endpoint, name, and params come straight off the same
+    `ToolSpec` that mounts its route, so the generated shims can't drift from
+    the surface they call.
+    """
     return {
         "tools": [
             {
@@ -161,7 +46,7 @@ def build_tool_schema_document() -> ToolSchemaDocument:
                     "dict[str, JsonValue]", spec.params_model.model_json_schema()
                 ),
             }
-            for spec in TOOL_SCHEMA_SPECS
+            for spec in all_tool_specs()
         ]
     }
 
