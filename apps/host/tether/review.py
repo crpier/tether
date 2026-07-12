@@ -8,23 +8,33 @@ narrates the result. That split keeps the load-bearing behavior testable
 (grouping/flagging, not prose) and the digest read-only by construction, so the
 review queue, tether/edit/reject, and the trusted corpus are all unchanged.
 
-The digest is recomputed from live SQLite on each call (ADR-0006): no new
-tables, no persisted flags, nothing to invalidate. Contradiction detection is
-inherently semantic, and slice 1 has no embeddings/FTS, so the host only
-surfaces keyword-overlap *candidates* — the model decides which truly conflict.
+The digest is recomputed from live SQLite on each call: no new tables, no
+persisted flags, nothing to invalidate. Dedup and contradiction detection are
+inherently semantic, so when the host is wired with an `Embedder` the digest
+recalls and ranks candidates by cosine similarity over Memory vectors — dedup
+then also spans loose vs. tethered, so a re-capture of an already-tethered fact
+surfaces. A Memory's canonical stored vector is reused when it is fresh and the
+search-metadata marker confirms it came from the live model; the rest are
+embedded on the fly, never writing any vector back. Without an embedder both
+fall back to keyword overlap. Either way the host only surfaces *candidates*:
+the model decides which truly conflict, and the human decides what happens.
 """
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import UUID7, BaseModel
 from snekql.sqlite import Database, Fetched
 
+from tether.embeddings import Embedder, Vector, vector_from_bytes
 from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.memory_capabilities import MemoryRead
+from tether.search_meta import SearchMetaService
 
 DEDUP_THRESHOLD = 0.6
 """Token-overlap ratio above which two loose Memories are near-duplicates.
@@ -41,11 +51,45 @@ semantics, so it casts a wider net of overlapping pairs and lets the model judge
 which actually conflict.
 """
 
+SEMANTIC_DEDUP_THRESHOLD = 0.9
+"""Cosine similarity above which two loose Memories are near-duplicates.
+
+Tight for the same reason the keyword bar is high: dedup should cluster
+restatements of one fact, which embed almost identically, while merely topical
+neighbours land visibly lower in every text-embedding space.
+"""
+
+SEMANTIC_CONTRADICTION_FLOOR = 0.6
+"""Cosine similarity below which a loose-vs-tethered pair is never surfaced.
+
+A recall floor, not a verdict: it only prunes clear non-neighbours (unrelated
+pairs sit noticeably lower) before the per-Memory ranking picks the nearest
+tethered facts for the model to judge.
+"""
+
+MAX_CONTRADICTION_CANDIDATES_PER_MEMORY = 3
+"""Nearest tethered facts surfaced per loose Memory on the semantic path.
+
+Embeddings recall and rank the neighbours, the model judges conflict, and the
+human decides — a short shortlist keeps the digest bounded as the trusted
+corpus grows, where the keyword path relied on overlap being rare.
+"""
+
 _MIN_GROUP_SIZE = 2
 """A grouping (dedup cluster, bulk batch) is only worth surfacing at two or more."""
 
 type Scrutiny = Literal["normal", "elevated"]
 """Whether a queued Memory warrants closer human attention than the default."""
+
+
+class EmbeddingBatchMismatchError(Exception):
+    """Raised when the embedder returns a different vector count than texts sent.
+
+    `Embedder.embed_documents` promises one vector per input in order; the
+    digest pairs vectors back to Memories positionally, so a short (or long)
+    batch would silently mis-assign every vector after the gap. Refusing the
+    batch outright turns a broken embedder into a clear error instead of a
+    mis-ranked digest."""
 
 
 class ReviewQueueItem(MemoryRead):
@@ -67,7 +111,13 @@ class ReviewQueueItem(MemoryRead):
 
 
 class DedupGroup(BaseModel):
-    """A cluster of two or more near-duplicate loose Memories."""
+    """A cluster of two or more near-duplicate Memories, at least one loose.
+
+    On the semantic path tethered Memories join the clustering so a loose
+    re-capture of an already-tethered fact surfaces as a duplicate; a cluster
+    with no loose member is never emitted, because only loose Memories can be
+    acted on in Review. The keyword fallback clusters loose Memories only.
+    """
 
     memory_ids: list[UUID7]
 
@@ -80,7 +130,11 @@ class BulkGroup(BaseModel):
 
 
 class ContradictionCandidate(BaseModel):
-    """A loose Memory that keyword-overlaps a tethered fact; the model judges it."""
+    """A loose Memory near a tethered fact (semantically or by keyword overlap).
+
+    A recall result, not a verdict: the model judges whether the pair truly
+    conflicts, and the human decides what to do about it.
+    """
 
     loose_id: UUID7
     tethered_id: UUID7
@@ -115,6 +169,23 @@ def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
     return len(left & right) / len(union)
 
 
+def _cosine(left: Vector, right: Vector) -> float:
+    """Cosine similarity of two vectors; 0 when either carries no magnitude.
+
+    Computed with explicit norms rather than assuming unit vectors, so the
+    digest is correct for any `Embedder`, normalized or not.
+    """
+    left_norm = math.sqrt(sum(component * component for component in left))
+    right_norm = math.sqrt(sum(component * component for component in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    shared = sum(
+        left_component * right_component
+        for left_component, right_component in zip(left, right, strict=True)
+    )
+    return shared / (left_norm * right_norm)
+
+
 def _scrutiny(provenance: MemoryProvenance) -> Scrutiny:
     """Elevate scrutiny for low-confidence captures, normal otherwise.
 
@@ -146,17 +217,20 @@ class _UnionFind:
         self._parent[self.find(left)] = self.find(right)
 
 
-def _dedup_groups(loose: list[Memory[Fetched]]) -> list[DedupGroup]:
-    """Cluster near-duplicate loose Memories via union-find over pairwise overlap.
+def _cluster_duplicates(
+    loose: list[Memory[Fetched]], is_duplicate: Callable[[int, int], bool]
+) -> list[DedupGroup]:
+    """Cluster near-duplicate loose Memories via union-find over pairwise checks.
 
     Transitivity matters: if A~B and B~C the three share one group even when A
-    and C alone fall under the threshold, so the human reviews one cluster.
+    and C alone fall under the threshold, so the human reviews one cluster. The
+    duplicate check is injected because the keyword and semantic paths differ
+    only in how a pair is compared, never in how clusters form.
     """
-    tokens = [_tokenize(memory.content) for memory in loose]
     clusters = _UnionFind(len(loose))
     for i in range(len(loose)):
         for j in range(i + 1, len(loose)):
-            if _jaccard(tokens[i], tokens[j]) >= DEDUP_THRESHOLD:
+            if is_duplicate(i, j):
                 clusters.union(i, j)
     members: dict[int, list[int]] = {}
     for index in range(len(loose)):
@@ -165,6 +239,40 @@ def _dedup_groups(loose: list[Memory[Fetched]]) -> list[DedupGroup]:
         DedupGroup(memory_ids=[loose[index].id for index in indices])
         for indices in members.values()
         if len(indices) >= _MIN_GROUP_SIZE
+    ]
+
+
+def _dedup_groups(loose: list[Memory[Fetched]]) -> list[DedupGroup]:
+    """Cluster loose Memories whose word sets overlap enough to be restatements."""
+    tokens = [_tokenize(memory.content) for memory in loose]
+    return _cluster_duplicates(
+        loose, lambda i, j: _jaccard(tokens[i], tokens[j]) >= DEDUP_THRESHOLD
+    )
+
+
+def _semantic_dedup_groups(
+    loose: list[Memory[Fetched]],
+    loose_vectors: list[Vector],
+    tethered: list[Memory[Fetched]],
+    tethered_vectors: list[Vector],
+) -> list[DedupGroup]:
+    """Cluster near-duplicate Memories across the queue and the trusted corpus.
+
+    Tethered Memories join the clustering so a loose re-capture of an
+    already-tethered fact surfaces as a duplicate, not only loose-vs-loose
+    restatements. Clusters with no loose member are dropped: a tethered-only
+    cluster contains nothing the human can act on in Review.
+    """
+    memories = loose + tethered
+    vectors = loose_vectors + tethered_vectors
+    loose_ids = {memory.id for memory in loose}
+    return [
+        group
+        for group in _cluster_duplicates(
+            memories,
+            lambda i, j: _cosine(vectors[i], vectors[j]) >= SEMANTIC_DEDUP_THRESHOLD,
+        )
+        if any(memory_id in loose_ids for memory_id in group.memory_ids)
     ]
 
 
@@ -200,15 +308,61 @@ def _contradictions(
     return candidates
 
 
+def _semantic_contradictions(
+    loose: list[Memory[Fetched]],
+    loose_vectors: list[Vector],
+    tethered: list[Memory[Fetched]],
+    tethered_vectors: list[Vector],
+) -> list[ContradictionCandidate]:
+    """Pair each loose Memory with its nearest tethered facts, nearest first.
+
+    Recall-and-rank, never a verdict: everything past the floor competes, the
+    shortlist is capped per loose Memory, and the model judges what conflicts.
+    The sort is stable, so equally similar facts keep the corpus's newest-first
+    order and the digest stays deterministic for a given state.
+    """
+    candidates: list[ContradictionCandidate] = []
+    for loose_memory, loose_vector in zip(loose, loose_vectors, strict=True):
+        nearest = sorted(
+            (
+                (similarity, tethered_memory.id)
+                for tethered_memory, tethered_vector in zip(
+                    tethered, tethered_vectors, strict=True
+                )
+                if (similarity := _cosine(loose_vector, tethered_vector))
+                >= SEMANTIC_CONTRADICTION_FLOOR
+            ),
+            key=lambda scored: scored[0],
+            reverse=True,
+        )[:MAX_CONTRADICTION_CANDIDATES_PER_MEMORY]
+        candidates.extend(
+            ContradictionCandidate(loose_id=loose_memory.id, tethered_id=tethered_id)
+            for _, tethered_id in nearest
+        )
+    return candidates
+
+
 class ReviewService:
     """Read-only capability that derives the AI-assisted Review digest.
 
-    Holds only the database: the digest never mutates, so it needs neither the
-    KB projection nor the event bus. Every call recomputes from live SQLite.
+    Holds the database plus an optional embedder: the digest never mutates, so
+    it needs neither the KB projection nor the event bus. Every call recomputes
+    from live SQLite.
     """
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, embedder: Embedder | None = None) -> None:
         self.database: Database = database
+        self.embedder: Embedder | None = embedder
+        """Semantic recall seam for dedup and contradiction candidates.
+
+        `None` when the host runs without search; the digest then falls back to
+        keyword overlap, so Review works identically minus semantic recall."""
+        self._search_meta: SearchMetaService = SearchMetaService(database=database)
+        """Reads the marker naming the model behind the stored canonical vectors.
+
+        The digest reuses a stored vector only when that marker matches the
+        live embedder — vectors from different models share no comparable
+        space, so mixing them would mis-rank or crash on a width mismatch."""
 
     async def review_digest(self, *, logger: Logger) -> ReviewDigest:
         """Compute dedup, bulk, contradiction, and scrutiny over the live queue.
@@ -217,7 +371,7 @@ class ReviewService:
         non-deleted Memories are the corpus contradiction candidates are checked
         against. Soft-deleted Memories are excluded from both.
         """
-        logger.debug("Computing review digest")
+        logger.debug("Computing review digest", semantic=self.embedder is not None)
         async with self.database.transaction() as tx:
             loose = await tx.fetch_all(
                 MemoryService.loose_queue().order_by(Memory.created_at.desc())
@@ -225,11 +379,29 @@ class ReviewService:
             tethered = await tx.fetch_all(
                 MemoryService.tethered_corpus().order_by(Memory.created_at.desc())
             )
+        if self.embedder is None:
+            dedup_groups = _dedup_groups(loose)
+            contradictions = _contradictions(loose, tethered)
+        else:
+            loose_vectors, tethered_vectors = await self._digest_vectors(
+                self.embedder,
+                loose=loose,
+                tethered=tethered,
+                reuse_stored=await self._stored_vectors_reusable(
+                    self.embedder, logger=logger
+                ),
+            )
+            dedup_groups = _semantic_dedup_groups(
+                loose, loose_vectors, tethered, tethered_vectors
+            )
+            contradictions = _semantic_contradictions(
+                loose, loose_vectors, tethered, tethered_vectors
+            )
         digest = ReviewDigest(
             queue=[ReviewQueueItem.from_memory(memory) for memory in loose],
-            dedup_groups=_dedup_groups(loose),
+            dedup_groups=dedup_groups,
             bulk_groups=_bulk_groups(loose),
-            contradictions=_contradictions(loose, tethered),
+            contradictions=contradictions,
         )
         logger.debug(
             "Review digest computed",
@@ -239,3 +411,65 @@ class ReviewService:
             contradiction_count=len(digest.contradictions),
         )
         return digest
+
+    async def _stored_vectors_reusable(
+        self, embedder: Embedder, *, logger: Logger
+    ) -> bool:
+        """Whether stored canonical vectors share the live embedder's space.
+
+        The search-metadata marker names the model (and width) that produced
+        every stored vector. A missing or disagreeing marker means the store
+        predates this embedder — those vectors would mis-rank against freshly
+        embedded ones, or crash cosine on a width mismatch, so the digest
+        re-embeds everything instead of reusing them.
+        """
+        marker = await self._search_meta.fetch(logger=logger)
+        return (
+            marker is not None
+            and marker.embedding_model == embedder.model_name
+            and marker.vector_dim == embedder.vector_dim
+        )
+
+    @staticmethod
+    async def _digest_vectors(
+        embedder: Embedder,
+        *,
+        loose: list[Memory[Fetched]],
+        tethered: list[Memory[Fetched]],
+        reuse_stored: bool,
+    ) -> tuple[list[Vector], list[Vector]]:
+        """Resolve one vector per Memory without ever writing one back.
+
+        Any Memory — loose or tethered — reuses its canonical stored vector
+        when `reuse_stored` says the store matches the live embedder and the
+        vector matches the current content version; the rest are embedded on
+        the fly in a single batch. The fresh vectors are used for this digest
+        and dropped — persisting them is the reconciler's job, keeping the
+        digest read-only.
+        """
+        memories = loose + tethered
+        stored_vectors = [
+            vector_from_bytes(memory.embedding)
+            if reuse_stored
+            and memory.embedding is not None
+            and memory.embedded_version == memory.version
+            else None
+            for memory in memories
+        ]
+        owed_contents = [
+            memory.content
+            for memory, stored in zip(memories, stored_vectors, strict=True)
+            if stored is None
+        ]
+        fresh = await embedder.embed_documents(owed_contents) if owed_contents else []
+        if len(fresh) != len(owed_contents):
+            message = (
+                f"embedder returned {len(fresh)} vectors for {len(owed_contents)} texts"
+            )
+            raise EmbeddingBatchMismatchError(message)
+        fresh_vectors = iter(fresh)
+        vectors = [
+            stored if stored is not None else next(fresh_vectors)
+            for stored in stored_vectors
+        ]
+        return vectors[: len(loose)], vectors[len(loose) :]
