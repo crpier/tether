@@ -32,6 +32,7 @@ export interface TetherApi {
   ): Promise<Conversation>;
   listTriggers(): Promise<Trigger[]>;
   createTrigger(body: CreateTrigger): Promise<Trigger>;
+  updateTrigger(triggerId: string, body: UpdateTrigger): Promise<Trigger>;
   deleteTrigger(triggerId: string, version: number): Promise<void>;
   getPushStatus(endpoint: string): Promise<PushStatus>;
   subscribePush(endpoint: string, p256dh: string, auth: string): Promise<void>;
@@ -137,6 +138,13 @@ export function createRestApi(
     },
     async createTrigger(body) {
       const { data, response } = await client.POST("/api/triggers", { body });
+      return requireData(data, response);
+    },
+    async updateTrigger(triggerId, body) {
+      const { data, response } = await client.PUT(
+        "/api/triggers/{trigger_id}",
+        { body, params: { path: { trigger_id: triggerId } } },
+      );
       return requireData(data, response);
     },
     async deleteTrigger(triggerId, version) {
