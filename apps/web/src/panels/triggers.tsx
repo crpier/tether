@@ -9,7 +9,6 @@ import type {
   Trigger,
   TriggerActionKind,
   TriggerRecurrence,
-  UpdateTrigger,
 } from "../api";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -37,8 +36,11 @@ function formatFireTime(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
-// A `datetime-local` value is a local (not UTC) `YYYY-MM-DDTHH:MM` stamp, so the
-// `min` guard has to be built from local components rather than `toISOString()`.
+// A `datetime-local` value is a local (not UTC) stamp, so the `min` guard and
+// the edit pre-fill have to be built from local components rather than
+// `toISOString()`. Seconds are included (with a matching `step` on the input)
+// so that saving an untouched edit of an agent-created trigger does not
+// silently truncate its fire time to the minute.
 function localDateTimeStamp(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   const year = String(date.getFullYear()).padStart(4, "0");
@@ -46,7 +48,23 @@ function localDateTimeStamp(date: Date): string {
   const day = pad(date.getDate());
   const hours = pad(date.getHours());
   const minutes = pad(date.getMinutes());
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  const seconds = pad(date.getSeconds());
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+}
+
+// The definition fields a save could overwrite: everything the form edits.
+// `next_fire_at` counts only for one-off triggers — recurring ones advance it
+// on every fire without the definition having changed.
+function sameDefinition(a: Trigger, b: Trigger): boolean {
+  return (
+    a.payload === b.payload &&
+    a.recurrence === b.recurrence &&
+    a.action_kind === b.action_kind &&
+    a.wall_time === b.wall_time &&
+    a.timezone === b.timezone &&
+    a.weekday === b.weekday &&
+    (a.recurrence !== "once" || a.next_fire_at === b.next_fire_at)
+  );
 }
 
 const WEEKDAYS = [
@@ -75,11 +93,10 @@ export function TriggersPanel(props: { api: TetherApi }) {
   const [timezone, setTimezone] = createSignal(browserTimezone());
   const [weekday, setWeekday] = createSignal(0);
   const [error, setError] = createSignal<string | undefined>();
-  // The row being edited (with the version observed at click time), or
-  // undefined when the form is in create mode.
-  const [editing, setEditing] = createSignal<
-    { id: string; version: number } | undefined
-  >();
+  // The trigger being edited, as observed at click time: its version is the
+  // optimistic-concurrency token and its definition is the basis a 409 retry
+  // is judged against. Undefined when the form is in create mode.
+  const [editing, setEditing] = createSignal<Trigger | undefined>();
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.triggers });
@@ -98,7 +115,11 @@ export function TriggersPanel(props: { api: TetherApi }) {
   };
 
   const startEdit = (trigger: Trigger) => {
-    setEditing({ id: trigger.id, version: trigger.version });
+    // Reset first so fields on the branch this trigger does not use (e.g. the
+    // one-off date after editing a recurring reminder) never carry leftovers
+    // from a previous edit that resurface on a mid-edit Repeat flip.
+    resetForm();
+    setEditing(trigger);
     setPayload(trigger.payload);
     setRecurrence(trigger.recurrence);
     setActionKind(trigger.action_kind);
@@ -146,29 +167,26 @@ export function TriggersPanel(props: { api: TetherApi }) {
       try {
         if (target === undefined) {
           await props.api.createTrigger(body);
-          setPayload("");
-          setFireAt("");
         } else {
           await props.api.updateTrigger(target.id, {
             ...body,
             version: target.version,
           });
-          resetForm();
         }
+        resetForm();
         refresh();
       } catch (caught) {
         // Same stale-version race as delete: the trigger fired after we loaded
         // the row, so the server's version moved on. Refetch and retry once
-        // with the fresh version instead of dead-ending on a bare 409.
+        // with the fresh version instead of dead-ending on a bare 409 — unless
+        // the refetch reveals a genuine concurrent edit.
         if (
           target !== undefined &&
           caught instanceof ApiError &&
           caught.status === 409
         ) {
-          const recovered = await retryUpdateWithFreshVersion(target.id, body);
-          if (recovered) {
-            return;
-          }
+          setError(await retryUpdateWithFreshVersion(target, body));
+          return;
         }
         setError(
           caught instanceof Error
@@ -181,27 +199,42 @@ export function TriggersPanel(props: { api: TetherApi }) {
     })();
   };
 
-  // Refetch triggers, then retry the update with the current version. Returns
-  // whether the save landed; a vanished trigger means it cannot land.
+  // Refetch triggers, then retry the update with the fresh version — but only
+  // when the fresh definition still matches the basis the edit was formulated
+  // against (i.e. only the version moved, e.g. because the trigger fired). A
+  // changed definition is a genuine concurrent edit; auto-resubmitting would
+  // silently overwrite it (docs/principles.md, "operations that overwrite
+  // distinct prior state"), so the conflict is surfaced instead. Returns
+  // undefined when the save landed, or the error message to show.
   const retryUpdateWithFreshVersion = async (
-    triggerId: string,
+    basis: Trigger,
     body: CreateTrigger,
-  ): Promise<boolean> => {
+  ): Promise<string | undefined> => {
     await queryClient.refetchQueries({ queryKey: queryKeys.triggers });
     const fresh = (
       queryClient.getQueryData<Trigger[]>(queryKeys.triggers) ?? []
-    ).find((candidate) => candidate.id === triggerId);
+    ).find((candidate) => candidate.id === basis.id);
     if (fresh === undefined) {
-      return false;
+      return "This reminder no longer exists, so the edit cannot be saved.";
     }
-    const retryBody: UpdateTrigger = { ...body, version: fresh.version };
+    if (!sameDefinition(basis, fresh)) {
+      // Re-arm the form against the fresh row (keeping the user's draft) so a
+      // second Save, after reviewing the refreshed list, deliberately wins.
+      setEditing(fresh);
+      return "This reminder changed elsewhere; the list now shows the latest version. Save again to overwrite it, or cancel.";
+    }
     try {
-      await props.api.updateTrigger(triggerId, retryBody);
+      await props.api.updateTrigger(basis.id, {
+        ...body,
+        version: fresh.version,
+      });
       resetForm();
       refresh();
-      return true;
-    } catch {
-      return false;
+      return undefined;
+    } catch (retryCaught) {
+      return retryCaught instanceof Error
+        ? retryCaught.message
+        : "Could not update reminder";
     }
   };
 
@@ -218,10 +251,8 @@ export function TriggersPanel(props: { api: TetherApi }) {
         // reminder actually goes away (the invalidate-on-fire refresh usually
         // beats the click, but this closes the race and reconnect windows).
         if (caught instanceof ApiError && caught.status === 409) {
-          const recovered = await retryDeleteWithFreshVersion(triggerId);
-          if (recovered) {
-            return;
-          }
+          setError(await retryDeleteWithFreshVersion(triggerId));
+          return;
         }
         setError(
           caught instanceof Error
@@ -233,24 +264,27 @@ export function TriggersPanel(props: { api: TetherApi }) {
   };
 
   // Refetch triggers, then retry the delete with the current version. Returns
-  // whether the reminder is now gone (deleted here, or already absent server-side).
+  // undefined when the reminder is now gone (deleted here, or already absent
+  // server-side), or the retry's own error message to show.
   const retryDeleteWithFreshVersion = async (
     triggerId: string,
-  ): Promise<boolean> => {
+  ): Promise<string | undefined> => {
     await queryClient.refetchQueries({ queryKey: queryKeys.triggers });
     const fresh = (
       queryClient.getQueryData<Trigger[]>(queryKeys.triggers) ?? []
     ).find((candidate) => candidate.id === triggerId);
     if (fresh === undefined) {
       refresh();
-      return true;
+      return undefined;
     }
     try {
       await props.api.deleteTrigger(triggerId, fresh.version);
       refresh();
-      return true;
-    } catch {
-      return false;
+      return undefined;
+    } catch (retryCaught) {
+      return retryCaught instanceof Error
+        ? retryCaught.message
+        : "Could not delete reminder";
     }
   };
 
@@ -307,6 +341,7 @@ export function TriggersPanel(props: { api: TetherApi }) {
             <TextFieldInput
               min={localDateTimeStamp(new Date())}
               name="fire_at"
+              step={1}
               type="datetime-local"
             />
           </TextField>

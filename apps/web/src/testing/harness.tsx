@@ -135,6 +135,14 @@ export class FakeApi implements TetherApi {
   // Per-trigger version the fake "server" will accept on update/delete; a
   // mismatch (e.g. after the trigger fired) is rejected with a 409, like the host.
   serverTriggerVersions: Record<string, number> = {};
+  // Definition fields the fake server reveals alongside the bumped version when
+  // an update 409s — simulates a genuine concurrent edit (second tab, agent)
+  // rather than a mere fire, which bumps the version but leaves the definition.
+  serverTriggerEdits: Record<string, Partial<Trigger>> = {};
+  // Forced per-call rejections, consumed FIFO before any version check. Lets a
+  // test make the first call 409 and the retry fail with a different status.
+  updateTriggerRejections: ApiError[] = [];
+  deleteTriggerRejections: ApiError[] = [];
   dismissNotificationCalls: string[] = [];
   clearNotificationsCalls = 0;
   loginPassword: string | undefined;
@@ -237,16 +245,25 @@ export class FakeApi implements TetherApi {
 
   updateTrigger(triggerId: string, body: UpdateTrigger) {
     this.updateTriggerCalls.push({ body, triggerId });
+    const forced = this.updateTriggerRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
     const serverVersion = this.serverTriggerVersions[triggerId];
     if (
       Object.hasOwn(this.serverTriggerVersions, triggerId) &&
       serverVersion !== body.version
     ) {
-      // The server bumped the version (e.g. the trigger fired). Reveal the fresh
-      // state to future list fetches, then reject exactly as the host does.
+      // The server bumped the version (e.g. the trigger fired, or a concurrent
+      // edit landed). Reveal the fresh state to future list fetches, then
+      // reject exactly as the host does.
       this.storedTriggers = this.storedTriggers.map((existing) =>
         existing.id === triggerId
-          ? { ...existing, version: serverVersion }
+          ? {
+              ...existing,
+              ...this.serverTriggerEdits[triggerId],
+              version: serverVersion,
+            }
           : existing,
       );
       return Promise.reject(new ApiError(409));
@@ -276,6 +293,10 @@ export class FakeApi implements TetherApi {
 
   deleteTrigger(triggerId: string, version: number) {
     this.deleteTriggerCalls.push({ triggerId, version });
+    const forced = this.deleteTriggerRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
     const serverVersion = this.serverTriggerVersions[triggerId];
     if (
       Object.hasOwn(this.serverTriggerVersions, triggerId) &&
