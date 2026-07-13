@@ -35,6 +35,7 @@ import type {
 } from "./chat-timeline";
 import { MessageContent } from "./components/message-content";
 import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
+import { BucketPanel } from "./panels/bucket";
 import { NotificationsPanel } from "./panels/notifications";
 import { PushControl } from "./panels/push";
 import { RecallPanel } from "./panels/recall";
@@ -702,6 +703,7 @@ export function ChatView(props: {
           />
           <YouTubeSyncPanel api={props.api} />
           <RecallPanel api={props.api} />
+          <BucketPanel api={props.api} />
           <TriggersPanel api={props.api} />
           <PushControl api={props.api} />
         </aside>

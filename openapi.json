@@ -423,6 +423,30 @@
         "title": "CreateTriggerRequest",
         "type": "object"
       },
+      "DecayedIntentContext": {
+        "description": "A stale item's immutable *why*, paired with how far it has eroded.",
+        "properties": {
+          "age_days": {
+            "title": "Age Days",
+            "type": "integer"
+          },
+          "decay": {
+            "title": "Decay",
+            "type": "number"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent_context",
+          "age_days",
+          "decay"
+        ],
+        "title": "DecayedIntentContext",
+        "type": "object"
+      },
       "DedupAdvisoryRead": {
         "description": "The dedup advisory returned alongside a freshly Added item.\n\n`severity` is `warn` when an active duplicate already exists, `inform` when\nthe only duplicates are terminal (completed/deleted), `none` otherwise.\nDedup never blocks, so the item is Added regardless.",
         "properties": {
@@ -467,6 +491,24 @@
           "study_item"
         ],
         "title": "DuePromptRead",
+        "type": "object"
+      },
+      "DuplicateCluster": {
+        "description": "Two or more active items that share one identity (item type + dedup key).",
+        "properties": {
+          "bucket_item_ids": {
+            "items": {
+              "format": "uuid7",
+              "type": "string"
+            },
+            "title": "Bucket Item Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bucket_item_ids"
+        ],
+        "title": "DuplicateCluster",
         "type": "object"
       },
       "EditRequest": {
@@ -986,6 +1028,25 @@
         "title": "SetConversationModelRequest",
         "type": "object"
       },
+      "StaleItem": {
+        "description": "An active item old enough to reconsider, with its decayed intent context.",
+        "properties": {
+          "bucket_item_id": {
+            "format": "uuid7",
+            "title": "Bucket Item Id",
+            "type": "string"
+          },
+          "intent_context": {
+            "$ref": "#/components/schemas/DecayedIntentContext"
+          }
+        },
+        "required": [
+          "bucket_item_id",
+          "intent_context"
+        ],
+        "title": "StaleItem",
+        "type": "object"
+      },
       "StartRecallRequest": {
         "description": "Body for promoting an ingested educational video into a study item.\n\n>>> StartRecallRequest(video_id=\"v1\").video_id\n'v1'",
         "properties": {
@@ -1126,6 +1187,47 @@
         "title": "TranscriptProviderPauseRead",
         "type": "object"
       },
+      "TriageReport": {
+        "description": "The full Triage view of the active Bucket list at one point in time.",
+        "properties": {
+          "active": {
+            "items": {
+              "$ref": "#/components/schemas/BucketItemRead"
+            },
+            "title": "Active",
+            "type": "array"
+          },
+          "duplicates": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateCluster"
+            },
+            "title": "Duplicates",
+            "type": "array"
+          },
+          "stale": {
+            "items": {
+              "$ref": "#/components/schemas/StaleItem"
+            },
+            "title": "Stale",
+            "type": "array"
+          },
+          "under_specified": {
+            "items": {
+              "$ref": "#/components/schemas/UnderSpecifiedItem"
+            },
+            "title": "Under Specified",
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "under_specified",
+          "duplicates",
+          "stale"
+        ],
+        "title": "TriageReport",
+        "type": "object"
+      },
       "TriggerActionKind": {
         "enum": [
           "message",
@@ -1263,6 +1365,26 @@
           "failed"
         ],
         "type": "string"
+      },
+      "UnderSpecifiedItem": {
+        "description": "An active item whose payload lacks the detail to act on it later.",
+        "properties": {
+          "bucket_item_id": {
+            "format": "uuid7",
+            "title": "Bucket Item Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bucket_item_id",
+          "reason"
+        ],
+        "title": "UnderSpecifiedItem",
+        "type": "object"
       },
       "UnsubscribeRequest": {
         "description": "Body for removing a browser push subscription.",
@@ -1712,6 +1834,23 @@
           }
         },
         "summary": "Keyword Search over active Bucket items."
+      }
+    },
+    "/api/bucket-items/triage": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageReport"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Compute the read-only Triage report over the live active Bucket list."
       }
     },
     "/api/bucket-items/{bucket_item_id}": {

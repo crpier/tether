@@ -229,6 +229,48 @@ def browse_deleted_returns_retained_history() -> None:
 
 
 @test()
+def triage_report_route_surfaces_the_live_active_backlog() -> None:
+    """`GET /api/bucket-items/triage` computes the report over active items."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        vague = add_item(client, "movie", {"title": "Dune"})
+        add_item(client, "movie", {"title": "Dune"})
+        specified = add_item(client, "movie", {"title": "Arrival", "year": 2016})
+
+        response = client.get("/api/bucket-items/triage")
+
+    assert_eq(response.status_code, 200)
+    report = response.json()
+    active_ids = [item["id"] for item in report["active"]]
+    assert_in(vague["item"]["id"], active_ids)
+    assert_in(specified["item"]["id"], active_ids)
+    under_specified_ids = [
+        flagged["bucket_item_id"] for flagged in report["under_specified"]
+    ]
+    assert_in(vague["item"]["id"], under_specified_ids)
+    assert_not_in(specified["item"]["id"], under_specified_ids)
+    assert_eq(len(report["duplicates"]), 1)
+    assert_in(vague["item"]["id"], report["duplicates"][0]["bucket_item_ids"])
+    assert_eq(report["stale"], [])
+
+
+@test()
+def triage_report_route_excludes_terminal_items() -> None:
+    """A completed item drops out of the Triage report's active list."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        done = add_item(client, "movie", {"title": "Watched", "year": 1999})
+        complete = client.post(
+            f"/api/bucket-items/{done['item']['id']}/complete",
+            json={"version": done["item"]["version"]},
+        )
+        assert_eq(complete.status_code, 200)
+
+        response = client.get("/api/bucket-items/triage")
+
+    report = response.json()
+    assert_not_in(done["item"]["id"], [item["id"] for item in report["active"]])
+
+
+@test()
 def add_movie_returns_a_well_formed_success_envelope() -> None:
     """A successful Add conforms to the envelope; quota is null internally."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
