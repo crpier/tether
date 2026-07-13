@@ -329,6 +329,19 @@ def add_book_without_author_stores_a_null_author() -> None:
 
 
 @test()
+def add_travel_without_season_stores_a_null_season() -> None:
+    """Season is optional at the tool seam; the stored payload is the full type."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client, "add_travel", destination="Japan", intent_context="cherry blossoms"
+        )
+
+    assert_eq(
+        envelope["result"]["item"]["data"], {"destination": "Japan", "season": None}
+    )
+
+
+@test()
 def add_blank_intent_yields_a_success_false_envelope() -> None:
     """Blank intent context is rejected as a well-formed envelope, adding nothing."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

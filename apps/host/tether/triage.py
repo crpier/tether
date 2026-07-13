@@ -102,8 +102,8 @@ def _under_specified_reason(item: BucketItem[Fetched]) -> str | None:
 
     Each item type owns its own bar: the distinguishing optional field that turns
     a vague intention into an actionable one (a movie's year, a place's
-    location). Mirrors `_describe_item`'s per-type match so the heuristic stays
-    beside the payload shapes it judges.
+    location, a book's author, a travel's season). Mirrors `_describe_item`'s
+    per-type match so the heuristic stays beside the payload shapes it judges.
     """
     item_type: ItemType = item.item_type
     match item_type:

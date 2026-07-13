@@ -114,13 +114,12 @@ def add_movie_tool_carries_its_typed_optional_field() -> None:
 
 
 @test()
-def add_book_and_add_travel_tools_carry_their_typed_fields() -> None:
-    """The book and travel Add tools expose their own flat per-type fields."""
+def add_book_tool_carries_its_typed_optional_field() -> None:
+    """The book Add tool exposes its item type's own (optional) fields."""
     document = build_tool_schema_document()
 
     tools = {tool["name"]: tool for tool in document["tools"]}
     add_book_schema = cast("dict[str, Any]", tools["add_book"]["schema"])
-    add_travel_schema = cast("dict[str, Any]", tools["add_travel"]["schema"])
 
     assert_eq(tools["add_book"]["endpoint"], "/internal/tools/add_book")
     assert_in("title", add_book_schema["required"])
@@ -128,6 +127,15 @@ def add_book_and_add_travel_tools_carry_their_typed_fields() -> None:
     # `author` is optional: present as a property, absent from `required`.
     assert_in("author", add_book_schema["properties"])
     assert_eq("author" in add_book_schema["required"], False)
+
+
+@test()
+def add_travel_tool_carries_its_typed_optional_field() -> None:
+    """The travel Add tool exposes its item type's own (optional) fields."""
+    document = build_tool_schema_document()
+
+    tools = {tool["name"]: tool for tool in document["tools"]}
+    add_travel_schema = cast("dict[str, Any]", tools["add_travel"]["schema"])
 
     assert_eq(tools["add_travel"]["endpoint"], "/internal/tools/add_travel")
     assert_in("destination", add_travel_schema["required"])
