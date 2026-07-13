@@ -44,6 +44,7 @@ describe("generated tool extension", () => {
       "start_recall",
       "list_due_recall_prompts",
       "answer_recall_prompt",
+      "propose_essay_grade",
     ]);
   });
 });

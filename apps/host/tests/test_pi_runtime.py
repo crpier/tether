@@ -473,6 +473,7 @@ export default function inspectTools(pi) {
             "ignore_youtube_video",
             "list_due_recall_prompts",
             "list_triggers",
+            "propose_essay_grade",
             "reject",
             "retry_youtube_video",
             "review_digest",

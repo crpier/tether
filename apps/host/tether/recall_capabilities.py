@@ -25,9 +25,11 @@ from tether.logging import get_request_logger
 from tether.recall import (
     AnswerOutcome,
     DuePrompt,
+    EssayGradeProposal,
     Fetched,
     InvalidAnswerError,
     InvalidPromptError,
+    PromptAnswer,
     RecallPrompt,
     RecallPromptKind,
     RecallPromptNotFoundError,
@@ -84,10 +86,12 @@ class StudyItemRead(BaseModel):
 
 
 class RecallPromptRead(BaseModel):
-    """HTTP representation of a recall prompt, with the answer key withheld.
+    """HTTP representation of a recall prompt, with the grading payload withheld.
 
-    `correct_index` is deliberately absent: the client renders and answers the
-    prompt without being able to read the right choice off the wire.
+    `correct_index`, `reference_answer`, and `rubric` are deliberately absent:
+    the client renders and answers the prompt without being able to read the
+    answer key off the wire (the rubric surfaces only in the essay
+    grade-proposal step, after the essay is written).
     """
 
     id: UUID7
@@ -122,6 +126,40 @@ class DuePromptRead(BaseModel):
         return cls(
             prompt=RecallPromptRead.from_prompt(due.prompt),
             study_item=StudyItemRead.from_study_item(due.study_item),
+        )
+
+
+class EssayGradeProposalRead(BaseModel):
+    """The model's proposed essay grade, for the human to confirm or override.
+
+    `proposed_correct` is `null` when the model was unavailable — the rubric is
+    still revealed so the human can grade unaided. Nothing is scheduled by a
+    proposal; only the confirmed answer reaches SM-2 (ADR 0004).
+    """
+
+    prompt_id: UUID7
+    rubric: str
+    proposed_correct: bool | None
+    reasoning: str | None
+
+    @classmethod
+    def from_proposal(
+        cls, prompt: RecallPrompt[Fetched], proposal: EssayGradeProposal
+    ) -> EssayGradeProposalRead:
+        """Render a grade proposal (plus the prompt's rubric) for the confirm step.
+
+        An essay row is written with its rubric (`_validate_generated`), so a
+        missing one is a corrupt row: raise rather than mask it as an empty
+        rubric the human would then "grade against".
+        """
+        if prompt.rubric is None:
+            message = f"essay prompt {prompt.id} is missing its rubric"
+            raise InvalidPromptError(message)
+        return cls(
+            prompt_id=prompt.id,
+            rubric=prompt.rubric,
+            proposed_correct=proposal.correct,
+            reasoning=proposal.reasoning,
         )
 
 
@@ -192,18 +230,40 @@ async def list_due_prompts(
 
 
 async def answer_prompt(
-    request: Request, prompt_id: UUID, selected_index: int, response_ms: int
+    request: Request, prompt_id: UUID, answer: PromptAnswer
 ) -> CapabilityOutcome:
-    """Answer a recall prompt, grading and rescheduling it (tethering on completion)."""
+    """Answer a recall prompt, grading and rescheduling it (tethering on completion).
+
+    The answer input matches the prompt's kind: `selected_index` for multiple
+    choice, `answer_text` for short answers, and `answer_text` plus the
+    human-confirmed `confirmed_correct` for essays.
+    """
     service = request.app.state.recall_service
     prompt = await service.fetch_prompt(prompt_id)
     outcome = await service.answer_prompt(
         prompt,
-        selected_index=selected_index,
-        response_ms=response_ms,
+        answer,
         now=datetime.now(UTC),
         logger=get_request_logger(request),
     )
     return CapabilityOutcome(
         result=AnswerOutcomeRead.from_outcome(outcome).model_dump(mode="json")
+    )
+
+
+async def propose_essay_grade(
+    request: Request, prompt_id: UUID, answer_text: str
+) -> CapabilityOutcome:
+    """Propose a model grade for an essay answer, for the human to confirm."""
+    service = request.app.state.recall_service
+    prompt = await service.fetch_prompt(prompt_id)
+    proposal = await service.propose_essay_grade(
+        prompt,
+        answer_text=answer_text,
+        logger=get_request_logger(request),
+    )
+    return CapabilityOutcome(
+        result=EssayGradeProposalRead.from_proposal(prompt, proposal).model_dump(
+            mode="json"
+        )
     )

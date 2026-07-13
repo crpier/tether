@@ -26,6 +26,7 @@ import { registerDeleteTriggerTool } from "./delete_trigger.js";
 import { registerStartRecallTool } from "./start_recall.js";
 import { registerListDueRecallPromptsTool } from "./list_due_recall_prompts.js";
 import { registerAnswerRecallPromptTool } from "./answer_recall_prompt.js";
+import { registerProposeEssayGradeTool } from "./propose_essay_grade.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -52,4 +53,5 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerStartRecallTool(pi);
   registerListDueRecallPromptsTool(pi);
   registerAnswerRecallPromptTool(pi);
+  registerProposeEssayGradeTool(pi);
 }

@@ -80,6 +80,9 @@ function renderRequiredExpression(schema: JsonSchema): string {
   if (schema.type === "integer") {
     return options === "" ? "Type.Integer()" : `Type.Integer(${options})`;
   }
+  if (schema.type === "boolean") {
+    return options === "" ? "Type.Boolean()" : `Type.Boolean(${options})`;
+  }
   throw new Error(`unsupported schema: ${JSON.stringify(schema)}`);
 }
 

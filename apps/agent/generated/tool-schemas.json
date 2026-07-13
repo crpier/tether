@@ -592,7 +592,7 @@
       "name": "answer_recall_prompt",
       "params_model": "AnswerRecallPromptParams",
       "schema": {
-        "description": "Params for answering a recall prompt: the chosen option and elapsed time.",
+        "description": "Params for answering a recall prompt, shaped by its kind.\n\nMultiple choice sends `selected_index`; short answer sends `answer_text`.\nEssays CANNOT be answered from this tool: their grade must be confirmed by\nthe HUMAN (ADR 0004 \u2014 the model never self-certifies learning), so propose\none with `propose_essay_grade` and let the human confirm it in the web app.",
         "properties": {
           "prompt_id": {
             "format": "uuid7",
@@ -600,9 +600,29 @@
             "type": "string"
           },
           "selected_index": {
-            "minimum": 0,
-            "title": "Selected Index",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selected Index"
+          },
+          "answer_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answer Text"
           },
           "response_ms": {
             "minimum": 0,
@@ -610,8 +630,30 @@
             "type": "integer"
           }
         },
-        "required": ["prompt_id", "selected_index", "response_ms"],
+        "required": ["prompt_id", "response_ms"],
         "title": "AnswerRecallPromptParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/propose_essay_grade",
+      "name": "propose_essay_grade",
+      "params_model": "ProposeEssayGradeParams",
+      "schema": {
+        "description": "Params for proposing an essay grade against the rubric.\n\nThe proposal is advisory: the human confirms or overrides it before the\nanswer is submitted (ADR 0004), through the web surface's answer route.",
+        "properties": {
+          "prompt_id": {
+            "format": "uuid7",
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "answer_text": {
+            "title": "Answer Text",
+            "type": "string"
+          }
+        },
+        "required": ["prompt_id", "answer_text"],
+        "title": "ProposeEssayGradeParams",
         "type": "object"
       }
     }

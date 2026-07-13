@@ -35,6 +35,16 @@ describe("renderTypeBoxProperty", () => {
     expect(rendered).toBe("year: Type.Optional(Type.Integer())");
   });
 
+  test("unwraps a nullable optional boolean to Type.Boolean", () => {
+    const rendered = renderTypeBoxProperty(
+      "confirmed_correct",
+      { anyOf: [{ type: "boolean" }, { type: "null" }], default: null },
+      false,
+    );
+
+    expect(rendered).toBe("confirmed_correct: Type.Optional(Type.Boolean())");
+  });
+
   test("unwraps a nullable optional enum to a StringEnum", () => {
     const rendered = renderTypeBoxProperty(
       "source",

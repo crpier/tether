@@ -16,6 +16,7 @@ from tether.recall import (
     GRADUATION_REPETITIONS,
     INITIAL_EASE_FACTOR,
     MIN_EASE_FACTOR,
+    RecallPromptKind,
     RecallSchedule,
     grade_answer,
     initial_schedule,
@@ -33,16 +34,41 @@ NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         Param(value=(30_000, 3), name="correct_slow"),
     ]
 )
-def correct_answer_grades_by_response_time(value: tuple[int, int]) -> None:
-    """A correct answer's quality drops as the response gets slower."""
+def correct_multiple_choice_grades_by_response_time(value: tuple[int, int]) -> None:
+    """A correct multiple-choice answer's quality drops as the response slows."""
     response_ms, expected = value
-    assert_eq(grade_answer(correct=True, response_ms=response_ms), expected)
+    assert_eq(
+        grade_answer(correct=True, response_ms=response_ms, kind="multiple_choice"),
+        expected,
+    )
 
 
-@test()
-def incorrect_answer_grades_below_passing() -> None:
+FREE_TEXT_PARAMS: list[Param[RecallPromptKind]] = [
+    Param(value="short_answer", name="short_answer"),
+    Param(value="essay", name="essay"),
+]
+
+ALL_KIND_PARAMS: list[Param[RecallPromptKind]] = [
+    Param(value="multiple_choice", name="multiple_choice"),
+    *FREE_TEXT_PARAMS,
+]
+
+
+@test(FREE_TEXT_PARAMS)
+def correct_free_text_grades_a_fixed_quality_regardless_of_time(
+    kind: RecallPromptKind,
+) -> None:
+    """Typing/composing time carries no recall signal for free-text kinds."""
+    fast = grade_answer(correct=True, response_ms=1_000, kind=kind)
+    slow = grade_answer(correct=True, response_ms=300_000, kind=kind)
+    assert_eq(fast, 4)
+    assert_eq(slow, 4)
+
+
+@test(ALL_KIND_PARAMS)
+def incorrect_answer_grades_below_passing(kind: RecallPromptKind) -> None:
     """Any incorrect answer grades below the SM-2 passing threshold of 3."""
-    quality = grade_answer(correct=False, response_ms=500)
+    quality = grade_answer(correct=False, response_ms=500, kind=kind)
     assert_in(quality, (0, 1, 2))
 
 

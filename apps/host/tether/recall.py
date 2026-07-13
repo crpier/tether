@@ -31,7 +31,7 @@ by driving controlled answers and timestamps.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 from uuid import uuid7
@@ -53,7 +53,6 @@ from snekql.sqlite import (
     select,
     update,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
@@ -94,16 +93,30 @@ _MEDIUM_RESPONSE_MS = 20_000
 _INCORRECT_QUALITY = 1
 """The SM-2 quality assigned to any incorrect answer (a sub-passing blackout)."""
 
+_FREE_TEXT_CORRECT_QUALITY = 4
+"""The fixed SM-2 quality for a correct short-answer or essay.
 
-def grade_answer(*, correct: bool, response_ms: int) -> int:
+The response-time thresholds above are tuned for a multiple-choice click;
+typing a phrase or composing an essay takes far longer without implying
+hesitant recall, so time carries no signal for free-text kinds. A flat 4
+("correct after some thought") passes without the ease inflation a perfect 5
+would grant on every essay.
+"""
+
+
+def grade_answer(*, correct: bool, response_ms: int, kind: RecallPromptKind) -> int:
     """Reduce an answer to an SM-2 review quality in the range 0..5.
 
     Correctness is the dominant signal — a wrong answer always grades below the
-    passing threshold regardless of speed — and response time refines a correct
-    answer: a fast recall is a confident 5, a slow one a hesitant 3.
+    passing threshold regardless of speed. Response time refines a correct
+    answer only for multiple choice (a fast click is a confident 5, a slow one
+    a hesitant 3); free-text kinds grade the fixed `_FREE_TEXT_CORRECT_QUALITY`
+    because writing time is composition, not recall hesitation.
     """
     if not correct:
         return _INCORRECT_QUALITY
+    if kind != "multiple_choice":
+        return _FREE_TEXT_CORRECT_QUALITY
     if response_ms <= _FAST_RESPONSE_MS:
         return 5
     if response_ms <= _MEDIUM_RESPONSE_MS:
@@ -188,9 +201,14 @@ def is_learned(schedule: RecallSchedule) -> bool:
     return schedule.repetitions >= GRADUATION_REPETITIONS
 
 
-type RecallPromptKind = Literal["multiple_choice"]
-"""The form of a recall prompt. Only multiple-choice exists today (issue #20);
-short-answer and essay are a deferred extension of this enum."""
+type RecallPromptKind = Literal["multiple_choice", "short_answer", "essay"]
+"""The form of a recall prompt (issue #131).
+
+Multiple-choice grades deterministically against `correct_index`; short-answer
+grades free text against `reference_answer` (model-assisted with a strict-match
+fallback); essay grades free text against `rubric`, with the model proposing a
+grade the **human** confirms (ADR 0004: the model never self-certifies learning).
+"""
 
 type StudyItemState = Literal["studying", "completed"]
 """A study item's lifecycle: drilling its prompts, or fully recalled and tethered."""
@@ -242,14 +260,19 @@ def _info(logger: Logger, event: str, **context: object) -> None:
 class GeneratedPrompt:
     """A single recall prompt as the generator produces it, before persistence.
 
-    `choices` are the multiple-choice options and `correct_index` points at the
-    right one. The index is validated against the choices on the way in, so a
-    malformed prompt is a domain error rather than a corrupt row.
+    Each kind carries its grading payload: multiple-choice its `choices` plus
+    the `correct_index` pointing at the right one, short-answer its
+    `reference_answer`, essay its `rubric`. The payload is validated against the
+    kind on the way in, so a malformed prompt is a domain error rather than a
+    corrupt row.
     """
 
     question: str
-    choices: list[str]
-    correct_index: int
+    kind: RecallPromptKind = "multiple_choice"
+    choices: list[str] = field(default_factory=list[str])
+    correct_index: int | None = None
+    reference_answer: str | None = None
+    rubric: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,15 +322,28 @@ Return ONLY a JSON object (no prose, no code fences) with this exact shape:
   "distilled_learnings": "<a few sentences capturing the key learnings>",
   "prompts": [
     {{
+      "kind": "multiple_choice",
       "question": "<a multiple-choice question testing one learning>",
       "choices": ["<option 0>", "<option 1>", "<option 2>", "<option 3>"],
       "correct_index": <0-based index of the correct choice>
+    }},
+    {{
+      "kind": "short_answer",
+      "question": "<a question answered in a word or short phrase>",
+      "reference_answer": "<the expected answer, used to grade free text>"
+    }},
+    {{
+      "kind": "essay",
+      "question": "<a prompt asking the learner to explain a learning in depth>",
+      "rubric": "<what a strong answer must cover, used to grade the essay>"
     }}
   ]
 }}
 
-Produce {count} prompts. Each prompt must have at least two choices and exactly \
-one correct answer. Base everything strictly on the transcript.
+Produce {count} prompts, mixing the kinds: mostly multiple_choice and \
+short_answer, and at most one essay. Each multiple_choice prompt must have at \
+least two choices and exactly one correct answer. Base everything strictly on \
+the transcript.
 
 Title: {title}
 
@@ -317,11 +353,19 @@ Transcript:
 
 
 class _ParsedPrompt(BaseModel):
-    """Strict parse target for one model-produced recall prompt."""
+    """Strict parse target for one model-produced recall prompt.
 
+    `kind` defaults to multiple-choice so a legacy reply without the field
+    still parses; the per-kind payload is validated later, by
+    `_validate_generated`, as a domain rule rather than a parse rule.
+    """
+
+    kind: RecallPromptKind = "multiple_choice"
     question: str
-    choices: list[str]
-    correct_index: int
+    choices: list[str] = []
+    correct_index: int | None = None
+    reference_answer: str | None = None
+    rubric: str | None = None
 
 
 class _ParsedStudyItem(BaseModel):
@@ -363,7 +407,7 @@ class PiStudyItemGenerator:
         self.prompt_count: int = prompt_count
 
     async def generate(self, *, transcript: str, title: str) -> GeneratedStudyItem:
-        """Distil a transcript into learnings and multiple-choice recall prompts."""
+        """Distil a transcript into learnings and a mix of recall prompts."""
         prompt = _GENERATION_INSTRUCTIONS.format(
             count=self.prompt_count, title=title, transcript=transcript
         )
@@ -378,12 +422,173 @@ class PiStudyItemGenerator:
             prompts=[
                 GeneratedPrompt(
                     question=prompt.question,
+                    kind=prompt.kind,
                     choices=prompt.choices,
                     correct_index=prompt.correct_index,
+                    reference_answer=prompt.reference_answer,
+                    rubric=prompt.rubric,
                 )
                 for prompt in parsed.prompts
             ],
         )
+
+
+class AnswerGradingUnavailableError(Exception):
+    """Raised when the model-backed grader cannot produce a verdict.
+
+    Distinct from a wrong answer: the caller falls back (strict match for short
+    answers, an empty proposal for essays) instead of failing the card.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class EssayGradeProposal:
+    """The model's *proposed* grade for an essay, awaiting human confirmation.
+
+    `correct` is `None` when no proposal could be made (model unavailable); the
+    human then grades unaided. The proposal is never applied to SM-2 directly —
+    only the human-confirmed grade is (ADR 0004).
+    """
+
+    correct: bool | None
+    reasoning: str | None
+
+
+@runtime_checkable
+class AnswerGrader(Protocol):
+    """Grades free-text answers (the model-backed step of answering).
+
+    Structural so a controlled fake drives the service tests while the live
+    implementation runs an ephemeral pi process, the same seam as generation.
+    """
+
+    async def grade_short_answer(
+        self, *, question: str, reference_answer: str, answer_text: str
+    ) -> bool:
+        """Judge whether a free-text answer matches the reference answer."""
+        ...
+
+    async def propose_essay_grade(
+        self, *, question: str, rubric: str, answer_text: str
+    ) -> EssayGradeProposal:
+        """Propose a grade for an essay against its rubric, for the human."""
+        ...
+
+
+_SHORT_ANSWER_GRADING_INSTRUCTIONS = """\
+You are grading one short-answer recall response.
+
+Question: {question}
+Reference answer: {reference_answer}
+Learner's answer: {answer_text}
+
+The learner's answer is correct when it conveys the same fact as the reference
+answer, allowing different wording. Return ONLY a JSON object (no prose, no
+code fences) with this exact shape:
+{{"correct": <true or false>}}
+"""
+
+_ESSAY_GRADING_INSTRUCTIONS = """\
+You are proposing a grade for one essay recall response. A human will review
+your proposal and make the final call, so explain your reasoning briefly.
+
+Essay prompt: {question}
+Rubric: {rubric}
+Learner's essay: {answer_text}
+
+The essay passes when it covers what the rubric requires. Return ONLY a JSON
+object (no prose, no code fences) with this exact shape:
+{{"correct": <true or false>, "reasoning": "<one or two sentences>"}}
+"""
+
+
+class _ParsedShortAnswerGrade(BaseModel):
+    """Strict parse target for the model's short-answer verdict JSON."""
+
+    correct: bool
+
+
+class _ParsedEssayGrade(BaseModel):
+    """Strict parse target for the model's essay grade-proposal JSON."""
+
+    correct: bool
+    reasoning: str = ""
+
+
+_UNUSABLE_GRADING_REPLY_ERRORS = (
+    InvalidPromptError,
+    ValidationError,
+    json.JSONDecodeError,
+)
+"""The reply-parsing failures the grader converts to *unavailable*.
+
+The same narrow set `PiStudyItemGenerator.generate` recovers from, plus the
+`InvalidPromptError` `_extract_json_object` raises for a reply with no JSON
+object. Anything else — the run itself failing, a bug in this path —
+propagates rather than silently downgrading every answer to the fallback
+grade.
+"""
+
+
+class PiAnswerGrader:
+    """The live `AnswerGrader`: judges free-text answers via an agent run.
+
+    An unparseable reply degrades to `AnswerGradingUnavailableError` so the
+    caller can fall back instead of trusting a garbled verdict. Only reply
+    parsing is caught (see `_UNUSABLE_GRADING_REPLY_ERRORS`); a failing run is
+    a real error and surfaces as one.
+    """
+
+    def __init__(self, runner: AgentTextRunner) -> None:
+        self.runner: AgentTextRunner = runner
+
+    async def grade_short_answer(
+        self, *, question: str, reference_answer: str, answer_text: str
+    ) -> bool:
+        """Judge a free-text answer against the reference via the model."""
+        prompt = _SHORT_ANSWER_GRADING_INSTRUCTIONS.format(
+            question=question,
+            reference_answer=reference_answer,
+            answer_text=answer_text,
+        )
+        reply = await self.runner.run(prompt)
+        try:
+            parsed = _ParsedShortAnswerGrade.model_validate_json(
+                _extract_json_object(reply)
+            )
+        except _UNUSABLE_GRADING_REPLY_ERRORS as error:
+            message = f"short-answer grading produced no verdict: {error}"
+            raise AnswerGradingUnavailableError(message) from error
+        return parsed.correct
+
+    async def propose_essay_grade(
+        self, *, question: str, rubric: str, answer_text: str
+    ) -> EssayGradeProposal:
+        """Propose an essay grade against the rubric via the model."""
+        prompt = _ESSAY_GRADING_INSTRUCTIONS.format(
+            question=question, rubric=rubric, answer_text=answer_text
+        )
+        reply = await self.runner.run(prompt)
+        try:
+            parsed = _ParsedEssayGrade.model_validate_json(_extract_json_object(reply))
+        except _UNUSABLE_GRADING_REPLY_ERRORS as error:
+            message = f"essay grading produced no proposal: {error}"
+            raise AnswerGradingUnavailableError(message) from error
+        return EssayGradeProposal(correct=parsed.correct, reasoning=parsed.reasoning)
+
+
+def _normalized_answer(text: str) -> str:
+    """Collapse whitespace and case so a strict match tolerates formatting only."""
+    return " ".join(text.split()).casefold()
+
+
+def matches_reference(reference_answer: str, answer_text: str) -> bool:
+    """The strict-match fallback grade: normalized exact equality.
+
+    >>> matches_reference("epoll", "  EPOLL ")
+    True
+    """
+    return _normalized_answer(reference_answer) == _normalized_answer(answer_text)
 
 
 class StudyItem[S = Pending](Model[S, "StudyItem[Fetched]"]):
@@ -406,7 +611,12 @@ class StudyItem[S = Pending](Model[S, "StudyItem[Fetched]"]):
 
 
 class RecallPrompt[S = Pending](Model[S, "RecallPrompt[Fetched]"]):
-    """One recall prompt: its question, choices, answer, and SM-2 card state."""
+    """One recall prompt: its question, grading payload, and SM-2 card state.
+
+    `kind` discriminates the grading payload: multiple-choice rows carry
+    `choices` + `correct_index`, short-answer rows `reference_answer`, essay
+    rows `rubric`; the other payload columns stay NULL (and `choices` empty).
+    """
 
     id: RecallPrompt.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
     study_item_id: RecallPrompt.Col[UUID7] = Text()
@@ -414,9 +624,13 @@ class RecallPrompt[S = Pending](Model[S, "RecallPrompt[Fetched]"]):
     kind: RecallPrompt.Col[RecallPromptKind] = Text()
     question: RecallPrompt.Col[str] = Text()
     choices: RecallPrompt.Col[Json[list[str]]] = Text()
-    """The multiple-choice options, as JSON."""
-    correct_index: RecallPrompt.Col[int] = Integer()
+    """The multiple-choice options, as JSON; empty for other kinds."""
+    correct_index: RecallPrompt.Col[int | None] = Integer(default=None, nullable=True)
     """Index into `choices` of the right answer; never sent to the client."""
+    reference_answer: RecallPrompt.Col[str | None] = Text(default=None, nullable=True)
+    """The short-answer key free text grades against; never sent to the client."""
+    rubric: RecallPrompt.Col[str | None] = Text(default=None, nullable=True)
+    """What a passing essay must cover; revealed only at the confirm-grade step."""
     repetitions: RecallPrompt.Col[int] = Integer(default=0)
     """Consecutive passing reviews; resets to zero on a miss (SM-2)."""
     ease_factor: RecallPrompt.Col[float] = Real(default=INITIAL_EASE_FACTOR)
@@ -436,7 +650,10 @@ class RecallAnswer[S = Pending](Model[S, "RecallAnswer[Fetched]"]):
 
     id: RecallAnswer.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
     prompt_id: RecallAnswer.Col[UUID7] = Text()
-    selected_index: RecallAnswer.Col[int] = Integer()
+    selected_index: RecallAnswer.Col[int | None] = Integer(default=None, nullable=True)
+    """The chosen option for a multiple-choice answer; NULL for free text."""
+    answer_text: RecallAnswer.Col[str | None] = Text(default=None, nullable=True)
+    """The free-text answer for short-answer and essay prompts; NULL for choices."""
     correct: RecallAnswer.Col[bool] = Integer()
     response_ms: RecallAnswer.Col[int] = Integer()
     quality: RecallAnswer.Col[int] = Integer()
@@ -454,6 +671,36 @@ def schedule_of(prompt: RecallPrompt[Fetched]) -> RecallSchedule:
         interval_days=prompt.interval_days,
         due_at=prompt.due_at,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PromptAnswer:
+    """One submitted answer, carrying the input for whichever kind it targets.
+
+    Multiple choice sets `selected_index`; short answer sets `answer_text`;
+    essay sets `answer_text` plus `confirmed_correct` — the grade the human
+    confirmed after seeing the model's proposal (ADR 0004). `response_ms`
+    always rides along to refine the SM-2 quality of a correct answer.
+    """
+
+    response_ms: int
+    selected_index: int | None = None
+    answer_text: str | None = None
+    confirmed_correct: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecallModelSteps:
+    """The model-backed collaborators of Recall, injected as one seam.
+
+    `generator` distils a transcript into a study item (starting Recall);
+    `grader` judges free-text answers (answering). The grader may be absent:
+    short answers then fall back to the strict reference match and essay
+    proposals come back empty — scheduling itself never needs a model.
+    """
+
+    generator: StudyItemGenerator
+    grader: AnswerGrader | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,43 +728,70 @@ class DuePrompt:
 
 
 def _validate_generated(generated: GeneratedStudyItem) -> None:
-    """Reject a distillation with no prompts or an out-of-range correct index."""
+    """Reject a distillation with no prompts, an unknown kind, or a missing payload."""
     if not generated.prompts:
         message = "a study item requires at least one recall prompt"
         raise InvalidPromptError(message)
     for prompt in generated.prompts:
-        if len(prompt.choices) < _MIN_CHOICES:
-            message = "a multiple-choice prompt requires at least two choices"
+        # Widened to `str` so the unmatched-kind guard survives values the type
+        # system says cannot happen (a lying caller): a kind this dispatch does
+        # not recognise must be rejected, never validated as some other kind.
+        kind: str = prompt.kind
+        if kind == "multiple_choice":
+            _validate_multiple_choice(prompt)
+        elif kind == "short_answer":
+            if not (prompt.reference_answer or "").strip():
+                message = "a short-answer prompt requires a reference answer"
+                raise InvalidPromptError(message)
+        elif kind == "essay":
+            if not (prompt.rubric or "").strip():
+                message = "an essay prompt requires a rubric"
+                raise InvalidPromptError(message)
+        else:
+            message = f"unknown recall prompt kind {kind!r}"
             raise InvalidPromptError(message)
-        if not 0 <= prompt.correct_index < len(prompt.choices):
-            message = (
-                f"correct_index {prompt.correct_index} is outside the "
-                f"{len(prompt.choices)} choices"
-            )
-            raise InvalidPromptError(message)
+
+
+def _validate_multiple_choice(prompt: GeneratedPrompt) -> None:
+    """Reject a multiple-choice prompt with too few choices or a bad answer key."""
+    if len(prompt.choices) < _MIN_CHOICES:
+        message = "a multiple-choice prompt requires at least two choices"
+        raise InvalidPromptError(message)
+    if prompt.correct_index is None or not 0 <= prompt.correct_index < len(
+        prompt.choices
+    ):
+        message = (
+            f"correct_index {prompt.correct_index} is outside the "
+            f"{len(prompt.choices)} choices"
+        )
+        raise InvalidPromptError(message)
 
 
 class RecallService:
     """Capability surface for the Recall tethering path, over a snekql database.
 
-    Starting Recall distils a transcript (the one model-backed step, injected)
-    into a loose Memory plus its prompts; answering grades and reschedules a
-    prompt with pure SM-2 math; learning the last prompt completes the study item
-    and tethers its Memory through the shared `MemoryService` — so the second
-    gate reuses the one Memory lifecycle rather than a parallel one.
+    Starting Recall distils a transcript (a model-backed step, injected) into a
+    loose Memory plus its prompts; answering reduces every kind to a
+    `(correct, response_ms)` pair — deterministically for multiple choice, via
+    the injected grader (with a strict-match fallback) for short answers, and
+    from the human-confirmed grade for essays — then reschedules with pure SM-2
+    math; learning the last prompt completes the study item and tethers its
+    Memory through the shared `MemoryService` — so the second gate reuses the
+    one Memory lifecycle rather than a parallel one.
     """
 
     def __init__(
         self,
         database: Database,
         memory_service: MemoryService,
-        generator: StudyItemGenerator,
+        models: RecallModelSteps,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
         self.memory_service: MemoryService = memory_service
-        self.generator: StudyItemGenerator = generator
+        self.generator: StudyItemGenerator = models.generator
+        self.grader: AnswerGrader | None = models.grader
         self.tracer: Tracer = tracer
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
 
@@ -570,10 +844,12 @@ class RecallService:
                         insert(
                             RecallPrompt(
                                 study_item_id=study_item.id,
-                                kind="multiple_choice",
+                                kind=generated_prompt.kind,
                                 question=generated_prompt.question,
                                 choices=generated_prompt.choices,
                                 correct_index=generated_prompt.correct_index,
+                                reference_answer=generated_prompt.reference_answer,
+                                rubric=generated_prompt.rubric,
                                 repetitions=schedule.repetitions,
                                 ease_factor=schedule.ease_factor,
                                 interval_days=schedule.interval_days,
@@ -644,29 +920,26 @@ class RecallService:
     async def answer_prompt(
         self,
         prompt: RecallPrompt[Fetched],
+        answer: PromptAnswer,
         *,
-        selected_index: int,
-        response_ms: int,
         now: datetime,
         logger: Logger,
     ) -> AnswerOutcome:
         """Grade and reschedule a prompt, completing the study item when learned.
 
-        The selected choice is graded deterministically, reduced to an SM-2
-        quality with the response time, and applied to the card. The answer is
-        recorded for audit. When this learns the study item's final prompt the
-        item completes and its Memory tethers (the Recall gate); a miss simply
-        reschedules, extending the overall effort. Tethering happens **only** on
-        full completion.
+        The answer is graded per the prompt's kind — a selected choice against
+        the answer key, free text against the reference answer (model-assisted,
+        strict match when the model is unavailable), or an essay by the
+        human-confirmed grade — reduced to an SM-2 quality with the response
+        time, and applied to the card. The answer is recorded for audit. When
+        this learns the study item's final prompt the item completes and its
+        Memory tethers (the Recall gate); a miss simply reschedules, extending
+        the overall effort. Tethering happens **only** on full completion.
         """
-        if not 0 <= selected_index < len(prompt.choices):
-            message = (
-                f"selected_index {selected_index} is outside the "
-                f"{len(prompt.choices)} choices"
-            )
-            raise InvalidAnswerError(message)
-        correct = selected_index == prompt.correct_index
-        quality = grade_answer(correct=correct, response_ms=response_ms)
+        correct = await self._grade(prompt, answer, logger=logger)
+        quality = grade_answer(
+            correct=correct, response_ms=answer.response_ms, kind=prompt.kind
+        )
         reviewed = review_schedule(schedule_of(prompt), quality=quality, now=now)
         with self.tracer.start_as_current_span(
             "RecallService.answer_prompt",
@@ -693,9 +966,10 @@ class RecallService:
                     insert(
                         RecallAnswer(
                             prompt_id=prompt.id,
-                            selected_index=selected_index,
+                            selected_index=answer.selected_index,
+                            answer_text=answer.answer_text,
                             correct=correct,
-                            response_ms=response_ms,
+                            response_ms=answer.response_ms,
                             quality=quality,
                         )
                     )
@@ -749,6 +1023,129 @@ class RecallService:
             completed=newly_complete,
             tethered=tethered,
         )
+
+    async def propose_essay_grade(
+        self,
+        prompt: RecallPrompt[Fetched],
+        *,
+        answer_text: str,
+        logger: Logger,
+    ) -> EssayGradeProposal:
+        """Ask the model to propose an essay grade for the human to confirm.
+
+        The proposal is advisory: nothing is recorded or rescheduled here, and
+        the grade that reaches SM-2 is the one the human later confirms through
+        `answer_prompt` (ADR 0004 — the model must not self-certify learning).
+        When the model is unavailable the proposal is empty and the human
+        grades unaided.
+        """
+        if prompt.kind != "essay":
+            message = f"prompt {prompt.id} is {prompt.kind}, not an essay"
+            raise InvalidAnswerError(message)
+        if not answer_text.strip():
+            message = "an essay grade proposal requires the essay text"
+            raise InvalidAnswerError(message)
+        if prompt.rubric is None:
+            # An essay row is written with its rubric (`_validate_generated`);
+            # one without it is corrupt, so raise rather than grade unaided
+            # against nothing.
+            message = f"essay prompt {prompt.id} is missing its rubric"
+            raise InvalidPromptError(message)
+        if self.grader is None:
+            return EssayGradeProposal(correct=None, reasoning=None)
+        try:
+            proposal = await self.grader.propose_essay_grade(
+                question=prompt.question,
+                rubric=prompt.rubric,
+                answer_text=answer_text,
+            )
+        except AnswerGradingUnavailableError:
+            logger.warning(
+                "Essay grading unavailable; the human grades unaided",
+                prompt_id=str(prompt.id),
+            )
+            return EssayGradeProposal(correct=None, reasoning=None)
+        _info(
+            logger,
+            "Essay grade proposed",
+            prompt_id=str(prompt.id),
+            proposed_correct=proposal.correct,
+        )
+        return proposal
+
+    async def _grade(
+        self,
+        prompt: RecallPrompt[Fetched],
+        answer: PromptAnswer,
+        *,
+        logger: Logger,
+    ) -> bool:
+        """Reduce an answer to its correctness per the prompt's kind."""
+        # Widened to `str` so a corrupt row's kind hits the explicit rejection
+        # below instead of falling through into another kind's grading path.
+        kind: str = prompt.kind
+        if kind == "multiple_choice":
+            if answer.selected_index is None:
+                message = "a multiple-choice prompt is answered by selected_index"
+                raise InvalidAnswerError(message)
+            if not 0 <= answer.selected_index < len(prompt.choices):
+                message = (
+                    f"selected_index {answer.selected_index} is outside the "
+                    f"{len(prompt.choices)} choices"
+                )
+                raise InvalidAnswerError(message)
+            return answer.selected_index == prompt.correct_index
+        if kind not in ("short_answer", "essay"):
+            message = f"prompt {prompt.id} has unknown kind {kind!r}"
+            raise InvalidPromptError(message)
+        if answer.answer_text is None or not answer.answer_text.strip():
+            message = f"a {kind} prompt is answered by answer_text"
+            raise InvalidAnswerError(message)
+        if kind == "essay":
+            if answer.confirmed_correct is None:
+                message = (
+                    "an essay answer requires confirmed_correct: the human "
+                    "confirms the grade (the model only proposes one)"
+                )
+                raise InvalidAnswerError(message)
+            return answer.confirmed_correct
+        return await self._grade_short_answer(
+            prompt, answer_text=answer.answer_text, logger=logger
+        )
+
+    async def _grade_short_answer(
+        self,
+        prompt: RecallPrompt[Fetched],
+        *,
+        answer_text: str,
+        logger: Logger,
+    ) -> bool:
+        """Grade free text via the model, strict-matching when it is unavailable."""
+        reference_answer = prompt.reference_answer
+        if reference_answer is None:
+            message = f"prompt {prompt.id} has no reference answer to grade against"
+            raise InvalidAnswerError(message)
+        if self.grader is not None:
+            try:
+                # ADR 0004 boundary: this model verdict flows straight into
+                # SM-2 (and, on the final card, completion → tethering). That
+                # is a deliberate, scoped exception (issue #131): a short
+                # answer has a strict factual key (`reference_answer`) the
+                # model merely fuzzy-matches against, so the human still
+                # authored the recalled fact. Essays, whose open-ended grade
+                # is a judgement call, must instead be confirmed by the human
+                # before their verdict reaches scheduling (`_grade` above).
+                return await self.grader.grade_short_answer(
+                    question=prompt.question,
+                    reference_answer=reference_answer,
+                    answer_text=answer_text,
+                )
+            except AnswerGradingUnavailableError:
+                logger.warning(
+                    "Short-answer grading unavailable; falling back to strict match",
+                    prompt_id=str(prompt.id),
+                )
+        return matches_reference(reference_answer, answer_text)
 
     async def _tether_memory(self, memory_id: UUID7, *, logger: Logger) -> bool:
         """Tether the distilled-learnings Memory on full Recall completion.
@@ -805,18 +1202,77 @@ class RecallService:
         return item
 
 
+def _recall_migrations() -> dict[str, str]:
+    """The ordered Recall migration chain, one statement per migration.
+
+    The `007_` bodies are the original scaffold (issue #20), frozen verbatim so
+    the model classes can keep evolving without rewriting an already-applied
+    migration; later shape changes are explicit `ALTER TABLE` steps.
+    """
+    migrations: dict[str, str] = {
+        "007_create_study_item": (
+            'CREATE TABLE "study_item" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, '
+            '"memory_id" TEXT, "source_video_id" TEXT, "source_title" TEXT, '
+            '"state" TEXT, '
+            "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"completed_at" TEXT'
+            ") STRICT"
+        ),
+        "007_create_index_ux_study_item_source_video_id": (
+            'CREATE UNIQUE INDEX "ux_study_item_source_video_id" '
+            'ON "study_item" ("source_video_id")'
+        ),
+        "007_create_index_ix_study_item_state": (
+            'CREATE INDEX "ix_study_item_state" ON "study_item" ("state")'
+        ),
+        "007_create_recall_prompt": (
+            'CREATE TABLE "recall_prompt" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, '
+            '"study_item_id" TEXT, "kind" TEXT, "question" TEXT, "choices" TEXT, '
+            '"correct_index" INTEGER, "repetitions" INTEGER, "ease_factor" REAL, '
+            '"interval_days" INTEGER, "due_at" TEXT, '
+            "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            ") STRICT"
+        ),
+        "007_create_index_ix_recall_prompt_study_item_id_due_at": (
+            'CREATE INDEX "ix_recall_prompt_study_item_id_due_at" '
+            'ON "recall_prompt" ("study_item_id", "due_at")'
+        ),
+        "007_create_recall_answer": (
+            'CREATE TABLE "recall_answer" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, '
+            '"prompt_id" TEXT, "selected_index" INTEGER, "correct" INTEGER, '
+            '"response_ms" INTEGER, "quality" INTEGER, '
+            "\"answered_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            ") STRICT"
+        ),
+        "007_create_index_ix_recall_answer_prompt_id": (
+            'CREATE INDEX "ix_recall_answer_prompt_id" ON "recall_answer" ("prompt_id")'
+        ),
+    }
+    # Prompt kinds beyond multiple choice (#131): the short-answer reference
+    # key and essay rubric, plus the free-text answer in the audit log.
+    migrations["010_recall_prompt_reference_answer"] = (
+        'ALTER TABLE "recall_prompt" ADD COLUMN "reference_answer" TEXT'
+    )
+    migrations["010_recall_prompt_rubric"] = (
+        'ALTER TABLE "recall_prompt" ADD COLUMN "rubric" TEXT'
+    )
+    migrations["010_recall_answer_answer_text"] = (
+        'ALTER TABLE "recall_answer" ADD COLUMN "answer_text" TEXT'
+    )
+    return migrations
+
+
 async def create_recall_schema(database: Database) -> None:
     """Create the study-item, recall-prompt, and answer tables on an initialized DB.
 
     Applied as its own ordered migrations after the earlier schemas (prefix
-    `007_`). Scaffolding emits one statement per table/index, and a snekql
-    migration body runs exactly one statement, so each becomes its own ordered
+    `007_`, extended by `010_`). A snekql migration body runs exactly one
+    statement, so each table, index, and column addition is its own ordered
     migration.
     """
-    migrations = {
-        f"007_{label}": sql
-        for label, sql in scaffold_sqlite_statements(
-            [StudyItem, RecallPrompt, RecallAnswer]
-        )
-    }
-    await database.migrate(migrations)
+    await database.migrate(_recall_migrations())
