@@ -120,8 +120,9 @@ class PiRuntimeConfig:
     system_prompt: str | None = None
     """Replacement for pi's default coding-agent system prompt.
 
-    pi still appends the current date and cwd after it, so a constant prompt
-    stays a stable prefix for provider prompt caching. Setting it also turns
+    pi still appends run context — e.g. the current date, cwd, and any
+    discovered APPEND_SYSTEM.md — after it, so a constant prompt stays a
+    stable prefix for provider prompt caching. Setting it also turns
     off pi's AGENTS.md/CLAUDE.md context-file discovery: those are coding-agent
     context that would pollute the persona and vary with the host's cwd.
     """

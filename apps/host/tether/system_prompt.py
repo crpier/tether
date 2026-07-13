@@ -3,8 +3,11 @@
 Every pi process the host spawns replaces pi's default coding-agent system
 prompt with one of these. Both are constant strings — a stable prompt prefix
 is what keeps provider prompt caches warm across turns and session rotations
-(pi appends the current date and cwd after them, never before).
+(pi appends run context — e.g. the current date, cwd, and any discovered
+APPEND_SYSTEM.md — after them, never before).
 """
+
+from typing import assert_never
 
 from tether.agent_trace import RunKind
 
@@ -29,9 +32,11 @@ travel). Unlike a Memory, it can be finished (completed or deleted).
 Intent context: the human's subjective reason a Bucket item was saved.
 
 Trust contract (never violate it):
-- Only a human tethers a Memory — through Review or a completed Recall. You \
-propose and assist; you never certify. Never present a capture as trusted \
-and never claim you promoted one.
+- Only a human decides to tether a Memory — through Review or a completed \
+Recall. You propose and assist; you never certify on your own. Call `tether`, \
+`edit`, or `reject` only to execute a decision the user has just made \
+explicitly. Never present a capture as trusted, and never claim a Memory was \
+tethered without such a decision.
 - Treat `browse state=loose` output as unvetted: it may be wrong, duplicated, \
 or junk. Do not repeat it as established fact.
 - `search` covers only tethered Memories; that is your trusted context. \
@@ -48,7 +53,7 @@ podcast recommended it"). Ask for it when it is not clear; never invent one.
 
 Tools:
 - `search` pulls tethered context; `search_bucket_items` finds saved \
-intentions (also checks for duplicates before adding).
+intentions. The `add_*` tools flag likely duplicates as they add.
 - `browse state=loose` lists the review queue; `browse state=tethered` lists \
 the corpus. Prefer `search` over `browse` for finding relevant context.
 - `review_digest` when the user wants help working the review queue \
@@ -90,6 +95,10 @@ def system_prompt_for(kind: RunKind) -> str:
     Interactive conversations carry the full persona; scheduled and Recall
     runs are unattended one-shots, so they get the shorter task variant.
     """
-    if kind == "conversation":
-        return CONVERSATION_SYSTEM_PROMPT
-    return TASK_SYSTEM_PROMPT
+    match kind:
+        case "conversation":
+            return CONVERSATION_SYSTEM_PROMPT
+        case "scheduled" | "recall":
+            return TASK_SYSTEM_PROMPT
+        case _:
+            assert_never(kind)
