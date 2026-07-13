@@ -36,6 +36,7 @@ import type {
 import { MessageContent } from "./components/message-content";
 import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
 import { BucketPanel } from "./panels/bucket";
+import { MemoriesPanel } from "./panels/memories";
 import { NotificationsPanel } from "./panels/notifications";
 import { PushControl } from "./panels/push";
 import { RecallPanel } from "./panels/recall";
@@ -703,6 +704,7 @@ export function ChatView(props: {
           />
           <YouTubeSyncPanel api={props.api} />
           <RecallPanel api={props.api} />
+          <MemoriesPanel api={props.api} />
           <BucketPanel api={props.api} />
           <TriggersPanel api={props.api} />
           <PushControl api={props.api} />
