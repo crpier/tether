@@ -45,6 +45,18 @@ describe("Memories panel", () => {
     );
   });
 
+  test("a long memory truncates its accessible row label but renders in full", async () => {
+    const content = `${"a".repeat(100)} tail`;
+    const api = new FakeApi({
+      authenticated: true,
+      memories: [memory({ content })],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText(`Memory: ${"a".repeat(80)}…`);
+    expect(row).toHaveTextContent(content);
+  });
+
   test("capturing a memory posts the content and clears the form", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
@@ -141,9 +153,11 @@ describe("Memories panel", () => {
         { memoryId: "mem-1", version: 2 },
       ]);
     });
-    expect(
-      screen.queryByLabelText("Memory: Aisle seats"),
-    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Memory: Aisle seats"),
+      ).not.toBeInTheDocument();
+    });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -188,6 +202,56 @@ describe("Memories panel", () => {
     });
   });
 
+  test("a tether 409 from a concurrent content edit surfaces the conflict instead of tethering unseen content", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      memories: [memory({ content: "Aisle seats", id: "mem-1", version: 1 })],
+    });
+    // The 409 hides a genuine content change: retrying blindly would make the
+    // user vouch for content they never reviewed.
+    api.serverMemoryVersions = { "mem-1": 2 };
+    api.serverMemoryEdits = { "mem-1": { content: "Business class only" } };
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Memory: Aisle seats");
+    fireEvent.click(within(row).getByRole("button", { name: "Tether" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "changed before it could be tethered",
+    );
+    expect(api.tetherMemoryCalls).toEqual([{ memoryId: "mem-1", version: 1 }]);
+    // The refreshed row shows the fresh content so the user can re-confirm.
+    expect(
+      await screen.findByLabelText("Memory: Business class only"),
+    ).toBeInTheDocument();
+    expect(api.storedMemories[0]).toMatchObject({ state: "loose" });
+  });
+
+  test("a tether 409 from a concurrent tether is settled without a second call", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      memories: [memory({ content: "Aisle seats", id: "mem-1", version: 1 })],
+    });
+    // Someone else already tethered the same content: the user's intent is
+    // done, and a retry would 409 again (the host rejects tethering tethered).
+    api.serverMemoryVersions = { "mem-1": 2 };
+    api.serverMemoryEdits = {
+      "mem-1": { state: "tethered", tethered_at: "2026-01-02T00:00:00Z" },
+    };
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Memory: Aisle seats");
+    fireEvent.click(within(row).getByRole("button", { name: "Tether" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Memory: Aisle seats"),
+      ).not.toBeInTheDocument();
+    });
+    expect(api.tetherMemoryCalls).toEqual([{ memoryId: "mem-1", version: 1 }]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   test("rejecting recovers from a stale-version 409 by refetching and retrying", async () => {
     const api = new FakeApi({
       authenticated: true,
@@ -205,9 +269,44 @@ describe("Memories panel", () => {
         { memoryId: "mem-1", version: 2 },
       ]);
     });
-    expect(
-      screen.queryByLabelText("Memory: Wrong guess"),
-    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Memory: Wrong guess"),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("rejecting a queue row that was concurrently tethered retries against the tethered row", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      memories: [memory({ content: "Wrong guess", id: "mem-1", version: 1 })],
+    });
+    // A host-side tether moved the row loose -> tethered before the reject
+    // landed: the memory is alive in the corpus, so treating the 409 as
+    // "already settled" would silently drop the user's reject.
+    api.serverMemoryVersions = { "mem-1": 2 };
+    api.serverMemoryEdits = {
+      "mem-1": { state: "tethered", tethered_at: "2026-01-02T00:00:00Z" },
+    };
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Memory: Wrong guess");
+    fireEvent.click(within(row).getByRole("button", { name: "Reject" }));
+
+    await waitFor(() => {
+      expect(api.rejectMemoryCalls).toEqual([
+        { memoryId: "mem-1", version: 1 },
+        { memoryId: "mem-1", version: 2 },
+      ]);
+    });
+    // The retry actually removed it server-side; it is not lingering tethered.
+    expect(api.storedMemories).toEqual([]);
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Memory: Wrong guess"),
+      ).not.toBeInTheDocument();
+    });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -282,6 +381,43 @@ describe("Memories panel", () => {
     expect(
       await screen.findByLabelText("Memory: Window seats"),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("an edit 409 from a concurrent tether retries against the tethered row instead of dropping the draft", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      memories: [memory({ content: "Aisle seats", id: "mem-1", version: 1 })],
+    });
+    // A host-side tether moved the row loose -> tethered mid-edit: the content
+    // basis is intact, so the save must follow the row and retry, not silently
+    // discard the draft because the loose list no longer has it.
+    api.serverMemoryVersions = { "mem-1": 2 };
+    api.serverMemoryEdits = {
+      "mem-1": { state: "tethered", tethered_at: "2026-01-02T00:00:00Z" },
+    };
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Memory: Aisle seats");
+    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
+      target: { value: "Window seats" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(api.editMemoryCalls).toEqual([
+        { content: "Window seats", memoryId: "mem-1", version: 1 },
+        { content: "Window seats", memoryId: "mem-1", version: 2 },
+      ]);
+    });
+    expect(api.storedMemories[0]).toMatchObject({
+      content: "Window seats",
+      state: "tethered",
+    });
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Memory content")).not.toBeInTheDocument();
+    });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

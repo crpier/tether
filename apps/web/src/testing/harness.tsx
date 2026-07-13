@@ -236,9 +236,10 @@ export class FakeApi implements TetherApi {
   // Per-memory version the fake "server" will accept on edit/tether/reject; a
   // mismatch (e.g. the agent touched the memory) is a 409, like the host.
   serverMemoryVersions: Record<string, number> = {};
-  // Content the fake server reveals alongside the bumped version when a
-  // mutation 409s — simulates a genuine concurrent edit rather than a mere
-  // version bump (e.g. a tether), which leaves the content intact.
+  // Fields the fake server reveals alongside the bumped version when a
+  // mutation 409s. `content` simulates a genuine concurrent edit; `state` +
+  // `tethered_at` simulate a host-side tether that moved the row from the
+  // loose queue to the corpus. A bare version bump leaves both intact.
   serverMemoryEdits: Record<string, Partial<Memory>> = {};
   // Forced per-call rejections, consumed FIFO before any version check.
   captureMemoryRejections: ApiError[] = [];
@@ -639,6 +640,8 @@ export class FakeApi implements TetherApi {
         tethered_at: "2026-01-02T00:00:00Z",
         version: version + 1,
       }),
+      // Tethering an already-tethered memory conflicts, like the host.
+      { conflictWhen: (current) => current.state === "tethered" },
     );
   }
 
@@ -659,7 +662,10 @@ export class FakeApi implements TetherApi {
     version: number,
     rejections: ApiError[],
     apply: (current: Memory) => Memory,
-    options: { remove?: boolean } = {},
+    options: {
+      conflictWhen?: (current: Memory) => boolean;
+      remove?: boolean;
+    } = {},
   ): Promise<Memory> {
     const forced = rejections.shift();
     if (forced !== undefined) {
@@ -688,6 +694,9 @@ export class FakeApi implements TetherApi {
     );
     if (current === undefined) {
       return Promise.reject(new ApiError(404));
+    }
+    if (options.conflictWhen?.(current) === true) {
+      return Promise.reject(new ApiError(409));
     }
     const mutated = apply(current);
     this.serverMemoryVersions[memoryId] = mutated.version;

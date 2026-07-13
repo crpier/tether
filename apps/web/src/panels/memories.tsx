@@ -30,14 +30,26 @@ type MemoriesView = "review" | "corpus";
 // results still feel immediate against the local single-tenant host.
 const SEARCH_DEBOUNCE_MS = 150;
 
+// Row labels feed the accessibility tree (and test selectors), so cap them:
+// enough of a free-form memory to identify the row, without turning the
+// label into a paragraph.
+const LABEL_MAX_CHARS = 80;
+
+function memoryLabel(content: string): string {
+  return content.length <= LABEL_MAX_CHARS
+    ? `Memory: ${content}`
+    : `Memory: ${content.slice(0, LABEL_MAX_CHARS)}…`;
+}
+
 interface Editing {
   // The content the edit was formulated against; a 409 whose fresh row still
   // matches this basis is a mere version bump (e.g. a tether) and safe to
   // retry, while a changed basis is a genuine concurrent edit.
   basisContent: string;
   id: string;
-  // Which state list the row lives in, so conflict recovery refetches the
-  // right one.
+  // Which state list the row lived in when the edit began, so conflict
+  // recovery starts its refetch there (falling back to the other list if a
+  // concurrent tether moved the row).
   state: MemoryState;
   version: number;
 }
@@ -184,9 +196,10 @@ export function MemoriesPanel(props: { api: TetherApi }) {
       ? props.api.tetherMemory(memoryId, version)
       : props.api.rejectMemory(memoryId, version);
 
-  // Refetch the row's state list, then retry once with the current version.
-  // Returns undefined when the memory is now settled (acted on here, or
-  // already gone server-side), or the retry's own error message to show.
+  // Refetch the row (following it across state lists), then retry once with
+  // the current version. Returns undefined when the memory is now settled
+  // (acted on here, gone server-side, or already tethered as-is), or the
+  // retry's own error message to show.
   const retryWithFreshVersion = async (
     item: Memory,
     action: "tether" | "reject",
@@ -195,6 +208,21 @@ export function MemoriesPanel(props: { api: TetherApi }) {
     if (fresh === undefined) {
       refresh();
       return undefined;
+    }
+    if (action === "tether") {
+      // Tethering is the Review gate's vouch, so never retry over content the
+      // user has not seen — surface the conflict and let them re-confirm the
+      // refreshed row. Reject stays blind: rejecting changed content is safe.
+      if (fresh.content !== item.content) {
+        refresh();
+        return "The memory changed before it could be tethered — review it and tether again";
+      }
+      if (fresh.state === "tethered") {
+        // Concurrently tethered with exactly the content the user vouched
+        // for: the intent is already done, and the host would 409 a re-tether.
+        refresh();
+        return undefined;
+      }
     }
     try {
       await call(action, item.id, fresh.version);
@@ -207,17 +235,34 @@ export function MemoriesPanel(props: { api: TetherApi }) {
     }
   };
 
+  // Find a memory's fresh row after a 409. A host-side tether MOVES a row
+  // loose -> tethered while bumping its version, so a miss in the list the
+  // row came from does not mean it settled — fall back to the other list
+  // before concluding the memory is gone.
   const refetchOne = async (
     state: MemoryState,
     memoryId: string,
   ): Promise<Memory | undefined> => {
-    await queryClient.refetchQueries({
+    const own = (await fetchStateList(state)).find(
+      (candidate) => candidate.id === memoryId,
+    );
+    if (own !== undefined) {
+      return own;
+    }
+    const other: MemoryState = state === "loose" ? "tethered" : "loose";
+    return (await fetchStateList(other)).find(
+      (candidate) => candidate.id === memoryId,
+    );
+  };
+
+  // fetchQuery rather than refetchQueries: it fetches even when no observer
+  // is mounted (the tethered list is disabled while the review view is up)
+  // and still lands in the cache the on-screen queries read.
+  const fetchStateList = (state: MemoryState) =>
+    queryClient.fetchQuery({
+      queryFn: () => props.api.listMemories(state),
       queryKey: queryKeys.memoriesState(state),
     });
-    return (
-      queryClient.getQueryData<Memory[]>(queryKeys.memoriesState(state)) ?? []
-    ).find((candidate) => candidate.id === memoryId);
-  };
 
   const startEdit = (item: Memory) => {
     setError(undefined);
@@ -329,7 +374,7 @@ export function MemoriesPanel(props: { api: TetherApi }) {
   // column can slot in on the left without reshuffling the layout.
   const memoryRow = (item: Memory) => (
     <li
-      aria-label={`Memory: ${item.content}`}
+      aria-label={memoryLabel(item.content)}
       class="bg-muted rounded-md border px-3 py-2 text-sm"
     >
       <Show fallback={editorRow()} when={editing()?.id !== item.id}>

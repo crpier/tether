@@ -9,24 +9,48 @@ test("captures a memory, tethers it from the review queue, and finds it in the c
   const memories = page.locator('section[aria-label="Memories"]');
   await expect(memories).toBeVisible();
 
-  // Capture a unique memory through the manual capture form.
-  const content = `e2e memory ${String(Date.now())}`;
-  await memories.locator('input[name="capture"]').fill(content);
-  await memories.getByRole("button", { name: "Capture memory" }).click();
-
-  // It lands in the loose review queue.
+  // Capture two unique memories so the search assertion below can check the
+  // relevance ranking between them, not just the presence of a row that the
+  // corpus browse already rendered.
+  const stamp = String(Date.now());
+  const content = `e2e aisle seats ${stamp}`;
+  const decoy = `e2e peanut allergy ${stamp}`;
+  for (const text of [content, decoy]) {
+    await memories.locator('input[name="capture"]').fill(text);
+    await memories.getByRole("button", { name: "Capture memory" }).click();
+    // It lands in the loose review queue.
+    await expect(
+      page.locator(`li[aria-label="Memory: ${text}"]`),
+    ).toBeVisible();
+  }
   const row = page.locator(`li[aria-label="Memory: ${content}"]`);
-  await expect(row).toBeVisible();
+  const decoyRow = page.locator(`li[aria-label="Memory: ${decoy}"]`);
 
-  // Tether it: the row leaves the queue and appears in the corpus view.
-  await row.getByRole("button", { name: "Tether" }).click();
-  await expect(row).toHaveCount(0);
+  // Tether both: the rows leave the queue and appear in the corpus view.
+  for (const queued of [row, decoyRow]) {
+    await queued.getByRole("button", { name: "Tether" }).click();
+    await expect(queued).toHaveCount(0);
+  }
   await memories.getByRole("button", { name: "Corpus" }).click();
   await expect(row).toBeVisible();
+  await expect(decoyRow).toBeVisible();
 
-  // Keyword search over the tethered corpus finds it.
+  // Keyword search over the tethered corpus. The host's search is ranked
+  // recall over every tethered memory (the vector arm has no score cutoff),
+  // so the decoy never drops out; what discriminates is the request itself —
+  // it only exists once the debounce fired — plus the relevance order it
+  // returns: the exact-content match ranks first, ahead of the decoy.
+  const searchDone = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/memories/search",
+    { timeout: 5000 },
+  );
   await memories.locator('input[name="search"]').fill(content);
+  await searchDone;
   await expect(row).toBeVisible();
+  await expect(memories.locator("ul > li").first()).toHaveAttribute(
+    "aria-label",
+    `Memory: ${content}`,
+  );
 });
 
 test("edits a loose memory and rejects it from the review queue", async ({
