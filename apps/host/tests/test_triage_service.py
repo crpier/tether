@@ -166,6 +166,54 @@ async def under_specified_flags_place_without_location() -> None:
 
 
 @test()
+async def under_specified_flags_book_without_author() -> None:
+    """A book with no author is too ambiguous to track down — flag it."""
+    harness = await load_fixture(triage_harness())
+    vague = await harness.add("book", {"title": "Dune"})
+
+    report = await harness.report()
+
+    flagged = {item.bucket_item_id for item in report.under_specified}
+    assert_in(vague.id, flagged)
+
+
+@test()
+async def under_specified_flags_travel_without_season() -> None:
+    """A trip with no season can never leave the someday pile — flag it."""
+    harness = await load_fixture(triage_harness())
+    vague = await harness.add("travel", {"destination": "Japan"})
+
+    report = await harness.report()
+
+    flagged = {item.bucket_item_id for item in report.under_specified}
+    assert_in(vague.id, flagged)
+
+
+@test()
+async def fully_specified_book_is_not_flagged() -> None:
+    """A book carrying its author clears the bar."""
+    harness = await load_fixture(triage_harness())
+    precise = await harness.add("book", {"title": "Dune", "author": "Frank Herbert"})
+
+    report = await harness.report()
+
+    flagged = {item.bucket_item_id for item in report.under_specified}
+    assert_not_in(precise.id, flagged)
+
+
+@test()
+async def fully_specified_travel_is_not_flagged() -> None:
+    """A trip carrying its season clears the bar."""
+    harness = await load_fixture(triage_harness())
+    precise = await harness.add("travel", {"destination": "Japan", "season": "spring"})
+
+    report = await harness.report()
+
+    flagged = {item.bucket_item_id for item in report.under_specified}
+    assert_not_in(precise.id, flagged)
+
+
+@test()
 async def fully_specified_item_is_not_flagged() -> None:
     """An item carrying its distinguishing field clears the bar."""
     harness = await load_fixture(triage_harness())

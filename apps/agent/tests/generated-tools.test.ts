@@ -29,6 +29,8 @@ describe("generated tool extension", () => {
       "reject",
       "add_movie",
       "add_place",
+      "add_book",
+      "add_travel",
       "complete_bucket_item",
       "delete_bucket_item",
       "search_bucket_items",

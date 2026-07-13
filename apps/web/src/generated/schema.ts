@@ -1699,7 +1699,7 @@ export interface components {
     IngestState: "active" | "ignored";
     IntentContext: string;
     /** @enum {string} */
-    ItemType: "movie" | "place";
+    ItemType: "movie" | "place" | "book" | "travel";
     JsonValue: unknown;
     /**
      * LoginRequest

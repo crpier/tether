@@ -7,7 +7,8 @@ The capability executes live in `tether.bucket_capabilities`, shared with the
 REST routes; this module only names each tool's params model and mounts it.
 
 Bucket items are typed, so Add is exposed per item type (`add_movie`,
-`add_place`): each tool takes that type's own flat fields, keeping the surface
+`add_place`, `add_book`, `add_travel`): each tool takes that type's own flat
+fields, keeping the surface
 friendly to a weak model rather than asking it to assemble a polymorphic JSON
 payload. The richer/optional fields and a single generic Add live on the REST
 surface. Complete, Delete, and Search round out the belt.
@@ -20,8 +21,10 @@ from starlette.routing import Route
 
 from tether.bucket_capabilities import (
     BUCKET_ERRORS,
+    add_book,
     add_movie,
     add_place,
+    add_travel,
     complete,
     delete,
     search,
@@ -44,6 +47,22 @@ class AddPlaceParams(BaseModel):
     name: str
     intent_context: str
     location: str | None = None
+
+
+class AddBookParams(BaseModel):
+    """Params for Adding a `book` Bucket item."""
+
+    title: str
+    intent_context: str
+    author: str | None = None
+
+
+class AddTravelParams(BaseModel):
+    """Params for Adding a `travel` Bucket item."""
+
+    destination: str
+    intent_context: str
+    season: str | None = None
 
 
 class CompleteBucketItemParams(BaseModel):
@@ -70,6 +89,8 @@ class SearchBucketItemsParams(BaseModel):
 BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("add_movie", AddMovieParams, bind_params(add_movie), BUCKET_ERRORS),
     ToolSpec("add_place", AddPlaceParams, bind_params(add_place), BUCKET_ERRORS),
+    ToolSpec("add_book", AddBookParams, bind_params(add_book), BUCKET_ERRORS),
+    ToolSpec("add_travel", AddTravelParams, bind_params(add_travel), BUCKET_ERRORS),
     ToolSpec(
         "complete_bucket_item",
         CompleteBucketItemParams,

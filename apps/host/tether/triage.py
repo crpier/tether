@@ -108,13 +108,16 @@ def _under_specified_reason(item: BucketItem[Fetched]) -> str | None:
     item_type: ItemType = item.item_type
     match item_type:
         case "movie":
-            if item.data.get("year") is None:
-                return "movie is missing its release year"
-            return None
+            distinguishing_field, reason = "year", "movie is missing its release year"
         case "place":
-            if item.data.get("location") is None:
-                return "place is missing its location"
-            return None
+            distinguishing_field, reason = "location", "place is missing its location"
+        case "book":
+            distinguishing_field, reason = "author", "book is missing its author"
+        case "travel":
+            distinguishing_field, reason = "season", "travel is missing its season"
+    if item.data.get(distinguishing_field) is None:
+        return reason
+    return None
 
 
 def _duplicate_clusters(active: list[BucketItem[Fetched]]) -> list[DuplicateCluster]:

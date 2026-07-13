@@ -280,6 +280,55 @@ def add_place_carries_its_own_fields() -> None:
 
 
 @test()
+def add_book_carries_its_own_fields() -> None:
+    """A book Add carries its own payload fields and lands active."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "add_book",
+            title="Dune",
+            author="Frank Herbert",
+            intent_context="read before the movie",
+        )
+
+    item = envelope["result"]["item"]
+    assert_eq(item["item_type"], "book")
+    assert_eq(item["state"], "active")
+    assert_eq(item["data"], {"title": "Dune", "author": "Frank Herbert"})
+    assert_eq(envelope["result"]["dedup"]["severity"], "none")
+
+
+@test()
+def add_travel_carries_its_own_fields() -> None:
+    """A travel Add carries its own payload fields and lands active."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "add_travel",
+            destination="Japan",
+            season="spring",
+            intent_context="cherry blossoms",
+        )
+
+    item = envelope["result"]["item"]
+    assert_eq(item["item_type"], "travel")
+    assert_eq(item["state"], "active")
+    assert_eq(item["data"], {"destination": "Japan", "season": "spring"})
+    assert_eq(envelope["result"]["dedup"]["severity"], "none")
+
+
+@test()
+def add_book_without_author_stores_a_null_author() -> None:
+    """Author is optional at the tool seam; the stored payload is the full type."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client, "add_book", title="Piranesi", intent_context="book club"
+        )
+
+    assert_eq(envelope["result"]["item"]["data"], {"title": "Piranesi", "author": None})
+
+
+@test()
 def add_blank_intent_yields_a_success_false_envelope() -> None:
     """Blank intent context is rejected as a well-formed envelope, adding nothing."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

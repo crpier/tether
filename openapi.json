@@ -546,7 +546,9 @@
       "ItemType": {
         "enum": [
           "movie",
-          "place"
+          "place",
+          "book",
+          "travel"
         ],
         "type": "string"
       },

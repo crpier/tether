@@ -32,6 +32,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "reject",
             "add_movie",
             "add_place",
+            "add_book",
+            "add_travel",
             "complete_bucket_item",
             "delete_bucket_item",
             "search_bucket_items",
@@ -109,3 +111,27 @@ def add_movie_tool_carries_its_typed_optional_field() -> None:
     # `year` is optional: present as a property, absent from `required`.
     assert_in("year", add_movie_schema["properties"])
     assert_eq("year" in add_movie_schema["required"], False)
+
+
+@test()
+def add_book_and_add_travel_tools_carry_their_typed_fields() -> None:
+    """The book and travel Add tools expose their own flat per-type fields."""
+    document = build_tool_schema_document()
+
+    tools = {tool["name"]: tool for tool in document["tools"]}
+    add_book_schema = cast("dict[str, Any]", tools["add_book"]["schema"])
+    add_travel_schema = cast("dict[str, Any]", tools["add_travel"]["schema"])
+
+    assert_eq(tools["add_book"]["endpoint"], "/internal/tools/add_book")
+    assert_in("title", add_book_schema["required"])
+    assert_in("intent_context", add_book_schema["required"])
+    # `author` is optional: present as a property, absent from `required`.
+    assert_in("author", add_book_schema["properties"])
+    assert_eq("author" in add_book_schema["required"], False)
+
+    assert_eq(tools["add_travel"]["endpoint"], "/internal/tools/add_travel")
+    assert_in("destination", add_travel_schema["required"])
+    assert_in("intent_context", add_travel_schema["required"])
+    # `season` is optional: present as a property, absent from `required`.
+    assert_in("season", add_travel_schema["properties"])
+    assert_eq("season" in add_travel_schema["required"], False)
