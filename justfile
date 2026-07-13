@@ -1,4 +1,7 @@
-# Tether tasks. `just` from root; uv targets apps/host via UV_PROJECT (.envrc).
+# Tether tasks. `just` from root; uv targets apps/host explicitly so recipes
+# work from git worktrees even when a parent shell has stale direnv variables.
+export UV_PROJECT := justfile_directory() + "/apps/host"
+export VIRTUAL_ENV := justfile_directory() + "/apps/host/.venv"
 
 # Load the repo-root `.env` into every recipe's environment. Without this the
 # host boots with an empty `TETHER_MODEL_ALLOWLIST` (and no default model), so
