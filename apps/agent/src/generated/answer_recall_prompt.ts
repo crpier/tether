@@ -10,7 +10,9 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const answer_recall_promptParameters = Type.Object({
   prompt_id: Type.String({ format: "uuid" }),
-  selected_index: Type.Integer(),
+  selected_index: Type.Optional(Type.Integer()),
+  answer_text: Type.Optional(Type.String()),
+  confirmed_correct: Type.Optional(Type.Boolean()),
   response_ms: Type.Integer(),
 });
 
@@ -25,9 +27,9 @@ export const answer_recall_promptTool: ToolDefinition<
   name: "answer_recall_prompt",
   label: "AnswerRecallPrompt",
   description:
-    "Params for answering a recall prompt: the chosen option and elapsed time.",
+    "Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement — propose one with propose_essay_grade and ask the human).",
   promptSnippet:
-    "Params for answering a recall prompt: the chosen option and elapsed time.",
+    "Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement — propose one with propose_essay_grade and ask the human).",
   parameters: answer_recall_promptParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

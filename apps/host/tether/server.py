@@ -53,7 +53,10 @@ from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
 from tether.push import PushService, create_push_schema
 from tether.recall import (
+    AnswerGrader,
+    PiAnswerGrader,
     PiStudyItemGenerator,
+    RecallModelSteps,
     RecallService,
     StudyItemGenerator,
     create_recall_schema,
@@ -171,6 +174,7 @@ class AppConfig:
     search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
     study_item_generator: StudyItemGenerator | None = None
+    answer_grader: AnswerGrader | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
     web_dist: Path | None = None
 
@@ -557,21 +561,24 @@ def _build_recall_service(
     memory_service: MemoryService,
     kb_root: Path,
 ) -> RecallService:
-    """Wire the Recall service over its model-backed study-item generator.
+    """Wire the Recall service over its model-backed generator and grader.
 
-    Distilling a transcript into learnings + prompts is the one model step in
-    Recall, so the generator runs an ephemeral pi under a dedicated session root;
-    everything else (grading, scheduling, the completion tether) is pure. Shared
-    collaborators are read from the already-populated `app.state`.
+    Distilling a transcript into learnings + prompts and judging free-text
+    answers are the model steps in Recall, so both run an ephemeral pi under a
+    dedicated session root (one shared runner); everything else (deterministic
+    grading, scheduling, the completion tether) is pure. Shared collaborators
+    are read from the already-populated `app.state`.
     """
-    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
-    session_root = (
-        Path(config.pi_session_root)
-        if config.pi_session_root is not None
-        else kb_root / "pi-sessions"
-    )
-    generator: StudyItemGenerator = config.study_item_generator or PiStudyItemGenerator(
-        EphemeralPiPromptRunner(
+    generator: StudyItemGenerator | None = config.study_item_generator
+    grader: AnswerGrader | None = config.answer_grader
+    if generator is None or grader is None:
+        model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
+        session_root = (
+            Path(config.pi_session_root)
+            if config.pi_session_root is not None
+            else kb_root / "pi-sessions"
+        )
+        runner = EphemeralPiPromptRunner(
             EphemeralPiConfig(
                 session_registry=app.state.session_registry,
                 session_root=session_root / "recall",
@@ -584,12 +591,13 @@ def _build_recall_service(
                 run_kind="recall",
             )
         )
-    )
+        generator = generator or PiStudyItemGenerator(runner)
+        grader = grader or PiAnswerGrader(runner)
     telemetry = cast("Telemetry", app.state.telemetry)
     return RecallService(
         database=database,
         memory_service=memory_service,
-        generator=generator,
+        models=RecallModelSteps(generator=generator, grader=grader),
         event_publisher=cast("EventHub", app.state.event_hub),
         tracer=telemetry.tracer,
     )

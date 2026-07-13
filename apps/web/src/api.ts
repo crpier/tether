@@ -15,6 +15,18 @@ export type TriggerRecurrence = components["schemas"]["TriggerRecurrence"];
 export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
 export type DuePrompt = components["schemas"]["DuePromptRead"];
 export type AnswerOutcome = components["schemas"]["AnswerOutcomeRead"];
+export type EssayGradeProposal =
+  components["schemas"]["EssayGradeProposalRead"];
+
+// The answer input for a recall prompt, shaped by its kind: multiple choice
+// sends selectedIndex, short answer sends answerText, essay sends answerText
+// plus the human-confirmed confirmedCorrect (the model only proposes a grade).
+export interface RecallAnswerInput {
+  selectedIndex?: number;
+  answerText?: string;
+  confirmedCorrect?: boolean;
+  responseMs: number;
+}
 export type YouTubeSyncStatus = components["schemas"]["YouTubeSyncStatusRead"];
 export type Notification = components["schemas"]["NotificationRead"];
 
@@ -41,9 +53,12 @@ export interface TetherApi {
   listDueRecallPrompts(): Promise<DuePrompt[]>;
   answerRecallPrompt(
     promptId: string,
-    selectedIndex: number,
-    responseMs: number,
+    input: RecallAnswerInput,
   ): Promise<AnswerOutcome>;
+  proposeEssayGrade(
+    promptId: string,
+    answerText: string,
+  ): Promise<EssayGradeProposal>;
   listNotifications(): Promise<Notification[]>;
   dismissNotification(notificationId: string): Promise<void>;
   clearNotifications(): Promise<void>;
@@ -180,11 +195,26 @@ export function createRestApi(
       const { data, response } = await client.GET("/api/recall/prompts");
       return requireData(data, response);
     },
-    async answerRecallPrompt(promptId, selectedIndex, responseMs) {
+    async answerRecallPrompt(promptId, input) {
       const { data, response } = await client.POST(
         "/api/recall/prompts/{prompt_id}/answer",
         {
-          body: { selected_index: selectedIndex, response_ms: responseMs },
+          body: {
+            answer_text: input.answerText ?? null,
+            confirmed_correct: input.confirmedCorrect ?? null,
+            response_ms: input.responseMs,
+            selected_index: input.selectedIndex ?? null,
+          },
+          params: { path: { prompt_id: promptId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async proposeEssayGrade(promptId, answerText) {
+      const { data, response } = await client.POST(
+        "/api/recall/prompts/{prompt_id}/grade-proposal",
+        {
+          body: { answer_text: answerText },
           params: { path: { prompt_id: promptId } },
         },
       );

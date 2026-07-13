@@ -948,6 +948,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/recall/prompts/{prompt_id}/grade-proposal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Propose a model grade for an essay answer, for the human to confirm. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          prompt_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["ProposeEssayGradeRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["EssayGradeProposalRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/recall/study-items": {
     parameters: {
       query?: never;
@@ -1421,16 +1463,34 @@ export interface components {
     };
     /**
      * AnswerPromptRequest
-     * @description Body for answering a recall prompt: the chosen option and how long it took.
+     * @description Body for answering a recall prompt, shaped by the prompt's kind.
+     *
+     *     Multiple choice sends `selected_index`; short answer sends `answer_text`;
+     *     essay sends `answer_text` plus the human-confirmed `confirmed_correct`
+     *     (ADR 0004 — the model only ever proposes an essay grade). `response_ms`
+     *     always rides along to refine the SM-2 quality.
      *
      *     >>> AnswerPromptRequest(selected_index=0, response_ms=1200).selected_index
      *     0
      */
     AnswerPromptRequest: {
+      /**
+       * Answer Text
+       * @default null
+       */
+      answer_text: string | null;
+      /**
+       * Confirmed Correct
+       * @default null
+       */
+      confirmed_correct: boolean | null;
       /** Response Ms */
       response_ms: number;
-      /** Selected Index */
-      selected_index: number;
+      /**
+       * Selected Index
+       * @default null
+       */
+      selected_index: number | null;
     };
     /**
      * BucketItemRead
@@ -1614,6 +1674,27 @@ export interface components {
       /** Version */
       version: number;
     };
+    /**
+     * EssayGradeProposalRead
+     * @description The model's proposed essay grade, for the human to confirm or override.
+     *
+     *     `proposed_correct` is `null` when the model was unavailable — the rubric is
+     *     still revealed so the human can grade unaided. Nothing is scheduled by a
+     *     proposal; only the confirmed answer reaches SM-2 (ADR 0004).
+     */
+    EssayGradeProposalRead: {
+      /**
+       * Prompt Id
+       * Format: uuid7
+       */
+      prompt_id: string;
+      /** Proposed Correct */
+      proposed_correct: boolean | null;
+      /** Reasoning */
+      reasoning: string | null;
+      /** Rubric */
+      rubric: string;
+    };
     /** @enum {string} */
     IngestState: "active" | "ignored";
     IntentContext: string;
@@ -1746,6 +1827,17 @@ export interface components {
       trigger_id: string | null;
     };
     /**
+     * ProposeEssayGradeRequest
+     * @description Body for requesting a model-proposed essay grade to confirm.
+     *
+     *     >>> ProposeEssayGradeRequest(answer_text="An essay.").answer_text
+     *     'An essay.'
+     */
+    ProposeEssayGradeRequest: {
+      /** Answer Text */
+      answer_text: string;
+    };
+    /**
      * PushStatusRead
      * @description HTTP representation of the browser's push-subscription status.
      */
@@ -1783,14 +1875,16 @@ export interface components {
       /** Used */
       used: number;
     };
-    /** @constant */
-    RecallPromptKind: "multiple_choice";
+    /** @enum {string} */
+    RecallPromptKind: "multiple_choice" | "short_answer" | "essay";
     /**
      * RecallPromptRead
-     * @description HTTP representation of a recall prompt, with the answer key withheld.
+     * @description HTTP representation of a recall prompt, with the grading payload withheld.
      *
-     *     `correct_index` is deliberately absent: the client renders and answers the
-     *     prompt without being able to read the right choice off the wire.
+     *     `correct_index`, `reference_answer`, and `rubric` are deliberately absent:
+     *     the client renders and answers the prompt without being able to read the
+     *     answer key off the wire (the rubric surfaces only in the essay
+     *     grade-proposal step, after the essay is written).
      */
     RecallPromptRead: {
       /** Choices */

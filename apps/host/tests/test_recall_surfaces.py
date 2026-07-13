@@ -18,7 +18,7 @@ from snektest import assert_eq, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
 from tests.surfaces import SESSION, call_tool, login, surface_client
-from tether.recall import GeneratedPrompt, GeneratedStudyItem
+from tether.recall import EssayGradeProposal, GeneratedPrompt, GeneratedStudyItem
 from tether.youtube import InMemoryYouTubeApi, RawYouTubeVideo
 
 
@@ -33,6 +33,30 @@ class FakeGenerator:
         return self.distilled
 
 
+class FakeGrader:
+    """A controlled `AnswerGrader` with scripted verdicts."""
+
+    def __init__(
+        self, *, short_answer_correct: bool = True, proposal_correct: bool = True
+    ) -> None:
+        self.short_answer_correct: bool = short_answer_correct
+        self.proposal_correct: bool = proposal_correct
+
+    async def grade_short_answer(
+        self, *, question: str, reference_answer: str, answer_text: str
+    ) -> bool:
+        _ = (question, reference_answer, answer_text)
+        return self.short_answer_correct
+
+    async def propose_essay_grade(
+        self, *, question: str, rubric: str, answer_text: str
+    ) -> EssayGradeProposal:
+        _ = (question, rubric, answer_text)
+        return EssayGradeProposal(
+            correct=self.proposal_correct, reasoning="Covers the rubric."
+        )
+
+
 def one_prompt_distillation() -> GeneratedStudyItem:
     """A distillation with a single multiple-choice prompt."""
     return GeneratedStudyItem(
@@ -43,6 +67,25 @@ def one_prompt_distillation() -> GeneratedStudyItem:
                 choices=["One thread", "Many threads", "Processes"],
                 correct_index=0,
             )
+        ],
+    )
+
+
+def mixed_kind_distillation() -> GeneratedStudyItem:
+    """A distillation with a short-answer and an essay prompt."""
+    return GeneratedStudyItem(
+        distilled_learnings="The event loop is built on epoll.",
+        prompts=[
+            GeneratedPrompt(
+                question="Name the syscall behind the event loop.",
+                kind="short_answer",
+                reference_answer="epoll",
+            ),
+            GeneratedPrompt(
+                question="Explain how an event loop schedules coroutines.",
+                kind="essay",
+                rubric="Mentions readiness, callbacks, and cooperative yielding.",
+            ),
         ],
     )
 
@@ -62,12 +105,18 @@ def seeded_api() -> InMemoryYouTubeApi:
     )
 
 
-def make_client(root: Path, api: InMemoryYouTubeApi) -> Any:
-    """A dual-surface app with a seeded YouTube API and a fake generator."""
+def make_client(
+    root: Path,
+    api: InMemoryYouTubeApi,
+    distilled: GeneratedStudyItem | None = None,
+    grader: FakeGrader | None = None,
+) -> Any:
+    """A dual-surface app with a seeded YouTube API and fake model seams."""
     return surface_client(
         root,
         youtube_api=api,
-        study_item_generator=FakeGenerator(one_prompt_distillation()),
+        study_item_generator=FakeGenerator(distilled or one_prompt_distillation()),
+        answer_grader=grader or FakeGrader(),
     )
 
 
@@ -236,6 +285,182 @@ def answering_an_unknown_prompt_is_not_found() -> None:
 
     assert_eq(envelope["success"], False)
     assert_eq(envelope["error"]["code"], "not_found")
+
+
+# --- short-answer and essay prompts (#131) ---
+
+
+@test()
+def free_text_prompts_are_listed_without_their_grading_payloads() -> None:
+    """A prompt read never leaks the reference answer or the rubric."""
+    api = seeded_api()
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, distilled=mixed_kind_distillation()) as c,
+    ):
+        login(c)
+        ingest_with_transcript(c)
+        _ = start_recall(c)
+        prompts = due_prompts(c)
+
+    kinds = {p["prompt"]["kind"] for p in prompts}
+    assert_eq(kinds, {"short_answer", "essay"})
+    for entry in prompts:
+        assert_not_in("reference_answer", entry["prompt"])
+        assert_not_in("rubric", entry["prompt"])
+        assert_not_in("correct_index", entry["prompt"])
+
+
+@test()
+def answering_a_short_answer_prompt_with_free_text_grades_it() -> None:
+    """`POST .../answer` accepts `answer_text` for a short-answer prompt."""
+    api = seeded_api()
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, distilled=mixed_kind_distillation()) as c,
+    ):
+        login(c)
+        ingest_with_transcript(c)
+        _ = start_recall(c)
+        prompt_id = next(
+            p["prompt"]["id"]
+            for p in due_prompts(c)
+            if p["prompt"]["kind"] == "short_answer"
+        )
+
+        response = c.post(
+            f"/api/recall/prompts/{prompt_id}/answer",
+            json={"answer_text": "it uses epoll", "response_ms": 1500},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_true(response.json()["correct"])
+
+
+@test()
+def an_essay_flows_through_proposal_then_human_confirmed_answer() -> None:
+    """The essay flow: propose a grade (rubric revealed), then confirm to answer."""
+    api = seeded_api()
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, distilled=mixed_kind_distillation()) as c,
+    ):
+        login(c)
+        ingest_with_transcript(c)
+        _ = start_recall(c)
+        prompt_id = next(
+            p["prompt"]["id"] for p in due_prompts(c) if p["prompt"]["kind"] == "essay"
+        )
+
+        proposed = c.post(
+            f"/api/recall/prompts/{prompt_id}/grade-proposal",
+            json={"answer_text": "Readiness polling plus cooperative yields."},
+        )
+        assert_eq(proposed.status_code, 200)
+        proposal = proposed.json()
+
+        answered = c.post(
+            f"/api/recall/prompts/{prompt_id}/answer",
+            json={
+                "answer_text": "Readiness polling plus cooperative yields.",
+                "confirmed_correct": False,
+                "response_ms": 90_000,
+            },
+        )
+
+    assert_eq(proposal["proposed_correct"], True)
+    assert_eq(proposal["reasoning"], "Covers the rubric.")
+    assert_eq(
+        proposal["rubric"], "Mentions readiness, callbacks, and cooperative yielding."
+    )
+    # The human overrode the model's proposal; the recorded grade is theirs.
+    assert_eq(answered.status_code, 200)
+    assert_eq(answered.json()["correct"], False)
+
+
+@test()
+def an_essay_answer_without_confirmation_is_unprocessable() -> None:
+    """An essay answer that skips the human-confirmed grade is rejected (422)."""
+    api = seeded_api()
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, distilled=mixed_kind_distillation()) as c,
+    ):
+        login(c)
+        ingest_with_transcript(c)
+        _ = start_recall(c)
+        prompt_id = next(
+            p["prompt"]["id"] for p in due_prompts(c) if p["prompt"]["kind"] == "essay"
+        )
+
+        response = c.post(
+            f"/api/recall/prompts/{prompt_id}/answer",
+            json={"answer_text": "An essay.", "response_ms": 1000},
+        )
+
+    assert_eq(response.status_code, 422)
+
+
+@test()
+def a_grade_proposal_for_a_multiple_choice_prompt_is_unprocessable() -> None:
+    """Only essays carry a rubric to propose a grade against (422)."""
+    api = seeded_api()
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as c:
+        login(c)
+        ingest_with_transcript(c)
+        _ = start_recall(c)
+        prompt_id = due_prompts(c)[0]["prompt"]["id"]
+
+        response = c.post(
+            f"/api/recall/prompts/{prompt_id}/grade-proposal",
+            json={"answer_text": "An answer."},
+        )
+
+    assert_eq(response.status_code, 422)
+
+
+@test()
+def the_recall_tools_drive_the_free_text_flow() -> None:
+    """`answer_recall_prompt` takes free text and `propose_essay_grade` proposes."""
+    api = seeded_api()
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, distilled=mixed_kind_distillation()) as c,
+    ):
+        _ = call_tool(c, "browse_youtube")
+        _ = call_tool(c, "fetch_youtube_transcript", video_id="v1")
+        _ = call_tool(c, "start_recall", video_id="v1")
+        due = call_tool(c, "list_due_recall_prompts")["result"]
+        by_kind = {entry["prompt"]["kind"]: entry["prompt"] for entry in due}
+
+        short = call_tool(
+            c,
+            "answer_recall_prompt",
+            prompt_id=by_kind["short_answer"]["id"],
+            answer_text="epoll",
+            response_ms=1200,
+        )
+        proposed = call_tool(
+            c,
+            "propose_essay_grade",
+            prompt_id=by_kind["essay"]["id"],
+            answer_text="Readiness polling plus cooperative yields.",
+        )
+        essay = call_tool(
+            c,
+            "answer_recall_prompt",
+            prompt_id=by_kind["essay"]["id"],
+            answer_text="Readiness polling plus cooperative yields.",
+            confirmed_correct=True,
+            response_ms=60_000,
+        )
+
+    assert_true(short["success"])
+    assert_true(short["result"]["correct"])
+    assert_true(proposed["success"])
+    assert_eq(proposed["result"]["proposed_correct"], True)
+    assert_true(essay["success"])
+    assert_true(essay["result"]["correct"])
 
 
 @test()

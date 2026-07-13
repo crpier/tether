@@ -1,7 +1,12 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { For, Show, createEffect, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 
-import type { AnswerOutcome, TetherApi } from "../api";
+import type {
+  AnswerOutcome,
+  DuePrompt,
+  EssayGradeProposal,
+  TetherApi,
+} from "../api";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -18,6 +23,15 @@ function recallFeedback(outcome: AnswerOutcome): string {
   return "Correct — see you next round.";
 }
 
+function proposalVerdict(proposal: EssayGradeProposal): string {
+  if (proposal.proposed_correct === null) {
+    return "No model proposal — grade your essay against the rubric.";
+  }
+  const verdict = proposal.proposed_correct ? "correct" : "incorrect";
+  const reasoning = proposal.reasoning ? ` — ${proposal.reasoning}` : "";
+  return `Model suggests: ${verdict}${reasoning}`;
+}
+
 export function RecallPanel(props: { api: TetherApi }) {
   const queryClient = useQueryClient();
   const promptsQuery = createQuery(() => ({
@@ -27,6 +41,11 @@ export function RecallPanel(props: { api: TetherApi }) {
   const [shownAt, setShownAt] = createSignal(Date.now());
   const [feedback, setFeedback] = createSignal<string | undefined>();
   const [error, setError] = createSignal<string | undefined>();
+  // Per-prompt free-text drafts and essay grade proposals, keyed by prompt id.
+  const [drafts, setDrafts] = createSignal<Record<string, string>>({});
+  const [proposals, setProposals] = createSignal<
+    Record<string, EssayGradeProposal>
+  >({});
 
   // Restart the response timer whenever the set of due prompts changes, so each
   // prompt is timed from when it became visible (response time feeds scheduling).
@@ -40,16 +59,28 @@ export function RecallPanel(props: { api: TetherApi }) {
     void queryClient.refetchQueries({ queryKey: queryKeys.recall });
   };
 
-  const answer = (promptId: string, choiceIndex: number) => {
+  const draftFor = (promptId: string) => drafts()[promptId] ?? "";
+
+  const setDraft = (promptId: string, value: string) => {
+    setDrafts((current) => ({ ...current, [promptId]: value }));
+  };
+
+  const answer = (
+    promptId: string,
+    input: {
+      answerText?: string;
+      confirmedCorrect?: boolean;
+      selectedIndex?: number;
+    },
+  ) => {
     const responseMs = Math.max(0, Date.now() - shownAt());
     void (async () => {
       setError(undefined);
       try {
-        const outcome = await props.api.answerRecallPrompt(
-          promptId,
-          choiceIndex,
+        const outcome = await props.api.answerRecallPrompt(promptId, {
+          ...input,
           responseMs,
-        );
+        });
         setFeedback(recallFeedback(outcome));
         refresh();
       } catch (caught) {
@@ -58,6 +89,138 @@ export function RecallPanel(props: { api: TetherApi }) {
         );
       }
     })();
+  };
+
+  const proposeGrade = (promptId: string) => {
+    void (async () => {
+      setError(undefined);
+      try {
+        const proposal = await props.api.proposeEssayGrade(
+          promptId,
+          draftFor(promptId),
+        );
+        setProposals((current) => ({ ...current, [promptId]: proposal }));
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Could not propose a grade",
+        );
+      }
+    })();
+  };
+
+  const multipleChoice = (due: DuePrompt) => (
+    <div class="flex flex-wrap gap-2" role="group">
+      <For each={due.prompt.choices}>
+        {(choice, choiceIndex) => (
+          <Button
+            onClick={() => {
+              answer(due.prompt.id, { selectedIndex: choiceIndex() });
+            }}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {choice}
+          </Button>
+        )}
+      </For>
+    </div>
+  );
+
+  const shortAnswer = (due: DuePrompt) => (
+    <div class="flex flex-wrap gap-2">
+      <input
+        aria-label="Your answer"
+        class="border-input bg-background h-8 flex-1 rounded-md border px-2 text-sm"
+        onInput={(event) => {
+          setDraft(due.prompt.id, event.currentTarget.value);
+        }}
+        type="text"
+        value={draftFor(due.prompt.id)}
+      />
+      <Button
+        disabled={draftFor(due.prompt.id).trim() === ""}
+        onClick={() => {
+          answer(due.prompt.id, { answerText: draftFor(due.prompt.id) });
+        }}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        Submit answer
+      </Button>
+    </div>
+  );
+
+  // The essay flow keeps the human in charge of the grade (ADR 0004): the
+  // model only proposes one, and the confirm/override click is what answers.
+  const essay = (due: DuePrompt) => {
+    const proposal = () => proposals()[due.prompt.id];
+    return (
+      <div class="space-y-2">
+        <textarea
+          aria-label="Your essay"
+          class="border-input bg-background min-h-20 w-full rounded-md border px-2 py-1 text-sm"
+          onInput={(event) => {
+            setDraft(due.prompt.id, event.currentTarget.value);
+          }}
+          value={draftFor(due.prompt.id)}
+        />
+        <Show
+          fallback={
+            <Button
+              disabled={draftFor(due.prompt.id).trim() === ""}
+              onClick={() => {
+                proposeGrade(due.prompt.id);
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Submit for grading
+            </Button>
+          }
+          when={proposal()}
+        >
+          {(graded) => (
+            <div class="space-y-2">
+              <p class="text-muted-foreground text-xs">{graded().rubric}</p>
+              <p class="text-sm">{proposalVerdict(graded())}</p>
+              <div class="flex flex-wrap gap-2" role="group">
+                <Button
+                  onClick={() => {
+                    answer(due.prompt.id, {
+                      answerText: draftFor(due.prompt.id),
+                      confirmedCorrect: true,
+                    });
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Confirm correct
+                </Button>
+                <Button
+                  onClick={() => {
+                    answer(due.prompt.id, {
+                      answerText: draftFor(due.prompt.id),
+                      confirmedCorrect: false,
+                    });
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Mark incorrect
+                </Button>
+              </div>
+            </div>
+          )}
+        </Show>
+      </div>
+    );
   };
 
   return (
@@ -92,22 +255,12 @@ export function RecallPanel(props: { api: TetherApi }) {
               >
                 <p class="text-sm font-medium">{due.prompt.question}</p>
                 <span class="text-muted-foreground text-xs">{`from ${due.study_item.source_title}`}</span>
-                <div class="flex flex-wrap gap-2" role="group">
-                  <For each={due.prompt.choices}>
-                    {(choice, choiceIndex) => (
-                      <Button
-                        onClick={() => {
-                          answer(due.prompt.id, choiceIndex());
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="outline"
-                      >
-                        {choice}
-                      </Button>
-                    )}
-                  </For>
-                </div>
+                <Switch fallback={multipleChoice(due)}>
+                  <Match when={due.prompt.kind === "short_answer"}>
+                    {shortAnswer(due)}
+                  </Match>
+                  <Match when={due.prompt.kind === "essay"}>{essay(due)}</Match>
+                </Switch>
               </li>
             )}
           </For>

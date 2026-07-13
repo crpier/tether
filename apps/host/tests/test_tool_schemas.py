@@ -47,6 +47,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "start_recall",
             "list_due_recall_prompts",
             "answer_recall_prompt",
+            "propose_essay_grade",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])

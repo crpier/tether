@@ -22,11 +22,12 @@ from starlette.routing import Route
 from tether import recall_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.openapi import EndpointRoute, endpoint
-from tether.recall import RecallPromptNotFoundError
+from tether.recall import PromptAnswer, RecallPromptNotFoundError
 from tether.recall_capabilities import (
     RECALL_ERRORS,
     AnswerOutcomeRead,
     DuePromptRead,
+    EssayGradeProposalRead,
     StudyItemRead,
 )
 
@@ -42,14 +43,40 @@ class StartRecallRequest(BaseModel):
 
 
 class AnswerPromptRequest(BaseModel):
-    """Body for answering a recall prompt: the chosen option and how long it took.
+    """Body for answering a recall prompt, shaped by the prompt's kind.
+
+    Multiple choice sends `selected_index`; short answer sends `answer_text`;
+    essay sends `answer_text` plus the human-confirmed `confirmed_correct`
+    (ADR 0004 — the model only ever proposes an essay grade). `response_ms`
+    always rides along to refine the SM-2 quality.
 
     >>> AnswerPromptRequest(selected_index=0, response_ms=1200).selected_index
     0
     """
 
-    selected_index: NonNegativeInt
+    selected_index: NonNegativeInt | None = None
+    answer_text: str | None = None
+    confirmed_correct: bool | None = None
     response_ms: NonNegativeInt
+
+    def to_answer(self) -> PromptAnswer:
+        """Project the request body onto the domain's answer input."""
+        return PromptAnswer(
+            response_ms=self.response_ms,
+            selected_index=self.selected_index,
+            answer_text=self.answer_text,
+            confirmed_correct=self.confirmed_correct,
+        )
+
+
+class ProposeEssayGradeRequest(BaseModel):
+    """Body for requesting a model-proposed essay grade to confirm.
+
+    >>> ProposeEssayGradeRequest(answer_text="An essay.").answer_text
+    'An essay.'
+    """
+
+    answer_text: str
 
 
 def _path_prompt_id(request: Request) -> UUID:
@@ -89,7 +116,19 @@ async def list_due_prompts(request: Request) -> Response:
 async def answer_prompt(request: Request, body: AnswerPromptRequest) -> Response:
     """Answer a recall prompt, grading and rescheduling it (tethering on completion)."""
     outcome = await recall_capabilities.answer_prompt(
-        request, _path_prompt_id(request), body.selected_index, body.response_ms
+        request, _path_prompt_id(request), body.to_answer()
+    )
+    return rest_response(outcome)
+
+
+@endpoint(request_body=ProposeEssayGradeRequest, response=EssayGradeProposalRead)
+@_translate_domain_errors
+async def propose_essay_grade(
+    request: Request, body: ProposeEssayGradeRequest
+) -> Response:
+    """Propose a model grade for an essay answer, for the human to confirm."""
+    outcome = await recall_capabilities.propose_essay_grade(
+        request, _path_prompt_id(request), body.answer_text
     )
     return rest_response(outcome)
 
@@ -102,5 +141,10 @@ recall_routes: list[Route] = [
     EndpointRoute("/api/recall/prompts", list_due_prompts, methods=["GET"]),
     EndpointRoute(
         "/api/recall/prompts/{prompt_id}/answer", answer_prompt, methods=["POST"]
+    ),
+    EndpointRoute(
+        "/api/recall/prompts/{prompt_id}/grade-proposal",
+        propose_essay_grade,
+        methods=["POST"],
     ),
 ]

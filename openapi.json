@@ -106,21 +106,52 @@
         "type": "object"
       },
       "AnswerPromptRequest": {
-        "description": "Body for answering a recall prompt: the chosen option and how long it took.\n\n>>> AnswerPromptRequest(selected_index=0, response_ms=1200).selected_index\n0",
+        "description": "Body for answering a recall prompt, shaped by the prompt's kind.\n\nMultiple choice sends `selected_index`; short answer sends `answer_text`;\nessay sends `answer_text` plus the human-confirmed `confirmed_correct`\n(ADR 0004 \u2014 the model only ever proposes an essay grade). `response_ms`\nalways rides along to refine the SM-2 quality.\n\n>>> AnswerPromptRequest(selected_index=0, response_ms=1200).selected_index\n0",
         "properties": {
+          "answer_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answer Text"
+          },
+          "confirmed_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confirmed Correct"
+          },
           "response_ms": {
             "minimum": 0,
             "title": "Response Ms",
             "type": "integer"
           },
           "selected_index": {
-            "minimum": 0,
-            "title": "Selected Index",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selected Index"
           }
         },
         "required": [
-          "selected_index",
           "response_ms"
         ],
         "title": "AnswerPromptRequest",
@@ -457,6 +488,50 @@
         "title": "EditRequest",
         "type": "object"
       },
+      "EssayGradeProposalRead": {
+        "description": "The model's proposed essay grade, for the human to confirm or override.\n\n`proposed_correct` is `null` when the model was unavailable \u2014 the rubric is\nstill revealed so the human can grade unaided. Nothing is scheduled by a\nproposal; only the confirmed answer reaches SM-2 (ADR 0004).",
+        "properties": {
+          "prompt_id": {
+            "format": "uuid7",
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "proposed_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed Correct"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "rubric": {
+            "title": "Rubric",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt_id",
+          "rubric",
+          "proposed_correct",
+          "reasoning"
+        ],
+        "title": "EssayGradeProposalRead",
+        "type": "object"
+      },
       "IngestState": {
         "enum": [
           "active",
@@ -752,6 +827,20 @@
         "title": "NotificationRead",
         "type": "object"
       },
+      "ProposeEssayGradeRequest": {
+        "description": "Body for requesting a model-proposed essay grade to confirm.\n\n>>> ProposeEssayGradeRequest(answer_text=\"An essay.\").answer_text\n'An essay.'",
+        "properties": {
+          "answer_text": {
+            "title": "Answer Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer_text"
+        ],
+        "title": "ProposeEssayGradeRequest",
+        "type": "object"
+      },
       "PushStatusRead": {
         "description": "HTTP representation of the browser's push-subscription status.",
         "properties": {
@@ -816,11 +905,15 @@
         "type": "object"
       },
       "RecallPromptKind": {
-        "const": "multiple_choice",
+        "enum": [
+          "multiple_choice",
+          "short_answer",
+          "essay"
+        ],
         "type": "string"
       },
       "RecallPromptRead": {
-        "description": "HTTP representation of a recall prompt, with the answer key withheld.\n\n`correct_index` is deliberately absent: the client renders and answers the\nprompt without being able to read the right choice off the wire.",
+        "description": "HTTP representation of a recall prompt, with the grading payload withheld.\n\n`correct_index`, `reference_answer`, and `rubric` are deliberately absent:\nthe client renders and answers the prompt without being able to read the\nanswer key off the wire (the rubric surfaces only in the essay\ngrade-proposal step, after the essay is written).",
         "properties": {
           "choices": {
             "items": {
@@ -2219,6 +2312,43 @@
           }
         },
         "summary": "Answer a recall prompt, grading and rescheduling it (tethering on completion)."
+      }
+    },
+    "/api/recall/prompts/{prompt_id}/grade-proposal": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeEssayGradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EssayGradeProposalRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Propose a model grade for an essay answer, for the human to confirm."
       }
     },
     "/api/recall/study-items": {

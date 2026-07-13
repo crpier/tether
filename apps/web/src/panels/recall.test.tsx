@@ -60,6 +60,118 @@ describe("Recall panel", () => {
     ).toBeInTheDocument();
   });
 
+  test("a short-answer prompt submits typed free text", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      duePrompts: [
+        duePrompt({
+          kind: "short_answer",
+          promptId: "018f0000-0000-7000-8000-0000000000c2",
+          question: "Name the syscall behind the event loop.",
+        }),
+      ],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText(
+      "Recall prompt: Name the syscall behind the event loop.",
+    );
+    fireEvent.input(within(row).getByLabelText("Your answer"), {
+      target: { value: "epoll" },
+    });
+    fireEvent.click(within(row).getByRole("button", { name: "Submit answer" }));
+
+    await waitFor(() => {
+      expect(api.answerCalls).toHaveLength(1);
+    });
+    expect(api.answerCalls[0].answerText).toBe("epoll");
+    expect(api.answerCalls[0].selectedIndex).toBeUndefined();
+    expect(
+      await screen.findByText("Correct — see you next round."),
+    ).toBeInTheDocument();
+  });
+
+  test("an essay prompt proposes a grade and the human confirms it", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      duePrompts: [
+        duePrompt({
+          kind: "essay",
+          promptId: "018f0000-0000-7000-8000-0000000000c3",
+          question: "Explain how an event loop schedules coroutines.",
+        }),
+      ],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText(
+      "Recall prompt: Explain how an event loop schedules coroutines.",
+    );
+    fireEvent.input(within(row).getByLabelText("Your essay"), {
+      target: { value: "Readiness polling plus cooperative yields." },
+    });
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Submit for grading" }),
+    );
+
+    await waitFor(() => {
+      expect(api.proposeCalls).toHaveLength(1);
+    });
+    expect(api.proposeCalls[0].answerText).toBe(
+      "Readiness polling plus cooperative yields.",
+    );
+    expect(
+      within(row).getByText("Mentions readiness and cooperative yielding."),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByText(/Model suggests: correct/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Confirm correct" }),
+    );
+
+    await waitFor(() => {
+      expect(api.answerCalls).toHaveLength(1);
+    });
+    expect(api.answerCalls[0].confirmedCorrect).toBe(true);
+    expect(api.answerCalls[0].answerText).toBe(
+      "Readiness polling plus cooperative yields.",
+    );
+  });
+
+  test("the human can override the proposed essay grade", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      duePrompts: [
+        duePrompt({
+          kind: "essay",
+          promptId: "018f0000-0000-7000-8000-0000000000c4",
+        }),
+      ],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText(
+      "Recall prompt: What does async IO multiplex?",
+    );
+    fireEvent.input(within(row).getByLabelText("Your essay"), {
+      target: { value: "A weak essay." },
+    });
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Submit for grading" }),
+    );
+
+    fireEvent.click(
+      await within(row).findByRole("button", { name: "Mark incorrect" }),
+    );
+
+    await waitFor(() => {
+      expect(api.answerCalls).toHaveLength(1);
+    });
+    expect(api.answerCalls[0].confirmedCorrect).toBe(false);
+  });
+
   test("shows an empty state when no recall prompts are due", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);

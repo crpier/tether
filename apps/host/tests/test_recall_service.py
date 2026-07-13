@@ -36,10 +36,15 @@ from tether.memories import (
     create_memory_schema,
 )
 from tether.recall import (
+    AnswerGrader,
+    AnswerGradingUnavailableError,
+    EssayGradeProposal,
     GeneratedPrompt,
     GeneratedStudyItem,
     InvalidAnswerError,
     InvalidPromptError,
+    PromptAnswer,
+    RecallModelSteps,
     RecallPrompt,
     RecallService,
     StudyItem,
@@ -99,6 +104,67 @@ def two_prompts() -> GeneratedStudyItem:
     )
 
 
+def one_short_answer() -> GeneratedStudyItem:
+    """A distillation with a single short-answer prompt."""
+    return GeneratedStudyItem(
+        distilled_learnings="The event loop is built on epoll.",
+        prompts=[
+            GeneratedPrompt(
+                question="Name the syscall behind the event loop.",
+                kind="short_answer",
+                reference_answer="epoll",
+            )
+        ],
+    )
+
+
+def one_essay() -> GeneratedStudyItem:
+    """A distillation with a single essay prompt."""
+    return GeneratedStudyItem(
+        distilled_learnings="Event loops schedule coroutines cooperatively.",
+        prompts=[
+            GeneratedPrompt(
+                question="Explain how an event loop schedules coroutines.",
+                kind="essay",
+                rubric="Mentions readiness, callbacks, and cooperative yielding.",
+            )
+        ],
+    )
+
+
+class FakeGrader:
+    """A controlled `AnswerGrader` with scripted verdicts and call recording."""
+
+    def __init__(
+        self,
+        *,
+        short_answer_correct: bool | None = None,
+        proposal: EssayGradeProposal | None = None,
+    ) -> None:
+        self.short_answer_correct: bool | None = short_answer_correct
+        self.proposal: EssayGradeProposal | None = proposal
+        self.short_answer_calls: list[tuple[str, str, str]] = []
+        self.proposal_calls: list[tuple[str, str, str]] = []
+
+    async def grade_short_answer(
+        self, *, question: str, reference_answer: str, answer_text: str
+    ) -> bool:
+        self.short_answer_calls.append((question, reference_answer, answer_text))
+        if self.short_answer_correct is None:
+            message = "grader scripted as unavailable"
+            raise AnswerGradingUnavailableError(message)
+        return self.short_answer_correct
+
+    async def propose_essay_grade(
+        self, *, question: str, rubric: str, answer_text: str
+    ) -> EssayGradeProposal:
+        self.proposal_calls.append((question, rubric, answer_text))
+        if self.proposal is None:
+            message = "grader scripted as unavailable"
+            raise AnswerGradingUnavailableError(message)
+        return self.proposal
+
+
 class RecallFixture:
     """A wired Recall service with its collaborators, for behavior assertions."""
 
@@ -147,7 +213,9 @@ class RecallFixture:
 
 
 @fixture
-async def recall_fixture(generator: FakeGenerator) -> AsyncGenerator[RecallFixture]:
+async def recall_fixture(
+    generator: FakeGenerator, grader: AnswerGrader | None = None
+) -> AsyncGenerator[RecallFixture]:
     """A fresh Recall service over an isolated DB, KB dir, and fake generator."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
@@ -161,7 +229,7 @@ async def recall_fixture(generator: FakeGenerator) -> AsyncGenerator[RecallFixtu
         service = RecallService(
             database=db,
             memory_service=memory_service,
-            generator=generator,
+            models=RecallModelSteps(generator=generator, grader=grader),
             tracer=noop_tracer(),
         )
         yield RecallFixture(
@@ -182,8 +250,7 @@ async def drive_to_learned(
     for _ in range(10):
         outcome = await fixture.service.answer_prompt(
             current,
-            selected_index=current.correct_index,
-            response_ms=1_000,
+            PromptAnswer(selected_index=current.correct_index, response_ms=1_000),
             now=now,
             logger=LOGGER,
         )
@@ -257,8 +324,7 @@ async def answering_correctly_pushes_the_prompt_out_of_the_due_list() -> None:
 
     outcome = await fixture.service.answer_prompt(
         due[0].prompt,
-        selected_index=due[0].prompt.correct_index,
-        response_ms=1_000,
+        PromptAnswer(selected_index=due[0].prompt.correct_index, response_ms=1_000),
         now=NOW,
         logger=LOGGER,
     )
@@ -275,12 +341,13 @@ async def answering_incorrectly_keeps_the_prompt_due_soon() -> None:
     fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
     _ = await fixture.start()
     due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
-    wrong_index = (due[0].prompt.correct_index + 1) % len(due[0].prompt.choices)
+    correct_index = due[0].prompt.correct_index
+    assert correct_index is not None
+    wrong_index = (correct_index + 1) % len(due[0].prompt.choices)
 
     outcome = await fixture.service.answer_prompt(
         due[0].prompt,
-        selected_index=wrong_index,
-        response_ms=1_000,
+        PromptAnswer(selected_index=wrong_index, response_ms=1_000),
         now=NOW,
         logger=LOGGER,
     )
@@ -301,8 +368,7 @@ async def answering_rejects_an_out_of_range_choice() -> None:
     with assert_raises(InvalidAnswerError):
         _ = await fixture.service.answer_prompt(
             due[0].prompt,
-            selected_index=99,
-            response_ms=1_000,
+            PromptAnswer(selected_index=99, response_ms=1_000),
             now=NOW,
             logger=LOGGER,
         )
@@ -358,6 +424,279 @@ async def completion_tolerates_a_memory_already_tethered_by_review() -> None:
     assert_eq(final.repetitions >= 3, True)
     refreshed = await fixture.study_item(study_item.id)
     assert_eq(refreshed.state, "completed")
+
+
+# --- short-answer grading (#131) ---
+
+
+@test()
+async def a_short_answer_is_graded_by_the_model_grader() -> None:
+    """A short answer defers to the model grader's verdict, not string equality."""
+    grader = FakeGrader(short_answer_correct=True)
+    fixture = await load_fixture(
+        recall_fixture(FakeGenerator(one_short_answer()), grader)
+    )
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    outcome = await fixture.service.answer_prompt(
+        due[0].prompt,
+        PromptAnswer(
+            answer_text="the loop is built on the epoll syscall", response_ms=1_000
+        ),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    assert_eq(outcome.correct, True)
+    assert_eq(
+        grader.short_answer_calls,
+        [
+            (
+                "Name the syscall behind the event loop.",
+                "epoll",
+                "the loop is built on the epoll syscall",
+            )
+        ],
+    )
+
+
+@test()
+async def a_short_answer_falls_back_to_strict_match_when_the_grader_is_unavailable() -> (
+    None
+):
+    """With no model verdict, a normalized exact match against the reference passes."""
+    grader = FakeGrader(short_answer_correct=None)  # scripted unavailable
+    fixture = await load_fixture(
+        recall_fixture(FakeGenerator(one_short_answer()), grader)
+    )
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    outcome = await fixture.service.answer_prompt(
+        due[0].prompt,
+        PromptAnswer(answer_text="  EPOLL ", response_ms=1_000),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    assert_eq(outcome.correct, True)
+    assert_eq(len(grader.short_answer_calls), 1)
+
+
+@test()
+async def a_short_answer_without_any_grader_strict_matches() -> None:
+    """A service wired without a grader still grades by strict reference match."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_short_answer())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    outcome = await fixture.service.answer_prompt(
+        due[0].prompt,
+        PromptAnswer(answer_text="select", response_ms=1_000),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    assert_eq(outcome.correct, False)
+
+
+@test()
+async def a_short_answer_requires_answer_text() -> None:
+    """Answering a short-answer prompt with a choice index is a domain error."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_short_answer())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    with assert_raises(InvalidAnswerError):
+        _ = await fixture.service.answer_prompt(
+            due[0].prompt,
+            PromptAnswer(selected_index=0, response_ms=1_000),
+            now=NOW,
+            logger=LOGGER,
+        )
+
+
+@test()
+async def a_multiple_choice_prompt_requires_a_selected_index() -> None:
+    """Answering a multiple-choice prompt with free text is a domain error."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    with assert_raises(InvalidAnswerError):
+        _ = await fixture.service.answer_prompt(
+            due[0].prompt,
+            PromptAnswer(answer_text="one thread over many waits", response_ms=1_000),
+            now=NOW,
+            logger=LOGGER,
+        )
+
+
+# --- essay grading: the human confirms (#131, ADR 0004) ---
+
+
+@test()
+async def an_essay_grade_comes_from_the_human_confirmation() -> None:
+    """The SM-2 input for an essay is the human's confirmed grade, not the model's."""
+    grader = FakeGrader(proposal=EssayGradeProposal(correct=False, reasoning="weak"))
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_essay()), grader))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    outcome = await fixture.service.answer_prompt(
+        due[0].prompt,
+        PromptAnswer(
+            answer_text="Readiness polling plus cooperative yields.",
+            confirmed_correct=True,
+            response_ms=1_000,
+        ),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    assert_eq(outcome.correct, True)
+    # Answering never re-consults the model: the human's confirmation is final.
+    assert_eq(grader.proposal_calls, [])
+
+
+@test()
+async def an_essay_answer_requires_the_confirmed_grade() -> None:
+    """An essay answer without a human-confirmed grade is a domain error."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_essay())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    with assert_raises(InvalidAnswerError):
+        _ = await fixture.service.answer_prompt(
+            due[0].prompt,
+            PromptAnswer(
+                answer_text="Readiness polling plus cooperative yields.",
+                response_ms=1_000,
+            ),
+            now=NOW,
+            logger=LOGGER,
+        )
+
+
+@test()
+async def propose_essay_grade_returns_the_model_proposal() -> None:
+    """Proposing a grade hands back the model's verdict for the human to confirm."""
+    grader = FakeGrader(
+        proposal=EssayGradeProposal(correct=True, reasoning="Covers the rubric.")
+    )
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_essay()), grader))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    proposal = await fixture.service.propose_essay_grade(
+        due[0].prompt,
+        answer_text="Readiness polling plus cooperative yields.",
+        logger=LOGGER,
+    )
+
+    assert_eq(proposal.correct, True)
+    assert_eq(proposal.reasoning, "Covers the rubric.")
+    assert_eq(len(grader.proposal_calls), 1)
+
+
+@test()
+async def propose_essay_grade_degrades_to_no_proposal_when_unavailable() -> None:
+    """With no model, the proposal is empty and the human grades unaided."""
+    grader = FakeGrader(proposal=None)  # scripted unavailable
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_essay()), grader))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    proposal = await fixture.service.propose_essay_grade(
+        due[0].prompt, answer_text="An answer.", logger=LOGGER
+    )
+
+    assert_is_none(proposal.correct)
+    assert_is_none(proposal.reasoning)
+
+
+@test()
+async def propose_essay_grade_rejects_non_essay_prompts() -> None:
+    """Only essays carry a rubric to grade against."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    with assert_raises(InvalidAnswerError):
+        _ = await fixture.service.propose_essay_grade(
+            due[0].prompt, answer_text="An answer.", logger=LOGGER
+        )
+
+
+@test()
+async def start_recall_rejects_a_short_answer_without_a_reference() -> None:
+    """A short-answer prompt with no reference answer can never be graded."""
+    malformed = GeneratedStudyItem(
+        distilled_learnings="x",
+        prompts=[GeneratedPrompt(question="q", kind="short_answer")],
+    )
+    fixture = await load_fixture(recall_fixture(FakeGenerator(malformed)))
+
+    with assert_raises(InvalidPromptError):
+        _ = await fixture.start()
+
+
+@test()
+async def start_recall_rejects_an_essay_without_a_rubric() -> None:
+    """An essay prompt with no rubric can never be confirm-graded."""
+    malformed = GeneratedStudyItem(
+        distilled_learnings="x",
+        prompts=[GeneratedPrompt(question="q", kind="essay")],
+    )
+    fixture = await load_fixture(recall_fixture(FakeGenerator(malformed)))
+
+    with assert_raises(InvalidPromptError):
+        _ = await fixture.start()
+
+
+@test()
+async def a_mixed_kind_study_item_completes_and_tethers() -> None:
+    """MC, short-answer, and essay cards all feed the same SM-2 gate to tether."""
+    mixed = GeneratedStudyItem(
+        distilled_learnings="Mixed learnings.",
+        prompts=[
+            GeneratedPrompt(question="MC?", choices=["a", "b"], correct_index=1),
+            GeneratedPrompt(
+                question="SA?", kind="short_answer", reference_answer="epoll"
+            ),
+            GeneratedPrompt(question="ES?", kind="essay", rubric="Covers X."),
+        ],
+    )
+    fixture = await load_fixture(recall_fixture(FakeGenerator(mixed)))
+    study_item = await fixture.start()
+
+    for _ in range(4):
+        due = await fixture.service.list_due_prompts(
+            NOW + timedelta(days=365), logger=LOGGER
+        )
+        for entry in due:
+            kind = entry.prompt.kind
+            _ = await fixture.service.answer_prompt(
+                entry.prompt,
+                PromptAnswer(
+                    selected_index=(
+                        entry.prompt.correct_index
+                        if kind == "multiple_choice"
+                        else None
+                    ),
+                    answer_text="epoll" if kind != "multiple_choice" else None,
+                    confirmed_correct=True if kind == "essay" else None,
+                    response_ms=1_000,
+                ),
+                now=entry.prompt.due_at,
+                logger=LOGGER,
+            )
+
+    refreshed = await fixture.study_item(study_item.id)
+    assert_eq(refreshed.state, "completed")
+    memory = await fixture.memory(study_item)
+    assert_is_not_none(memory.tethered_at)
 
 
 @test()

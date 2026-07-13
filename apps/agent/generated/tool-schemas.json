@@ -592,7 +592,7 @@
       "name": "answer_recall_prompt",
       "params_model": "AnswerRecallPromptParams",
       "schema": {
-        "description": "Params for answering a recall prompt: the chosen option and elapsed time.",
+        "description": "Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement \u2014 propose one with propose_essay_grade and ask the human).",
         "properties": {
           "prompt_id": {
             "format": "uuid7",
@@ -600,9 +600,41 @@
             "type": "string"
           },
           "selected_index": {
-            "minimum": 0,
-            "title": "Selected Index",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selected Index"
+          },
+          "answer_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answer Text"
+          },
+          "confirmed_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confirmed Correct"
           },
           "response_ms": {
             "minimum": 0,
@@ -610,8 +642,30 @@
             "type": "integer"
           }
         },
-        "required": ["prompt_id", "selected_index", "response_ms"],
+        "required": ["prompt_id", "response_ms"],
         "title": "AnswerRecallPromptParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/propose_essay_grade",
+      "name": "propose_essay_grade",
+      "params_model": "ProposeEssayGradeParams",
+      "schema": {
+        "description": "Params for proposing an essay grade against the rubric: the model's proposal for the human to confirm or override before the answer is submitted.",
+        "properties": {
+          "prompt_id": {
+            "format": "uuid7",
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "answer_text": {
+            "title": "Answer Text",
+            "type": "string"
+          }
+        },
+        "required": ["prompt_id", "answer_text"],
+        "title": "ProposeEssayGradeParams",
         "type": "object"
       }
     }
