@@ -1,5 +1,13 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import type { JSX } from "solid-js";
 
 import { ApiError } from "../api";
@@ -63,15 +71,29 @@ const ITEM_TYPE_FIELDS: Record<
 
 const ITEM_TYPES = Object.keys(ITEM_TYPE_FIELDS) as BucketItemType[];
 
+// Long enough to coalesce a typing burst into one request, short enough that
+// results still feel immediate against the local single-tenant host.
+const SEARCH_DEBOUNCE_MS = 150;
+
 function formatDate(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
-// The date of the terminal transition a history row is ordered by.
+// The raw timestamp of the terminal transition a history row is ordered by.
+function terminalStamp(item: BucketItem): string | undefined {
+  return item.deleted_at ?? item.completed_at ?? undefined;
+}
+
 function terminalDate(item: BucketItem): string | undefined {
-  const stamp = item.deleted_at ?? item.completed_at;
-  return stamp === null ? undefined : formatDate(stamp);
+  const stamp = terminalStamp(item);
+  return stamp === undefined ? undefined : formatDate(stamp);
+}
+
+function terminalTime(item: BucketItem): number {
+  const stamp = terminalStamp(item);
+  const parsed = stamp === undefined ? Number.NaN : new Date(stamp).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function duplicateLine(duplicate: BucketItem): string {
@@ -88,11 +110,26 @@ export function BucketPanel(props: { api: TetherApi }) {
   const [optionalValue, setOptionalValue] = createSignal("");
   const [intentContext, setIntentContext] = createSignal("");
   const [search, setSearch] = createSignal("");
+  const [debouncedSearch, setDebouncedSearch] = createSignal("");
   const [error, setError] = createSignal<string | undefined>();
   const [advisory, setAdvisory] = createSignal<DedupAdvisory | undefined>();
 
+  // Debounce keystrokes so each typing pause issues one search request (and
+  // registers one cache entry) instead of one per keystroke.
+  let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    clearTimeout(searchDebounce);
+  });
+  const onSearchInput = (value: string) => {
+    setSearch(value);
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      setDebouncedSearch(value);
+    }, SEARCH_DEBOUNCE_MS);
+  };
+
   const fields = createMemo(() => ITEM_TYPE_FIELDS[itemType()]);
-  const searchTerm = createMemo(() => search().trim());
+  const searchTerm = createMemo(() => debouncedSearch().trim());
 
   const activeQuery = createQuery(() => ({
     queryFn: () => props.api.listBucketItems("active"),
@@ -102,10 +139,10 @@ export function BucketPanel(props: { api: TetherApi }) {
     const term = searchTerm();
     return {
       enabled: term.length > 0,
-      // Guard the blank term even though the query is disabled then:
-      // `refresh()` refetches every cached "bucket-items" query after a
-      // mutation, including the empty-term cache entry this disabled query
-      // registers, and the host 400s a blank search.
+      // Guard the blank term even though the query is disabled then: the WS
+      // invalidate frame (`invalidateNamedKey`) refetches every cached
+      // "bucket-items" query, including the empty-term cache entry this
+      // disabled query registers, and the host 400s a blank search.
       queryFn: () =>
         term.length === 0
           ? Promise.resolve<BucketItem[]>([])
@@ -136,8 +173,24 @@ export function BucketPanel(props: { api: TetherApi }) {
   );
 
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.bucketItems });
-    void queryClient.refetchQueries({ queryKey: queryKeys.bucketItems });
+    // Mark every bucket query stale but only refetch what is on screen now
+    // (the active list, plus the current search results while a term is
+    // typed). A broad refetch would fan out to the disabled history/triage
+    // queries and to one cache entry per previously typed search term; those
+    // refetch when their view or term is next looked at.
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.bucketItems,
+      refetchType: "none",
+    });
+    void queryClient.refetchQueries({
+      queryKey: queryKeys.bucketItemsView("active"),
+    });
+    const term = searchTerm();
+    if (term.length > 0) {
+      void queryClient.refetchQueries({
+        queryKey: queryKeys.bucketSearch(term),
+      });
+    }
   };
 
   const submit = () => {
@@ -227,6 +280,13 @@ export function BucketPanel(props: { api: TetherApi }) {
   // Refetch the active list, then retry once with the current version. Returns
   // undefined when the item is now settled (terminated here, or already gone
   // server-side), or the retry's own error message to show.
+  //
+  // This mirrors the editable-reminders pattern, but the symmetry is partial:
+  // bucket items have no editable fields, so the only version bumps are the
+  // terminal transitions themselves. Against the real host a 409 therefore
+  // means the item already left the active list and the refetch settles it;
+  // the retry-with-fresh-version arm only fires against fakes (or a future
+  // host that bumps versions without terminating).
   const retryWithFreshVersion = async (
     bucketItemId: string,
     action: "complete" | "delete",
@@ -356,7 +416,7 @@ export function BucketPanel(props: { api: TetherApi }) {
             )}
           </Show>
           <div class="mt-3">
-            <TextField onChange={setSearch} value={search()}>
+            <TextField onChange={onSearchInput} value={search()}>
               <TextFieldLabel>Search</TextFieldLabel>
               <TextFieldInput name="search" type="search" />
             </TextField>
@@ -465,14 +525,19 @@ function BucketHistory(props: {
   completed: BucketItem[];
   deleted: BucketItem[];
 }) {
+  // One interleaved timeline, newest terminal transition first.
+  const items = createMemo(() =>
+    [...props.completed, ...props.deleted].sort(
+      (first, second) => terminalTime(second) - terminalTime(first),
+    ),
+  );
   return (
     <Show
       fallback={<p class="text-muted-foreground text-sm">No history yet</p>}
-      when={props.completed.length + props.deleted.length > 0}
+      when={items().length > 0}
     >
       <ul class="space-y-2">
-        <For each={props.completed}>{(item) => <HistoryRow item={item} />}</For>
-        <For each={props.deleted}>{(item) => <HistoryRow item={item} />}</For>
+        <For each={items()}>{(item) => <HistoryRow item={item} />}</For>
       </ul>
     </Show>
   );

@@ -204,6 +204,7 @@ export class FakeApi implements TetherApi {
   // mismatch (e.g. the agent touched the item) is a 409, like the host.
   serverBucketItemVersions: Record<string, number> = {};
   // Forced per-call rejections, consumed FIFO before any version check.
+  addBucketItemRejections: ApiError[] = [];
   completeBucketItemRejections: ApiError[] = [];
   deleteBucketItemRejections: ApiError[] = [];
   // The dedup advisory the next add returns; dedup informs, never blocks.
@@ -491,6 +492,10 @@ export class FakeApi implements TetherApi {
 
   addBucketItem(body: AddBucketItem): Promise<BucketItemAdded> {
     this.addBucketItemCalls.push(body);
+    const forced = this.addBucketItemRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
     const data = body.data as Record<string, unknown>;
     const named = data.title ?? data.name ?? data.destination;
     const title = typeof named === "string" ? named : "untitled";

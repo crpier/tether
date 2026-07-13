@@ -4,7 +4,8 @@ export const queryKeys = {
   // The "bucket-items" prefix matches the host's InvalidateEvent key, so the
   // WS invalidate frame refetches every bucket query (list, history, triage).
   bucketItems: ["bucket-items"] as const,
-  bucketItemsView: (view: string) => ["bucket-items", view] as const,
+  bucketItemsView: (view: "active" | "completed" | "deleted" | "triage") =>
+    ["bucket-items", view] as const,
   bucketSearch: (q: string) => ["bucket-items", "search", q] as const,
   conversations: ["conversations"] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,

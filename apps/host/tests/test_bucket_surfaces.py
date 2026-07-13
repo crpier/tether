@@ -266,6 +266,7 @@ def triage_report_route_excludes_terminal_items() -> None:
 
         response = client.get("/api/bucket-items/triage")
 
+    assert_eq(response.status_code, 200)
     report = response.json()
     assert_not_in(done["item"]["id"], [item["id"] for item in report["active"]])
 

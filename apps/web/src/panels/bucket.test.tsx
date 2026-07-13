@@ -5,12 +5,15 @@ import {
   waitFor,
   within,
 } from "@solidjs/testing-library";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ApiError } from "../api";
 import { FakeApi, bucketItem, input, renderApp } from "../testing/harness";
 
-afterEach(cleanup);
+afterEach(() => {
+  vi.useRealTimers();
+  cleanup();
+});
 
 describe("Bucket panel", () => {
   test("lists active items with type, intent context and created date", async () => {
@@ -134,6 +137,75 @@ describe("Bucket panel", () => {
       expect(api.addBucketItemCalls).toHaveLength(1);
     });
     expect(api.addBucketItemCalls[0].data).toEqual({ title: "Arrival" });
+  });
+
+  test("adding a book posts title and author", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    fireEvent.change(await screen.findByLabelText("Type"), {
+      target: { value: "book" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Title")), {
+      target: { value: "Dune" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Author")), {
+      target: { value: "Frank Herbert" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Reason")), {
+      target: { value: "the movie was great" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+
+    await waitFor(() => {
+      expect(api.addBucketItemCalls).toHaveLength(1);
+    });
+    const body = api.addBucketItemCalls[0];
+    expect(body.item_type).toBe("book");
+    expect(body.data).toEqual({ author: "Frank Herbert", title: "Dune" });
+  });
+
+  test("a non-numeric year is rejected before any request", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    fireEvent.input(input(await screen.findByLabelText("Title")), {
+      target: { value: "Dune" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Year")), {
+      target: { value: "next year" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Reason")), {
+      target: { value: "a friend raved" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Year must be a whole number",
+    );
+    expect(api.addBucketItemCalls).toHaveLength(0);
+  });
+
+  test("a failed add surfaces the error and keeps the form filled", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.addBucketItemRejections = [new ApiError(500)];
+    renderApp(api);
+
+    fireEvent.input(input(await screen.findByLabelText("Title")), {
+      target: { value: "Dune" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Reason")), {
+      target: { value: "a friend raved" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      new ApiError(500).message,
+    );
+    expect(api.addBucketItemCalls).toHaveLength(1);
+    // The form keeps its values so the user can retry.
+    expect(input(screen.getByLabelText("Title")).value).toBe("Dune");
+    expect(input(screen.getByLabelText("Reason")).value).toBe("a friend raved");
   });
 
   test("a blank reason is rejected before any request", async () => {
@@ -346,6 +418,62 @@ describe("Bucket panel", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("keystrokes are debounced into one search request per pause", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      bucketItems: [bucketItem({ id: "item-1", title: "Blade Runner" })],
+    });
+    renderApp(api);
+    await screen.findByLabelText("Bucket item: Blade Runner");
+
+    vi.useFakeTimers();
+    const field = input(screen.getByLabelText("Search"));
+    fireEvent.input(field, { target: { value: "B" } });
+    fireEvent.input(field, { target: { value: "Bl" } });
+    fireEvent.input(field, { target: { value: "Blade" } });
+    expect(api.searchBucketItemsCalls).toEqual([]);
+    await vi.advanceTimersByTimeAsync(150);
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(api.searchBucketItemsCalls).toEqual(["Blade"]);
+    });
+  });
+
+  test("a mutation does not refetch stale cached search terms", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      bucketItems: [
+        bucketItem({ id: "item-1", title: "Blade Runner" }),
+        bucketItem({ id: "item-2", title: "Dune", version: 1 }),
+      ],
+    });
+    renderApp(api);
+    await screen.findByLabelText("Bucket item: Dune");
+
+    // Register a search cache entry, then clear the term so it goes stale.
+    fireEvent.input(input(screen.getByLabelText("Search")), {
+      target: { value: "Blade" },
+    });
+    await waitFor(() => {
+      expect(api.searchBucketItemsCalls).toEqual(["Blade"]);
+    });
+    fireEvent.input(input(screen.getByLabelText("Search")), {
+      target: { value: "" },
+    });
+    const row = await screen.findByLabelText("Bucket item: Dune");
+    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Bucket item: Dune"),
+      ).not.toBeInTheDocument();
+    });
+    // The post-mutation refresh only refetches what is on screen; the stale
+    // "Blade" cache entry waits until it is looked at again.
+    expect(api.searchBucketItemsCalls).toEqual(["Blade"]);
+  });
+
   test("the history view shows terminal items read-only", async () => {
     const api = new FakeApi({
       authenticated: true,
@@ -389,6 +517,44 @@ describe("Bucket panel", () => {
     expect(
       screen.queryByLabelText("Bucket item: Still active"),
     ).not.toBeInTheDocument();
+  });
+
+  test("history interleaves completed and deleted by terminal date, newest first", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      bucketItems: [
+        bucketItem({
+          completed_at: "2024-01-01T00:00:00Z",
+          id: "item-1",
+          state: "completed",
+          title: "Old completed",
+        }),
+        bucketItem({
+          deleted_at: "2025-01-01T00:00:00Z",
+          id: "item-2",
+          state: "deleted",
+          title: "Recent deleted",
+        }),
+        bucketItem({
+          completed_at: "2026-01-01T00:00:00Z",
+          id: "item-3",
+          state: "completed",
+          title: "Newest completed",
+        }),
+      ],
+    });
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Bucket" });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+
+    await screen.findByLabelText("Bucket item: Newest completed");
+    const rows = screen.getAllByLabelText(/^Bucket item: /);
+    expect(rows.map((item) => item.getAttribute("aria-label"))).toEqual([
+      "Bucket item: Newest completed",
+      "Bucket item: Recent deleted",
+      "Bucket item: Old completed",
+    ]);
   });
 
   test("the triage view surfaces under-specified, duplicate and stale items", async () => {
