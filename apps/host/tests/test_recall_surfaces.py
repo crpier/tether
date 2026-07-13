@@ -446,21 +446,46 @@ def the_recall_tools_drive_the_free_text_flow() -> None:
             prompt_id=by_kind["essay"]["id"],
             answer_text="Readiness polling plus cooperative yields.",
         )
-        essay = call_tool(
-            c,
-            "answer_recall_prompt",
-            prompt_id=by_kind["essay"]["id"],
-            answer_text="Readiness polling plus cooperative yields.",
-            confirmed_correct=True,
-            response_ms=60_000,
-        )
 
     assert_true(short["success"])
     assert_true(short["result"]["correct"])
     assert_true(proposed["success"])
     assert_eq(proposed["result"]["proposed_correct"], True)
-    assert_true(essay["success"])
-    assert_true(essay["result"]["correct"])
+
+
+@test()
+def the_answer_tool_cannot_grade_an_essay() -> None:
+    """The internal tool surface has no `confirmed_correct`, so essays fail.
+
+    ADR 0004: only the human confirms an essay grade. The agent tool omits the
+    field structurally, so even a call that claims a confirmed grade cannot
+    push an essay verdict into SM-2 (and, transitively, tether the Memory) —
+    it fails as invalid input; essays are graded via the human HTTP route.
+    """
+    api = seeded_api()
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api, distilled=mixed_kind_distillation()) as c,
+    ):
+        _ = call_tool(c, "browse_youtube")
+        _ = call_tool(c, "fetch_youtube_transcript", video_id="v1")
+        _ = call_tool(c, "start_recall", video_id="v1")
+        due = call_tool(c, "list_due_recall_prompts")["result"]
+        essay_id = next(
+            entry["prompt"]["id"] for entry in due if entry["prompt"]["kind"] == "essay"
+        )
+
+        essay = call_tool(
+            c,
+            "answer_recall_prompt",
+            prompt_id=essay_id,
+            answer_text="Readiness polling plus cooperative yields.",
+            confirmed_correct=True,  # ignored: the params model has no such field
+            response_ms=60_000,
+        )
+
+    assert_eq(essay["success"], False)
+    assert_eq(essay["error"]["code"], "invalid_input")
 
 
 @test()

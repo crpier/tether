@@ -25,7 +25,9 @@ function recallFeedback(outcome: AnswerOutcome): string {
 
 function proposalVerdict(proposal: EssayGradeProposal): string {
   if (proposal.proposed_correct === null) {
-    return "No model proposal — grade your essay against the rubric.";
+    return proposal.rubric
+      ? "No model proposal — grade your essay against the rubric."
+      : "No model proposal — grade your own essay.";
   }
   const verdict = proposal.proposed_correct ? "correct" : "incorrect";
   const reasoning = proposal.reasoning ? ` — ${proposal.reasoning}` : "";
@@ -68,9 +70,9 @@ export function RecallPanel(props: { api: TetherApi }) {
   const answer = (
     promptId: string,
     input: {
-      answerText?: string;
-      confirmedCorrect?: boolean;
-      selectedIndex?: number;
+      answer_text?: string;
+      confirmed_correct?: boolean;
+      selected_index?: number;
     },
   ) => {
     const responseMs = Math.max(0, Date.now() - shownAt());
@@ -79,7 +81,7 @@ export function RecallPanel(props: { api: TetherApi }) {
       try {
         const outcome = await props.api.answerRecallPrompt(promptId, {
           ...input,
-          responseMs,
+          response_ms: responseMs,
         });
         setFeedback(recallFeedback(outcome));
         refresh();
@@ -101,6 +103,18 @@ export function RecallPanel(props: { api: TetherApi }) {
         );
         setProposals((current) => ({ ...current, [promptId]: proposal }));
       } catch (caught) {
+        // The proposal is advisory (ADR 0004): a failed request must not lock
+        // the human out of answering, so fall back to an empty proposal — no
+        // verdict, no rubric — and let them confirm or override unaided.
+        setProposals((current) => ({
+          ...current,
+          [promptId]: {
+            prompt_id: promptId,
+            proposed_correct: null,
+            reasoning: null,
+            rubric: "",
+          },
+        }));
         setError(
           caught instanceof Error
             ? caught.message
@@ -116,7 +130,7 @@ export function RecallPanel(props: { api: TetherApi }) {
         {(choice, choiceIndex) => (
           <Button
             onClick={() => {
-              answer(due.prompt.id, { selectedIndex: choiceIndex() });
+              answer(due.prompt.id, { selected_index: choiceIndex() });
             }}
             size="sm"
             type="button"
@@ -143,7 +157,7 @@ export function RecallPanel(props: { api: TetherApi }) {
       <Button
         disabled={draftFor(due.prompt.id).trim() === ""}
         onClick={() => {
-          answer(due.prompt.id, { answerText: draftFor(due.prompt.id) });
+          answer(due.prompt.id, { answer_text: draftFor(due.prompt.id) });
         }}
         size="sm"
         type="button"
@@ -186,14 +200,16 @@ export function RecallPanel(props: { api: TetherApi }) {
         >
           {(graded) => (
             <div class="space-y-2">
-              <p class="text-muted-foreground text-xs">{graded().rubric}</p>
+              <Show when={graded().rubric}>
+                <p class="text-muted-foreground text-xs">{graded().rubric}</p>
+              </Show>
               <p class="text-sm">{proposalVerdict(graded())}</p>
               <div class="flex flex-wrap gap-2" role="group">
                 <Button
                   onClick={() => {
                     answer(due.prompt.id, {
-                      answerText: draftFor(due.prompt.id),
-                      confirmedCorrect: true,
+                      answer_text: draftFor(due.prompt.id),
+                      confirmed_correct: true,
                     });
                   }}
                   size="sm"
@@ -205,8 +221,8 @@ export function RecallPanel(props: { api: TetherApi }) {
                 <Button
                   onClick={() => {
                     answer(due.prompt.id, {
-                      answerText: draftFor(due.prompt.id),
-                      confirmedCorrect: false,
+                      answer_text: draftFor(due.prompt.id),
+                      confirmed_correct: false,
                     });
                   }}
                   size="sm"

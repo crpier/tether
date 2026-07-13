@@ -165,6 +165,9 @@ export class FakeApi implements TetherApi {
   storedDuePrompts: DuePrompt[];
   answerCalls: ({ promptId: string } & RecallAnswerInput)[] = [];
   proposeCalls: { answerText: string; promptId: string }[] = [];
+  // Forced per-call rejections for grade proposals, consumed FIFO. Lets a test
+  // make the proposal request fail while answering still works.
+  proposeRejections: ApiError[] = [];
   correctIndices: Record<string, number> = {};
 
   constructor(options: {
@@ -368,9 +371,9 @@ export class FakeApi implements TetherApi {
       (due) => due.prompt.id !== promptId,
     );
     const correct =
-      input.confirmedCorrect ??
-      (input.selectedIndex !== undefined
-        ? input.selectedIndex === this.correctIndices[promptId]
+      input.confirmed_correct ??
+      (input.selected_index !== undefined
+        ? input.selected_index === this.correctIndices[promptId]
         : true);
     return Promise.resolve({
       completed: false,
@@ -386,6 +389,10 @@ export class FakeApi implements TetherApi {
     answerText: string,
   ): Promise<EssayGradeProposal> {
     this.proposeCalls.push({ answerText, promptId });
+    const forced = this.proposeRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
     return Promise.resolve({
       prompt_id: promptId,
       proposed_correct: true,

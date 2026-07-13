@@ -93,16 +93,30 @@ _MEDIUM_RESPONSE_MS = 20_000
 _INCORRECT_QUALITY = 1
 """The SM-2 quality assigned to any incorrect answer (a sub-passing blackout)."""
 
+_FREE_TEXT_CORRECT_QUALITY = 4
+"""The fixed SM-2 quality for a correct short-answer or essay.
 
-def grade_answer(*, correct: bool, response_ms: int) -> int:
+The response-time thresholds above are tuned for a multiple-choice click;
+typing a phrase or composing an essay takes far longer without implying
+hesitant recall, so time carries no signal for free-text kinds. A flat 4
+("correct after some thought") passes without the ease inflation a perfect 5
+would grant on every essay.
+"""
+
+
+def grade_answer(*, correct: bool, response_ms: int, kind: RecallPromptKind) -> int:
     """Reduce an answer to an SM-2 review quality in the range 0..5.
 
     Correctness is the dominant signal — a wrong answer always grades below the
-    passing threshold regardless of speed — and response time refines a correct
-    answer: a fast recall is a confident 5, a slow one a hesitant 3.
+    passing threshold regardless of speed. Response time refines a correct
+    answer only for multiple choice (a fast click is a confident 5, a slow one
+    a hesitant 3); free-text kinds grade the fixed `_FREE_TEXT_CORRECT_QUALITY`
+    because writing time is composition, not recall hesitation.
     """
     if not correct:
         return _INCORRECT_QUALITY
+    if kind != "multiple_choice":
+        return _FREE_TEXT_CORRECT_QUALITY
     if response_ms <= _FAST_RESPONSE_MS:
         return 5
     if response_ms <= _MEDIUM_RESPONSE_MS:
@@ -501,12 +515,28 @@ class _ParsedEssayGrade(BaseModel):
     reasoning: str = ""
 
 
+_UNUSABLE_GRADING_REPLY_ERRORS = (
+    InvalidPromptError,
+    ValidationError,
+    json.JSONDecodeError,
+)
+"""The reply-parsing failures the grader converts to *unavailable*.
+
+The same narrow set `PiStudyItemGenerator.generate` recovers from, plus the
+`InvalidPromptError` `_extract_json_object` raises for a reply with no JSON
+object. Anything else — the run itself failing, a bug in this path —
+propagates rather than silently downgrading every answer to the fallback
+grade.
+"""
+
+
 class PiAnswerGrader:
     """The live `AnswerGrader`: judges free-text answers via an agent run.
 
-    Any failure — the run itself, or an unparseable reply — degrades to
-    `AnswerGradingUnavailableError` so the caller can fall back instead of
-    trusting a garbled verdict; a broken model never silently grades a card.
+    An unparseable reply degrades to `AnswerGradingUnavailableError` so the
+    caller can fall back instead of trusting a garbled verdict. Only reply
+    parsing is caught (see `_UNUSABLE_GRADING_REPLY_ERRORS`); a failing run is
+    a real error and surfaces as one.
     """
 
     def __init__(self, runner: AgentTextRunner) -> None:
@@ -521,12 +551,12 @@ class PiAnswerGrader:
             reference_answer=reference_answer,
             answer_text=answer_text,
         )
+        reply = await self.runner.run(prompt)
         try:
-            reply = await self.runner.run(prompt)
             parsed = _ParsedShortAnswerGrade.model_validate_json(
                 _extract_json_object(reply)
             )
-        except Exception as error:
+        except _UNUSABLE_GRADING_REPLY_ERRORS as error:
             message = f"short-answer grading produced no verdict: {error}"
             raise AnswerGradingUnavailableError(message) from error
         return parsed.correct
@@ -538,10 +568,10 @@ class PiAnswerGrader:
         prompt = _ESSAY_GRADING_INSTRUCTIONS.format(
             question=question, rubric=rubric, answer_text=answer_text
         )
+        reply = await self.runner.run(prompt)
         try:
-            reply = await self.runner.run(prompt)
             parsed = _ParsedEssayGrade.model_validate_json(_extract_json_object(reply))
-        except Exception as error:
+        except _UNUSABLE_GRADING_REPLY_ERRORS as error:
             message = f"essay grading produced no proposal: {error}"
             raise AnswerGradingUnavailableError(message) from error
         return EssayGradeProposal(correct=parsed.correct, reasoning=parsed.reasoning)
@@ -698,19 +728,27 @@ class DuePrompt:
 
 
 def _validate_generated(generated: GeneratedStudyItem) -> None:
-    """Reject a distillation with no prompts or a kind missing its grading payload."""
+    """Reject a distillation with no prompts, an unknown kind, or a missing payload."""
     if not generated.prompts:
         message = "a study item requires at least one recall prompt"
         raise InvalidPromptError(message)
     for prompt in generated.prompts:
-        if prompt.kind == "multiple_choice":
+        # Widened to `str` so the unmatched-kind guard survives values the type
+        # system says cannot happen (a lying caller): a kind this dispatch does
+        # not recognise must be rejected, never validated as some other kind.
+        kind: str = prompt.kind
+        if kind == "multiple_choice":
             _validate_multiple_choice(prompt)
-        elif prompt.kind == "short_answer":
+        elif kind == "short_answer":
             if not (prompt.reference_answer or "").strip():
                 message = "a short-answer prompt requires a reference answer"
                 raise InvalidPromptError(message)
-        elif not (prompt.rubric or "").strip():
-            message = "an essay prompt requires a rubric"
+        elif kind == "essay":
+            if not (prompt.rubric or "").strip():
+                message = "an essay prompt requires a rubric"
+                raise InvalidPromptError(message)
+        else:
+            message = f"unknown recall prompt kind {kind!r}"
             raise InvalidPromptError(message)
 
 
@@ -899,7 +937,9 @@ class RecallService:
         the overall effort. Tethering happens **only** on full completion.
         """
         correct = await self._grade(prompt, answer, logger=logger)
-        quality = grade_answer(correct=correct, response_ms=answer.response_ms)
+        quality = grade_answer(
+            correct=correct, response_ms=answer.response_ms, kind=prompt.kind
+        )
         reviewed = review_schedule(schedule_of(prompt), quality=quality, now=now)
         with self.tracer.start_as_current_span(
             "RecallService.answer_prompt",
@@ -1005,7 +1045,13 @@ class RecallService:
         if not answer_text.strip():
             message = "an essay grade proposal requires the essay text"
             raise InvalidAnswerError(message)
-        if self.grader is None or prompt.rubric is None:
+        if prompt.rubric is None:
+            # An essay row is written with its rubric (`_validate_generated`);
+            # one without it is corrupt, so raise rather than grade unaided
+            # against nothing.
+            message = f"essay prompt {prompt.id} is missing its rubric"
+            raise InvalidPromptError(message)
+        if self.grader is None:
             return EssayGradeProposal(correct=None, reasoning=None)
         try:
             proposal = await self.grader.propose_essay_grade(
@@ -1035,7 +1081,10 @@ class RecallService:
         logger: Logger,
     ) -> bool:
         """Reduce an answer to its correctness per the prompt's kind."""
-        if prompt.kind == "multiple_choice":
+        # Widened to `str` so a corrupt row's kind hits the explicit rejection
+        # below instead of falling through into another kind's grading path.
+        kind: str = prompt.kind
+        if kind == "multiple_choice":
             if answer.selected_index is None:
                 message = "a multiple-choice prompt is answered by selected_index"
                 raise InvalidAnswerError(message)
@@ -1046,10 +1095,13 @@ class RecallService:
                 )
                 raise InvalidAnswerError(message)
             return answer.selected_index == prompt.correct_index
+        if kind not in ("short_answer", "essay"):
+            message = f"prompt {prompt.id} has unknown kind {kind!r}"
+            raise InvalidPromptError(message)
         if answer.answer_text is None or not answer.answer_text.strip():
-            message = f"a {prompt.kind} prompt is answered by answer_text"
+            message = f"a {kind} prompt is answered by answer_text"
             raise InvalidAnswerError(message)
-        if prompt.kind == "essay":
+        if kind == "essay":
             if answer.confirmed_correct is None:
                 message = (
                     "an essay answer requires confirmed_correct: the human "
@@ -1075,6 +1127,14 @@ class RecallService:
             raise InvalidAnswerError(message)
         if self.grader is not None:
             try:
+                # ADR 0004 boundary: this model verdict flows straight into
+                # SM-2 (and, on the final card, completion → tethering). That
+                # is a deliberate, scoped exception (issue #131): a short
+                # answer has a strict factual key (`reference_answer`) the
+                # model merely fuzzy-matches against, so the human still
+                # authored the recalled fact. Essays, whose open-ended grade
+                # is a judgement call, must instead be confirmed by the human
+                # before their verdict reaches scheduling (`_grade` above).
                 return await self.grader.grade_short_answer(
                     question=prompt.question,
                     reference_answer=reference_answer,

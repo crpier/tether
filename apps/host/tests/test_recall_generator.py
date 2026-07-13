@@ -204,14 +204,22 @@ class BrokenRunner:
 
 
 @test()
-async def a_failing_model_call_is_a_grading_unavailable_error() -> None:
-    """A runner failure surfaces as unavailable, never as a silent grade."""
+async def a_failing_model_call_propagates_as_a_real_error() -> None:
+    """A runner failure is a genuine error, not a silent fallback grade.
+
+    Only an unparseable reply degrades to `AnswerGradingUnavailableError`; a
+    failing run (or any bug in the grading path) must surface so it cannot
+    quietly downgrade every answer to the strict-match fallback.
+    """
     grader = PiAnswerGrader(BrokenRunner())
 
-    with assert_raises(AnswerGradingUnavailableError):
+    with assert_raises(RuntimeError):
         _ = await grader.grade_short_answer(
             question="q", reference_answer="epoll", answer_text="epoll"
         )
+
+    with assert_raises(RuntimeError):
+        _ = await grader.propose_essay_grade(question="q", rubric="r", answer_text="a")
 
 
 @test()

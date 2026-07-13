@@ -146,10 +146,18 @@ class EssayGradeProposalRead(BaseModel):
     def from_proposal(
         cls, prompt: RecallPrompt[Fetched], proposal: EssayGradeProposal
     ) -> EssayGradeProposalRead:
-        """Render a grade proposal (plus the prompt's rubric) for the confirm step."""
+        """Render a grade proposal (plus the prompt's rubric) for the confirm step.
+
+        An essay row is written with its rubric (`_validate_generated`), so a
+        missing one is a corrupt row: raise rather than mask it as an empty
+        rubric the human would then "grade against".
+        """
+        if prompt.rubric is None:
+            message = f"essay prompt {prompt.id} is missing its rubric"
+            raise InvalidPromptError(message)
         return cls(
             prompt_id=prompt.id,
-            rubric=prompt.rubric or "",
+            rubric=prompt.rubric,
             proposed_correct=proposal.correct,
             reasoning=proposal.reasoning,
         )

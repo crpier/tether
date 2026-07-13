@@ -18,15 +18,20 @@ export type AnswerOutcome = components["schemas"]["AnswerOutcomeRead"];
 export type EssayGradeProposal =
   components["schemas"]["EssayGradeProposalRead"];
 
-// The answer input for a recall prompt, shaped by its kind: multiple choice
-// sends selectedIndex, short answer sends answerText, essay sends answerText
-// plus the human-confirmed confirmedCorrect (the model only proposes a grade).
-export interface RecallAnswerInput {
-  selectedIndex?: number;
-  answerText?: string;
-  confirmedCorrect?: boolean;
-  responseMs: number;
-}
+type AnswerPromptRequest = components["schemas"]["AnswerPromptRequest"];
+
+// The answer input for a recall prompt, derived from the generated contract
+// (ADR 0008): multiple choice sends selected_index, short answer sends
+// answer_text, essay sends answer_text plus the human-confirmed
+// confirmed_correct (the model only proposes a grade). The per-kind fields are
+// optional here; the client fills the wire's `null` defaults.
+export type RecallAnswerInput = Pick<AnswerPromptRequest, "response_ms"> &
+  Partial<
+    Pick<
+      AnswerPromptRequest,
+      "answer_text" | "confirmed_correct" | "selected_index"
+    >
+  >;
 export type YouTubeSyncStatus = components["schemas"]["YouTubeSyncStatusRead"];
 export type Notification = components["schemas"]["NotificationRead"];
 
@@ -200,10 +205,10 @@ export function createRestApi(
         "/api/recall/prompts/{prompt_id}/answer",
         {
           body: {
-            answer_text: input.answerText ?? null,
-            confirmed_correct: input.confirmedCorrect ?? null,
-            response_ms: input.responseMs,
-            selected_index: input.selectedIndex ?? null,
+            answer_text: input.answer_text ?? null,
+            confirmed_correct: input.confirmed_correct ?? null,
+            response_ms: input.response_ms,
+            selected_index: input.selected_index ?? null,
           },
           params: { path: { prompt_id: promptId } },
         },

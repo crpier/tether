@@ -592,7 +592,7 @@
       "name": "answer_recall_prompt",
       "params_model": "AnswerRecallPromptParams",
       "schema": {
-        "description": "Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement \u2014 propose one with propose_essay_grade and ask the human).",
+        "description": "Params for answering a recall prompt, shaped by its kind.\n\nMultiple choice sends `selected_index`; short answer sends `answer_text`.\nEssays CANNOT be answered from this tool: their grade must be confirmed by\nthe HUMAN (ADR 0004 \u2014 the model never self-certifies learning), so propose\none with `propose_essay_grade` and let the human confirm it in the web app.",
         "properties": {
           "prompt_id": {
             "format": "uuid7",
@@ -624,18 +624,6 @@
             "default": null,
             "title": "Answer Text"
           },
-          "confirmed_correct": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Confirmed Correct"
-          },
           "response_ms": {
             "minimum": 0,
             "title": "Response Ms",
@@ -652,7 +640,7 @@
       "name": "propose_essay_grade",
       "params_model": "ProposeEssayGradeParams",
       "schema": {
-        "description": "Params for proposing an essay grade against the rubric: the model's proposal for the human to confirm or override before the answer is submitted.",
+        "description": "Params for proposing an essay grade against the rubric.\n\nThe proposal is advisory: the human confirms or overrides it before the\nanswer is submitted (ADR 0004), through the web surface's answer route.",
         "properties": {
           "prompt_id": {
             "format": "uuid7",

@@ -12,7 +12,6 @@ const answer_recall_promptParameters = Type.Object({
   prompt_id: Type.String({ format: "uuid" }),
   selected_index: Type.Optional(Type.Integer()),
   answer_text: Type.Optional(Type.String()),
-  confirmed_correct: Type.Optional(Type.Boolean()),
   response_ms: Type.Integer(),
 });
 
@@ -27,9 +26,9 @@ export const answer_recall_promptTool: ToolDefinition<
   name: "answer_recall_prompt",
   label: "AnswerRecallPrompt",
   description:
-    "Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement — propose one with propose_essay_grade and ask the human).",
+    "Params for answering a recall prompt, shaped by its kind.\n\nMultiple choice sends `selected_index`; short answer sends `answer_text`.\nEssays CANNOT be answered from this tool: their grade must be confirmed by\nthe HUMAN (ADR 0004 — the model never self-certifies learning), so propose\none with `propose_essay_grade` and let the human confirm it in the web app.",
   promptSnippet:
-    "Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement — propose one with propose_essay_grade and ask the human).",
+    "Params for answering a recall prompt, shaped by its kind.\n\nMultiple choice sends `selected_index`; short answer sends `answer_text`.\nEssays CANNOT be answered from this tool: their grade must be confirmed by\nthe HUMAN (ADR 0004 — the model never self-certifies learning), so propose\none with `propose_essay_grade` and let the human confirm it in the web app.",
   parameters: answer_recall_promptParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

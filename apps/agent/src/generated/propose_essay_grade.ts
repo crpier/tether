@@ -24,9 +24,9 @@ export const propose_essay_gradeTool: ToolDefinition<
   name: "propose_essay_grade",
   label: "ProposeEssayGrade",
   description:
-    "Params for proposing an essay grade against the rubric: the model's proposal for the human to confirm or override before the answer is submitted.",
+    "Params for proposing an essay grade against the rubric.\n\nThe proposal is advisory: the human confirms or overrides it before the\nanswer is submitted (ADR 0004), through the web surface's answer route.",
   promptSnippet:
-    "Params for proposing an essay grade against the rubric: the model's proposal for the human to confirm or override before the answer is submitted.",
+    "Params for proposing an essay grade against the rubric.\n\nThe proposal is advisory: the human confirms or overrides it before the\nanswer is submitted (ADR 0004), through the web surface's answer route.",
   parameters: propose_essay_gradeParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

@@ -31,21 +31,31 @@ class StartRecallParams(BaseModel):
 
 
 class AnswerRecallPromptParams(BaseModel):
-    """Params for answering a recall prompt, shaped by its kind: multiple choice sends selected_index; short answer sends answer_text; essay sends answer_text plus confirmed_correct, the grade the HUMAN confirmed (never the model's own judgement — propose one with propose_essay_grade and ask the human)."""
+    """Params for answering a recall prompt, shaped by its kind.
+
+    Multiple choice sends `selected_index`; short answer sends `answer_text`.
+    Essays CANNOT be answered from this tool: their grade must be confirmed by
+    the HUMAN (ADR 0004 — the model never self-certifies learning), so propose
+    one with `propose_essay_grade` and let the human confirm it in the web app.
+    """
 
     prompt_id: UUID7
     selected_index: NonNegativeInt | None = None
     answer_text: str | None = None
-    confirmed_correct: bool | None = None
     response_ms: NonNegativeInt
 
     def to_answer(self) -> PromptAnswer:
-        """Project the flat tool params onto the domain's answer input."""
+        """Project the flat tool params onto the domain's answer input.
+
+        `confirmed_correct` is deliberately never set: the internal surface
+        has no field to assert a human-confirmed essay grade, so an essay
+        answered here fails the service's validation — the structural ADR 0004
+        gate keeping the agent from grading its own essay into a tether.
+        """
         return PromptAnswer(
             response_ms=self.response_ms,
             selected_index=self.selected_index,
             answer_text=self.answer_text,
-            confirmed_correct=self.confirmed_correct,
         )
 
 
@@ -59,7 +69,11 @@ async def _answer_recall_prompt(
 
 
 class ProposeEssayGradeParams(BaseModel):
-    """Params for proposing an essay grade against the rubric: the model's proposal for the human to confirm or override before the answer is submitted."""
+    """Params for proposing an essay grade against the rubric.
+
+    The proposal is advisory: the human confirms or overrides it before the
+    answer is submitted (ADR 0004), through the web surface's answer route.
+    """
 
     prompt_id: UUID7
     answer_text: str

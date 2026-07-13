@@ -11,13 +11,16 @@ controlled answers and timestamps keeps it all model-free (issue #20).
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from uuid import uuid7
 
 import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from pydantic import UUID7
-from snekql.sqlite import Config, Database, Fetched, select
+from snekql.sqlite import Config, Database, Fetched, select, update
 from snektest import (
     assert_eq,
     assert_is_none,
@@ -46,6 +49,7 @@ from tether.recall import (
     PromptAnswer,
     RecallModelSteps,
     RecallPrompt,
+    RecallPromptKind,
     RecallService,
     StudyItem,
     StudyItemExistsError,
@@ -653,6 +657,118 @@ async def start_recall_rejects_an_essay_without_a_rubric() -> None:
 
     with assert_raises(InvalidPromptError):
         _ = await fixture.start()
+
+
+async def clear_rubric(
+    fixture: RecallFixture, prompt_id: UUID7
+) -> RecallPrompt[Fetched]:
+    """NULL out a stored essay's rubric and re-fetch it.
+
+    The domain never writes such a row — `_validate_generated` rejects it — so
+    this reaches under the service to prove a corrupt row is refused rather
+    than silently graded against an empty rubric.
+    """
+    async with fixture.database.transaction() as tx:
+        _ = await tx.execute(
+            update(RecallPrompt)
+            .set(RecallPrompt.rubric.to(None))
+            .where(RecallPrompt.id.eq(prompt_id))
+        )
+    return await fixture.service.fetch_prompt(prompt_id)
+
+
+@test()
+async def start_recall_rejects_an_unknown_prompt_kind() -> None:
+    """A generated prompt of an unrecognised kind is refused, never stored."""
+    malformed = GeneratedStudyItem(
+        distilled_learnings="x",
+        prompts=[
+            GeneratedPrompt(question="q", kind=cast("RecallPromptKind", "flashcard"))
+        ],
+    )
+    fixture = await load_fixture(recall_fixture(FakeGenerator(malformed)))
+
+    with assert_raises(InvalidPromptError):
+        _ = await fixture.start()
+
+
+@test()
+async def grading_an_unmatched_prompt_kind_is_rejected() -> None:
+    """The grading dispatch refuses an unrecognised kind, never falls through.
+
+    snekql validates `kind` on write, fetch, and model construction, so a
+    corrupt row cannot reach the service through the database; this stubs the
+    prompt to prove the dispatch itself rejects an unmatched kind rather than
+    grading it as some other kind.
+    """
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
+    corrupt = cast(
+        "RecallPrompt[Fetched]",
+        SimpleNamespace(id=uuid7(), kind="flashcard", choices=[]),
+    )
+
+    with assert_raises(InvalidPromptError):
+        _ = await fixture.service._grade(
+            corrupt,
+            PromptAnswer(answer_text="anything", response_ms=1_000),
+            logger=LOGGER,
+        )
+
+
+@test()
+async def a_slow_correct_essay_grades_the_fixed_free_text_quality() -> None:
+    """Essay quality comes from the confirmed grade alone, not composition time."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_essay())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    outcome = await fixture.service.answer_prompt(
+        due[0].prompt,
+        PromptAnswer(
+            answer_text="Readiness polling plus cooperative yields.",
+            confirmed_correct=True,
+            response_ms=300_000,  # essays take minutes; never a hesitation signal
+        ),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    assert_eq(outcome.correct, True)
+    assert_eq(outcome.quality, 4)
+
+
+@test()
+async def a_slow_correct_short_answer_is_not_penalised_for_typing_time() -> None:
+    """Short-answer quality ignores response time (typing is not hesitation)."""
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_short_answer())))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+
+    outcome = await fixture.service.answer_prompt(
+        due[0].prompt,
+        PromptAnswer(answer_text="epoll", response_ms=120_000),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    assert_eq(outcome.correct, True)
+    assert_eq(outcome.quality, 4)
+
+
+@test()
+async def propose_essay_grade_rejects_an_essay_row_missing_its_rubric() -> None:
+    """An essay row without a rubric is corrupt: raise, never grade against ''."""
+    grader = FakeGrader(proposal=EssayGradeProposal(correct=True, reasoning="ok"))
+    fixture = await load_fixture(recall_fixture(FakeGenerator(one_essay()), grader))
+    _ = await fixture.start()
+    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
+    corrupt = await clear_rubric(fixture, due[0].prompt.id)
+
+    with assert_raises(InvalidPromptError):
+        _ = await fixture.service.propose_essay_grade(
+            corrupt, answer_text="An essay.", logger=LOGGER
+        )
+    assert_eq(grader.proposal_calls, [])
 
 
 @test()
