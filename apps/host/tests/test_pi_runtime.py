@@ -458,8 +458,10 @@ export default function inspectTools(pi) {
     assert_eq(
         sorted(active_tools),
         [
+            "add_book",
             "add_movie",
             "add_place",
+            "add_travel",
             "answer_recall_prompt",
             "browse",
             "browse_youtube",

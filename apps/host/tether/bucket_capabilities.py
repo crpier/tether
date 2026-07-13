@@ -5,7 +5,8 @@ The pieces the REST routes (`tether.bucket_routes`) and the internal tools
 detached-reference builder, the domain→code map (`BUCKET_ERRORS`), and one
 execute function per capability — the service call plus its Read-model
 rendering. Add is one shared execute; the per-type tool spellings
-(`add_movie`, `add_place`) project their flat fields onto it.
+(`add_movie`, `add_place`, `add_book`, `add_travel`) project their flat
+fields onto it.
 """
 
 from __future__ import annotations
@@ -210,6 +211,26 @@ async def add_place(
     if location is not None:
         data["location"] = location
     return await add(request, "place", data, intent_context)
+
+
+async def add_book(
+    request: Request, title: str, intent_context: str, author: str | None = None
+) -> CapabilityOutcome:
+    """Add a `book` Bucket item from its flat tool fields."""
+    data: dict[str, Any] = {"title": title}
+    if author is not None:
+        data["author"] = author
+    return await add(request, "book", data, intent_context)
+
+
+async def add_travel(
+    request: Request, destination: str, intent_context: str, season: str | None = None
+) -> CapabilityOutcome:
+    """Add a `travel` Bucket item from its flat tool fields."""
+    data: dict[str, Any] = {"destination": destination}
+    if season is not None:
+        data["season"] = season
+    return await add(request, "travel", data, intent_context)
 
 
 async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:

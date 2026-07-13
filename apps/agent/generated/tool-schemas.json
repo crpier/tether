@@ -229,6 +229,72 @@
       }
     },
     {
+      "endpoint": "/internal/tools/add_book",
+      "name": "add_book",
+      "params_model": "AddBookParams",
+      "schema": {
+        "description": "Params for Adding a `book` Bucket item.",
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Author"
+          }
+        },
+        "required": ["title", "intent_context"],
+        "title": "AddBookParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/add_travel",
+      "name": "add_travel",
+      "params_model": "AddTravelParams",
+      "schema": {
+        "description": "Params for Adding a `travel` Bucket item.",
+        "properties": {
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Season"
+          }
+        },
+        "required": ["destination", "intent_context"],
+        "title": "AddTravelParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/complete_bucket_item",
       "name": "complete_bucket_item",
       "params_model": "CompleteBucketItemParams",

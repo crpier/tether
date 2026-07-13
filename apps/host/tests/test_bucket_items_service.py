@@ -187,6 +187,48 @@ async def add_stores_a_contrasting_typed_payload() -> None:
 
 
 @test()
+async def add_stores_a_book_payload() -> None:
+    """A book carries its own payload fields through the JSON data column."""
+    service = await load_fixture(bucket_item_service())
+
+    item = await add_item(service, "book", {"title": "Dune", "author": "Frank Herbert"})
+
+    assert_eq(item.item_type, "book")
+    assert_eq(item.data, {"title": "Dune", "author": "Frank Herbert"})
+
+
+@test()
+async def add_stores_a_travel_payload() -> None:
+    """A travel item carries its own payload fields through the JSON data column."""
+    service = await load_fixture(bucket_item_service())
+
+    item = await add_item(
+        service, "travel", {"destination": "Japan", "season": "spring"}
+    )
+
+    assert_eq(item.item_type, "travel")
+    assert_eq(item.data, {"destination": "Japan", "season": "spring"})
+
+
+@test()
+async def add_rejects_an_invalid_book_payload() -> None:
+    """A book payload missing its required title is a domain error."""
+    service = await load_fixture(bucket_item_service())
+
+    with assert_raises(InvalidItemDataError):
+        _ = await add_item(service, "book", {"author": "Frank Herbert"})
+
+
+@test()
+async def add_rejects_an_invalid_travel_payload() -> None:
+    """A travel payload missing its required destination is a domain error."""
+    service = await load_fixture(bucket_item_service())
+
+    with assert_raises(InvalidItemDataError):
+        _ = await add_item(service, "travel", {"season": "spring"})
+
+
+@test()
 async def add_records_intent_context() -> None:
     """An Added item records why it was saved."""
     service = await load_fixture(bucket_item_service())
@@ -492,6 +534,67 @@ async def dedup_distinguishes_movies_by_year() -> None:
     _ = await add_item(service, "movie", {"title": "Dune", "year": 1984})
 
     outcome = await service.add("movie", {"title": "Dune", "year": 2021}, "the remake")
+
+    assert_eq(outcome.severity, "none")
+
+
+@test()
+async def re_adding_an_active_book_warns() -> None:
+    """Book dedup shares the advisory semantics: an active twin warns."""
+    service = await load_fixture(bucket_item_service())
+    _ = await add_item(service, "book", {"title": "Dune"})
+
+    outcome = await service.add("book", {"title": "dune"}, "again")
+
+    assert_eq(outcome.severity, "warn")
+    assert_eq(derive_state(outcome.item), "active")
+
+
+@test()
+async def re_adding_an_active_travel_warns() -> None:
+    """Travel dedup shares the advisory semantics: an active twin warns."""
+    service = await load_fixture(bucket_item_service())
+    _ = await add_item(service, "travel", {"destination": "Japan"})
+
+    outcome = await service.add("travel", {"destination": "japan"}, "again")
+
+    assert_eq(outcome.severity, "warn")
+    assert_eq(derive_state(outcome.item), "active")
+
+
+@test()
+async def dedup_distinguishes_books_by_author() -> None:
+    """Same title, different author is a different book."""
+    service = await load_fixture(bucket_item_service())
+    _ = await add_item(service, "book", {"title": "Dune", "author": "Frank Herbert"})
+
+    outcome = await service.add(
+        "book", {"title": "Dune", "author": "Brian Herbert"}, "the sequel era"
+    )
+
+    assert_eq(outcome.severity, "none")
+
+
+@test()
+async def dedup_distinguishes_travel_by_season() -> None:
+    """Same destination, different season is a different trip intention."""
+    service = await load_fixture(bucket_item_service())
+    _ = await add_item(service, "travel", {"destination": "Japan", "season": "spring"})
+
+    outcome = await service.add(
+        "travel", {"destination": "Japan", "season": "winter"}, "ski trip"
+    )
+
+    assert_eq(outcome.severity, "none")
+
+
+@test()
+async def dedup_does_not_span_movie_and_book() -> None:
+    """A movie and a book with the same title are not duplicates."""
+    service = await load_fixture(bucket_item_service())
+    _ = await add_item(service, "movie", {"title": "Dune"})
+
+    outcome = await service.add("book", {"title": "Dune"}, "read it first")
 
     assert_eq(outcome.severity, "none")
 

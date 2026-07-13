@@ -52,7 +52,7 @@ from tether.logging import Logger
 type BucketItemState = Literal["active", "completed", "deleted"]
 """A Bucket item's lifecycle state, derived from its terminal timestamps."""
 
-type ItemType = Literal["movie", "place"]
+type ItemType = Literal["movie", "place", "book", "travel"]
 """The kind of a Bucket item; determines which payload fields it carries."""
 
 type DedupSeverity = Literal["none", "warn", "inform"]
@@ -103,6 +103,20 @@ class PlaceData(BaseModel):
 
     name: str
     location: str | None = None
+
+
+class BookData(BaseModel):
+    """The payload fields a `book` Bucket item carries."""
+
+    title: str
+    author: str | None = None
+
+
+class TravelData(BaseModel):
+    """The payload fields a `travel` Bucket item carries."""
+
+    destination: str
+    season: str | None = None
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -175,6 +189,26 @@ def _describe_item(item_type: ItemType, data: Mapping[str, object]) -> _ItemDesc
                     data=place.model_dump(mode="json"),
                     dedup_key=dedup_key,
                     title=place.name,
+                )
+            case "book":
+                book = BookData.model_validate(data)
+                dedup_key = _normalise_key(book.title)
+                if book.author is not None:
+                    dedup_key = f"{dedup_key}|{_normalise_key(book.author)}"
+                return _ItemDescription(
+                    data=book.model_dump(mode="json"),
+                    dedup_key=dedup_key,
+                    title=book.title,
+                )
+            case "travel":
+                travel = TravelData.model_validate(data)
+                dedup_key = _normalise_key(travel.destination)
+                if travel.season is not None:
+                    dedup_key = f"{dedup_key}|{_normalise_key(travel.season)}"
+                return _ItemDescription(
+                    data=travel.model_dump(mode="json"),
+                    dedup_key=dedup_key,
+                    title=travel.destination,
                 )
     except ValidationError as error:
         message = (
