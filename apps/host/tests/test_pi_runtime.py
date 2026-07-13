@@ -35,6 +35,7 @@ from tether.pi_runtime import (
     PiRuntime,
     PiRuntimeConfig,
     PiRuntimeError,
+    _spawn_command,
 )
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
@@ -347,6 +348,63 @@ async def stream_turn_yields_typed_events_until_the_agent_ends() -> None:
             AgentEnded(),
         ],
     )
+
+
+@test()
+async def spawn_command_replaces_the_default_prompt_when_one_is_configured() -> None:
+    """A configured system prompt rides the command line as `--system-prompt`.
+
+    Context-file discovery is switched off alongside it: repo-local AGENTS.md
+    or CLAUDE.md are coding-agent context that would pollute the persona and
+    make the prompt prefix vary with the host's cwd.
+    """
+    command = _spawn_command(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+            system_prompt="You are Tether.",
+        ),
+        "019f08f0-0000-7000-8000-000000000002",
+    )
+
+    prompt_flag_index = command.index("--system-prompt")
+    assert_eq(command[prompt_flag_index + 1], "You are Tether.")
+    assert_in("--no-context-files", command)
+
+
+@test()
+async def spawn_command_keeps_pi_defaults_when_no_prompt_is_configured() -> None:
+    """Without a configured prompt, the command line is unchanged."""
+    command = _spawn_command(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+        ),
+        "019f08f0-0000-7000-8000-000000000002",
+    )
+
+    assert_not_in("--system-prompt", command)
+    assert_not_in("--no-context-files", command)
+
+
+@test()
+async def runtime_spawned_with_a_system_prompt_boots_healthy() -> None:
+    """A real pi accepts the system-prompt flags and answers `get_state`."""
+    session_dir = await load_fixture(pi_session_dir())
+    registry = SessionRegistry()
+
+    runtime = await PiRuntime.spawn(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+            session_dir=session_dir,
+            system_prompt="You are Tether, a personal assistant.",
+        ),
+        session_registry=registry,
+    )
+
+    assert_true(await runtime.health())
+    await runtime.shutdown()
 
 
 @test()

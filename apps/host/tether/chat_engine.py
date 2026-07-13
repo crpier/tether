@@ -20,6 +20,7 @@ from tether.model_selection import (
     ModelNotAllowedError,
 )
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig
+from tether.system_prompt import system_prompt_for
 from tether.tools import SessionRegistry
 
 
@@ -116,6 +117,7 @@ class ConversationRuntimeRegistry:
                 pi_binary=self.config.pi_binary,
                 session_dir=session_dir,
                 session_id=str(conversation.pi_session_id),
+                system_prompt=system_prompt_for("conversation"),
                 tool_base_url=self.config.tool_base_url,
                 tool_secret=self.config.tool_secret,
             ),
