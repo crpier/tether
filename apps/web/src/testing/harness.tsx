@@ -2,9 +2,15 @@ import { render } from "@solidjs/testing-library";
 
 import { ApiError } from "../api";
 import type {
+  AddBucketItem,
   AnswerOutcome,
+  BucketItem,
+  BucketItemAdded,
+  BucketItemState,
+  BucketTriageReport,
   Conversation,
   CreateTrigger,
+  DedupAdvisory,
   DuePrompt,
   EssayGradeProposal,
   Message,
@@ -121,6 +127,31 @@ export function trigger(overrides: Partial<Trigger>): Trigger {
   };
 }
 
+export function bucketItem(overrides: Partial<BucketItem>): BucketItem {
+  const title = overrides.title ?? "Dune";
+  return {
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00Z",
+    data: { title },
+    deleted_at: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    intent_context: "saved on a whim",
+    item_type: "movie",
+    state: "active",
+    title,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    ...overrides,
+  };
+}
+
+export const emptyTriageReport: BucketTriageReport = {
+  active: [],
+  duplicates: [],
+  stale: [],
+  under_specified: [],
+};
+
 export function notification(overrides: Partial<Notification>): Notification {
   return {
     action_kind: "message",
@@ -163,6 +194,22 @@ export class FakeApi implements TetherApi {
   subscribeCalls: { auth: string; endpoint: string; p256dh: string }[] = [];
   unsubscribeCalls: string[] = [];
   storedDuePrompts: DuePrompt[];
+  storedBucketItems: BucketItem[];
+  addBucketItemCalls: AddBucketItem[] = [];
+  completeBucketItemCalls: { bucketItemId: string; version: number }[] = [];
+  deleteBucketItemCalls: { bucketItemId: string; version: number }[] = [];
+  searchBucketItemsCalls: string[] = [];
+  listBucketItemsCalls = 0;
+  // Per-item version the fake "server" will accept on complete/delete; a
+  // mismatch (e.g. the agent touched the item) is a 409, like the host.
+  serverBucketItemVersions: Record<string, number> = {};
+  // Forced per-call rejections, consumed FIFO before any version check.
+  addBucketItemRejections: ApiError[] = [];
+  completeBucketItemRejections: ApiError[] = [];
+  deleteBucketItemRejections: ApiError[] = [];
+  // The dedup advisory the next add returns; dedup informs, never blocks.
+  nextDedup: DedupAdvisory = { duplicates: [], severity: "none" };
+  triageReport: BucketTriageReport = emptyTriageReport;
   answerCalls: ({ promptId: string } & RecallAnswerInput)[] = [];
   proposeCalls: { answerText: string; promptId: string }[] = [];
   // Forced per-call rejections for grade proposals, consumed FIFO. Lets a test
@@ -172,6 +219,7 @@ export class FakeApi implements TetherApi {
 
   constructor(options: {
     authenticated: boolean;
+    bucketItems?: BucketItem[];
     duePrompts?: DuePrompt[];
     messages?: Message[];
     triggers?: Trigger[];
@@ -180,6 +228,7 @@ export class FakeApi implements TetherApi {
     this.storedMessages = options.messages ?? [];
     this.storedTriggers = options.triggers ?? [];
     this.storedDuePrompts = options.duePrompts ?? [];
+    this.storedBucketItems = options.bucketItems ?? [];
   }
 
   getSession() {
@@ -420,6 +469,125 @@ export class FakeApi implements TetherApi {
     this.clearNotificationsCalls += 1;
     this.storedNotifications = [];
     return Promise.resolve();
+  }
+
+  listBucketItems(state: BucketItemState): Promise<BucketItem[]> {
+    this.listBucketItemsCalls += 1;
+    return Promise.resolve(
+      this.storedBucketItems.filter((item) => item.state === state),
+    );
+  }
+
+  searchBucketItems(q: string): Promise<BucketItem[]> {
+    this.searchBucketItemsCalls.push(q);
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return Promise.resolve(
+      this.storedBucketItems.filter(
+        (item) =>
+          item.state === "active" &&
+          terms.every((term) => item.title.toLowerCase().includes(term)),
+      ),
+    );
+  }
+
+  addBucketItem(body: AddBucketItem): Promise<BucketItemAdded> {
+    this.addBucketItemCalls.push(body);
+    const forced = this.addBucketItemRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const data = body.data as Record<string, unknown>;
+    const named = data.title ?? data.name ?? data.destination;
+    const title = typeof named === "string" ? named : "untitled";
+    const created = bucketItem({
+      data: body.data,
+      id: `018f0000-0000-7000-8000-0000000001${this.addBucketItemCalls.length
+        .toString()
+        .padStart(2, "0")}`,
+      intent_context: body.intent_context,
+      item_type: body.item_type,
+      title,
+    });
+    this.storedBucketItems = [created, ...this.storedBucketItems];
+    const dedup = this.nextDedup;
+    this.nextDedup = { duplicates: [], severity: "none" };
+    return Promise.resolve({ dedup, item: created });
+  }
+
+  completeBucketItem(
+    bucketItemId: string,
+    version: number,
+  ): Promise<BucketItem> {
+    this.completeBucketItemCalls.push({ bucketItemId, version });
+    return this.terminateBucketItem(
+      bucketItemId,
+      version,
+      "completed",
+      this.completeBucketItemRejections,
+    );
+  }
+
+  deleteBucketItem(bucketItemId: string, version: number): Promise<BucketItem> {
+    this.deleteBucketItemCalls.push({ bucketItemId, version });
+    return this.terminateBucketItem(
+      bucketItemId,
+      version,
+      "deleted",
+      this.deleteBucketItemRejections,
+    );
+  }
+
+  getBucketTriage(): Promise<BucketTriageReport> {
+    return Promise.resolve(this.triageReport);
+  }
+
+  private terminateBucketItem(
+    bucketItemId: string,
+    version: number,
+    state: "completed" | "deleted",
+    rejections: ApiError[],
+  ): Promise<BucketItem> {
+    const forced = rejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const serverVersion = this.serverBucketItemVersions[bucketItemId];
+    if (
+      Object.hasOwn(this.serverBucketItemVersions, bucketItemId) &&
+      serverVersion !== version
+    ) {
+      // The server bumped the version; reveal the fresh state to future list
+      // fetches, then reject exactly as the host does.
+      this.storedBucketItems = this.storedBucketItems.map((existing) =>
+        existing.id === bucketItemId
+          ? { ...existing, version: serverVersion }
+          : existing,
+      );
+      return Promise.reject(new ApiError(409));
+    }
+    const current = this.storedBucketItems.find(
+      (existing) => existing.id === bucketItemId,
+    );
+    if (current === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    if (current.state !== "active") {
+      return Promise.reject(new ApiError(409));
+    }
+    const stamp = "2026-01-02T00:00:00Z";
+    const terminal: BucketItem = {
+      ...current,
+      completed_at: state === "completed" ? stamp : current.completed_at,
+      deleted_at: state === "deleted" ? stamp : current.deleted_at,
+      state,
+      updated_at: stamp,
+      version: version + 1,
+    };
+    this.serverBucketItemVersions[bucketItemId] = terminal.version;
+    this.storedBucketItems = this.storedBucketItems.map((existing) =>
+      existing.id === bucketItemId ? terminal : existing,
+    );
+    return Promise.resolve(terminal);
   }
 
   private placeholderPrompt(promptId: string): DuePrompt["prompt"] {

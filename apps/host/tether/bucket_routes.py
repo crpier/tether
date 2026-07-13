@@ -23,7 +23,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, PositiveInt, StringConstraints
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from tether import bucket_capabilities
@@ -39,7 +39,9 @@ from tether.bucket_items import (
     JsonValue,
 )
 from tether.capabilities import rest_response, translate_domain_errors
+from tether.logging import get_request_logger
 from tether.openapi import EndpointRoute, endpoint
+from tether.triage import TriageReport
 
 type IntentContext = Annotated[
     str,
@@ -138,6 +140,15 @@ async def search_bucket_items(request: Request, query: SearchQuery) -> Response:
     return rest_response(outcome)
 
 
+@endpoint(response=TriageReport)
+async def triage_bucket_items(request: Request) -> Response:
+    """Compute the read-only Triage report over the live active Bucket list."""
+    report = await request.app.state.triage_service.triage_report(
+        logger=get_request_logger(request)
+    )
+    return JSONResponse(report.model_dump(mode="json"))
+
+
 @endpoint(request_body=CompleteRequest, response=BucketItemRead)
 @_translate_domain_errors
 async def complete_bucket_item(request: Request, body: CompleteRequest) -> Response:
@@ -158,12 +169,13 @@ async def delete_bucket_item(request: Request, query: DeleteQuery) -> Response:
     return rest_response(outcome)
 
 
-# `/api/bucket-items/search` precedes `/api/bucket-items/{bucket_item_id}` so
-# the literal path wins.
+# `/api/bucket-items/search` and `/api/bucket-items/triage` precede
+# `/api/bucket-items/{bucket_item_id}` so the literal paths win.
 bucket_item_routes: list[Route] = [
     EndpointRoute("/api/bucket-items", add_bucket_item, methods=["POST"]),
     EndpointRoute("/api/bucket-items", browse_bucket_items, methods=["GET"]),
     EndpointRoute("/api/bucket-items/search", search_bucket_items, methods=["GET"]),
+    EndpointRoute("/api/bucket-items/triage", triage_bucket_items, methods=["GET"]),
     EndpointRoute(
         "/api/bucket-items/{bucket_item_id}",
         delete_bucket_item,

@@ -213,6 +213,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/bucket-items/triage": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compute the read-only Triage report over the live active Bucket list. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TriageReport"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/bucket-items/{bucket_item_id}": {
     parameters: {
       query?: never;
@@ -1640,6 +1676,18 @@ export interface components {
       weekday: number | null;
     };
     /**
+     * DecayedIntentContext
+     * @description A stale item's immutable *why*, paired with how far it has eroded.
+     */
+    DecayedIntentContext: {
+      /** Age Days */
+      age_days: number;
+      /** Decay */
+      decay: number;
+      /** Intent Context */
+      intent_context: string;
+    };
+    /**
      * DedupAdvisoryRead
      * @description The dedup advisory returned alongside a freshly Added item.
      *
@@ -1661,6 +1709,14 @@ export interface components {
     DuePromptRead: {
       prompt: components["schemas"]["RecallPromptRead"];
       study_item: components["schemas"]["StudyItemRead"];
+    };
+    /**
+     * DuplicateCluster
+     * @description Two or more active items that share one identity (item type + dedup key).
+     */
+    DuplicateCluster: {
+      /** Bucket Item Ids */
+      bucket_item_ids: string[];
     };
     /**
      * EditRequest
@@ -1925,6 +1981,18 @@ export interface components {
       selected_model: string;
     };
     /**
+     * StaleItem
+     * @description An active item old enough to reconsider, with its decayed intent context.
+     */
+    StaleItem: {
+      /**
+       * Bucket Item Id
+       * Format: uuid7
+       */
+      bucket_item_id: string;
+      intent_context: components["schemas"]["DecayedIntentContext"];
+    };
+    /**
      * StartRecallRequest
      * @description Body for promoting an ingested educational video into a study item.
      *
@@ -2009,6 +2077,20 @@ export interface components {
       /** Source */
       source: string;
     };
+    /**
+     * TriageReport
+     * @description The full Triage view of the active Bucket list at one point in time.
+     */
+    TriageReport: {
+      /** Active */
+      active: components["schemas"]["BucketItemRead"][];
+      /** Duplicates */
+      duplicates: components["schemas"]["DuplicateCluster"][];
+      /** Stale */
+      stale: components["schemas"]["StaleItem"][];
+      /** Under Specified */
+      under_specified: components["schemas"]["UnderSpecifiedItem"][];
+    };
     /** @enum {string} */
     TriggerActionKind: "message" | "prompt";
     /**
@@ -2060,6 +2142,19 @@ export interface components {
     TriggerRecurrence: "once" | "daily" | "weekly";
     /** @enum {string} */
     TriggerStatus: "active" | "completed" | "failed";
+    /**
+     * UnderSpecifiedItem
+     * @description An active item whose payload lacks the detail to act on it later.
+     */
+    UnderSpecifiedItem: {
+      /**
+       * Bucket Item Id
+       * Format: uuid7
+       */
+      bucket_item_id: string;
+      /** Reason */
+      reason: string;
+    };
     /**
      * UnsubscribeRequest
      * @description Body for removing a browser push subscription.
