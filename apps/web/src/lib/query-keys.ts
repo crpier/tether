@@ -8,6 +8,12 @@ export const queryKeys = {
     ["bucket-items", view] as const,
   bucketSearch: (q: string) => ["bucket-items", "search", q] as const,
   conversations: ["conversations"] as const,
+  // The "memories" prefix matches the host's InvalidateEvent key (it emits
+  // ["memories", "review-queue"]; the prefix alone already covers every
+  // memories query — queue, corpus and search).
+  memories: ["memories"] as const,
+  memoriesSearch: (q: string) => ["memories", "search", q] as const,
+  memoriesState: (state: "loose" | "tethered") => ["memories", state] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
   models: ["models"] as const,
   notifications: ["notifications"] as const,

@@ -13,6 +13,8 @@ import type {
   DedupAdvisory,
   DuePrompt,
   EssayGradeProposal,
+  Memory,
+  MemoryState,
   Message,
   ModelList,
   Notification,
@@ -145,6 +147,19 @@ export function bucketItem(overrides: Partial<BucketItem>): BucketItem {
   };
 }
 
+export function memory(overrides: Partial<Memory>): Memory {
+  return {
+    content: "I prefer aisle seats",
+    created_at: "2026-01-01T00:00:00Z",
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    state: "loose",
+    tethered_at: null,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    ...overrides,
+  };
+}
+
 export const emptyTriageReport: BucketTriageReport = {
   active: [],
   duplicates: [],
@@ -210,6 +225,26 @@ export class FakeApi implements TetherApi {
   // The dedup advisory the next add returns; dedup informs, never blocks.
   nextDedup: DedupAdvisory = { duplicates: [], severity: "none" };
   triageReport: BucketTriageReport = emptyTriageReport;
+  storedMemories: Memory[];
+  captureMemoryCalls: string[] = [];
+  editMemoryCalls: { content: string; memoryId: string; version: number }[] =
+    [];
+  tetherMemoryCalls: { memoryId: string; version: number }[] = [];
+  rejectMemoryCalls: { memoryId: string; version: number }[] = [];
+  searchMemoriesCalls: string[] = [];
+  listMemoriesCalls = 0;
+  // Per-memory version the fake "server" will accept on edit/tether/reject; a
+  // mismatch (e.g. the agent touched the memory) is a 409, like the host.
+  serverMemoryVersions: Record<string, number> = {};
+  // Content the fake server reveals alongside the bumped version when a
+  // mutation 409s — simulates a genuine concurrent edit rather than a mere
+  // version bump (e.g. a tether), which leaves the content intact.
+  serverMemoryEdits: Record<string, Partial<Memory>> = {};
+  // Forced per-call rejections, consumed FIFO before any version check.
+  captureMemoryRejections: ApiError[] = [];
+  editMemoryRejections: ApiError[] = [];
+  tetherMemoryRejections: ApiError[] = [];
+  rejectMemoryRejections: ApiError[] = [];
   answerCalls: ({ promptId: string } & RecallAnswerInput)[] = [];
   proposeCalls: { answerText: string; promptId: string }[] = [];
   // Forced per-call rejections for grade proposals, consumed FIFO. Lets a test
@@ -221,6 +256,7 @@ export class FakeApi implements TetherApi {
     authenticated: boolean;
     bucketItems?: BucketItem[];
     duePrompts?: DuePrompt[];
+    memories?: Memory[];
     messages?: Message[];
     triggers?: Trigger[];
   }) {
@@ -229,6 +265,7 @@ export class FakeApi implements TetherApi {
     this.storedTriggers = options.triggers ?? [];
     this.storedDuePrompts = options.duePrompts ?? [];
     this.storedBucketItems = options.bucketItems ?? [];
+    this.storedMemories = options.memories ?? [];
   }
 
   getSession() {
@@ -539,6 +576,128 @@ export class FakeApi implements TetherApi {
 
   getBucketTriage(): Promise<BucketTriageReport> {
     return Promise.resolve(this.triageReport);
+  }
+
+  listMemories(state: MemoryState): Promise<Memory[]> {
+    this.listMemoriesCalls += 1;
+    return Promise.resolve(
+      this.storedMemories.filter((candidate) => candidate.state === state),
+    );
+  }
+
+  searchMemories(q: string): Promise<Memory[]> {
+    this.searchMemoriesCalls.push(q);
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return Promise.resolve(
+      this.storedMemories.filter(
+        (candidate) =>
+          candidate.state === "tethered" &&
+          terms.every((term) => candidate.content.toLowerCase().includes(term)),
+      ),
+    );
+  }
+
+  captureMemory(content: string): Promise<Memory> {
+    this.captureMemoryCalls.push(content);
+    const forced = this.captureMemoryRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const captured = memory({
+      content,
+      id: `018f0000-0000-7000-8000-0000000002${this.captureMemoryCalls.length
+        .toString()
+        .padStart(2, "0")}`,
+    });
+    this.storedMemories = [captured, ...this.storedMemories];
+    return Promise.resolve(captured);
+  }
+
+  editMemory(
+    memoryId: string,
+    content: string,
+    version: number,
+  ): Promise<Memory> {
+    this.editMemoryCalls.push({ content, memoryId, version });
+    return this.mutateMemory(
+      memoryId,
+      version,
+      this.editMemoryRejections,
+      (current) => ({ ...current, content, version: version + 1 }),
+    );
+  }
+
+  tetherMemory(memoryId: string, version: number): Promise<Memory> {
+    this.tetherMemoryCalls.push({ memoryId, version });
+    return this.mutateMemory(
+      memoryId,
+      version,
+      this.tetherMemoryRejections,
+      (current) => ({
+        ...current,
+        state: "tethered",
+        tethered_at: "2026-01-02T00:00:00Z",
+        version: version + 1,
+      }),
+    );
+  }
+
+  rejectMemory(memoryId: string, version: number): Promise<Memory> {
+    this.rejectMemoryCalls.push({ memoryId, version });
+    return this.mutateMemory(
+      memoryId,
+      version,
+      this.rejectMemoryRejections,
+      (current) => ({ ...current, version: version + 1 }),
+      // Reject soft-deletes: the memory leaves both browsable states.
+      { remove: true },
+    );
+  }
+
+  private mutateMemory(
+    memoryId: string,
+    version: number,
+    rejections: ApiError[],
+    apply: (current: Memory) => Memory,
+    options: { remove?: boolean } = {},
+  ): Promise<Memory> {
+    const forced = rejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const serverVersion = this.serverMemoryVersions[memoryId];
+    if (
+      Object.hasOwn(this.serverMemoryVersions, memoryId) &&
+      serverVersion !== version
+    ) {
+      // The server bumped the version; reveal the fresh state to future list
+      // fetches, then reject exactly as the host does.
+      this.storedMemories = this.storedMemories.map((existing) =>
+        existing.id === memoryId
+          ? {
+              ...existing,
+              ...this.serverMemoryEdits[memoryId],
+              version: serverVersion,
+            }
+          : existing,
+      );
+      return Promise.reject(new ApiError(409));
+    }
+    const current = this.storedMemories.find(
+      (existing) => existing.id === memoryId,
+    );
+    if (current === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    const mutated = apply(current);
+    this.serverMemoryVersions[memoryId] = mutated.version;
+    this.storedMemories =
+      options.remove === true
+        ? this.storedMemories.filter((existing) => existing.id !== memoryId)
+        : this.storedMemories.map((existing) =>
+            existing.id === memoryId ? mutated : existing,
+          );
+    return Promise.resolve(mutated);
   }
 
   private terminateBucketItem(

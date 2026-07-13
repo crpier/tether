@@ -41,6 +41,8 @@ export type AddBucketItem = components["schemas"]["AddBucketItemRequest"];
 export type BucketItemAdded = components["schemas"]["AddBucketItemResponse"];
 export type DedupAdvisory = components["schemas"]["DedupAdvisoryRead"];
 export type BucketTriageReport = components["schemas"]["TriageReport"];
+export type Memory = components["schemas"]["MemoryRead"];
+export type MemoryState = components["schemas"]["MemoryState"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -83,6 +85,16 @@ export interface TetherApi {
   ): Promise<BucketItem>;
   deleteBucketItem(bucketItemId: string, version: number): Promise<BucketItem>;
   getBucketTriage(): Promise<BucketTriageReport>;
+  listMemories(state: MemoryState): Promise<Memory[]>;
+  searchMemories(q: string): Promise<Memory[]>;
+  captureMemory(content: string): Promise<Memory>;
+  editMemory(
+    memoryId: string,
+    content: string,
+    version: number,
+  ): Promise<Memory>;
+  tetherMemory(memoryId: string, version: number): Promise<Memory>;
+  rejectMemory(memoryId: string, version: number): Promise<Memory>;
 }
 
 // Carries the HTTP status so callers can react to specific failures (e.g. a 409
@@ -298,6 +310,53 @@ export function createRestApi(
     },
     async getBucketTriage() {
       const { data, response } = await client.GET("/api/bucket-items/triage");
+      return requireData(data, response);
+    },
+    async listMemories(state) {
+      const { data, response } = await client.GET("/api/memories", {
+        params: { query: { state } },
+      });
+      return requireData(data, response);
+    },
+    async searchMemories(q) {
+      const { data, response } = await client.GET("/api/memories/search", {
+        params: { query: { q } },
+      });
+      return requireData(data, response);
+    },
+    async captureMemory(content) {
+      const { data, response } = await client.POST("/api/memories", {
+        body: { content },
+      });
+      return requireData(data, response);
+    },
+    async editMemory(memoryId, content, version) {
+      const { data, response } = await client.PATCH(
+        "/api/memories/{memory_id}",
+        {
+          body: { content, version },
+          params: { path: { memory_id: memoryId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async tetherMemory(memoryId, version) {
+      const { data, response } = await client.POST(
+        "/api/memories/{memory_id}/tether",
+        {
+          body: { version },
+          params: { path: { memory_id: memoryId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async rejectMemory(memoryId, version) {
+      const { data, response } = await client.DELETE(
+        "/api/memories/{memory_id}",
+        {
+          params: { path: { memory_id: memoryId }, query: { version } },
+        },
+      );
       return requireData(data, response);
     },
   };
