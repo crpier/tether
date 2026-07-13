@@ -45,7 +45,7 @@ youtube = [
 ]
 
 [tool.uv.sources]
-snektest = { path = "../../../snektest", editable = true }
+snektest = { git = "ssh://git@github.com/crpier/snektest", rev = "b6ff08544eade05804a2fdfd894c2c854145e537" }
 
 [build-system]
 requires = ["hatchling"]

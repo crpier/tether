@@ -1120,26 +1120,11 @@ wheels = [
 [[package]]
 name = "snektest"
 version = "0.16.0"
-source = { editable = "../../../snektest" }
+source = { git = "ssh://git@github.com/crpier/snektest?rev=b6ff08544eade05804a2fdfd894c2c854145e537#b6ff08544eade05804a2fdfd894c2c854145e537" }
 dependencies = [
     { name = "hypothesis" },
     { name = "pydantic" },
     { name = "rich" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "hypothesis", specifier = ">=6.0.0" },
-    { name = "pydantic", specifier = ">=2.12.4" },
-    { name = "rich", specifier = ">=14.2.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "coverage", specifier = ">=7.13.1" },
-    { name = "pyright", specifier = ">=1.1.407" },
-    { name = "ruff", specifier = ">=0.14.5" },
-    { name = "ty", specifier = ">=0.0.9" },
 ]
 
 [[package]]
@@ -1235,7 +1220,7 @@ dev = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyright", specifier = ">=1.1.410" },
     { name = "ruff", specifier = ">=0.15.18" },
-    { name = "snektest", editable = "../../../snektest" },
+    { name = "snektest", git = "ssh://git@github.com/crpier/snektest?rev=b6ff08544eade05804a2fdfd894c2c854145e537" },
 ]
 youtube = [
     { name = "google-api-python-client", specifier = ">=2.0.0" },
