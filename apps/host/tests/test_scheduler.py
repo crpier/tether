@@ -31,9 +31,9 @@ from snektest import (
 )
 
 from tether import scheduler as scheduler_module
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.logging import Logger
-from tether.pi_runtime import AgentEnded, PiRuntimeError, TurnEvent
+from tether.pi_runtime import AgentEnded, PiRuntimeConfig, PiRuntimeError, TurnEvent
 from tether.scheduler import (
     EphemeralPiConfig,
     EphemeralPiPromptRunner,
@@ -42,6 +42,7 @@ from tether.scheduler import (
     TriggerDispatcher,
     TriggerNotifier,
 )
+from tether.system_prompt import TASK_SYSTEM_PROMPT
 from tether.tools import SessionRegistry
 from tether.triggers import (
     ScheduledTrigger,
@@ -345,24 +346,28 @@ class FakePiRuntimeSpawner:
     """Stands in for the `PiRuntime` class, spawning a prepared fake."""
 
     def __init__(self, runtime: FakePiRuntime) -> None:
+        self.configs: list[object] = []
         self.runtime: FakePiRuntime = runtime
 
     async def spawn(self, config: object, *, session_registry: object) -> FakePiRuntime:
         """Hand out the prepared fake instead of launching a process."""
+        self.configs.append(config)
         return self.runtime
 
 
 @contextlib.contextmanager
-def fake_pi_runtime(runtime: FakePiRuntime) -> Generator[None]:
+def fake_pi_runtime(runtime: FakePiRuntime) -> Generator[FakePiRuntimeSpawner]:
     """Swap the scheduler module's `PiRuntime` for a fake, restoring on exit.
 
+    Yields the spawner so tests can inspect the spawn configs the runner built.
     The fake is intentionally not type-compatible with the real class, so the
     swap goes through `setattr` to stay out of static type checking.
     """
     original = scheduler_module.PiRuntime
-    setattr(scheduler_module, "PiRuntime", FakePiRuntimeSpawner(runtime))  # noqa: B010
+    spawner = FakePiRuntimeSpawner(runtime)
+    setattr(scheduler_module, "PiRuntime", spawner)  # noqa: B010
     try:
-        yield
+        yield spawner
     finally:
         setattr(scheduler_module, "PiRuntime", original)  # noqa: B010
 
@@ -375,7 +380,9 @@ async def ephemeral_session_root() -> AsyncGenerator[Path]:
 
 
 def build_ephemeral_runner(
-    session_root: Path, recorder: AgentTraceRecorder
+    session_root: Path,
+    recorder: AgentTraceRecorder,
+    run_kind: RunKind = "scheduled",
 ) -> EphemeralPiPromptRunner:
     """Wire an ephemeral runner whose pi spawn will be faked by the test."""
     return EphemeralPiPromptRunner(
@@ -385,8 +392,43 @@ def build_ephemeral_runner(
             tool_base_url="http://127.0.0.1:0",
             tool_secret="test-secret",
             trace_recorder=recorder,
+            run_kind=run_kind,
         )
     )
+
+
+@test()
+async def a_scheduled_run_spawns_pi_with_the_task_system_prompt() -> None:
+    """A scheduled-trigger run replaces pi's default prompt with the task one."""
+    session_root = await load_fixture(ephemeral_session_root())
+    runtime = FakePiRuntime(accepts_prompt=False)
+    runner = build_ephemeral_runner(session_root, AgentTraceRecorder())
+
+    with fake_pi_runtime(runtime) as spawner, assert_raises(PiRuntimeError):
+        _ = await runner.run("summarise the day")
+
+    assert_eq(len(spawner.configs), 1)
+    spawn_config = spawner.configs[0]
+    assert isinstance(spawn_config, PiRuntimeConfig)
+    assert_eq(spawn_config.system_prompt, TASK_SYSTEM_PROMPT)
+
+
+@test()
+async def a_recall_run_spawns_pi_with_the_task_system_prompt() -> None:
+    """A Recall model step also carries the short unattended-task prompt."""
+    session_root = await load_fixture(ephemeral_session_root())
+    runtime = FakePiRuntime(accepts_prompt=False)
+    runner = build_ephemeral_runner(
+        session_root, AgentTraceRecorder(), run_kind="recall"
+    )
+
+    with fake_pi_runtime(runtime) as spawner, assert_raises(PiRuntimeError):
+        _ = await runner.run("grade this answer")
+
+    assert_eq(len(spawner.configs), 1)
+    spawn_config = spawner.configs[0]
+    assert isinstance(spawn_config, PiRuntimeConfig)
+    assert_eq(spawn_config.system_prompt, TASK_SYSTEM_PROMPT)
 
 
 @test()

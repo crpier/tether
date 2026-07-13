@@ -16,6 +16,7 @@ from tether.chat_engine import (
 from tether.conversations import Conversation
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.pi_runtime import PiRuntime, PiRuntimeConfig, PiRuntimeError
+from tether.system_prompt import CONVERSATION_SYSTEM_PROMPT
 from tether.tools import SessionRegistry
 
 
@@ -49,6 +50,7 @@ class RecordingSpawner:
     """Spawn seam that returns fakes bound to the requested pi session id."""
 
     def __init__(self) -> None:
+        self.configs: list[PiRuntimeConfig] = []
         self.spawned: list[FakeRuntime] = []
 
     async def __call__(
@@ -56,6 +58,7 @@ class RecordingSpawner:
     ) -> PiRuntime:
         """Return a fake runtime tagged with the spawned session id."""
         _ = session_registry
+        self.configs.append(config)
         runtime = FakeRuntime(session_id=str(config.session_id))
         self.spawned.append(runtime)
         return cast("PiRuntime", runtime)
@@ -118,6 +121,19 @@ def make_model_registry(
         now=lambda: 0.0,
         spawn=spawner,
     )
+
+
+@test()
+async def runtime_for_spawns_with_the_conversation_system_prompt() -> None:
+    """Every conversation runtime replaces pi's default with the Tether persona."""
+    conversation = FakeConversation(uuid7())
+    spawner = RecordingSpawner()
+    with TemporaryDirectory() as directory:
+        registry = make_registry(directory, spawner)
+        _ = await registry.runtime_for(cast("Conversation[Fetched]", conversation))
+
+    assert_eq(len(spawner.configs), 1)
+    assert_eq(spawner.configs[0].system_prompt, CONVERSATION_SYSTEM_PROMPT)
 
 
 @test()

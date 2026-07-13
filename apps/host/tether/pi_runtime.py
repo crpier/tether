@@ -117,6 +117,15 @@ class PiRuntimeConfig:
     pi_binary: Path | None = None
     session_dir: Path | None = None
     session_id: str | None = None
+    system_prompt: str | None = None
+    """Replacement for pi's default coding-agent system prompt.
+
+    pi still appends run context — e.g. the current date, cwd, and any
+    discovered APPEND_SYSTEM.md — after it, so a constant prompt stays a
+    stable prefix for provider prompt caching. Setting it also turns
+    off pi's AGENTS.md/CLAUDE.md context-file discovery: those are coding-agent
+    context that would pollute the persona and vary with the host's cwd.
+    """
 
 
 class PiRpcClient:
@@ -688,6 +697,8 @@ def _spawn_command(config: PiRuntimeConfig, session_id: str) -> list[str]:
     ]
     if config.session_dir is not None:
         command.extend(["--session-dir", str(config.session_dir)])
+    if config.system_prompt is not None:
+        command.extend(["--system-prompt", config.system_prompt, "--no-context-files"])
     for extension_path in [
         config.extension_path or _repo_root() / "apps/agent/src/generated/index.ts",
         *config.extra_extension_paths,
