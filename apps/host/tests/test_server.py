@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,6 +30,7 @@ from tether.server import (
     AppConfig,
     HostSettings,
     TranscriptProviderConfigError,
+    _build_library_provider,
     _build_supadata_provider,
     _compose_transcript_provider,
     _parse_transcript_languages,
@@ -37,6 +39,7 @@ from tether.server import (
     serve,
 )
 from tether.telemetry import TelemetryExporter, TelemetrySettings
+from tether.transcript_library import YouTubeTranscriptApiProvider
 from tether.transcript_supadata import SupadataTranscriptProvider
 from tether.youtube import (
     FallbackTranscriptProvider,
@@ -474,6 +477,70 @@ def supadata_is_built_when_key_and_flag_are_both_set() -> None:
         _supadata_settings(enabled=True, api_key="sk-secret")
     )
     assert_true(isinstance(provider, SupadataTranscriptProvider))
+
+
+def _library_settings(
+    *, enabled: bool = True, max_requests_per_pass: int = 5, min_interval: float = 5.0
+) -> HostSettings:
+    """HostSettings with the always-required secrets plus the library gating."""
+    return HostSettings(
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        transcript_library_enabled=enabled,
+        transcript_library_max_requests_per_pass=max_requests_per_pass,
+        transcript_library_min_request_interval_seconds=min_interval,
+    )
+
+
+@test()
+def library_is_omitted_when_disabled() -> None:
+    """`TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` drops it from the chain entirely."""
+    provider = _build_library_provider(_library_settings(enabled=False))
+    assert_true(provider is None)
+
+
+@test()
+def library_threads_the_per_pass_budget_and_pacing_from_settings() -> None:
+    """The per-pass request budget and request spacing reach the real provider
+    (issue #179) — the same way Supadata's own pacing is threaded."""
+    provider = _build_library_provider(
+        _library_settings(max_requests_per_pass=3, min_interval=7.5)
+    )
+    assert provider is not None
+    assert isinstance(provider, YouTubeTranscriptApiProvider)
+    assert_eq(provider._budget.max_requests_per_pass, 3)
+    assert_eq(provider._budget.min_request_interval, timedelta(seconds=7.5))
+
+
+@test()
+def transcript_rate_limit_defaults_are_strict() -> None:
+    """The shipped defaults are deliberately strict (issue #179): a small
+    per-pass budget, a few seconds of spacing, and a multi-hour initial cooldown
+    that escalates to a full day rather than 6 hours."""
+    settings = HostSettings(
+        app_password="test-app-password", session_secret="test-session-secret"
+    )
+    assert_eq(settings.transcript_library_max_requests_per_pass, 5)
+    assert_eq(settings.transcript_library_min_request_interval_seconds, 5.0)
+    assert_eq(settings.transcript_block_pause_base_seconds, 2 * 60 * 60)
+    assert_eq(settings.transcript_block_pause_cap_seconds, 24 * 60 * 60)
+
+
+@test()
+def app_config_from_settings_threads_the_block_pause_bounds() -> None:
+    """The transcript block-pause bounds come from env settings, not AppConfig's
+    own hardcoded defaults (a pre-existing wiring gap fixed alongside #179)."""
+    settings = HostSettings(
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        transcript_block_pause_base_seconds=111,
+        transcript_block_pause_cap_seconds=222,
+    )
+
+    config = server._app_config_from_settings(settings)
+
+    assert_eq(config.transcript_block_pause_base_seconds, 111)
+    assert_eq(config.transcript_block_pause_cap_seconds, 222)
 
 
 def _named_providers() -> dict[str, TranscriptProvider]:

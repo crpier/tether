@@ -15,13 +15,17 @@ from typing import Any
 from snektest import assert_eq, assert_is_none, assert_raises, test
 
 from tether.transcript_library import (
+    LibraryPassBudget,
     YouTubeTranscriptApiProvider,
     _classify_library_error,
     _is_transcript_ip_block_error,
     _parse_retry_after,
     _parse_snippets,
+    reset_library_pass_budget,
 )
 from tether.youtube import (
+    FallbackTranscriptProvider,
+    NullTranscriptProvider,
     TranscriptBlockedError,
     TranscriptExcludedError,
     TranscriptTransientError,
@@ -139,6 +143,12 @@ def classify_maps_request_blocked_to_blocked_with_retry_after() -> None:
     classified = _classify_library_error("v1", blocked)
     assert isinstance(classified, TranscriptBlockedError)
     assert_eq(classified.retry_after, timedelta(seconds=300))
+    # The source must be stamped here (not left for a composite fallback to fill
+    # in): when the library runs standalone or as the chain's primary, nothing
+    # else ever stamps it, and the worker treats a `None` source as an
+    # already-deferred skip rather than a fresh block — so the persisted
+    # per-source pause would silently never trip.
+    assert_eq(classified.source, "youtube_transcript_api")
 
 
 @test()
@@ -229,3 +239,275 @@ async def provider_fetch_classifies_block() -> None:
     provider = YouTubeTranscriptApiProvider(fetcher)
     with assert_raises(TranscriptBlockedError):
         _ = await provider.fetch("v1")
+
+
+# --- Per-pass request budget: bound real calls a single sync pass can fire ---
+
+
+class _CountingFetcher:
+    """A fetcher stand-in that always succeeds and counts real invocations."""
+
+    def __init__(self) -> None:
+        self.calls: int = 0
+
+    def __call__(self, video_id: str) -> Any:
+        _ = video_id
+        self.calls += 1
+        return [Snippet("hi", 0.0)]
+
+
+@test()
+async def unlimited_by_default_matches_prior_behaviour() -> None:
+    """With no budget configured (the old constructor shape), nothing is capped."""
+    fetcher = _CountingFetcher()
+    provider = YouTubeTranscriptApiProvider(fetcher)
+
+    for _ in range(10):
+        _ = await provider.fetch("v1")
+
+    assert_eq(fetcher.calls, 10)
+
+
+@test()
+async def budget_exhausted_blocks_without_calling_the_fetcher() -> None:
+    """Once the per-pass budget is spent, further fetches self-throttle: no
+    further real network call, but a typed *blocked* (source-stamped) so the
+    worker's normal pause/backoff takes over for the rest of the pass."""
+    fetcher = _CountingFetcher()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=2)
+    )
+
+    _ = await provider.fetch("v1")
+    _ = await provider.fetch("v2")
+    with assert_raises(TranscriptBlockedError) as caught:
+        _ = await provider.fetch("v3")
+
+    assert_eq(fetcher.calls, 2)
+    assert_eq(caught.exception.source, "youtube_transcript_api")
+
+
+@test()
+async def budget_exhaustion_keeps_blocking_the_rest_of_the_pass() -> None:
+    """Every fetch past the cap stays blocked (no further real calls) until the
+    worker starts a new pass."""
+    fetcher = _CountingFetcher()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=1)
+    )
+
+    _ = await provider.fetch("v1")
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v2")
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v3")
+
+    assert_eq(fetcher.calls, 1)
+
+
+@test()
+async def begin_pass_refills_the_budget() -> None:
+    """`begin_pass` (the worker's per-pass reset hook) refills the counter."""
+    fetcher = _CountingFetcher()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=1)
+    )
+
+    _ = await provider.fetch("v1")
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v2")
+
+    provider.begin_pass()
+    _ = await provider.fetch("v3")
+
+    assert_eq(fetcher.calls, 2)
+
+
+@test()
+async def a_real_block_latches_for_the_rest_of_the_pass() -> None:
+    """A genuine IP block also stops further real calls this pass — not just
+    budget exhaustion — so a block on request 2 of a budget of 5 doesn't spend
+    the remaining 3 hitting an IP that is already blocked."""
+
+    class _OnceBlocked:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, video_id: str) -> Any:
+            _ = video_id
+            self.calls += 1
+            raise RequestBlocked("ip blocked")
+
+    fetcher = _OnceBlocked()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=5)
+    )
+
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v1")
+    with assert_raises(TranscriptBlockedError) as caught:
+        _ = await provider.fetch("v2")
+
+    assert_eq(fetcher.calls, 1)
+    assert_eq(caught.exception.source, "youtube_transcript_api")
+
+
+@test()
+async def begin_pass_clears_the_block_latch_too() -> None:
+    """A new pass gets a fresh chance even after a real block latched the last."""
+
+    class _BlockedOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, video_id: str) -> Any:
+            _ = video_id
+            self.calls += 1
+            if self.calls == 1:
+                raise RequestBlocked("ip blocked")
+            return [Snippet("hi", 0.0)]
+
+    fetcher = _BlockedOnce()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=5)
+    )
+
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v1")
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v2")
+    assert_eq(fetcher.calls, 1)
+
+    provider.begin_pass()
+    result = await provider.fetch("v3")
+
+    assert_eq(result.text, "hi")
+    assert_eq(fetcher.calls, 2)
+
+
+# --- Request pacing: stay under YouTube's per-request rate tolerance --------
+
+
+class _FakeClock:
+    """A controllable monotonic clock whose `sleep` advances it and records
+    waits, mirroring the Supadata provider's pacing test double."""
+
+    def __init__(self) -> None:
+        self.now: float = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _paced_provider(
+    fetcher: Any, clock: _FakeClock, *, interval_seconds: float
+) -> YouTubeTranscriptApiProvider:
+    return YouTubeTranscriptApiProvider(
+        fetcher,
+        budget=LibraryPassBudget(
+            min_request_interval=timedelta(seconds=interval_seconds)
+        ),
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+
+@test()
+async def sequential_fetches_are_paced_by_the_min_interval() -> None:
+    """A configured min interval delays the next real fetch by the unspent
+    remainder, so back-to-back videos don't burst YouTube's rate tolerance."""
+    fetcher = _CountingFetcher()
+    clock = _FakeClock()
+    provider = _paced_provider(fetcher, clock, interval_seconds=5)
+
+    _ = await provider.fetch("v1")
+    assert_eq(clock.sleeps, [])  # the first call has no predecessor to pace against
+
+    clock.now += 1.0
+    _ = await provider.fetch("v2")
+
+    assert_eq(clock.sleeps, [4.0])
+    assert_eq(fetcher.calls, 2)
+
+
+@test()
+async def a_gap_longer_than_the_interval_is_not_paced() -> None:
+    """When more than the interval already elapsed, the next fetch fires at once."""
+    fetcher = _CountingFetcher()
+    clock = _FakeClock()
+    provider = _paced_provider(fetcher, clock, interval_seconds=5)
+
+    _ = await provider.fetch("v1")
+    clock.now += 10.0
+    _ = await provider.fetch("v2")
+
+    assert_eq(clock.sleeps, [])
+
+
+@test()
+async def pacing_is_off_when_the_interval_is_zero() -> None:
+    """The default (zero interval) inserts no delay — behaviour unchanged."""
+    fetcher = _CountingFetcher()
+    clock = _FakeClock()
+    provider = _paced_provider(fetcher, clock, interval_seconds=0)
+
+    _ = await provider.fetch("v1")
+    _ = await provider.fetch("v2")
+
+    assert_eq(clock.sleeps, [])
+
+
+@test()
+async def a_budget_exhausted_call_incurs_no_pacing_delay() -> None:
+    """Pacing wraps only the real call: a fetch blocked at the cap never waits."""
+    fetcher = _CountingFetcher()
+    clock = _FakeClock()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher,
+        budget=LibraryPassBudget(
+            max_requests_per_pass=0, min_request_interval=timedelta(seconds=5)
+        ),
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+    with assert_raises(TranscriptBlockedError):
+        _ = await provider.fetch("v1")
+
+    assert_eq(clock.sleeps, [])
+    assert_eq(fetcher.calls, 0)
+
+
+# --- Pass-budget reset wiring: walk a composed chain to find the library ----
+
+
+@test()
+def reset_library_pass_budget_resets_a_nested_provider() -> None:
+    """The reset walker finds a `YouTubeTranscriptApiProvider` nested behind a
+    `FallbackTranscriptProvider` (mirrors `bind_supadata_spend_guard`'s walk)."""
+    fetcher = _CountingFetcher()
+    library = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=1)
+    )
+    chain = FallbackTranscriptProvider(NullTranscriptProvider(), fallbacks=[library])
+
+    library._requests_this_pass = 1
+
+    reset_library_pass_budget(chain)
+
+    assert_eq(library._requests_this_pass, 0)
+
+
+@test()
+def reset_library_pass_budget_is_a_noop_without_a_library_provider() -> None:
+    """A chain with no library provider (e.g. Supadata-only) is left alone."""
+    chain = FallbackTranscriptProvider(
+        NullTranscriptProvider(), fallbacks=[NullTranscriptProvider()]
+    )
+
+    reset_library_pass_budget(chain)  # must not raise

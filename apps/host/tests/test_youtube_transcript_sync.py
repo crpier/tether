@@ -35,6 +35,7 @@ from snektest import (
 )
 
 from tether.logging import Logger
+from tether.transcript_library import LibraryPassBudget, YouTubeTranscriptApiProvider
 from tether.transcript_worker import TranscriptSyncService
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
@@ -552,3 +553,101 @@ async def on_demand_transient_retry_uses_the_configured_backoff() -> None:
     persisted = await state_of(env.db, "v1")
     due = persisted.next_attempt_at if persisted is not None else None
     assert_eq(due, (env.clock.now() + timedelta(minutes=45)).isoformat())
+
+
+# --- Real youtube-transcript-api provider: per-pass budget end to end -------
+#
+# The rest of this file drives the worker over a `FakeTranscriptProvider`, which
+# has no blockable source of its own. These tests wire the *real*
+# `YouTubeTranscriptApiProvider` in directly (still with a fake, in-process
+# fetcher — never the network) to prove the worker actually resets and honors
+# its per-pass request budget end to end (issue #179): a pass must never fire
+# more real calls at the library than the configured budget, and a fresh pass
+# gets a fresh budget rather than staying blocked forever.
+
+
+class _CountingFetcher:
+    """A fetcher stand-in that always succeeds and counts real invocations."""
+
+    def __init__(self) -> None:
+        self.calls: int = 0
+
+    def __call__(self, video_id: str) -> list[dict[str, object]]:
+        self.calls += 1
+        return [{"text": f"transcript for {video_id}", "start": 0.0}]
+
+
+@test()
+async def a_sync_pass_never_exceeds_the_librarys_request_budget() -> None:
+    """Five eligible videos, a budget of two: only two real calls fire, the
+    other three stay pending (no per-video state written, not terminal)."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    client = YouTubeApiClient(
+        InMemoryYouTubeApi(), DailyQuota(db, limit=1000), clock=clock
+    )
+    fetcher = _CountingFetcher()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=2)
+    )
+    worker = TranscriptSyncService(
+        database=db,
+        client=client,
+        provider=provider,
+        config=TranscriptSyncConfig(block_pause_base=timedelta(minutes=1)),
+    )
+    for video_id in ("v1", "v2", "v3", "v4", "v5"):
+        await seed(db, video_id)
+
+    report = await worker.sync(logger=test_logger())
+
+    assert_eq(fetcher.calls, 2)
+    assert_eq(report.fetched, 2)
+    assert_true(report.paused)
+    # The three videos past the budget were deferred (a *blocked* outcome), not
+    # attempted at all — no per-video state, so a later pass still sees them.
+    still_pending = [
+        video_id
+        for video_id in ("v1", "v2", "v3", "v4", "v5")
+        if (await state_of(db, video_id)) is None
+    ]
+    assert_eq(len(still_pending), 3)
+
+    await db.close()
+
+
+@test()
+async def a_fresh_pass_refills_the_librarys_request_budget() -> None:
+    """After the per-source pause lifts, the next pass again gets its own full
+    budget rather than staying exhausted/latched from the previous pass."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    client = YouTubeApiClient(
+        InMemoryYouTubeApi(), DailyQuota(db, limit=1000), clock=clock
+    )
+    fetcher = _CountingFetcher()
+    provider = YouTubeTranscriptApiProvider(
+        fetcher, budget=LibraryPassBudget(max_requests_per_pass=2)
+    )
+    worker = TranscriptSyncService(
+        database=db,
+        client=client,
+        provider=provider,
+        config=TranscriptSyncConfig(block_pause_base=timedelta(minutes=1)),
+    )
+    for video_id in ("v1", "v2", "v3", "v4", "v5"):
+        await seed(db, video_id)
+    _ = await worker.sync(logger=test_logger())
+    assert_eq(fetcher.calls, 2)
+
+    # Move past the one-minute cooldown the first pass's budget-exhaustion trip.
+    clock.advance(timedelta(minutes=2))
+    report = await worker.sync(logger=test_logger())
+
+    # A fresh pass, a fresh budget: two more real calls, not zero.
+    assert_eq(fetcher.calls, 4)
+    assert_eq(report.fetched, 2)
+
+    await db.close()

@@ -28,6 +28,7 @@ from snekql.sqlite import Database, Fetched, select
 from tether.escalating_pause import PauseState, PersistentEscalatingPause
 from tether.events import EventPublisher, NullEventPublisher
 from tether.logging import Logger
+from tether.transcript_library import reset_library_pass_budget
 from tether.youtube import (
     IngestedVideo,
     TranscriptAttempt,
@@ -129,6 +130,12 @@ class TranscriptSyncService:
         """
         quota_exhausted = False
         _debug(logger, "Transcript sync starting")
+        # Refill the library provider's per-pass request budget (and clear its
+        # "blocked this pass" latch) before walking candidates — it is a
+        # long-lived object shared across passes, so without this reset a budget
+        # spent (or a block observed) last pass would stay exhausted/latched
+        # forever instead of just for that one pass (issue #179).
+        reset_library_pass_budget(self.provider)
         context = self._context
         pauses = await load_all_provider_pauses(self.database)
         state = _TranscriptPassState(
