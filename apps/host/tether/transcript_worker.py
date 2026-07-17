@@ -36,12 +36,14 @@ from tether.youtube import (
     TranscriptProvider,
     TranscriptSyncConfig,
     TranscriptSyncReport,
-    YouTubeApiClient,
-    YouTubeQuotaExceededError,
     YouTubeTranscriptState,
     fetch_and_store_transcript,
     load_all_provider_pauses,
     provider_pause_keys,
+)
+from tether.youtube_quota import (
+    YouTubeApiClient,
+    YouTubeQuotaExceededError,
     state_get,
     state_set,
 )
