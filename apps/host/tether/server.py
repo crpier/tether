@@ -85,7 +85,7 @@ from tether.telemetry import (
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
 from tether.transcript_index import TranscriptIndex
-from tether.transcript_library import YouTubeTranscriptApiProvider
+from tether.transcript_library import LibraryPassBudget, YouTubeTranscriptApiProvider
 from tether.transcript_reconciler import TranscriptReconciler
 from tether.transcript_search import TranscriptSearchService
 from tether.transcript_supadata import (
@@ -165,8 +165,8 @@ class AppConfig:
     transcript_sync_recent_window: int = 50
     transcript_retry_backoff_base_seconds: float = 10 * 60
     transcript_retry_backoff_cap_seconds: float = 6 * 60 * 60
-    transcript_block_pause_base_seconds: float = 30 * 60
-    transcript_block_pause_cap_seconds: float = 6 * 60 * 60
+    transcript_block_pause_base_seconds: float = 2 * 60 * 60
+    transcript_block_pause_cap_seconds: float = 24 * 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -232,6 +232,34 @@ class HostSettings(BaseSettings):
     """Whether the `youtube-transcript-api` library source is available to compose.
     Enabled by default; set `TETHER_TRANSCRIPT_LIBRARY_ENABLED=false` to drop it
     from the chain entirely (e.g. if the host IP keeps getting blocked)."""
+    transcript_library_max_requests_per_pass: int = 5
+    """Hard cap on real `youtube-transcript-api` network calls within a single
+    transcript sync pass. Deliberately small and strict: the library gets the host
+    IP-blocked in bursts of roughly 10+ rapid requests (issue #179), so one pass
+    must never be allowed to fire dozens at it. Once the cap is spent the provider
+    self-throttles for the rest of that pass (remaining candidates stay pending,
+    picked up next pass) rather than making further real calls; a fresh pass gets
+    a fresh budget. Applies to `youtube_transcript_api` only — Supadata's own
+    budget (`supadata_max_uses`) and pacing (`supadata_min_request_interval_seconds`)
+    are unaffected."""
+    transcript_library_min_request_interval_seconds: float = 5.0
+    """Minimum spacing between consecutive real `youtube-transcript-api` calls.
+    Mirrors `supadata_min_request_interval_seconds`: back-to-back requests read as
+    bot traffic to YouTube, so pacing even the small per-pass budget's calls keeps
+    the host looking less like a scraper. 0 disables pacing."""
+    transcript_block_pause_base_seconds: float = 2 * 60 * 60
+    """Initial cooldown once a blockable transcript source (the free library, or
+    Supadata) reports an IP block / rate limit, before its escalating per-source
+    pause is retried. Raised from a historical 30 minutes: youtube-transcript-api's
+    IP blocks routinely outlast a half hour, so a short initial cooldown just
+    re-triggers the same block on the very next pass. Doubles on each further
+    consecutive block, clamped to `transcript_block_pause_cap_seconds`."""
+    transcript_block_pause_cap_seconds: float = 24 * 60 * 60
+    """Ceiling on the escalating per-source transcript-provider pause. Raised from
+    6 hours to a full day: a source still getting blocked after several
+    escalations is very likely under a longer-lived IP ban, so backing off for up
+    to a day is worth the lost sync speed (explicitly an acceptable trade per
+    issue #179)."""
     transcript_languages: str = "en,ro"
     """Comma-separated preferred transcript languages, most preferred first (ISO
     codes). Passed to the `youtube-transcript-api` library (which tries them in
@@ -1029,13 +1057,39 @@ def build_configured_transcript_provider(
             _youtube_oauth_config(settings)
         )
     }
-    if settings.transcript_library_enabled:
-        available["library"] = YouTubeTranscriptApiProvider(languages=languages)
+    library = _build_library_provider(settings, languages=languages)
+    if library is not None:
+        available["library"] = library
     supadata = _build_supadata_provider(settings, languages=languages)
     if supadata is not None:
         available["supadata"] = supadata
     return _compose_transcript_provider(
         _parse_transcript_provider_order(settings.transcript_provider_order), available
+    )
+
+
+def _build_library_provider(
+    settings: HostSettings, *, languages: tuple[str, ...] = ()
+) -> YouTubeTranscriptApiProvider | None:
+    """Build the free `youtube-transcript-api` provider, unless disabled.
+
+    Threads the strict per-pass request budget and mandatory request spacing from
+    settings so they reach the real provider — the same way `_build_supadata_
+    provider` threads Supadata's own pacing. Both default to deliberately
+    conservative values (issue #179): the library gets the host IP-blocked in
+    bursts of roughly 10+ rapid requests, so a single sync pass must never be
+    allowed to fire dozens at it.
+    """
+    if not settings.transcript_library_enabled:
+        return None
+    return YouTubeTranscriptApiProvider(
+        languages=languages,
+        budget=LibraryPassBudget(
+            max_requests_per_pass=settings.transcript_library_max_requests_per_pass,
+            min_request_interval=timedelta(
+                seconds=settings.transcript_library_min_request_interval_seconds
+            ),
+        ),
     )
 
 
@@ -1108,6 +1162,39 @@ def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
     )
 
 
+def _app_config_from_settings(settings: HostSettings) -> AppConfig:
+    """Build the `AppConfig` the app factory wires from environment settings.
+
+    Extracted out of `create_app_from_environment` so the settings -> config
+    field mapping is unit-testable without spinning up the full ASGI app (which
+    needs a YouTube OAuth token on disk to wire the background workers).
+    """
+    return AppConfig(
+        app_password=settings.app_password,
+        database_path=settings.database_path,
+        default_model=settings.default_model,
+        kb_root=settings.kb_root,
+        logging_level=settings.logging_level,
+        log_file=settings.log_file,
+        model_allowlist=settings.model_allowlist,
+        secure_cookies=settings.secure_cookies,
+        session_secret=settings.session_secret,
+        web_dist=settings.web_dist,
+        youtube_api=build_configured_youtube_api(settings),
+        youtube_likes_rewalk_interval_days=settings.youtube_likes_rewalk_interval_days,
+        youtube_likes_drift_alarm_margin=settings.youtube_likes_drift_alarm_margin,
+        youtube_sync_enabled=settings.youtube_sync_enabled,
+        transcript_provider=build_configured_transcript_provider(settings),
+        transcript_supadata_max_uses=settings.supadata_max_uses,
+        transcript_sync_enabled=settings.transcript_sync_enabled,
+        # The escalating per-source pause bounds (issue #179): previously left at
+        # AppConfig's own hardcoded defaults with no env-var override at all, so
+        # threaded through here alongside the new library-specific knobs above.
+        transcript_block_pause_base_seconds=settings.transcript_block_pause_base_seconds,
+        transcript_block_pause_cap_seconds=settings.transcript_block_pause_cap_seconds,
+    )
+
+
 def create_app_from_environment() -> Starlette:
     """Create the ASGI app from `TETHER_` environment variables.
 
@@ -1117,25 +1204,7 @@ def create_app_from_environment() -> Starlette:
     """
     settings = HostSettings()
     return create_app(
-        config=AppConfig(
-            app_password=settings.app_password,
-            database_path=settings.database_path,
-            default_model=settings.default_model,
-            kb_root=settings.kb_root,
-            logging_level=settings.logging_level,
-            log_file=settings.log_file,
-            model_allowlist=settings.model_allowlist,
-            secure_cookies=settings.secure_cookies,
-            session_secret=settings.session_secret,
-            web_dist=settings.web_dist,
-            youtube_api=build_configured_youtube_api(settings),
-            youtube_likes_rewalk_interval_days=settings.youtube_likes_rewalk_interval_days,
-            youtube_likes_drift_alarm_margin=settings.youtube_likes_drift_alarm_margin,
-            youtube_sync_enabled=settings.youtube_sync_enabled,
-            transcript_provider=build_configured_transcript_provider(settings),
-            transcript_supadata_max_uses=settings.supadata_max_uses,
-            transcript_sync_enabled=settings.transcript_sync_enabled,
-        ),
+        config=_app_config_from_settings(settings),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
         embedder=FastEmbedder(),
