@@ -71,12 +71,18 @@ class LoggedBucketItemService:
         self,
         item_type: ItemType,
         data: Mapping[str, object],
-        intent_context: str = "saved on a whim",
+        intent_context: str | None = "saved on a whim",
     ) -> AddOutcome:
         """Add through the wrapped service with logging context."""
         return await self.service.add(
             item_type, data, intent_context, logger=self.logger
         )
+
+    async def set_intent(
+        self, item: BucketItem[Fetched], intent_context: str
+    ) -> BucketItem[Fetched]:
+        """Set intent context through the wrapped service with logging context."""
+        return await self.service.set_intent(item, intent_context, logger=self.logger)
 
     async def search(
         self,
@@ -117,7 +123,7 @@ async def add_item(
     service: LoggedBucketItemService,
     item_type: ItemType = "movie",
     data: Mapping[str, object] | None = None,
-    intent_context: str = "saved on a whim",
+    intent_context: str | None = "saved on a whim",
 ) -> BucketItem[Fetched]:
     """Add a Bucket item and return the created item (dropping the advisory)."""
     payload = data if data is not None else {"title": "Dune"}
@@ -250,11 +256,21 @@ async def add_trims_intent_context() -> None:
 
 @test()
 async def add_rejects_blank_intent_context() -> None:
-    """Intent context is required: an empty reason is no reason."""
+    """A *supplied* blank reason is rejected: an empty reason is no reason."""
     service = await load_fixture(bucket_item_service())
 
     with assert_raises(EmptyIntentContextError):
         _ = await add_item(service, intent_context="   ")
+
+
+@test()
+async def add_without_intent_context_still_adds_the_item() -> None:
+    """Intent context is optional: omitting it (`None`) never blocks the Add."""
+    service = await load_fixture(bucket_item_service())
+
+    item = await add_item(service, intent_context=None)
+
+    assert_eq(item.intent_context, "")
 
 
 @test()
@@ -286,12 +302,12 @@ async def add_starts_at_version_one() -> None:
     assert_eq(item.version, 1)
 
 
-# --- Intent context immutability ---
+# --- Intent context: preserved by terminate, editable via set_intent ---
 
 
 @test()
 async def completing_an_item_preserves_intent_context() -> None:
-    """Intent context is immutable: a terminal transition leaves it untouched."""
+    """Completing leaves intent context untouched: it's a terminal transition."""
     service = await load_fixture(bucket_item_service())
     item = await add_item(service, intent_context="a friend recommended it")
 
@@ -304,7 +320,7 @@ async def completing_an_item_preserves_intent_context() -> None:
 
 @test()
 async def deleting_an_item_preserves_intent_context() -> None:
-    """Deleting leaves the immutable intent context recorded on the row."""
+    """Deleting leaves the intent context recorded on the row untouched."""
     service = await load_fixture(bucket_item_service())
     item = await add_item(service, intent_context="relates to my interest in X")
 
@@ -313,6 +329,74 @@ async def deleting_an_item_preserves_intent_context() -> None:
     row = await fetch_item_row(service, item)
     assert row is not None, "deleted item is retained as history"
     assert_eq(row.intent_context, "relates to my interest in X")
+
+
+@test()
+async def set_intent_attaches_a_reason_added_without_one() -> None:
+    """`set_intent` is the way to record a reason supplied after the Add."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, intent_context=None)
+
+    updated = await service.set_intent(item, "turns out it's a sequel to Dune")
+
+    assert_eq(updated.intent_context, "turns out it's a sequel to Dune")
+    assert_eq(updated.version, item.version + 1)
+
+
+@test()
+async def set_intent_replaces_an_existing_reason() -> None:
+    """`set_intent` also replaces a reason the item already carried."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, intent_context="a friend recommended it")
+
+    updated = await service.set_intent(item, "actually, saw the trailer")
+
+    assert_eq(updated.intent_context, "actually, saw the trailer")
+
+
+@test()
+async def set_intent_trims_whitespace() -> None:
+    """`set_intent` stores the reason trimmed, like Add does."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, intent_context=None)
+
+    updated = await service.set_intent(item, "  saw a trailer  ")
+
+    assert_eq(updated.intent_context, "saw a trailer")
+
+
+@test()
+async def set_intent_rejects_a_blank_reason() -> None:
+    """`set_intent` still refuses to record an empty reason."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, intent_context=None)
+
+    with assert_raises(EmptyIntentContextError):
+        _ = await service.set_intent(item, "   ")
+
+
+@test()
+async def set_intent_on_a_stale_version_conflicts() -> None:
+    """`set_intent` is optimistic-concurrency checked like complete/delete."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, intent_context=None)
+    _ = await service.set_intent(item, "first reason")
+
+    with assert_raises(BucketItemConflictError):
+        _ = await service.set_intent(item, "stale reason")
+
+
+@test()
+async def set_intent_works_on_a_terminal_item() -> None:
+    """A reason can surface after an item is already completed or deleted."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, intent_context=None)
+    completed = await service.complete(item)
+
+    updated = await service.set_intent(completed, "finally remembered why")
+
+    assert_eq(updated.intent_context, "finally remembered why")
+    assert_eq(derive_state(updated), "completed")
 
 
 # --- Complete / delete: terminal states retained as history ---

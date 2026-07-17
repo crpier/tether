@@ -13,20 +13,23 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
-import type { Conversation, TetherApi } from "./api";
+import type { Conversation, Message, TetherApi } from "./api";
 import type {
   ChatBus,
   ChatFrame,
   ConnectionStatus,
   CreateChatBus,
 } from "./chat-bus";
+import { isPinned, restoredScrollTop } from "./chat-scroll";
 import {
   deriveRows,
   emptyTurn,
   isAwaitingFirstToken,
   reduceFrame,
+  stabilizeRows,
   startTurn,
 } from "./chat-timeline";
+import { willStartFreshSession } from "./session-freshness";
 import type {
   ChatRole,
   LiveTurn,
@@ -35,6 +38,7 @@ import type {
 } from "./chat-timeline";
 import { MessageContent } from "./components/message-content";
 import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
+import { formatToolResult } from "./lib/tool-result";
 import { BucketPanel } from "./panels/bucket";
 import { MemoriesPanel } from "./panels/memories";
 import { NotificationsPanel } from "./panels/notifications";
@@ -74,6 +78,10 @@ function bubbleClass(role: ChatRole): string {
 
 const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
+
+// Default transcript page size: the latest N messages load up front, older
+// ones page in on demand as the user scrolls up (see `loadOlderMessages`).
+const MESSAGES_PAGE_SIZE = 30;
 
 function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
   const queryClient = useQueryClient();
@@ -203,7 +211,11 @@ function MessageRow(props: { row: TimelineRow }) {
       <Match when={props.row.kind === "tool" && props.row}>
         {(tool) => {
           const args = () => formatToolDetail(tool().args);
-          const result = () => formatToolDetail(tool().result);
+          // Results get the deep-parse + trim treatment (see lib/tool-result):
+          // huge/nested tool payloads only need to convey shape, not
+          // completeness. Arguments stay untouched — they're small and the
+          // model needs to see them verbatim to debug a call.
+          const result = () => formatToolResult(tool().result);
           return (
             <article
               aria-label="Tool activity"
@@ -313,21 +325,45 @@ function MessageRow(props: { row: TimelineRow }) {
   );
 }
 
+// Scroll near the top by less than this many px triggers an older-page fetch.
+const NEAR_TOP_THRESHOLD_PX = 100;
+
 function MessageRows(props: {
   rows: TimelineRow[];
   working: boolean;
   startedAt: number | null;
   stopped: boolean;
+  // Triggers a fetch of the next-older page; a no-op if one is already in
+  // flight or history is exhausted. Returns whether a fetch actually started,
+  // so the caller only arms its scroll-position restore when rows are really
+  // about to prepend.
+  onNearTop: () => boolean;
 }) {
   let viewport: HTMLElement | undefined;
-  const [following, setFollowing] = createSignal(true);
+  // Pinned ⇔ the viewport is within PINNED_THRESHOLD_PX of the bottom. This
+  // is the *only* thing that decides whether content changes move the
+  // viewport, and it is only ever recomputed from a real `scroll` event —
+  // never flipped directly by our own follow-scroll. That's safe because a
+  // follow-scroll always lands exactly at the bottom, so recomputing from
+  // geometry after it fires still reports pinned.
+  const [pinned, setPinned] = createSignal(true);
+  // Set right before an older-page fetch so the next render (which prepends
+  // rows above the fold) restores the viewport to the same visual position
+  // instead of jumping. Needed because `overflow-anchor` is off below — the
+  // pinned-follow rule owns scroll position, so nothing else may adjust it.
+  let pendingRestore: { scrollHeight: number; scrollTop: number } | null = null;
 
-  const atBottom = () => {
+  const updatePinned = () => {
     if (!viewport) {
-      return true;
+      setPinned(true);
+      return;
     }
-    return (
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48
+    setPinned(
+      isPinned(
+        viewport.scrollTop,
+        viewport.scrollHeight,
+        viewport.clientHeight,
+      ),
     );
   };
   const scrollToEnd = () => {
@@ -336,12 +372,27 @@ function MessageRows(props: {
     }
   };
 
-  // Follow the stream while the user sits at the bottom; the moment they scroll
-  // up we stop yanking them back and offer an explicit jump affordance instead.
+  // The explicit pinned-follow rule: on *any* content change (new message,
+  // streamed token, tool call start/end, a row settling, history hydrating),
+  // a pinned viewport snaps to the bottom instantly (no smooth behavior); a
+  // non-pinned viewport is left completely untouched so content can append
+  // below without moving the viewport under the user. A pending scroll
+  // restore from an older-page prepend takes priority over both, since those
+  // rows changed for a reason unrelated to the live turn.
   createEffect(() => {
     void props.rows;
     void props.working;
-    if (following()) {
+    if (pendingRestore !== null && viewport !== undefined) {
+      const { scrollHeight, scrollTop } = pendingRestore;
+      viewport.scrollTop = restoredScrollTop(
+        scrollTop,
+        scrollHeight,
+        viewport.scrollHeight,
+      );
+      pendingRestore = null;
+      return;
+    }
+    if (pinned()) {
       queueMicrotask(scrollToEnd);
     }
   });
@@ -360,7 +411,19 @@ function MessageRows(props: {
         aria-label="Chat transcript"
         class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-4 shadow-sm"
         onScroll={() => {
-          setFollowing(atBottom());
+          updatePinned();
+          if (
+            viewport !== undefined &&
+            viewport.scrollTop < NEAR_TOP_THRESHOLD_PX
+          ) {
+            const snapshot = {
+              scrollHeight: viewport.scrollHeight,
+              scrollTop: viewport.scrollTop,
+            };
+            if (props.onNearTop()) {
+              pendingRestore = snapshot;
+            }
+          }
         }}
       >
         <For each={props.rows}>{(row) => <MessageRow row={row} />}</For>
@@ -386,11 +449,11 @@ function MessageRows(props: {
           </p>
         </Show>
       </section>
-      <Show when={!following()}>
+      <Show when={!pinned()}>
         <Button
           class="absolute bottom-3 left-1/2 -translate-x-1/2 shadow"
           onClick={() => {
-            setFollowing(true);
+            setPinned(true);
             scrollToEnd();
           }}
           size="sm"
@@ -429,26 +492,109 @@ export function ChatView(props: {
   }));
   const conversation = createMemo(() => conversationsQuery.data?.[0]);
   const conversationId = createMemo(() => conversation()?.id);
+
+  // Ticks the "will this land on a fresh pi session" indicator forward without
+  // a refetch — a plain `Date.now()` read at render time would never update
+  // while the user just sits looking at the composer.
+  const [nowTick, setNowTick] = createSignal(Date.now());
+  onMount(() => {
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+    }, 5000);
+    onCleanup(() => {
+      clearInterval(interval);
+    });
+  });
+  const startsFreshSession = createMemo(() => {
+    const current = conversation();
+    if (current === undefined) {
+      return false;
+    }
+    return willStartFreshSession(
+      current.latest_activity,
+      current.session_gap_seconds,
+      nowTick(),
+    );
+  });
+
+  // Settled history is paginated: `messagesQuery` only ever fetches the latest
+  // page (bounded by `MESSAGES_PAGE_SIZE`); `accumulated` is the union-by-seq
+  // of that page plus every older page fetched via `loadOlderMessages`.
+  // Messages are append-only and immutable once settled, so merging by seq is
+  // safe and stays gap-free as long as older pages are always fetched
+  // contiguously backwards from the oldest seq seen so far.
+  const [accumulated, setAccumulated] = createSignal<Map<number, Message>>(
+    new Map(),
+  );
+  const [hasMoreHistory, setHasMoreHistory] = createSignal(false);
+  const [loadingOlder, setLoadingOlder] = createSignal(false);
+
   const messagesQuery = createQuery(() => ({
     enabled: conversationId() !== undefined,
     queryFn: async () => {
       const id = conversationId();
-      return id === undefined ? [] : props.api.listMessages(id);
+      return id === undefined
+        ? []
+        : props.api.listMessages(id, { limit: MESSAGES_PAGE_SIZE });
     },
     queryKey: [
       ...queryKeys.messages(conversationId() ?? "pending"),
       messagesRefresh(),
     ] as const,
   }));
+
+  // Reset the accumulated pagination state whenever the conversation itself
+  // changes (there is no in-app conversation switcher today, but this keeps
+  // the state honest if one is ever added rather than leaking a former
+  // conversation's rows/cursor into a new one).
+  createEffect((previousId: string | undefined) => {
+    const id = conversationId();
+    if (id !== previousId) {
+      setAccumulated(new Map());
+      setHasMoreHistory(false);
+    }
+    return id;
+  }, undefined);
+
+  // Merge each latest-page fetch into the accumulated store. `hasMoreHistory`
+  // reflects whether *this* page came back full — a fresh signal from the tail
+  // end of history, distinct from whatever `loadOlderMessages` last learned
+  // about the (unrelated) older boundary.
+  createEffect(() => {
+    const page = messagesQuery.data;
+    if (page === undefined) {
+      return;
+    }
+    setAccumulated((current) => {
+      const merged = new Map(current);
+      for (const message of page) {
+        merged.set(message.seq, message);
+      }
+      return merged;
+    });
+    setHasMoreHistory(page.length === MESSAGES_PAGE_SIZE);
+  });
+
   const storedMessages = createMemo<StoredMessage[]>(() =>
-    (messagesQuery.data ?? []).map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      toolName: message.tool_name,
-    })),
+    Array.from(accumulated().values())
+      .sort((left, right) => left.seq - right.seq)
+      .map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        toolName: message.tool_name,
+        toolArgs: message.tool_args,
+        toolResult: message.tool_result,
+      })),
   );
-  const rows = createMemo(() => deriveRows(storedMessages(), turn()));
+  // Reconciled against the previous frame's output so rows whose rendered
+  // content hasn't changed keep the same object reference — see
+  // `stabilizeRows` for why that matters (it's what stops the whole
+  // transcript remounting on every streamed token).
+  const rows = createMemo<TimelineRow[]>(
+    (previous) => stabilizeRows(previous, deriveRows(storedMessages(), turn())),
+    [],
+  );
   const working = createMemo(() => isAwaitingFirstToken(turn()));
 
   // Clear the live turn once settled history catches up. Tracks only the stored
@@ -465,6 +611,41 @@ export function ChatView(props: {
       }
     });
   });
+
+  // Fetch the next-older page when the user scrolls near the top. Returns
+  // whether a fetch actually started, so the caller (the scroll handler) only
+  // arms its scroll-position restore when rows are really about to prepend.
+  const loadOlderMessages = (): boolean => {
+    const id = conversationId();
+    if (id === undefined || loadingOlder() || !hasMoreHistory()) {
+      return false;
+    }
+    const seqs = Array.from(accumulated().keys());
+    if (seqs.length === 0) {
+      return false;
+    }
+    const oldestSeq = Math.min(...seqs);
+    setLoadingOlder(true);
+    void (async () => {
+      try {
+        const page = await props.api.listMessages(id, {
+          limit: MESSAGES_PAGE_SIZE,
+          beforeSeq: oldestSeq,
+        });
+        setAccumulated((current) => {
+          const merged = new Map(current);
+          for (const message of page) {
+            merged.set(message.seq, message);
+          }
+          return merged;
+        });
+        setHasMoreHistory(page.length === MESSAGES_PAGE_SIZE);
+      } finally {
+        setLoadingOlder(false);
+      }
+    })();
+    return true;
+  };
 
   const rehydrate = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
@@ -553,6 +734,11 @@ export function ChatView(props: {
         await props.api.clearConversation(id);
         setInterrupted(false);
         setTurn(emptyTurn());
+        // The conversation id is unchanged by a clear, so the id-keyed reset
+        // effect above never fires here — drop the accumulated pagination
+        // state explicitly instead of union-merging an empty page into it.
+        setAccumulated(new Map());
+        setHasMoreHistory(false);
         rehydrate();
       } catch (caught) {
         setError(
@@ -671,11 +857,20 @@ export function ChatView(props: {
             when={!conversationsQuery.isLoading && conversation() !== undefined}
           >
             <MessageRows
+              onNearTop={loadOlderMessages}
               rows={rows()}
               startedAt={turn().startedAt}
               stopped={turn().stopped || interrupted()}
               working={working()}
             />
+            <Show when={startsFreshSession() && !generating()}>
+              <p
+                class="text-muted-foreground text-xs"
+                title="The assistant's working context resets after a few minutes idle; chat history stays."
+              >
+                Next message starts a fresh session
+              </p>
+            </Show>
             <form class="space-y-2" onSubmit={onSubmit}>
               <TextField onChange={setDraft} value={draft()}>
                 <TextFieldLabel>Message</TextFieldLabel>

@@ -61,8 +61,19 @@ async def the_conversation_prompt_allows_executing_a_human_tether_decision() -> 
 
 @test()
 async def the_conversation_prompt_covers_capture_discipline() -> None:
-    """The full prompt demands the human's own intent context for captures."""
-    assert_in("intent context", CONVERSATION_SYSTEM_PROMPT)
+    """The full prompt treats intent context as optional, never a blocker."""
+    assert_in("Intent context", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("never withhold the add", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_offers_to_note_the_reason_after_adding() -> None:
+    """After a reason-less add, the prompt asks for a light one-line offer,
+    made once per add/batch and dropped if the user doesn't respond — never
+    a repeated or interrogating follow-up."""
+    assert_in("one-line offer to note why", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`set_bucket_item_intent`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("drop it", CONVERSATION_SYSTEM_PROMPT)
 
 
 @test()

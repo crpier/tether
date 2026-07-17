@@ -50,6 +50,7 @@ from tether.youtube import (
     Clock,
     FallbackTranscriptProvider,
     FetchedTranscript,
+    SupadataUsage,
     SystemClock,
     TranscriptBlockedError,
     TranscriptProvider,
@@ -303,12 +304,21 @@ class SupadataSpendGuard(Protocol):
         """Reserve one use, or raise `SupadataBudgetExhaustedError` if the cap is hit."""
         ...
 
+    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+        """The current month's usage without charging, or None when uncapped."""
+        ...
+
 
 class UnlimitedSupadataSpend(SupadataSpendGuard):
     """The default guard: never caps (used in tests and when no cap is wired)."""
 
     async def charge(self) -> None:
         """A no-op — spending is unbounded."""
+
+    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+        """None — there is no cap to report usage against."""
+        _ = now
+        return None
 
 
 class PersistentSupadataSpendGuard(SupadataSpendGuard):
@@ -361,6 +371,21 @@ class PersistentSupadataSpendGuard(SupadataSpendGuard):
 
         await run_in_transaction(self._database, _reserve)
 
+    async def snapshot(self, *, now: datetime) -> SupadataUsage:
+        """Report the current UTC month's usage against the cap, without charging."""
+        month_key = _month_key(now)
+        async with self._database.transaction() as tx:
+            row = await tx.fetch_one_or_none(
+                select(YouTubeSyncState).where(YouTubeSyncState.key.eq(month_key))
+            )
+        used = int(row.value) if row is not None else 0
+        return SupadataUsage(
+            used=used,
+            limit=self._max_uses,
+            remaining=max(0, self._max_uses - used),
+            month=month_key.removeprefix(f"{_SPEND_KEY_PREFIX}:"),
+        )
+
 
 def _iter_supadata_providers(
     provider: TranscriptProvider,
@@ -371,6 +396,25 @@ def _iter_supadata_providers(
     elif isinstance(provider, FallbackTranscriptProvider):
         for child in provider.leaf_providers():
             yield from _iter_supadata_providers(child)
+
+
+class ProviderSupadataUsageReader:
+    """A `SupadataUsageReader` reading the first Supadata leaf's bound guard.
+
+    Built once at wire time over the resolved provider tree (mirrors
+    `bind_supadata_spend_guard`'s walk). `snapshot` returns None when the chain
+    has no Supadata leaf, or when its guard reports no cap (`UnlimitedSupadataSpend`,
+    the default before a guard is late-bound).
+    """
+
+    def __init__(self, provider: TranscriptProvider) -> None:
+        self._provider: TranscriptProvider = provider
+
+    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+        """The current month's Supadata usage, or None when unavailable."""
+        for leaf in _iter_supadata_providers(self._provider):
+            return await leaf.spend_guard.snapshot(now=now)
+        return None
 
 
 def bind_supadata_spend_guard(

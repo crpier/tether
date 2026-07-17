@@ -102,6 +102,20 @@ class TranscriptProviderPauseRead(BaseModel):
     paused_until: datetime
 
 
+class SupadataUsageRead(BaseModel):
+    """HTTP representation of Supadata's own separate monthly usage budget.
+
+    Distinct from `quota` (the YouTube Data API's per-day budget): Supadata is a
+    separate paid HTTP API with its own cap and monthly reset. `month` is the
+    UTC calendar month (`YYYY-MM`) `used`/`remaining` apply to.
+    """
+
+    used: int
+    limit: int
+    remaining: int
+    month: str
+
+
 class YouTubeSyncStatusRead(BaseModel):
     """HTTP snapshot of the background ingestion's progress and health.
 
@@ -114,6 +128,7 @@ class YouTubeSyncStatusRead(BaseModel):
     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
     ...     api_paused_until=None,
     ...     transcript_providers_paused=[],
+    ...     supadata=None,
     ... )
     >>> read.videos_total
     3
@@ -127,6 +142,7 @@ class YouTubeSyncStatusRead(BaseModel):
     quota: QuotaMeta
     api_paused_until: datetime | None
     transcript_providers_paused: list[TranscriptProviderPauseRead]
+    supadata: SupadataUsageRead | None = None
 
     @classmethod
     def from_status(cls, status: YouTubeSyncStatus) -> YouTubeSyncStatusRead:
@@ -145,6 +161,14 @@ class YouTubeSyncStatusRead(BaseModel):
                 )
                 for pause in status.transcript_providers_paused
             ],
+            supadata=SupadataUsageRead(
+                used=status.supadata.used,
+                limit=status.supadata.limit,
+                remaining=status.supadata.remaining,
+                month=status.supadata.month,
+            )
+            if status.supadata is not None
+            else None,
         )
 
 

@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ApiError } from "../api";
+import { formatDate } from "../lib/format";
 import {
   FakeApi,
   input,
@@ -40,9 +41,7 @@ describe("Memories panel", () => {
 
     const row = await screen.findByLabelText("Memory: I prefer aisle seats");
     expect(row).toHaveTextContent("I prefer aisle seats");
-    expect(row).toHaveTextContent(
-      new Date("2026-01-05T00:00:00Z").toLocaleDateString(),
-    );
+    expect(row).toHaveTextContent(formatDate(new Date("2026-01-05T00:00:00Z")));
   });
 
   test("a long memory truncates its accessible row label but renders in full", async () => {
@@ -481,9 +480,7 @@ describe("Memories panel", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Corpus" }));
 
     const row = await screen.findByLabelText("Memory: Trusted fact");
-    expect(row).toHaveTextContent(
-      new Date("2026-01-06T00:00:00Z").toLocaleDateString(),
-    );
+    expect(row).toHaveTextContent(formatDate(new Date("2026-01-06T00:00:00Z")));
     expect(
       within(row).getByRole("button", { name: "Edit" }),
     ).toBeInTheDocument();

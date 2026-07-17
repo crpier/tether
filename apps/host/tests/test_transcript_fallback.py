@@ -268,6 +268,46 @@ async def composite_goes_terminal_when_only_gated_and_unavailable_remain() -> No
     assert_eq(supadata.calls.get("v1"), None)
 
 
+@test()
+async def composite_tries_a_gated_source_as_last_resort_when_the_fallback_is_paused() -> (
+    None
+):
+    """A gated source is deprioritized, not excluded: when the only other reachable
+    fallback is paused (not cleanly unavailable), the gated source is tried as a
+    last resort instead of leaving the video deferring forever (issue #182)."""
+    primary = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Ok("library")]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
+    composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
+
+    result = await composite.fetch(
+        "v1",
+        paused_sources=frozenset({"library"}),
+        skip_sources=frozenset({"supadata"}),
+    )
+
+    assert_eq(result.text, "supadata")
+    assert_eq(result.source, "supadata")
+
+
+@test()
+async def composite_still_defers_when_the_gated_last_resort_is_also_paused() -> None:
+    """A gated source that is itself paused is not tried as a last resort — the
+    composite still defers rather than reaching a source known to be unreachable."""
+    primary = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Ok("library")]}, name="library")
+    supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
+    composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
+
+    with assert_raises(TranscriptBlockedError):
+        _ = await composite.fetch(
+            "v1",
+            paused_sources=frozenset({"library", "supadata"}),
+            skip_sources=frozenset({"supadata"}),
+        )
+    assert_eq(supadata.calls.get("v1"), None)
+
+
 # --- Worker integration over the real composite -----------------------------
 
 
@@ -700,6 +740,33 @@ async def a_supadata_rate_limit_pauses_only_supadata() -> None:
     assert_is_none(library_pause.paused_until)
     # The Supadata-blocked video stays pending for after the cooldown.
     assert_is_none(await transcript_of(env.db, "v_supa"))
+
+
+@test()
+async def a_caption_less_video_tries_supadata_as_last_resort_while_library_is_paused() -> (
+    None
+):
+    """A caption-less video whose library is paused this pass still gets Supadata as
+    a last resort, instead of staying stuck pending behind the library's cooldown
+    forever despite Supadata being healthy and under its cap (issue #182)."""
+    # v_block trips the library pause (processed first, newest-liked-first); v1 is
+    # then processed in the *same* pass with the library already paused, so it
+    # exercises the gated-last-resort path rather than needing a second pass.
+    captions = FakeSource(
+        {"v_block": [UNAVAILABLE], "v1": [UNAVAILABLE]}, name="captions"
+    )
+    library = FakeSource({"v_block": [Blocked()], "v1": [UNAVAILABLE]}, name="library")
+    supadata = FakeSource({"v1": [Ok("last resort")]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v_block", liked_at=LATER, caption_available=1)
+    await seed(env.db, "v1", liked_at=EARLIER, caption_available=0)
+
+    report = await env.worker.sync(logger=test_logger())
+
+    assert_eq(report.blocked, 1)
+    assert_eq(report.fetched, 1)
+    assert_eq(await transcript_of(env.db, "v1"), "last resort")
+    assert_eq(env.supadata.calls.get("v1"), 1)
 
 
 @test()

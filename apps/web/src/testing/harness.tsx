@@ -13,6 +13,7 @@ import type {
   DedupAdvisory,
   DuePrompt,
   EssayGradeProposal,
+  ListMessagesOptions,
   Memory,
   MemoryState,
   Message,
@@ -36,8 +37,10 @@ import type {
 export const conversation: Conversation = {
   created_at: "2026-01-01T00:00:00Z",
   id: "018f0000-0000-7000-8000-000000000001",
+  latest_activity: null,
   pi_session_id: "018f0000-0000-7000-8000-000000000002",
   selected_model: "openai:gpt-4.1",
+  session_gap_seconds: 300,
   title: null,
 };
 
@@ -227,6 +230,17 @@ export class FakeApi implements TetherApi {
   // The dedup advisory the next add returns; dedup informs, never blocks.
   nextDedup: DedupAdvisory = { duplicates: [], severity: "none" };
   triageReport: BucketTriageReport = emptyTriageReport;
+  youTubeSyncStatus: YouTubeSyncStatus = {
+    api_paused_until: null,
+    last_synced_at: null,
+    quota: { limit: 10000, remaining: 10000, used: 0 },
+    supadata: null,
+    transcript_providers_paused: [],
+    transcripts_done: 0,
+    transcripts_pending: 0,
+    transcripts_unavailable: 0,
+    videos_total: 0,
+  };
   storedMemories: Memory[];
   captureMemoryCalls: string[] = [];
   editMemoryCalls: { content: string; memoryId: string; version: number }[] =
@@ -290,9 +304,22 @@ export class FakeApi implements TetherApi {
     return Promise.resolve([this.storedConversation]);
   }
 
-  listMessages() {
+  listMessagesCalls: (ListMessagesOptions | undefined)[] = [];
+
+  listMessages(_conversationId: string, options?: ListMessagesOptions) {
     this.messageCalls += 1;
-    return Promise.resolve(this.storedMessages);
+    this.listMessagesCalls.push(options);
+    const windowed =
+      options?.beforeSeq === undefined
+        ? this.storedMessages
+        : this.storedMessages.filter(
+            (candidate) => candidate.seq < (options.beforeSeq ?? Infinity),
+          );
+    const page =
+      options?.limit === undefined
+        ? windowed
+        : windowed.slice(Math.max(0, windowed.length - options.limit));
+    return Promise.resolve(page);
   }
 
   clearConversation() {
@@ -432,16 +459,7 @@ export class FakeApi implements TetherApi {
   }
 
   getYouTubeSyncStatus(): Promise<YouTubeSyncStatus> {
-    return Promise.resolve({
-      api_paused_until: null,
-      last_synced_at: null,
-      quota: { limit: 10000, remaining: 10000, used: 0 },
-      transcript_providers_paused: [],
-      transcripts_done: 0,
-      transcripts_pending: 0,
-      transcripts_unavailable: 0,
-      videos_total: 0,
-    });
+    return Promise.resolve(this.youTubeSyncStatus);
   }
 
   listDueRecallPrompts(): Promise<DuePrompt[]> {

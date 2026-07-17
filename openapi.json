@@ -322,7 +322,7 @@
         "type": "object"
       },
       "ConversationRead": {
-        "description": "HTTP representation of a host-owned conversation.",
+        "description": "HTTP representation of a host-owned conversation.\n\n`session_gap_seconds` and `latest_activity` let the frontend compute\nwhether the *next* message will land on a fresh pi session (see\n`ConversationService.resolve_session`) without hardcoding the gap.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -333,6 +333,18 @@
             "format": "uuid7",
             "title": "Id",
             "type": "string"
+          },
+          "latest_activity": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Activity"
           },
           "pi_session_id": {
             "format": "uuid7",
@@ -350,6 +362,10 @@
             ],
             "title": "Selected Model"
           },
+          "session_gap_seconds": {
+            "title": "Session Gap Seconds",
+            "type": "integer"
+          },
           "title": {
             "anyOf": [
               {
@@ -365,8 +381,10 @@
         "required": [
           "created_at",
           "id",
+          "latest_activity",
           "pi_session_id",
           "selected_model",
+          "session_gap_seconds",
           "title"
         ],
         "title": "ConversationRead",
@@ -1172,6 +1190,35 @@
         "title": "SubscribeRequest",
         "type": "object"
       },
+      "SupadataUsageRead": {
+        "description": "HTTP representation of Supadata's own separate monthly usage budget.\n\nDistinct from `quota` (the YouTube Data API's per-day budget): Supadata is a\nseparate paid HTTP API with its own cap and monthly reset. `month` is the\nUTC calendar month (`YYYY-MM`) `used`/`remaining` apply to.",
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "limit",
+          "remaining",
+          "month"
+        ],
+        "title": "SupadataUsageRead",
+        "type": "object"
+      },
       "TetherRequest": {
         "description": "Body for tethering a Memory at an observed `version`.\n\n>>> TetherRequest(version=1).version\n1",
         "properties": {
@@ -1502,7 +1549,7 @@
         "type": "string"
       },
       "YouTubeSyncStatusRead": {
-        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n... )\n>>> read.videos_total\n3",
+        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n...     supadata=None,\n... )\n>>> read.videos_total\n3",
         "properties": {
           "api_paused_until": {
             "anyOf": [
@@ -1530,6 +1577,17 @@
           },
           "quota": {
             "$ref": "#/components/schemas/QuotaMeta"
+          },
+          "supadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SupadataUsageRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "transcript_providers_paused": {
             "items": {
@@ -2001,6 +2059,42 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Before Seq"
             }
           }
         ],

@@ -18,6 +18,7 @@ import type {
   DedupAdvisory,
   TetherApi,
 } from "../api";
+import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Badge } from "@/components/ui/badge";
@@ -77,7 +78,7 @@ const SEARCH_DEBOUNCE_MS = 150;
 
 function formatDate(value: string): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+  return Number.isNaN(parsed.getTime()) ? value : formatDateOnly(parsed);
 }
 
 // The raw timestamp of the terminal transition a history row is ordered by.
@@ -467,7 +468,7 @@ export function BucketPanel(props: { api: TetherApi }) {
                       </Button>
                     </div>
                     <p class="text-muted-foreground mt-0.5 text-xs italic">
-                      {item.intent_context}
+                      {item.intent_context || "no reason noted"}
                     </p>
                   </li>
                 )}
@@ -515,7 +516,7 @@ function HistoryRow(props: { item: BucketItem }) {
         </span>
       </div>
       <p class="text-muted-foreground mt-0.5 text-xs italic">
-        {props.item.intent_context}
+        {props.item.intent_context || "no reason noted"}
       </p>
     </li>
   );

@@ -38,6 +38,9 @@ from tether.bucket_items import (
 from tether.bucket_tools import internal_bucket_tool_routes
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
 from tether.chat_ws import websocket_routes
+from tether.conversation_history_tools import (
+    internal_conversation_history_tool_routes,
+)
 from tether.conversations import ConversationService, create_conversation_schema
 from tether.embeddings import Embedder, FastEmbedder
 from tether.events import EventHub
@@ -90,6 +93,7 @@ from tether.transcript_reconciler import TranscriptReconciler
 from tether.transcript_search import TranscriptSearchService
 from tether.transcript_supadata import (
     HttpSupadataTransport,
+    ProviderSupadataUsageReader,
     SupadataConfig,
     SupadataMode,
     SupadataTranscriptProvider,
@@ -120,6 +124,7 @@ from tether.youtube_oauth import (
     CaptionsTranscriptProvider,
     OAuthConfig,
     OAuthYouTubeApi,
+    bind_captions_daily_quota,
 )
 from tether.youtube_tools import internal_youtube_tool_routes
 
@@ -159,7 +164,7 @@ class AppConfig:
     youtube_api_gate_pause_base_seconds: float = 15 * 60
     youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
     transcript_provider: TranscriptProvider | None = None
-    transcript_supadata_max_uses: int = 100
+    transcript_supadata_max_uses: int = 3_000
     transcript_sync_enabled: bool = True
     transcript_sync_interval_seconds: float = 5 * 60
     transcript_sync_recent_window: int = 50
@@ -301,7 +306,7 @@ class HostSettings(BaseSettings):
     """Supadata transcript mode. `native` (the default) fetches an existing caption
     track only — one use per call — so a caption-less video costs one lookup and
     returns unavailable instead of the multi-use AI `generate` path."""
-    supadata_max_uses: int = 100
+    supadata_max_uses: int = 3_000
     """Hard cap on total Supadata uses, persisted across restarts. The background
     sweep stops calling Supadata once this many are spent (remaining videos stay
     pending), bounding spend to a limited plan. Raise it after topping up."""
@@ -335,16 +340,22 @@ async def _create_schemas(db: Database) -> None:
 
 
 def _resolve_transcript_provider(
-    config: AppConfig, api: YouTubeApi, database: Database
+    config: AppConfig, api: YouTubeApi, database: Database, client: YouTubeApiClient
 ) -> TranscriptProvider:
-    """Pick the transcript provider and bind its persisted Supadata use cap.
+    """Pick the transcript provider and bind its persisted budgets/caps.
 
     The on-demand fetch path always needs a provider: prefer the explicitly
     configured one (the composed captions/Supadata chain in production), else reuse
     the upstream fake when it doubles as a `TranscriptProvider` (the in-memory test
-    double), else a null provider that reports every video unavailable. The Supadata
-    cap is late-bound here — the provider tree is built from settings before the
-    database exists — and is a no-op when the chain has no Supadata.
+    double), else a null provider that reports every video unavailable. Two things
+    are late-bound here — the provider tree is built from settings before the
+    database/client exist:
+
+    * The Supadata monthly use cap (a no-op when the chain has no Supadata).
+    * The YouTube Data API daily-quota charge, onto any captions provider in the
+      chain (a no-op when the chain has no captions — the default order). Only
+      captions calls consume the Data API's daily budget; the free library and
+      Supadata never do, so they are never bound to it.
     """
     provider = config.transcript_provider or (
         api if isinstance(api, InMemoryYouTubeApi) else NullTranscriptProvider()
@@ -352,6 +363,7 @@ def _resolve_transcript_provider(
     bind_supadata_spend_guard(
         provider, database, max_uses=config.transcript_supadata_max_uses
     )
+    bind_captions_daily_quota(provider, client.charge_transcript)
     return provider
 
 
@@ -408,7 +420,7 @@ async def _wire_youtube(
     tracer = cast("Telemetry", app.state.telemetry).tracer
     api = config.youtube_api or InMemoryYouTubeApi()
     client = _build_youtube_client(api, config, database)
-    provider = _resolve_transcript_provider(config, api, database)
+    provider = _resolve_transcript_provider(config, api, database, client)
     transcript_config = _build_transcript_sync_config(config)
     youtube_service = YouTubeService(
         database=database,
@@ -417,11 +429,14 @@ async def _wire_youtube(
         event_publisher=event_publisher,
         tracer=tracer,
     )
-    # Late-bind the on-demand retry config to the same one the worker uses, and the
+    # Late-bind the on-demand retry config to the same one the worker uses, the
     # optional semantic-search collaborator (None when search is disabled, leaving
-    # the lexical LIKE fallback in place).
+    # the lexical LIKE fallback in place), and the Supadata monthly-usage reader
+    # (a no-op when the chain has no Supadata) so the status surface can report
+    # its spend separately from the YouTube daily quota.
     youtube_service.config = transcript_config
     youtube_service.transcript_search = transcript_search
+    youtube_service.supadata_usage = ProviderSupadataUsageReader(provider)
     app.state.youtube_service = youtube_service
     sync = YouTubeSyncService(
         database=database,
@@ -718,6 +733,52 @@ def _reconcile_loop_tasks(
     return tasks
 
 
+_BACKGROUND_TASK_SHUTDOWN_GRACE_SECONDS = 5.0
+"""Bound on how long lifespan shutdown waits for background tasks to unwind.
+
+Previously the finally block awaited every background task with no bound. A
+task that doesn't propagate `CancelledError` back out promptly — including,
+in practice, the YouTube/transcript sync loops while inside a synchronous
+`asyncio.to_thread` upstream call, which the cancelling task can't interrupt
+mid-call — could hold shutdown open for however long that happened to take
+(observed: up to ~2 minutes under `just dev`, which the reload supervisor's
+`process.join()` then waits on in turn, leaving the whole process tree
+running well after ctrl-c). Past this grace period we log and abandon
+whatever hasn't finished instead of blocking on it further. Note this bounds
+our own `await`, not the underlying OS thread a `to_thread` call may still be
+running in the background — `just dev`'s cleanup trap force-kills the
+process group as the outer backstop for that.
+"""
+
+
+async def _shutdown_background_tasks(
+    tasks: Sequence[asyncio.Task[None]],
+    *,
+    logger: Logger,
+    grace_seconds: float = _BACKGROUND_TASK_SHUTDOWN_GRACE_SECONDS,
+) -> None:
+    """Cancel `tasks` and await them without blocking shutdown indefinitely.
+
+    Tasks that finish (by honoring cancellation) within `grace_seconds` are
+    awaited normally. Anything still outstanding past the grace period is
+    logged and left to run to completion in the background — the process is
+    exiting either way, so nothing further awaits it.
+    """
+    for task in tasks:
+        _ = task.cancel()
+    if not tasks:
+        return
+    done, pending = await asyncio.wait(tasks, timeout=grace_seconds)
+    for task in pending:
+        logger.warning(
+            "Background task did not stop within the shutdown grace period; abandoning it",
+            task=task.get_name(),
+        )
+    for task in done:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 def _lifespan(
     *,
     config: AppConfig,
@@ -875,11 +936,7 @@ def _lifespan(
             try:
                 yield
             finally:
-                for task in background_tasks:
-                    _ = task.cancel()
-                for task in background_tasks:
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
+                await _shutdown_background_tasks(background_tasks, logger=app_logger)
                 await scheduler.shutdown()
                 await runtime_registry.shutdown_all()
                 telemetry.shutdown()
@@ -956,6 +1013,7 @@ def create_app(
             *internal_youtube_tool_routes(),
             *internal_trigger_tool_routes(),
             *internal_recall_tool_routes(),
+            *internal_conversation_history_tool_routes(),
             *websocket_routes,
             *docs,
             # The SPA catch-all mounts at "/", so it must come last — every API,

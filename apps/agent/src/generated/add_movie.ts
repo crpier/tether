@@ -10,7 +10,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const add_movieParameters = Type.Object({
   title: Type.String(),
-  intent_context: Type.String(),
+  intent_context: Type.Optional(Type.String()),
   year: Type.Optional(Type.Integer()),
 });
 
@@ -22,8 +22,10 @@ export const add_movieTool: ToolDefinition<
 > = {
   name: "add_movie",
   label: "AddMovie",
-  description: "Params for Adding a `movie` Bucket item.",
-  promptSnippet: "Params for Adding a `movie` Bucket item.",
+  description:
+    "Params for Adding a `movie` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
+  promptSnippet:
+    "Params for Adding a `movie` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
   parameters: add_movieParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

@@ -6,8 +6,10 @@ import {
   emptyTurn,
   isAwaitingFirstToken,
   reduceFrame,
+  stabilizeRows,
   startTurn,
   type LiveTurn,
+  type TimelineRow,
 } from "./chat-timeline";
 
 function chat(
@@ -93,6 +95,49 @@ describe("chat-timeline seam", () => {
         text: "earlier thought",
         streaming: false,
         done: true,
+      },
+    ]);
+  });
+
+  test("stored tool history renders as an expandable, done tool row with args/result", () => {
+    const rows = deriveRows(
+      [
+        {
+          id: "t1",
+          role: "tool",
+          content: "search",
+          toolName: "search",
+          toolArgs: { q: "needle" },
+          toolResult: { hits: 3 },
+        },
+      ],
+      emptyTurn(),
+    );
+    expect(rows).toEqual([
+      {
+        kind: "tool",
+        id: "t1",
+        toolName: "search",
+        status: "done",
+        args: { q: "needle" },
+        result: { hits: 3 },
+      },
+    ]);
+  });
+
+  test("stored tool history without persisted args/result still renders an expandable tool row", () => {
+    const rows = deriveRows(
+      [{ id: "t2", role: "tool", content: "capture", toolName: "capture" }],
+      emptyTurn(),
+    );
+    expect(rows).toEqual([
+      {
+        kind: "tool",
+        id: "t2",
+        toolName: "capture",
+        status: "done",
+        args: null,
+        result: null,
       },
     ]);
   });
@@ -204,5 +249,69 @@ describe("chat-timeline seam", () => {
 
   test("empty turn renders nothing", () => {
     expect(deriveRows([], emptyTurn())).toEqual([]);
+  });
+});
+
+describe("stabilizeRows", () => {
+  const settled: TimelineRow = {
+    kind: "message",
+    id: "m1",
+    role: "user",
+    text: "hi",
+    toolName: null,
+    streaming: false,
+  };
+
+  test("reuses the prior object reference when a row's content is unchanged", () => {
+    const first = stabilizeRows([], [settled]);
+    // A fresh object with identical fields, as `deriveRows` would produce on
+    // the next unrelated frame.
+    const rederived: TimelineRow = { ...settled };
+    const second = stabilizeRows(first, [rederived]);
+    expect(second[0]).toBe(first[0]);
+    expect(second[0]).not.toBe(rederived);
+  });
+
+  test("uses the new object when a row's content actually changed", () => {
+    const running: TimelineRow = {
+      kind: "tool",
+      id: "t1",
+      toolName: "search",
+      status: "running",
+      args: null,
+      result: null,
+    };
+    const first = stabilizeRows([], [running]);
+    const done: TimelineRow = { ...running, status: "done", result: "hit" };
+    const second = stabilizeRows(first, [done]);
+    expect(second[0]).toBe(done);
+    expect(second[0]).not.toBe(first[0]);
+  });
+
+  test("does not confuse rows with the same id but a different kind", () => {
+    const asMessage: TimelineRow = {
+      kind: "message",
+      id: "x",
+      role: "assistant",
+      text: "hi",
+      toolName: null,
+      streaming: false,
+    };
+    const asTool: TimelineRow = {
+      kind: "tool",
+      id: "x",
+      toolName: "search",
+      status: "done",
+      args: null,
+      result: null,
+    };
+    const first = stabilizeRows([], [asMessage]);
+    const second = stabilizeRows(first, [asTool]);
+    expect(second[0]).toBe(asTool);
+  });
+
+  test("leaves brand-new rows (no prior id match) untouched", () => {
+    const result = stabilizeRows([], [settled]);
+    expect(result[0]).toBe(settled);
   });
 });

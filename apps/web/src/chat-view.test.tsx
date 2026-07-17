@@ -27,7 +27,9 @@ describe("Chat view", () => {
           content: "capture",
           role: "tool",
           seq: 2,
+          tool_args: { content: "aisle seats" },
           tool_name: "capture",
+          tool_result: { ok: true },
         }),
         message({
           content: "Captured that preference.",
@@ -41,6 +43,15 @@ describe("Chat view", () => {
     expect(await screen.findByText("remember aisle seats")).toBeInTheDocument();
     expect(screen.getByText("used capture")).toBeInTheDocument();
     expect(screen.getByText("Captured that preference.")).toBeInTheDocument();
+
+    // Settled tool rows must stay expandable (same disclosure as a live tool
+    // call), with the persisted arguments/result available behind it — this
+    // is the regression this test guards against: history used to collapse
+    // to a bare "used capture" line with no way to inspect the call.
+    fireEvent.click(screen.getByText("arguments"));
+    expect(screen.getByText(/"content": "aisle seats"/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("result"));
+    expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
   });
 
   test("sends prompts and renders streamed assistant deltas", async () => {
@@ -381,5 +392,167 @@ describe("Chat view", () => {
     await waitFor(() => {
       expect(api.selectedModel).toBe("anthropic:claude-sonnet-4");
     });
+  });
+
+  test("only fetches the latest page of history by default", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      messages: [message({ content: "hi", role: "user", seq: 1 })],
+    });
+    renderApp(api);
+
+    await waitFor(() => {
+      expect(api.listMessagesCalls.length).toBeGreaterThan(0);
+    });
+    expect(api.listMessagesCalls[0]).toEqual({
+      limit: 30,
+      beforeSeq: undefined,
+    });
+  });
+
+  test("scrolling near the top loads and prepends the older page", async () => {
+    const messages = Array.from({ length: 32 }, (_, index) =>
+      message({
+        content: `msg-${(index + 1).toString()}`,
+        role: "user",
+        seq: index + 1,
+      }),
+    );
+    const api = new FakeApi({ authenticated: true, messages });
+    renderApp(api);
+
+    // The default page is the newest 30 rows (seq 3..32); the oldest two are
+    // not yet loaded.
+    expect(await screen.findByText("msg-32")).toBeInTheDocument();
+    expect(screen.queryByText("msg-1")).not.toBeInTheDocument();
+
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+
+    expect(await screen.findByText("msg-1")).toBeInTheDocument();
+    expect(screen.getByText("msg-2")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.listMessagesCalls).toEqual([
+        { limit: 30, beforeSeq: undefined },
+        { limit: 30, beforeSeq: 3 },
+      ]);
+    });
+  });
+
+  test("stops fetching once the oldest page is smaller than the limit", async () => {
+    const messages = [message({ content: "only one", role: "user", seq: 1 })];
+    const api = new FakeApi({ authenticated: true, messages });
+    renderApp(api);
+
+    expect(await screen.findByText("only one")).toBeInTheDocument();
+    const callsAfterInitialLoad = api.listMessagesCalls.length;
+
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+
+    // hasMore is false (the first page came back under the limit), so the
+    // near-top scroll must not trigger another fetch.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(api.listMessagesCalls.length).toBe(callsAfterInitialLoad);
+  });
+
+  test("shows a fresh-session hint when there is no prior activity", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+  });
+
+  test("hides the fresh-session hint once activity is inside the gap", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedConversation = {
+      ...conversation,
+      latest_activity: new Date().toISOString(),
+      session_gap_seconds: 300,
+    };
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    expect(
+      screen.queryByText("Next message starts a fresh session"),
+    ).not.toBeInTheDocument();
+  });
+
+  test("shows the fresh-session hint once activity is past the gap", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedConversation = {
+      ...conversation,
+      latest_activity: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      session_gap_seconds: 300,
+    };
+    renderApp(api);
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+  });
+
+  test("hides the fresh-session hint while a turn is generating", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "Hello" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      screen.queryByText("Next message starts a fresh session"),
+    ).not.toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "agent_end",
+      type: "chat",
+    });
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+  });
+
+  test("New chat resets accumulated pagination state", async () => {
+    const messages = Array.from({ length: 32 }, (_, index) =>
+      message({
+        content: `msg-${(index + 1).toString()}`,
+        role: "user",
+        seq: index + 1,
+      }),
+    );
+    const api = new FakeApi({ authenticated: true, messages });
+    renderApp(api);
+
+    expect(await screen.findByText("msg-32")).toBeInTheDocument();
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+    expect(await screen.findByText("msg-1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await waitFor(() => {
+      expect(api.clearConversationCalls).toBe(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("msg-1")).not.toBeInTheDocument();
+    });
+
+    // Scrolling after the reset must not reissue a fetch for the now-stale
+    // pre-clear cursor (seq 3): the accumulated map and hasMore were reset.
+    const callsAfterClear = api.listMessagesCalls.length;
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      api.listMessagesCalls
+        .slice(callsAfterClear)
+        .every((call) => call?.beforeSeq === undefined),
+    ).toBe(true);
   });
 });

@@ -2,7 +2,7 @@ import { createQuery } from "@tanstack/solid-query";
 import { For, Match, Show, Switch } from "solid-js";
 
 import type { TetherApi } from "../api";
-import { formatSyncTimestamp } from "../lib/format";
+import { formatDateTime, formatSyncTimestamp } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ function formatUntil(iso: string): string {
   if (Number.isNaN(when.getTime())) {
     return iso;
   }
-  return when.toLocaleString();
+  return formatDateTime(when);
 }
 
 export function YouTubeSyncPanel(props: { api: TetherApi }) {
@@ -71,6 +71,16 @@ export function YouTubeSyncPanel(props: { api: TetherApi }) {
                 <span class="text-muted-foreground text-xs">Daily quota</span>
                 <span>{`${String(status().quota.used)} / ${String(status().quota.limit)}`}</span>
               </div>
+              <Show when={status().supadata}>
+                {(supadata) => (
+                  <div class="flex items-baseline justify-between">
+                    <span class="text-muted-foreground text-xs">
+                      Supadata (monthly)
+                    </span>
+                    <span>{`${String(supadata().used)} / ${String(supadata().limit)}`}</span>
+                  </div>
+                )}
+              </Show>
               <Show when={status().api_paused_until}>
                 {(until) => (
                   <p class="text-destructive text-xs" role="status">

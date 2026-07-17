@@ -481,6 +481,16 @@ class FallbackTranscriptProvider(TranscriptProvider):
     with `source=None` (a deferral) rather than *unavailable*, so the worker keeps
     the video pending for after the cooldown instead of marking it terminal on a
     source it never tried.
+
+    `skip_sources` (e.g. Supadata gated off a caption-less video) deprioritizes
+    rather than excludes: a gated source is dropped from the normal pass so a
+    clean *unavailable* from the rest of the chain still goes terminal without
+    spending it (the cost-avoidance intent). But when the *only* reason nothing
+    else succeeded is that a real fallback was paused (not cleanly unavailable),
+    a gated source that is itself reachable (not also paused) is tried as a
+    genuine last resort instead of leaving the video deferring forever — it
+    should never be true that every configured, reachable source is excluded
+    at once (issue #182).
     """
 
     def __init__(
@@ -501,6 +511,31 @@ class FallbackTranscriptProvider(TranscriptProvider):
         """The composed providers (primary first) for wiring to walk and late-bind."""
         return (self._primary, *self._fallbacks)
 
+    async def _attempt(
+        self,
+        provider: TranscriptProvider,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str],
+        skip_sources: frozenset[str],
+    ) -> FetchedTranscript | TranscriptUnavailableError:
+        """Fetch from one provider: the transcript, or its *unavailable* to fold in.
+
+        Any other outcome (*excluded*, *transient*, *blocked*) surfaces immediately;
+        a source-less block is stamped with this provider's source so the worker
+        pauses the right one.
+        """
+        try:
+            return await provider.fetch(
+                video_id, paused_sources=paused_sources, skip_sources=skip_sources
+            )
+        except TranscriptUnavailableError as error:
+            return error
+        except TranscriptBlockedError as error:
+            if error.source is None:
+                error.source = provider.source
+            raise
+
     async def fetch(
         self,
         video_id: str,
@@ -510,47 +545,52 @@ class FallbackTranscriptProvider(TranscriptProvider):
     ) -> FetchedTranscript:
         """Try the primary, then each reachable fallback, surfacing the best outcome.
 
-        A source in `skip_sources` is dropped from this fetch as if unconfigured —
-        the primary included — and never defers; a source in `paused_sources` is
-        skipped but defers (keeps the video pending) rather than going terminal.
+        A source in `skip_sources` is dropped from the normal pass — the primary
+        included — deprioritizing it rather than excluding it outright: it is
+        retried as a last resort (see below) before this ever defers or goes
+        terminal. A source in `paused_sources` is skipped and defers (keeps the
+        video pending) rather than going terminal.
         """
         last_unavailable: TranscriptUnavailableError | None = None
         skipped_paused = False
+        # Gated (skip_sources) providers that are still reachable (not also
+        # paused) — tried only as a last resort, after the normal chain below.
+        gated_last_resort: list[TranscriptProvider] = []
         # The primary and fallbacks are one ordered chain for skip/pause handling;
         # only the primary is exempt from the pause skip (it is never blockable).
-        if self._primary.source in skip_sources:
-            pass
-        else:
-            try:
-                return await self._primary.fetch(
-                    video_id, paused_sources=paused_sources, skip_sources=skip_sources
-                )
-            except TranscriptUnavailableError as error:
-                last_unavailable = error
-        # The primary had nothing (or was skipped). Try each fallback in order,
-        # dropping skipped sources entirely and deferring paused ones. A real block
-        # propagates, stamped with the source that raised it so the worker pauses
-        # that provider specifically.
-        for fallback in self._fallbacks:
-            if fallback.source in skip_sources:
+        for provider in (self._primary, *self._fallbacks):
+            if provider.source in skip_sources:
+                if provider.source not in paused_sources:
+                    gated_last_resort.append(provider)
                 continue
-            if fallback.source in paused_sources:
+            if provider is not self._primary and provider.source in paused_sources:
                 skipped_paused = True
                 continue
-            try:
-                return await fallback.fetch(
-                    video_id, paused_sources=paused_sources, skip_sources=skip_sources
-                )
-            except TranscriptUnavailableError as error:
-                last_unavailable = error
-            except TranscriptBlockedError as error:
-                if error.source is None:
-                    error.source = fallback.source
-                raise
-        # Every reachable source was unavailable. If a paused fallback was skipped,
-        # defer (a source-less *blocked*) so the video stays pending for the
-        # cooldown rather than going terminal on a source we never tried.
+            outcome = await self._attempt(
+                provider,
+                video_id,
+                paused_sources=paused_sources,
+                skip_sources=skip_sources,
+            )
+            if not isinstance(outcome, TranscriptUnavailableError):
+                return outcome
+            last_unavailable = outcome
+        # Every non-gated reachable source was unavailable. If a paused fallback
+        # was skipped, a gated-but-reachable source (e.g. Supadata, normally
+        # deprioritized to save its paid use) is the only way left to make
+        # progress, so try it now as a genuine last resort rather than leaving
+        # the video deferring indefinitely behind the paused fallback's cooldown.
         if skipped_paused:
+            for provider in gated_last_resort:
+                outcome = await self._attempt(
+                    provider,
+                    video_id,
+                    paused_sources=paused_sources,
+                    skip_sources=skip_sources,
+                )
+                if not isinstance(outcome, TranscriptUnavailableError):
+                    return outcome
+                last_unavailable = outcome
             message = f"provider paused; skipped blockable fallbacks for {video_id}"
             raise TranscriptBlockedError(message)
         raise last_unavailable or TranscriptUnavailableError(video_id)
@@ -789,6 +829,31 @@ class TranscriptProviderPause:
 
 
 @dataclass(frozen=True, slots=True)
+class SupadataUsage:
+    """A snapshot of Supadata's own *monthly* billed-use budget.
+
+    Distinct from `QuotaMeta` (the YouTube Data API's per-*day* budget): Supadata
+    is a separate paid HTTP API with its own cap, reset cadence, and spend, so
+    mixing the two into one number would be meaningless. `month` is the UTC
+    calendar month (`YYYY-MM`) the count applies to; a new month starts fresh.
+    """
+
+    used: int
+    limit: int
+    remaining: int
+    month: str
+
+
+@runtime_checkable
+class SupadataUsageReader(Protocol):
+    """Reads Supadata's monthly usage without charging it."""
+
+    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+        """The current month's Supadata usage, or None when Supadata isn't wired."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
 class YouTubeSyncStatus:
     """A snapshot of the background ingestion's progress and health.
 
@@ -796,7 +861,10 @@ class YouTubeSyncStatus:
     already transcribed (``transcripts_done``), still owed one
     (``transcripts_pending``), or permanently without one
     (``transcripts_unavailable``); their sum is ``videos_total``. `last_synced_at`
-    is when the likes sync last ran, `quota` the day's budget, and the two pause
+    is when the likes sync last ran, `quota` the day's YouTube Data API budget
+    (only actual Data API usage — captions.list/download and the liked-list/
+    metadata calls — counts against it), `supadata` Supadata's own separate
+    monthly budget (`None` when Supadata isn't configured), and the two pause
     fields explain a stall (a live Data API block, or a per-source transcript
     provider block).
     """
@@ -809,6 +877,7 @@ class YouTubeSyncStatus:
     quota: QuotaMeta
     api_paused_until: datetime | None
     transcript_providers_paused: list[TranscriptProviderPause]
+    supadata: SupadataUsage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2023,6 +2092,11 @@ class YouTubeService:
         # lexical fallback; left None (search disabled), `search` keeps the SQLite
         # LIKE behaviour.
         self.transcript_search: TranscriptSearchService | None = None
+        # Optional, late-bound reader for Supadata's separate monthly usage
+        # (wired by the composition root after construction, once the provider
+        # tree's Supadata leaf — if any — has its persisted guard bound). None
+        # (the default) reports no Supadata usage on the status surface.
+        self.supadata_usage: SupadataUsageReader | None = None
 
     async def browse(
         self,
@@ -2102,6 +2176,11 @@ class YouTubeService:
             for source, pause in sorted(pauses.items())
             if pause.is_paused(now) and pause.paused_until is not None
         ]
+        supadata = (
+            await self.supadata_usage.snapshot(now=now)
+            if self.supadata_usage is not None
+            else None
+        )
         status = YouTubeSyncStatus(
             videos_total=total,
             transcripts_done=total - owed,
@@ -2113,6 +2192,7 @@ class YouTubeService:
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
             transcript_providers_paused=providers_paused,
+            supadata=supadata,
         )
         _debug(
             logger,
@@ -2220,10 +2300,15 @@ class YouTubeService:
         """Fetch and persist a transcript for an ingested video.
 
         The video must already be ingested (sync runs first). A stored transcript
-        short-circuits with no provider call; otherwise the budget is charged and
-        the fetch runs through the same `TranscriptProvider` port and persistence
-        the background worker uses, so manual and background fetches share one
-        code path. The three failure outcomes surface as typed errors:
+        short-circuits with no provider call; otherwise the fetch runs through the
+        same `TranscriptProvider` port and persistence the background worker uses,
+        so manual and background fetches share one code path. Only the captions
+        provider spends the YouTube Data API daily budget (it charges itself,
+        right before its own live call — see `CaptionsTranscriptProvider`); a
+        depleted day surfaces as `YouTubeQuotaExceededError` from the provider
+        call below (translated to 429 at the boundary) rather than a pre-check
+        here, so a chain without captions (the default) never spends or blocks on
+        it. The three failure outcomes surface as typed errors:
         unavailable/excluded -> `TranscriptUnavailableError`, transient ->
         `TranscriptTransientError`.
         """
@@ -2236,9 +2321,6 @@ class YouTubeService:
                 cache=CacheMeta(hit=True, source="cache"),
                 quota=await self.client.snapshot(),
             )
-        # Spend before calling the provider: a depleted budget raises here
-        # (translated to 429 at the boundary) and never reaches the provider.
-        await self.client.charge_transcript()
         context = TranscriptFetchContext(
             database=self.database,
             provider=self.provider,

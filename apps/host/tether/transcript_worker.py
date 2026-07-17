@@ -155,20 +155,24 @@ class TranscriptSyncService:
             )
         candidates = await self._eligible(self.client.now())
         for video in candidates:
+            now = self.client.now()
+            # Only the captions provider spends the YouTube Data API daily budget
+            # (it charges itself before its own live call); a depleted day
+            # surfaces here as `YouTubeQuotaExceededError` from that provider
+            # rather than a pre-check, so a chain without captions (the default)
+            # never stops on it.
             try:
-                await self.client.charge_transcript()
+                attempt = await fetch_and_store_transcript(
+                    context,
+                    video_id=video.video_id,
+                    now=now,
+                    paused_sources=state.paused_sources,
+                    skip_sources=self._skip_sources_for(video),
+                )
             except YouTubeQuotaExceededError as error:
                 quota_exhausted = True
                 _debug(logger, "Transcript sync stopped on quota", error=str(error))
                 break
-            now = self.client.now()
-            attempt = await fetch_and_store_transcript(
-                context,
-                video_id=video.video_id,
-                now=now,
-                paused_sources=state.paused_sources,
-                skip_sources=self._skip_sources_for(video),
-            )
             await self._apply_attempt(
                 state, video=video, attempt=attempt, now=now, logger=logger
             )

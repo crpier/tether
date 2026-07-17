@@ -5,6 +5,9 @@ from typing import Any, cast
 from snektest import assert_eq, assert_in, test
 
 from tether.bucket_tools import internal_bucket_tool_routes
+from tether.conversation_history_tools import (
+    internal_conversation_history_tool_routes,
+)
 from tether.recall_tools import internal_recall_tool_routes
 from tether.tool_schemas import build_tool_schema_document
 from tether.tools import internal_tool_routes
@@ -37,6 +40,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "complete_bucket_item",
             "delete_bucket_item",
             "search_bucket_items",
+            "set_bucket_item_intent",
             "triage_report",
             "browse_youtube",
             "search_youtube",
@@ -50,6 +54,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "list_due_recall_prompts",
             "answer_recall_prompt",
             "propose_essay_grade",
+            "read_conversation_history",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
@@ -87,6 +92,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_youtube_tool_routes(),
             internal_trigger_tool_routes(),
             internal_recall_tool_routes(),
+            internal_conversation_history_tool_routes(),
         )
         for route in routes
     }
@@ -107,8 +113,10 @@ def add_movie_tool_carries_its_typed_optional_field() -> None:
 
     assert_eq(tools["add_movie"]["endpoint"], "/internal/tools/add_movie")
     assert_in("title", add_movie_schema["required"])
-    assert_in("intent_context", add_movie_schema["required"])
-    # `year` is optional: present as a property, absent from `required`.
+    # `intent_context` and `year` are optional: present as properties, absent
+    # from `required` — a Bucket item can be Added without a reason.
+    assert_in("intent_context", add_movie_schema["properties"])
+    assert_eq("intent_context" in add_movie_schema["required"], False)
     assert_in("year", add_movie_schema["properties"])
     assert_eq("year" in add_movie_schema["required"], False)
 
@@ -123,8 +131,10 @@ def add_book_tool_carries_its_typed_optional_field() -> None:
 
     assert_eq(tools["add_book"]["endpoint"], "/internal/tools/add_book")
     assert_in("title", add_book_schema["required"])
-    assert_in("intent_context", add_book_schema["required"])
-    # `author` is optional: present as a property, absent from `required`.
+    # `intent_context` and `author` are optional: present as properties,
+    # absent from `required` — a Bucket item can be Added without a reason.
+    assert_in("intent_context", add_book_schema["properties"])
+    assert_eq("intent_context" in add_book_schema["required"], False)
     assert_in("author", add_book_schema["properties"])
     assert_eq("author" in add_book_schema["required"], False)
 
@@ -139,7 +149,9 @@ def add_travel_tool_carries_its_typed_optional_field() -> None:
 
     assert_eq(tools["add_travel"]["endpoint"], "/internal/tools/add_travel")
     assert_in("destination", add_travel_schema["required"])
-    assert_in("intent_context", add_travel_schema["required"])
-    # `season` is optional: present as a property, absent from `required`.
+    # `intent_context` and `season` are optional: present as properties,
+    # absent from `required` — a Bucket item can be Added without a reason.
+    assert_in("intent_context", add_travel_schema["properties"])
+    assert_eq("intent_context" in add_travel_schema["required"], False)
     assert_in("season", add_travel_schema["properties"])
     assert_eq("season" in add_travel_schema["required"], False)

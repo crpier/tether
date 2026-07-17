@@ -16,6 +16,8 @@ export interface StoredMessage {
   role: StoredRole;
   content: string;
   toolName?: string | null;
+  toolArgs?: unknown;
+  toolResult?: unknown;
 }
 
 export type TimelineRow =
@@ -266,25 +268,40 @@ export function deriveRows(
   stored: readonly StoredMessage[],
   turn: LiveTurn,
 ): TimelineRow[] {
-  const rows: TimelineRow[] = stored.map((message) =>
-    message.role === "reasoning"
-      ? {
-          kind: "reasoning",
-          id: message.id,
-          text: message.content,
-          streaming: false,
-          // Settled history is always a finished turn, so it renders compact.
-          done: true,
-        }
-      : {
-          kind: "message",
-          id: message.id,
-          role: message.role,
-          text: message.content,
-          toolName: message.toolName ?? null,
-          streaming: false,
-        },
-  );
+  const rows: TimelineRow[] = stored.map((message) => {
+    if (message.role === "reasoning") {
+      return {
+        kind: "reasoning",
+        id: message.id,
+        text: message.content,
+        streaming: false,
+        // Settled history is always a finished turn, so it renders compact.
+        done: true,
+      };
+    }
+    if (message.role === "tool") {
+      // Route settled tool rows through the same "tool" kind a live turn uses,
+      // so history keeps the expandable arguments/result disclosure instead
+      // of collapsing to a bare "used X" line once persisted (see
+      // `MessageRow`'s "tool" branch in chat-view.tsx).
+      return {
+        kind: "tool",
+        id: message.id,
+        toolName: message.toolName ?? message.content,
+        status: "done",
+        args: message.toolArgs ?? null,
+        result: message.toolResult ?? null,
+      };
+    }
+    return {
+      kind: "message",
+      id: message.id,
+      role: message.role,
+      text: message.content,
+      toolName: message.toolName ?? null,
+      streaming: false,
+    };
+  });
   if (turn.userText !== null) {
     rows.push({
       kind: "message",
@@ -331,6 +348,64 @@ export function deriveRows(
     });
   }
   return rows;
+}
+
+function rowContentEqual(a: TimelineRow, b: TimelineRow): boolean {
+  if (a.kind !== b.kind) {
+    return false;
+  }
+  switch (a.kind) {
+    case "message": {
+      const other = b as Extract<TimelineRow, { kind: "message" }>;
+      return (
+        a.role === other.role &&
+        a.text === other.text &&
+        a.toolName === other.toolName &&
+        a.streaming === other.streaming
+      );
+    }
+    case "reasoning": {
+      const other = b as Extract<TimelineRow, { kind: "reasoning" }>;
+      return (
+        a.text === other.text &&
+        a.streaming === other.streaming &&
+        a.done === other.done
+      );
+    }
+    case "tool": {
+      const other = b as Extract<TimelineRow, { kind: "tool" }>;
+      return (
+        a.toolName === other.toolName &&
+        a.status === other.status &&
+        a.args === other.args &&
+        a.result === other.result
+      );
+    }
+  }
+}
+
+// `deriveRows` rebuilds the *entire* row list — settled history and all —
+// every time it runs, which is every single streamed token or tool event.
+// Rendered as-is, that hands `<For>` a brand-new object for every row on
+// every frame, so it tears down and remounts the whole transcript (hundreds
+// of settled messages included) each time a delta arrives: visible
+// flicker/scroll-jitter, and any DOM-local state — like an expanded tool-call
+// `<details>` — gets wiped the instant something unrelated streams in.
+//
+// This reconciles a freshly derived row list against the previously rendered
+// one by id, keeping the *same object reference* for any row whose rendered
+// content hasn't actually changed. `<For>` diffs by reference, so untouched
+// rows (which is almost all of them, most of the time) keep their DOM node —
+// and whatever local state it holds — completely undisturbed.
+export function stabilizeRows(
+  previous: readonly TimelineRow[],
+  next: readonly TimelineRow[],
+): TimelineRow[] {
+  const priorById = new Map(previous.map((row) => [row.id, row]));
+  return next.map((row) => {
+    const prior = priorById.get(row.id);
+    return prior !== undefined && rowContentEqual(prior, row) ? prior : row;
+  });
 }
 
 // True once a turn is running but has produced no visible assistant text yet —

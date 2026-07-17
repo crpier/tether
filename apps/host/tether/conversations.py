@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from typing import Literal, cast
 from uuid import UUID, uuid7
 
@@ -45,6 +46,17 @@ type JsonValue = (
 
 class ConversationNotFoundError(Exception):
     """Raised when transcript history is requested for an absent conversation."""
+
+
+SESSION_GAP = timedelta(minutes=5)
+"""Idle window after which a new turn rotates onto a fresh pi session.
+
+Roughly the provider's automatic prompt-cache warmth window: inside it we reuse
+the live session (cache hit); past it we start clean rather than resend a stale,
+uncached history — which also matches the usual "after a few minutes it's a new
+topic" shape of these conversations. Shared with the frontend via
+`ConversationRead.session_gap_seconds` so it does not hardcode the value.
+"""
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -91,22 +103,37 @@ class Message[S = Pending](Model[S, "Message[Fetched]"]):
 
 
 class ConversationRead(BaseModel):
-    """HTTP representation of a host-owned conversation."""
+    """HTTP representation of a host-owned conversation.
+
+    `session_gap_seconds` and `latest_activity` let the frontend compute
+    whether the *next* message will land on a fresh pi session (see
+    `ConversationService.resolve_session`) without hardcoding the gap.
+    """
 
     created_at: datetime
     id: UUID7
+    latest_activity: datetime | None
     pi_session_id: UUID7
     selected_model: str | None
+    session_gap_seconds: int
     title: str | None
 
     @classmethod
-    def from_conversation(cls, conversation: Conversation[Fetched]) -> ConversationRead:
+    def from_conversation(
+        cls,
+        conversation: Conversation[Fetched],
+        *,
+        latest_activity: datetime | None,
+        session_gap: timedelta = SESSION_GAP,
+    ) -> ConversationRead:
         """Render a stored Conversation as JSON-safe response data."""
         return cls(
             created_at=conversation.created_at,
             id=conversation.id,
+            latest_activity=latest_activity,
             pi_session_id=conversation.pi_session_id,
             selected_model=conversation.selected_model,
+            session_gap_seconds=int(session_gap.total_seconds()),
             title=conversation.title,
         )
 
@@ -195,6 +222,24 @@ class ConversationService:
             raise ConversationNotFoundError(conversation_id)
         return conversation
 
+    async def fetch_conversation_by_pi_session_id(
+        self, pi_session_id: UUID
+    ) -> Conversation[Fetched]:
+        """Return the conversation currently live on a pi session id.
+
+        The loopback tool surface only knows the caller's pi session id (the
+        `session_id` the auth gate already validated against
+        `SessionRegistry`); this is how a tool call resolves that back to the
+        host-owned conversation whose transcript it may read.
+        """
+        async with self.database.transaction() as tx:
+            conversation = await tx.fetch_one_or_none(
+                select(Conversation).where(Conversation.pi_session_id.eq(pi_session_id))
+            )
+        if conversation is None:
+            raise ConversationNotFoundError(pi_session_id)
+        return conversation
+
     async def set_selected_model(
         self,
         conversation_id: UUID,
@@ -256,6 +301,11 @@ class ConversationService:
             )
         return latest.created_at if latest is not None else None
 
+    async def to_read(self, conversation: Conversation[Fetched]) -> ConversationRead:
+        """Render a conversation with its current session-freshness signal."""
+        latest = await self.latest_activity(conversation.id)
+        return ConversationRead.from_conversation(conversation, latest_activity=latest)
+
     async def rotate_pi_session(self, conversation_id: UUID) -> Conversation[Fetched]:
         """Point a conversation at a fresh pi session; transcript rows are kept.
 
@@ -312,19 +362,86 @@ class ConversationService:
             raise ConversationNotFoundError(conversation_id)
         return conversation
 
-    async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
-        """Return settled transcript rows for a conversation in display order."""
+    async def fetch_messages(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int | None = None,
+        before_seq: int | None = None,
+    ) -> list[Message[Fetched]]:
+        """Return settled transcript rows for a conversation in display order.
+
+        With no `limit`/`before_seq`, this is the full unbounded history in
+        ascending `seq` order (unchanged from before pagination existed). A
+        `limit` windows to the newest `limit` rows at or before `before_seq`
+        (or the newest overall when `before_seq` is absent) — fetched newest
+        first so `LIMIT` keeps the right end of the window, then reversed back
+        to ascending `seq` so callers never see a backwards page.
+        """
         async with self.database.transaction() as tx:
             conversation = await tx.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
             if conversation is None:
                 raise ConversationNotFoundError(conversation_id)
-            return await tx.fetch_all(
+            query = select(Message).where(Message.conversation_id.eq(conversation_id))
+            if before_seq is not None:
+                query = query.where(Message.seq.lt(before_seq))
+            if limit is None:
+                return await tx.fetch_all(query.order_by(Message.seq.asc()))
+            page = await tx.fetch_all(query.order_by(Message.seq.desc()).limit(limit))
+            return list(reversed(page))
+
+    async def current_session_start_seq(
+        self, conversation_id: UUID, *, gap: timedelta = SESSION_GAP
+    ) -> int | None:
+        """Return the `seq` of the first row in the live pi session, or None.
+
+        Rotation (`resolve_session`) never stamps a row with "this is where a
+        new session began" — it only swaps `pi_session_id`. This recovers that
+        boundary after the fact from the same signal rotation itself uses: the
+        most recent gap between consecutive rows' `created_at` that is at
+        least `gap` wide. Everything from that row onward is the live session;
+        everything before it is prior-session context. A conversation that has
+        never gone cold (no such gap) returns None — its whole transcript is
+        the live session, so there is nothing earlier to read.
+        """
+        async with self.database.transaction() as tx:
+            rows = await tx.fetch_all(
                 select(Message)
                 .where(Message.conversation_id.eq(conversation_id))
                 .order_by(Message.seq.asc())
             )
+        boundary_seq: int | None = None
+        for previous, current in pairwise(rows):
+            if _as_utc(current.created_at) - _as_utc(previous.created_at) >= gap:
+                boundary_seq = current.seq
+        return boundary_seq
+
+    async def fetch_prior_session_messages(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int,
+        before_seq: int | None = None,
+    ) -> list[Message[Fetched]]:
+        """Return transcript rows from before the conversation's live session.
+
+        Windows exactly like `fetch_messages` (newest-first `limit`, optional
+        `before_seq` cursor to page further back), but clamped to strictly
+        before the live session's first row, so pi can never re-read the
+        context it already has. Returns an empty list when the conversation has
+        never rotated — there is no prior session to read.
+        """
+        boundary_seq = await self.current_session_start_seq(conversation_id)
+        if boundary_seq is None:
+            return []
+        effective_before_seq = (
+            boundary_seq if before_seq is None else min(before_seq, boundary_seq)
+        )
+        return await self.fetch_messages(
+            conversation_id, limit=limit, before_seq=effective_before_seq
+        )
 
     async def append_message(self, draft: MessageDraft) -> Message[Fetched]:
         """Append one settled transcript row with a monotonic per-thread sequence."""
@@ -383,20 +500,43 @@ async def create_conversation_schema(database: Database) -> None:
 @endpoint(response=ConversationRead, response_is_list=True)
 async def list_conversations(request: Request) -> Response:
     """List host-owned conversations."""
-    conversations = await request.app.state.conversation_service.list_conversations()
+    service = request.app.state.conversation_service
+    conversations = await service.list_conversations()
     return JSONResponse(
         [
-            ConversationRead.from_conversation(conversation).model_dump(mode="json")
+            (await service.to_read(conversation)).model_dump(mode="json")
             for conversation in conversations
         ]
     )
 
 
-async def _messages_response(request: Request, conversation_id: UUID) -> Response:
+class MessagesQuery(BaseModel):
+    """Query string for windowed transcript pagination.
+
+    No params means the full unbounded history, exactly as before pagination
+    existed. `limit` alone windows to the newest `limit` rows; `before_seq`
+    paired with `limit` walks backwards from a cursor (the oldest `seq` seen
+    so far) to fetch the next-older page.
+
+    >>> MessagesQuery().limit is None
+    True
+    """
+
+    limit: PositiveInt | None = None
+    before_seq: PositiveInt | None = None
+
+
+async def _messages_response(
+    request: Request,
+    conversation_id: UUID,
+    *,
+    limit: int | None = None,
+    before_seq: int | None = None,
+) -> Response:
     """Serialize settled transcript rows or translate absence to 404."""
     try:
         messages = await request.app.state.conversation_service.fetch_messages(
-            conversation_id
+            conversation_id, limit=limit, before_seq=before_seq
         )
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
@@ -437,20 +577,24 @@ async def set_conversation_model(
         )
     except PiRuntimeError:
         return JSONResponse({"detail": "set_model failed"}, status_code=502)
-    return JSONResponse(
-        ConversationRead.from_conversation(conversation).model_dump(mode="json")
-    )
+    read = await request.app.state.conversation_service.to_read(conversation)
+    return JSONResponse(read.model_dump(mode="json"))
 
 
-@endpoint(response=MessageRead, response_is_list=True)
-async def list_messages(request: Request) -> Response:
+@endpoint(query=MessagesQuery, response=MessageRead, response_is_list=True)
+async def list_messages(request: Request, query: MessagesQuery) -> Response:
     """List settled transcript rows for one conversation."""
     raw_conversation_id = request.path_params["conversation_id"]
     try:
         conversation_id = UUID(raw_conversation_id)
     except ValueError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    return await _messages_response(request, conversation_id)
+    return await _messages_response(
+        request,
+        conversation_id,
+        limit=query.limit,
+        before_seq=query.before_seq,
+    )
 
 
 @endpoint(response=ConversationRead)
@@ -470,9 +614,8 @@ async def clear_messages(request: Request) -> Response:
     # Tear down any live runtime bound to the now-rotated session so the next
     # turn spawns clean against the fresh pi session instead of replaying it.
     await request.app.state.conversation_runtime_registry.discard(conversation.id)
-    return JSONResponse(
-        ConversationRead.from_conversation(conversation).model_dump(mode="json")
-    )
+    read = await request.app.state.conversation_service.to_read(conversation)
+    return JSONResponse(read.model_dump(mode="json"))
 
 
 conversation_routes: list[Route] = [

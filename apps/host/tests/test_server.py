@@ -1,10 +1,13 @@
 """Host server configuration and process entrypoint tests."""
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import timedelta
@@ -35,6 +38,7 @@ from tether.server import (
     _compose_transcript_provider,
     _parse_transcript_languages,
     _parse_transcript_provider_order,
+    _shutdown_background_tasks,
     create_app_from_environment,
     serve,
 )
@@ -602,3 +606,72 @@ def the_order_flag_is_parsed_into_normalized_names() -> None:
 def the_language_flag_is_parsed_in_preference_order() -> None:
     """Languages keep their order (most preferred first); blanks are dropped."""
     assert_eq(_parse_transcript_languages("en, ro ,"), ("en", "ro"))
+
+
+@test()
+async def shutdown_awaits_tasks_that_honor_cancellation() -> None:
+    """A task that responds to cancellation promptly is awaited and finished."""
+    started = asyncio.Event()
+
+    async def cooperative() -> None:
+        started.set()
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(cooperative(), name="cooperative")
+    await started.wait()
+
+    await _shutdown_background_tasks(
+        [task],
+        logger=structlog.stdlib.get_logger("test.server.shutdown"),
+        grace_seconds=1.0,
+    )
+
+    assert_true(task.done())
+    assert_true(task.cancelled())
+
+
+@test()
+async def shutdown_does_not_block_on_a_task_that_ignores_cancellation() -> None:
+    """A task that doesn't unwind promptly on cancel is abandoned, not awaited.
+
+    Regression test for the `just dev` shutdown hang: the boot lifespan awaited
+    every background task to fully finish before returning, with no bound. A
+    task whose current await doesn't propagate `CancelledError` right away
+    (in production, the YouTube/transcript sync loops mid a synchronous
+    `asyncio.to_thread` upstream call) could keep shutdown — and the whole
+    `uvicorn --reload` process tree under `just dev` — waiting for however
+    long that took (observed: up to ~2 minutes). Shutdown must bound the wait
+    instead.
+    """
+    swallowed_once = False
+
+    async def stubborn() -> None:
+        nonlocal swallowed_once
+        while True:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                if swallowed_once:
+                    raise
+                swallowed_once = True
+
+    task = asyncio.create_task(stubborn(), name="stubborn")
+    await asyncio.sleep(0)  # let it reach the first sleep
+
+    before = time.monotonic()
+    await _shutdown_background_tasks(
+        [task],
+        logger=structlog.stdlib.get_logger("test.server.shutdown"),
+        grace_seconds=0.2,
+    )
+    elapsed = time.monotonic() - before
+
+    # Bounded by the grace period, not the task's full unresponsive stretch.
+    assert_true(elapsed < 1.0)
+    assert_false(task.done())
+
+    # Second cancel actually lands (the fake only swallows the first one);
+    # drain it so it doesn't outlive the test.
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)

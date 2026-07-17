@@ -2,10 +2,11 @@
 
 A Bucket item is a typed intention to act (a movie to watch, a place to visit).
 It is Added `active` under exactly one item type, each type carrying its own
-payload fields, and records — immutably — the human's intent context (*why* it
-was saved) plus its provenance. It moves to a terminal state when Completed or
-Deleted; terminal rows are retained permanently as history so dedup can reason
-across the whole past.
+payload fields, and records the human's intent context (*why* it was saved,
+optional at Add — attach or replace it later with `set_intent`) plus its
+provenance. It moves to a terminal state when Completed or Deleted; terminal
+rows are retained permanently as history so dedup can reason across the whole
+past.
 
 Dedup spans every state and **informs but never hard-blocks**: Adding always
 succeeds and returns an advisory — `warn` when an active duplicate already
@@ -138,12 +139,17 @@ def _normalise_key(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def _normalise_intent(intent_context: str) -> str:
-    """Trim intent context, rejecting a blank reason.
+def _normalise_intent(intent_context: str | None) -> str:
+    """Trim intent context, rejecting an explicitly-blank reason.
 
-    Intent context answers "why did I save this?" months later; an empty reason
-    is not a reason. It is required at Add and never edited afterward.
+    Intent context answers "why did I save this?" months later. It is optional
+    at Add — an omitted reason (`None`) stores as `""`, so the item is Added
+    immediately rather than blocked — but a reason that *was* supplied must not
+    be blank whitespace. It can be attached or replaced later through
+    `BucketItemService.set_intent`.
     """
+    if intent_context is None:
+        return ""
     normalised = intent_context.strip()
     if not normalised:
         msg = "intent context must not be blank"
@@ -231,7 +237,8 @@ class BucketItem[S = Pending](Model[S, "BucketItem[Fetched]"]):
     data: BucketItem.Col[Json[dict[str, JsonValue]]] = Text()
     """The item-type's payload fields, as JSON."""
     intent_context: BucketItem.Col[str] = Text()
-    """Why the human saved this. Set at Add, immutable thereafter."""
+    """Why the human saved this, if given. Optional at Add (stored as `""` when
+    omitted); may be attached or replaced later via `set_intent`."""
     provenance: BucketItem.Col[Json[BucketItemProvenance]] = Text(
         default_factory=lambda: BucketItemProvenance(kind="manual"),
     )
@@ -311,15 +318,18 @@ class BucketItemService:
         self,
         item_type: ItemType,
         data: Mapping[str, object],
-        intent_context: str,
+        intent_context: str | None,
         *,
         logger: Logger,
     ) -> AddOutcome:
         """Add an active Bucket item and report any pre-existing duplicates.
 
-        Records the immutable intent context and manual provenance. Dedup is
-        computed inside the same transaction that inserts, against every state,
-        and only ever informs — the item is created regardless of severity.
+        Intent context is optional: a `None` reason (nothing supplied) stores
+        as `""` rather than blocking the Add — the item lands immediately, and
+        a reason can be attached afterward through `set_intent`. A reason that
+        *was* supplied must not be blank whitespace. Dedup is computed inside
+        the same transaction that inserts, against every state, and only ever
+        informs — the item is created regardless of severity.
         """
         normalised_intent = _normalise_intent(intent_context)
         description = _describe_item(item_type, data)
@@ -557,6 +567,70 @@ class BucketItemService:
             "Bucket item terminated",
             bucket_item_id=str(fresh_item.id),
             terminal_state=terminal_state,
+            previous_version=item.version,
+            version=fresh_item.version,
+        )
+        await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
+        return fresh_item
+
+    async def set_intent(
+        self,
+        item: BucketItem[Fetched],
+        intent_context: str,
+        *,
+        logger: Logger,
+    ) -> BucketItem[Fetched]:
+        """Attach or replace intent context on an existing Bucket item.
+
+        The one place intent context changes after Add — the common case is an
+        item Added without a reason, with the human supplying one moments
+        later. Optimistic-concurrency checked like Complete/Delete (the caller
+        sends its observed `version`); works in any lifecycle state, since a
+        reason can surface after an item has already been completed or
+        deleted.
+        """
+        normalised_intent = _normalise_intent(intent_context)
+        _debug(
+            logger,
+            "Setting Bucket item intent context",
+            bucket_item_id=str(item.id),
+            observed_version=item.version,
+        )
+        set_intent = (
+            update(BucketItem)
+            .set(BucketItem.updated_at.to(CurrentTimestamp))
+            .set(BucketItem.version.to(item.version + 1))
+            .set(BucketItem.intent_context.to(normalised_intent))
+        )
+
+        async def _set_intent_tx(tx: Transaction) -> BucketItem[Fetched]:
+            matched_rows = await tx.execute(
+                set_intent.where(BucketItem.id.eq(item.id)).where(
+                    BucketItem.version.eq(item.version)
+                )
+            )
+            fresh_item = await self._fetch(tx, item.id)
+            if matched_rows == 0:
+                _debug(
+                    logger,
+                    "Bucket item set-intent conflict",
+                    bucket_item_id=str(item.id),
+                    reason="stale_version",
+                    observed_version=item.version,
+                    current_version=fresh_item.version,
+                )
+                msg = (
+                    f"Tried to update Bucket item {item.id} with version "
+                    f"{item.version} but it had version {fresh_item.version}"
+                )
+                raise BucketItemConflictError(msg)
+            return fresh_item
+
+        fresh_item = await run_in_transaction(self.database, _set_intent_tx)
+        _info(
+            logger,
+            "Bucket item intent context set",
+            bucket_item_id=str(fresh_item.id),
             previous_version=item.version,
             version=fresh_item.version,
         )

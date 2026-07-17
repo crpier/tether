@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ApiError } from "../api";
+import { formatDate } from "../lib/format";
 import { FakeApi, bucketItem, input, renderApp } from "../testing/harness";
 
 afterEach(() => {
@@ -34,9 +35,7 @@ describe("Bucket panel", () => {
     expect(row).toHaveTextContent("Dune");
     expect(row).toHaveTextContent("movie");
     expect(row).toHaveTextContent("a friend raved");
-    expect(row).toHaveTextContent(
-      new Date("2026-01-05T00:00:00Z").toLocaleDateString(),
-    );
+    expect(row).toHaveTextContent(formatDate(new Date("2026-01-05T00:00:00Z")));
   });
 
   test("adding a movie posts the typed payload with its intent context", async () => {
@@ -503,7 +502,7 @@ describe("Bucket panel", () => {
     );
     expect(completedRow).toHaveTextContent("completed");
     expect(completedRow).toHaveTextContent(
-      new Date("2022-03-01T00:00:00Z").toLocaleDateString(),
+      formatDate(new Date("2022-03-01T00:00:00Z")),
     );
     const deletedRow = screen.getByLabelText("Bucket item: Changed my mind");
     expect(deletedRow).toHaveTextContent("deleted");

@@ -38,6 +38,7 @@ from tether.youtube import (
     InMemoryYouTubeApi,
     LikedPage,
     RawYouTubeVideo,
+    SupadataUsage,
     TranscriptStatus,
     TranscriptUnavailableError,
     YouTubeApi,
@@ -1343,6 +1344,36 @@ async def sync_status_reports_last_run_quota_and_no_pauses_by_default() -> None:
     assert_eq(status.quota.used, 2)
     assert_is_none(status.api_paused_until)
     assert_eq(status.transcript_providers_paused, [])
+
+
+@test()
+async def sync_status_supadata_is_none_when_no_usage_reader_is_wired() -> None:
+    """The default (no Supadata configured) reports no Supadata usage at all."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+
+    status = await env.service.sync_status(logger=test_logger())
+
+    assert_is_none(status.supadata)
+
+
+@test()
+async def sync_status_reports_the_wired_supadata_reader_snapshot() -> None:
+    """A wired `supadata_usage` reader's snapshot surfaces on the status."""
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+
+    class _FakeSupadataUsageReader:
+        async def snapshot(self, *, now: datetime) -> SupadataUsage:
+            _ = now
+            return SupadataUsage(used=7, limit=3000, remaining=2993, month="2026-07")
+
+    env.service.supadata_usage = _FakeSupadataUsageReader()
+
+    status = await env.service.sync_status(logger=test_logger())
+
+    assert status.supadata is not None
+    assert_eq(status.supadata.used, 7)
+    assert_eq(status.supadata.limit, 3000)
+    assert_eq(status.supadata.month, "2026-07")
 
 
 @test()
