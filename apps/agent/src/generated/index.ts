@@ -16,6 +16,7 @@ import { registerAddTravelTool } from "./add_travel.js";
 import { registerCompleteBucketItemTool } from "./complete_bucket_item.js";
 import { registerDeleteBucketItemTool } from "./delete_bucket_item.js";
 import { registerSearchBucketItemsTool } from "./search_bucket_items.js";
+import { registerSetBucketItemIntentTool } from "./set_bucket_item_intent.js";
 import { registerTriageReportTool } from "./triage_report.js";
 import { registerBrowseYoutubeTool } from "./browse_youtube.js";
 import { registerSearchYoutubeTool } from "./search_youtube.js";
@@ -29,6 +30,7 @@ import { registerStartRecallTool } from "./start_recall.js";
 import { registerListDueRecallPromptsTool } from "./list_due_recall_prompts.js";
 import { registerAnswerRecallPromptTool } from "./answer_recall_prompt.js";
 import { registerProposeEssayGradeTool } from "./propose_essay_grade.js";
+import { registerReadConversationHistoryTool } from "./read_conversation_history.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -45,6 +47,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCompleteBucketItemTool(pi);
   registerDeleteBucketItemTool(pi);
   registerSearchBucketItemsTool(pi);
+  registerSetBucketItemIntentTool(pi);
   registerTriageReportTool(pi);
   registerBrowseYoutubeTool(pi);
   registerSearchYoutubeTool(pi);
@@ -58,4 +61,5 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerListDueRecallPromptsTool(pi);
   registerAnswerRecallPromptTool(pi);
   registerProposeEssayGradeTool(pi);
+  registerReadConversationHistoryTool(pi);
 }

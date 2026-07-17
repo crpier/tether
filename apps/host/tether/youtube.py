@@ -829,6 +829,31 @@ class TranscriptProviderPause:
 
 
 @dataclass(frozen=True, slots=True)
+class SupadataUsage:
+    """A snapshot of Supadata's own *monthly* billed-use budget.
+
+    Distinct from `QuotaMeta` (the YouTube Data API's per-*day* budget): Supadata
+    is a separate paid HTTP API with its own cap, reset cadence, and spend, so
+    mixing the two into one number would be meaningless. `month` is the UTC
+    calendar month (`YYYY-MM`) the count applies to; a new month starts fresh.
+    """
+
+    used: int
+    limit: int
+    remaining: int
+    month: str
+
+
+@runtime_checkable
+class SupadataUsageReader(Protocol):
+    """Reads Supadata's monthly usage without charging it."""
+
+    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+        """The current month's Supadata usage, or None when Supadata isn't wired."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
 class YouTubeSyncStatus:
     """A snapshot of the background ingestion's progress and health.
 
@@ -836,7 +861,10 @@ class YouTubeSyncStatus:
     already transcribed (``transcripts_done``), still owed one
     (``transcripts_pending``), or permanently without one
     (``transcripts_unavailable``); their sum is ``videos_total``. `last_synced_at`
-    is when the likes sync last ran, `quota` the day's budget, and the two pause
+    is when the likes sync last ran, `quota` the day's YouTube Data API budget
+    (only actual Data API usage — captions.list/download and the liked-list/
+    metadata calls — counts against it), `supadata` Supadata's own separate
+    monthly budget (`None` when Supadata isn't configured), and the two pause
     fields explain a stall (a live Data API block, or a per-source transcript
     provider block).
     """
@@ -849,6 +877,7 @@ class YouTubeSyncStatus:
     quota: QuotaMeta
     api_paused_until: datetime | None
     transcript_providers_paused: list[TranscriptProviderPause]
+    supadata: SupadataUsage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2063,6 +2092,11 @@ class YouTubeService:
         # lexical fallback; left None (search disabled), `search` keeps the SQLite
         # LIKE behaviour.
         self.transcript_search: TranscriptSearchService | None = None
+        # Optional, late-bound reader for Supadata's separate monthly usage
+        # (wired by the composition root after construction, once the provider
+        # tree's Supadata leaf — if any — has its persisted guard bound). None
+        # (the default) reports no Supadata usage on the status surface.
+        self.supadata_usage: SupadataUsageReader | None = None
 
     async def browse(
         self,
@@ -2142,6 +2176,11 @@ class YouTubeService:
             for source, pause in sorted(pauses.items())
             if pause.is_paused(now) and pause.paused_until is not None
         ]
+        supadata = (
+            await self.supadata_usage.snapshot(now=now)
+            if self.supadata_usage is not None
+            else None
+        )
         status = YouTubeSyncStatus(
             videos_total=total,
             transcripts_done=total - owed,
@@ -2153,6 +2192,7 @@ class YouTubeService:
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
             transcript_providers_paused=providers_paused,
+            supadata=supadata,
         )
         _debug(
             logger,
@@ -2260,10 +2300,15 @@ class YouTubeService:
         """Fetch and persist a transcript for an ingested video.
 
         The video must already be ingested (sync runs first). A stored transcript
-        short-circuits with no provider call; otherwise the budget is charged and
-        the fetch runs through the same `TranscriptProvider` port and persistence
-        the background worker uses, so manual and background fetches share one
-        code path. The three failure outcomes surface as typed errors:
+        short-circuits with no provider call; otherwise the fetch runs through the
+        same `TranscriptProvider` port and persistence the background worker uses,
+        so manual and background fetches share one code path. Only the captions
+        provider spends the YouTube Data API daily budget (it charges itself,
+        right before its own live call — see `CaptionsTranscriptProvider`); a
+        depleted day surfaces as `YouTubeQuotaExceededError` from the provider
+        call below (translated to 429 at the boundary) rather than a pre-check
+        here, so a chain without captions (the default) never spends or blocks on
+        it. The three failure outcomes surface as typed errors:
         unavailable/excluded -> `TranscriptUnavailableError`, transient ->
         `TranscriptTransientError`.
         """
@@ -2276,9 +2321,6 @@ class YouTubeService:
                 cache=CacheMeta(hit=True, source="cache"),
                 quota=await self.client.snapshot(),
             )
-        # Spend before calling the provider: a depleted budget raises here
-        # (translated to 429 at the boundary) and never reaches the provider.
-        await self.client.charge_transcript()
         context = TranscriptFetchContext(
             database=self.database,
             provider=self.provider,

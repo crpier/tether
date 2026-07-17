@@ -28,40 +28,57 @@ from tether.bucket_capabilities import (
     complete,
     delete,
     search,
+    set_bucket_item_intent,
 )
 from tether.capabilities import bind_params
 from tether.tools import ToolSpec
 
 
 class AddMovieParams(BaseModel):
-    """Params for Adding a `movie` Bucket item."""
+    """Params for Adding a `movie` Bucket item.
+
+    `intent_context` is optional — add the item now even without one; a reason
+    can be attached later with `set_bucket_item_intent`.
+    """
 
     title: str
-    intent_context: str
+    intent_context: str | None = None
     year: int | None = None
 
 
 class AddPlaceParams(BaseModel):
-    """Params for Adding a `place` Bucket item."""
+    """Params for Adding a `place` Bucket item.
+
+    `intent_context` is optional — add the item now even without one; a reason
+    can be attached later with `set_bucket_item_intent`.
+    """
 
     name: str
-    intent_context: str
+    intent_context: str | None = None
     location: str | None = None
 
 
 class AddBookParams(BaseModel):
-    """Params for Adding a `book` Bucket item."""
+    """Params for Adding a `book` Bucket item.
+
+    `intent_context` is optional — add the item now even without one; a reason
+    can be attached later with `set_bucket_item_intent`.
+    """
 
     title: str
-    intent_context: str
+    intent_context: str | None = None
     author: str | None = None
 
 
 class AddTravelParams(BaseModel):
-    """Params for Adding a `travel` Bucket item."""
+    """Params for Adding a `travel` Bucket item.
+
+    `intent_context` is optional — add the item now even without one; a reason
+    can be attached later with `set_bucket_item_intent`.
+    """
 
     destination: str
-    intent_context: str
+    intent_context: str | None = None
     season: str | None = None
 
 
@@ -86,6 +103,18 @@ class SearchBucketItemsParams(BaseModel):
     limit: PositiveInt = 50
 
 
+class SetBucketItemIntentParams(BaseModel):
+    """Params for attaching or replacing a Bucket item's intent context.
+
+    The one way to record a reason after Add — use it once the human supplies
+    one for an item that was Added without it.
+    """
+
+    bucket_item_id: UUID7
+    version: PositiveInt
+    intent_context: str
+
+
 BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("add_movie", AddMovieParams, bind_params(add_movie), BUCKET_ERRORS),
     ToolSpec("add_place", AddPlaceParams, bind_params(add_place), BUCKET_ERRORS),
@@ -107,6 +136,12 @@ BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "search_bucket_items",
         SearchBucketItemsParams,
         bind_params(search),
+        BUCKET_ERRORS,
+    ),
+    ToolSpec(
+        "set_bucket_item_intent",
+        SetBucketItemIntentParams,
+        bind_params(set_bucket_item_intent),
         BUCKET_ERRORS,
     ),
 )

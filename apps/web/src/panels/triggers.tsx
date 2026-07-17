@@ -10,6 +10,7 @@ import type {
   TriggerActionKind,
   TriggerRecurrence,
 } from "../api";
+import { formatDateTime } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ function browserTimezone(): string {
 
 function formatFireTime(value: string): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
 }
 
 // A `datetime-local` value is a local (not UTC) stamp, so the `min` guard and

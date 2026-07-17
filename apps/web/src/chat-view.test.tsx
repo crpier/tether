@@ -27,7 +27,9 @@ describe("Chat view", () => {
           content: "capture",
           role: "tool",
           seq: 2,
+          tool_args: { content: "aisle seats" },
           tool_name: "capture",
+          tool_result: { ok: true },
         }),
         message({
           content: "Captured that preference.",
@@ -41,6 +43,15 @@ describe("Chat view", () => {
     expect(await screen.findByText("remember aisle seats")).toBeInTheDocument();
     expect(screen.getByText("used capture")).toBeInTheDocument();
     expect(screen.getByText("Captured that preference.")).toBeInTheDocument();
+
+    // Settled tool rows must stay expandable (same disclosure as a live tool
+    // call), with the persisted arguments/result available behind it — this
+    // is the regression this test guards against: history used to collapse
+    // to a bare "used capture" line with no way to inspect the call.
+    fireEvent.click(screen.getByText("arguments"));
+    expect(screen.getByText(/"content": "aisle seats"/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("result"));
+    expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
   });
 
   test("sends prompts and renders streamed assistant deltas", async () => {
@@ -442,6 +453,72 @@ describe("Chat view", () => {
     // near-top scroll must not trigger another fetch.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(api.listMessagesCalls.length).toBe(callsAfterInitialLoad);
+  });
+
+  test("shows a fresh-session hint when there is no prior activity", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+  });
+
+  test("hides the fresh-session hint once activity is inside the gap", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedConversation = {
+      ...conversation,
+      latest_activity: new Date().toISOString(),
+      session_gap_seconds: 300,
+    };
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    expect(
+      screen.queryByText("Next message starts a fresh session"),
+    ).not.toBeInTheDocument();
+  });
+
+  test("shows the fresh-session hint once activity is past the gap", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.storedConversation = {
+      ...conversation,
+      latest_activity: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      session_gap_seconds: 300,
+    };
+    renderApp(api);
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+  });
+
+  test("hides the fresh-session hint while a turn is generating", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "Hello" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      screen.queryByText("Next message starts a fresh session"),
+    ).not.toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "agent_end",
+      type: "chat",
+    });
+
+    expect(
+      await screen.findByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
   });
 
   test("New chat resets accumulated pagination state", async () => {

@@ -10,7 +10,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const add_travelParameters = Type.Object({
   destination: Type.String(),
-  intent_context: Type.String(),
+  intent_context: Type.Optional(Type.String()),
   season: Type.Optional(Type.String()),
 });
 
@@ -22,8 +22,10 @@ export const add_travelTool: ToolDefinition<
 > = {
   name: "add_travel",
   label: "AddTravel",
-  description: "Params for Adding a `travel` Bucket item.",
-  promptSnippet: "Params for Adding a `travel` Bucket item.",
+  description:
+    "Params for Adding a `travel` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
+  promptSnippet:
+    "Params for Adding a `travel` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
   parameters: add_travelParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

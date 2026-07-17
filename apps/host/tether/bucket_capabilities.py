@@ -178,7 +178,7 @@ async def add(
     request: Request,
     item_type: ItemType,
     data: dict[str, JsonValue],
-    intent_context: str,
+    intent_context: str | None,
 ) -> CapabilityOutcome:
     """Add a Bucket item; the outcome carries its dedup advisory."""
     outcome = await request.app.state.bucket_item_service.add(
@@ -194,7 +194,10 @@ async def add(
 
 
 async def add_movie(
-    request: Request, title: str, intent_context: str, year: int | None = None
+    request: Request,
+    title: str,
+    intent_context: str | None = None,
+    year: int | None = None,
 ) -> CapabilityOutcome:
     """Add a `movie` Bucket item from its flat tool fields."""
     data: dict[str, Any] = {"title": title}
@@ -204,7 +207,10 @@ async def add_movie(
 
 
 async def add_place(
-    request: Request, name: str, intent_context: str, location: str | None = None
+    request: Request,
+    name: str,
+    intent_context: str | None = None,
+    location: str | None = None,
 ) -> CapabilityOutcome:
     """Add a `place` Bucket item from its flat tool fields."""
     data: dict[str, Any] = {"name": name}
@@ -214,7 +220,10 @@ async def add_place(
 
 
 async def add_book(
-    request: Request, title: str, intent_context: str, author: str | None = None
+    request: Request,
+    title: str,
+    intent_context: str | None = None,
+    author: str | None = None,
 ) -> CapabilityOutcome:
     """Add a `book` Bucket item from its flat tool fields."""
     data: dict[str, Any] = {"title": title}
@@ -224,7 +233,10 @@ async def add_book(
 
 
 async def add_travel(
-    request: Request, destination: str, intent_context: str, season: str | None = None
+    request: Request,
+    destination: str,
+    intent_context: str | None = None,
+    season: str | None = None,
 ) -> CapabilityOutcome:
     """Add a `travel` Bucket item from its flat tool fields."""
     data: dict[str, Any] = {"destination": destination}
@@ -269,6 +281,25 @@ async def delete(
     """Delete a Bucket item, moving it to terminal history."""
     item = await request.app.state.bucket_item_service.delete(
         _bucket_item_reference(bucket_item_id, version),
+        logger=get_request_logger(request),
+    )
+    return _single(item)
+
+
+async def set_bucket_item_intent(
+    request: Request,
+    bucket_item_id: UUID,
+    version: PositiveInt,
+    intent_context: str,
+) -> CapabilityOutcome:
+    """Attach or replace intent context on a Bucket item at an observed version.
+
+    The one way to record a reason after Add — e.g. the item was Added without
+    one and the human supplies it moments later.
+    """
+    item = await request.app.state.bucket_item_service.set_intent(
+        _bucket_item_reference(bucket_item_id, version),
+        intent_context,
         logger=get_request_logger(request),
     )
     return _single(item)

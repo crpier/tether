@@ -255,6 +255,11 @@ class ToolEndpoint:
             return session_failure
         # `_reject_unknown_session` already proved this is a registered `str`.
         session_id = cast("str", body["session_id"])
+        # Handlers only ever see `request`/validated params (`session_id` is
+        # stripped before params validation); a capability that needs the
+        # caller's identity — e.g. resolving which conversation a pi session
+        # belongs to — reads it back off `request.state`.
+        request.state.session_id = session_id
         run_context = self._run_context(request, session_id)
         with structlog.contextvars.bound_contextvars(**run_context):
             envelope, duration_ms = await self._invoke(request, body)

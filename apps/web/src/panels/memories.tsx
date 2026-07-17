@@ -12,6 +12,7 @@ import type { JSX } from "solid-js";
 
 import { ApiError } from "../api";
 import type { Memory, MemoryState, TetherApi } from "../api";
+import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,7 @@ interface Editing {
 
 function formatDate(value: string): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+  return Number.isNaN(parsed.getTime()) ? value : formatDateOnly(parsed);
 }
 
 export function MemoriesPanel(props: { api: TetherApi }) {

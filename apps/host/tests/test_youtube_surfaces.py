@@ -22,6 +22,7 @@ from tether.youtube import (
     RawYouTubeVideo,
     TranscriptBlockedError,
     TranscriptProvider,
+    YouTubeQuotaExceededError,
 )
 
 
@@ -365,16 +366,31 @@ def search_caps_rows_at_the_limit() -> None:
 
 @test()
 def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
-    """A depleted budget surfaces as a well-formed quota_exceeded envelope.
+    """A depleted daily budget surfaces as a well-formed quota_exceeded envelope.
 
-    The boot sync spends the whole day's budget (list + detail) mirroring the one
-    liked video, so the upstream transcript fetch has nothing left and the guard
-    refuses it before calling out.
+    Only a Data-API-backed source (captions) spends the daily budget — see
+    `test_youtube_transcript_sync.py` for that charging behaviour in full. This
+    exercises the surface-level translation with a fake provider that raises the
+    same typed error a depleted captions charge would.
     """
+
+    class ExhaustedProvider(TranscriptProvider):
+        source: str = "fake"
+
+        async def fetch(
+            self,
+            video_id: str,
+            *,
+            paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+            skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        ) -> FetchedTranscript:
+            _ = (paused_sources, skip_sources)
+            raise YouTubeQuotaExceededError(f"day exhausted fetching {video_id}")
+
     api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
     with (
         TemporaryDirectory() as directory,
-        make_client(Path(directory), api, quota_limit=2) as client,
+        make_client(Path(directory), api, provider=ExhaustedProvider()) as client,
     ):
         envelope = call_tool(client, "fetch_youtube_transcript", video_id="v1")
 

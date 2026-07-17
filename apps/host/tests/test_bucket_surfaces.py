@@ -400,6 +400,36 @@ def add_blank_intent_yields_a_success_false_envelope() -> None:
 
 
 @test()
+def add_movie_without_intent_context_still_adds_the_item() -> None:
+    """Omitting intent context at the tool seam adds the item, unblocked."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(client, "add_movie", title="John Wick")
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"]["item"]["intent_context"], "")
+
+
+@test()
+def set_bucket_item_intent_attaches_a_reason_after_add() -> None:
+    """A reason given after the fact attaches to the just-added item."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        added = call_tool(client, "add_movie", title="John Wick")
+        item = added["result"]["item"]
+
+        envelope = call_tool(
+            client,
+            "set_bucket_item_intent",
+            bucket_item_id=item["id"],
+            version=item["version"],
+            intent_context="my brother recommended it",
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"]["intent_context"], "my brother recommended it")
+    assert_eq(envelope["result"]["version"], item["version"] + 1)
+
+
+@test()
 def completing_a_terminal_item_yields_a_conflict_envelope() -> None:
     """A complete succeeds through the tool seam; a second one is a conflict."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

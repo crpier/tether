@@ -13,7 +13,7 @@ recency ordering.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -28,6 +28,7 @@ from snektest import (
     assert_is_none,
     assert_is_not_none,
     assert_not_in,
+    assert_raises,
     assert_true,
     fixture,
     load_fixture,
@@ -40,6 +41,7 @@ from tether.transcript_worker import TranscriptSyncService
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
     DailyQuota,
+    FallbackTranscriptProvider,
     FetchedTranscript,
     IngestedVideo,
     InMemoryYouTubeApi,
@@ -49,10 +51,12 @@ from tether.youtube import (
     TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeApiClient,
+    YouTubeQuotaExceededError,
     YouTubeService,
     YouTubeTranscriptState,
     create_youtube_schema,
 )
+from tether.youtube_oauth import CaptionsTranscriptProvider
 
 
 def noop_tracer() -> Tracer:
@@ -98,6 +102,10 @@ TRANSIENT = "transient"
 type Outcome = Ok | str
 
 
+async def _no_charge() -> None:
+    """The default no-op charge: a fake provider with no bound daily budget."""
+
+
 class FakeTranscriptProvider:
     """A `TranscriptProvider` scripted per video, last outcome repeating.
 
@@ -105,6 +113,10 @@ class FakeTranscriptProvider:
     is down to its last scripted outcome, that outcome repeats. An unscripted
     video reports unavailable. Records call counts so tests can prove the worker
     stops calling a terminal/not-due video.
+
+    Mirrors `CaptionsTranscriptProvider`'s self-charging design: `charge` is a
+    no-op unless a test explicitly binds it (e.g. to `client.charge_transcript`)
+    to simulate a Data-API-backed source that spends the daily budget.
     """
 
     source: str = "fake"
@@ -114,6 +126,7 @@ class FakeTranscriptProvider:
             key: list(value) for key, value in scripts.items()
         }
         self.calls: dict[str, int] = {}
+        self.charge: Callable[[], Awaitable[None]] = _no_charge
 
     async def fetch(
         self,
@@ -123,6 +136,7 @@ class FakeTranscriptProvider:
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
         _ = (paused_sources, skip_sources)  # this fake has no blockable source
+        await self.charge()
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
@@ -460,11 +474,16 @@ async def a_success_between_transients_resets_the_storm_counter() -> None:
 
 @test()
 async def worker_stops_when_the_daily_budget_is_exhausted() -> None:
-    """An exhausted budget halts the pass after spending what it can."""
+    """An exhausted budget halts the pass after spending what it can.
+
+    Binds the fake provider's charge to the shared client, simulating a
+    Data-API-backed source (e.g. captions) — the only kind that spends the
+    daily budget."""
     provider = FakeTranscriptProvider(
         {"v1": [Ok("one")], "v2": [Ok("two")], "v3": [Ok("three")]}
     )
     env = await load_fixture(make_env(provider, daily_limit=2))
+    provider.charge = env.client.charge_transcript
     await seed(env.db, "v1", liked_at=datetime(2026, 6, 3, tzinfo=UTC))
     await seed(env.db, "v2", liked_at=datetime(2026, 6, 2, tzinfo=UTC))
     await seed(env.db, "v3", liked_at=datetime(2026, 6, 1, tzinfo=UTC))
@@ -486,9 +505,14 @@ async def worker_stops_when_the_daily_budget_is_exhausted() -> None:
 
 @test()
 async def worker_processes_most_recently_liked_first() -> None:
-    """With room for one fetch, the newest-liked video is transcribed first."""
+    """With room for one fetch, the newest-liked video is transcribed first.
+
+    Binds the fake provider's charge to the shared client, simulating a
+    Data-API-backed source (e.g. captions) — the only kind that spends the
+    daily budget."""
     provider = FakeTranscriptProvider({"new": [Ok("fresh")], "old": [Ok("stale")]})
     env = await load_fixture(make_env(provider, daily_limit=1))
+    provider.charge = env.client.charge_transcript
     await seed(env.db, "old", liked_at=datetime(2026, 1, 1, tzinfo=UTC))
     await seed(env.db, "new", liked_at=datetime(2026, 6, 1, tzinfo=UTC))
 
@@ -649,5 +673,199 @@ async def a_fresh_pass_refills_the_librarys_request_budget() -> None:
     # A fresh pass, a fresh budget: two more real calls, not zero.
     assert_eq(fetcher.calls, 4)
     assert_eq(report.fetched, 2)
+
+    await db.close()
+
+
+# --- DailyQuota accounting: only captions spends it (#2, mixing bug) --------
+
+
+class _FakeCaptionRequest:
+    """A built request that returns a canned value."""
+
+    def __init__(self, result: object) -> None:
+        self._result = result
+
+    def execute(self) -> object:
+        return self._result
+
+
+class _FakeCaptionsCollection:
+    """A fake `captions` collection serving exactly one human-authored track."""
+
+    def list(self, **_kwargs: object) -> _FakeCaptionRequest:
+        return _FakeCaptionRequest(
+            {"items": [{"id": "t1", "snippet": {"trackKind": "standard"}}]}
+        )
+
+    def download(self, **_kwargs: object) -> _FakeCaptionRequest:
+        srt = "1\n00:00:01,000 --> 00:00:02,000\nhello\n"
+        return _FakeCaptionRequest(srt)
+
+
+class _FakeCaptionsResource:
+    """A discovery resource exposing only the captions collection."""
+
+    def captions(self) -> _FakeCaptionsCollection:
+        return _FakeCaptionsCollection()
+
+
+@test()
+async def a_fallback_source_serving_the_video_never_spends_the_daily_quota() -> None:
+    """A video served by a non-captions fallback (Supadata/library stand-in)
+    leaves the YouTube Data API daily quota untouched — only captions.list/
+    download are billed Data API calls; the free/paid transcript sources aren't.
+    """
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    quota = DailyQuota(db, limit=10)
+    client = YouTubeApiClient(InMemoryYouTubeApi(), quota, clock=clock)
+    captions = CaptionsTranscriptProvider(
+        _FakeCaptionsResource()  # pyright: ignore[reportArgumentType]
+    )
+    captions.charge = client.charge_transcript
+    fake_fallback = FakeTranscriptProvider(
+        {"v1": [Ok(text="from the fallback", source="fake")]}
+    )
+    # A caption-less video: the primary is unavailable, so the fallback serves it.
+    empty_captions = CaptionsTranscriptProvider(
+        _EmptyCaptionsResource()  # pyright: ignore[reportArgumentType]
+    )
+    empty_captions.charge = client.charge_transcript
+    chain = FallbackTranscriptProvider(empty_captions, fallbacks=[fake_fallback])
+    worker = TranscriptSyncService(database=db, client=client, provider=chain)
+    await seed(db, "v1")
+
+    report = await worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 1)
+    # The captions primary *did* charge (it always runs first), so the quota
+    # accounting reflects that live call — but the fallback's own success never
+    # charges a second unit.
+    assert_eq(await quota.used(now=clock.now()), 1)
+
+    await db.close()
+
+
+class _EmptyCaptionsResource:
+    """A discovery resource whose captions collection has no tracks."""
+
+    def captions(self) -> _EmptyCaptionsCollection:
+        return _EmptyCaptionsCollection()
+
+
+class _EmptyCaptionsCollection:
+    """A fake `captions` collection with no tracks (drives the unavailable path)."""
+
+    def list(self, **_kwargs: object) -> _FakeCaptionRequest:
+        return _FakeCaptionRequest({"items": []})
+
+    def download(self, **_kwargs: object) -> _FakeCaptionRequest:
+        raise AssertionError("no track to download")
+
+
+@test()
+async def a_captions_hit_spends_exactly_one_daily_quota_unit() -> None:
+    """A video the captions primary itself serves spends exactly one unit."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    quota = DailyQuota(db, limit=10)
+    client = YouTubeApiClient(InMemoryYouTubeApi(), quota, clock=clock)
+    captions = CaptionsTranscriptProvider(
+        _FakeCaptionsResource()  # pyright: ignore[reportArgumentType]
+    )
+    captions.charge = client.charge_transcript
+    worker = TranscriptSyncService(database=db, client=client, provider=captions)
+    await seed(db, "v1")
+
+    report = await worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 1)
+    assert_eq(await quota.used(now=clock.now()), 1)
+
+    await db.close()
+
+
+@test()
+async def an_unbound_chain_with_only_fallback_sources_never_touches_the_quota() -> None:
+    """A chain with no captions leaf at all (the default supadata/library order)
+    never spends the daily quota, however many videos it fetches — reproducing
+    and fixing the mixing bug where every transcript, regardless of provider,
+    spent one YouTube Data API unit."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    quota = DailyQuota(db, limit=10)
+    client = YouTubeApiClient(InMemoryYouTubeApi(), quota, clock=clock)
+    fake_provider = FakeTranscriptProvider(
+        {
+            "v1": [Ok(text="one", source="supadata")],
+            "v2": [Ok(text="two", source="youtube_transcript_api")],
+        }
+    )
+    worker = TranscriptSyncService(database=db, client=client, provider=fake_provider)
+    await seed(db, "v1")
+    await seed(db, "v2")
+
+    report = await worker.sync(logger=test_logger())
+
+    assert_eq(report.fetched, 2)
+    assert_eq(await quota.used(now=clock.now()), 0)
+
+
+@test()
+async def on_demand_fetch_raises_when_quota_exhausted_and_captions_is_the_source() -> (
+    None
+):
+    """The on-demand path still stops before a live captions call once the day's
+    Data API budget is spent (translated to 429 at the HTTP boundary)."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    quota = DailyQuota(db, limit=1)
+    await quota.spend(1, now=clock.now())
+    client = YouTubeApiClient(InMemoryYouTubeApi(), quota, clock=clock)
+    captions = CaptionsTranscriptProvider(
+        _FakeCaptionsResource()  # pyright: ignore[reportArgumentType]
+    )
+    captions.charge = client.charge_transcript
+    service = YouTubeService(
+        database=db, client=client, provider=captions, tracer=noop_tracer()
+    )
+    await seed(db, "v1")
+
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await service.fetch_transcript("v1", logger=test_logger())
+
+    await db.close()
+
+
+@test()
+async def on_demand_fetch_ignores_exhausted_quota_with_no_captions_in_the_chain() -> (
+    None
+):
+    """A chain with no captions leaf never checks (or spends) the daily quota, so
+    a video still fetches even once the day's budget is nominally exhausted."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    quota = DailyQuota(db, limit=1)
+    await quota.spend(1, now=clock.now())
+    client = YouTubeApiClient(InMemoryYouTubeApi(), quota, clock=clock)
+    fake_provider = FakeTranscriptProvider(
+        {"v1": [Ok(text="served", source="supadata")]}
+    )
+    service = YouTubeService(
+        database=db, client=client, provider=fake_provider, tracer=noop_tracer()
+    )
+    await seed(db, "v1")
+
+    result = await service.fetch_transcript("v1", logger=test_logger())
+
+    assert_eq(result.transcript, "served")
+
+    await db.close()
 
     await db.close()

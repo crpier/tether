@@ -167,15 +167,23 @@
       "name": "add_movie",
       "params_model": "AddMovieParams",
       "schema": {
-        "description": "Params for Adding a `movie` Bucket item.",
+        "description": "Params for Adding a `movie` Bucket item.\n\n`intent_context` is optional \u2014 add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
         "properties": {
           "title": {
             "title": "Title",
             "type": "string"
           },
           "intent_context": {
-            "title": "Intent Context",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Context"
           },
           "year": {
             "anyOf": [
@@ -190,7 +198,7 @@
             "title": "Year"
           }
         },
-        "required": ["title", "intent_context"],
+        "required": ["title"],
         "title": "AddMovieParams",
         "type": "object"
       }
@@ -200,15 +208,23 @@
       "name": "add_place",
       "params_model": "AddPlaceParams",
       "schema": {
-        "description": "Params for Adding a `place` Bucket item.",
+        "description": "Params for Adding a `place` Bucket item.\n\n`intent_context` is optional \u2014 add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
         "properties": {
           "name": {
             "title": "Name",
             "type": "string"
           },
           "intent_context": {
-            "title": "Intent Context",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Context"
           },
           "location": {
             "anyOf": [
@@ -223,7 +239,7 @@
             "title": "Location"
           }
         },
-        "required": ["name", "intent_context"],
+        "required": ["name"],
         "title": "AddPlaceParams",
         "type": "object"
       }
@@ -233,15 +249,23 @@
       "name": "add_book",
       "params_model": "AddBookParams",
       "schema": {
-        "description": "Params for Adding a `book` Bucket item.",
+        "description": "Params for Adding a `book` Bucket item.\n\n`intent_context` is optional \u2014 add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
         "properties": {
           "title": {
             "title": "Title",
             "type": "string"
           },
           "intent_context": {
-            "title": "Intent Context",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Context"
           },
           "author": {
             "anyOf": [
@@ -256,7 +280,7 @@
             "title": "Author"
           }
         },
-        "required": ["title", "intent_context"],
+        "required": ["title"],
         "title": "AddBookParams",
         "type": "object"
       }
@@ -266,15 +290,23 @@
       "name": "add_travel",
       "params_model": "AddTravelParams",
       "schema": {
-        "description": "Params for Adding a `travel` Bucket item.",
+        "description": "Params for Adding a `travel` Bucket item.\n\n`intent_context` is optional \u2014 add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
         "properties": {
           "destination": {
             "title": "Destination",
             "type": "string"
           },
           "intent_context": {
-            "title": "Intent Context",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Context"
           },
           "season": {
             "anyOf": [
@@ -289,7 +321,7 @@
             "title": "Season"
           }
         },
-        "required": ["destination", "intent_context"],
+        "required": ["destination"],
         "title": "AddTravelParams",
         "type": "object"
       }
@@ -360,6 +392,33 @@
         },
         "required": ["q"],
         "title": "SearchBucketItemsParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/set_bucket_item_intent",
+      "name": "set_bucket_item_intent",
+      "params_model": "SetBucketItemIntentParams",
+      "schema": {
+        "description": "Params for attaching or replacing a Bucket item's intent context.\n\nThe one way to record a reason after Add \u2014 use it once the human supplies\none for an item that was Added without it.",
+        "properties": {
+          "bucket_item_id": {
+            "format": "uuid7",
+            "title": "Bucket Item Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "intent_context": {
+            "title": "Intent Context",
+            "type": "string"
+          }
+        },
+        "required": ["bucket_item_id", "version", "intent_context"],
+        "title": "SetBucketItemIntentParams",
         "type": "object"
       }
     },
@@ -720,6 +779,38 @@
         },
         "required": ["prompt_id", "answer_text"],
         "title": "ProposeEssayGradeParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/read_conversation_history",
+      "name": "read_conversation_history",
+      "params_model": "ReadConversationHistoryParams",
+      "schema": {
+        "description": "Params for reading transcript rows from before the live pi session.\n\n`limit` windows to the newest `limit` prior-session rows (capped at 50 so\na single call can't flood the model's context); `before` is an optional\n`seq` cursor for paging further back once the first page has been read.",
+        "properties": {
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before"
+          }
+        },
+        "title": "ReadConversationHistoryParams",
         "type": "object"
       }
     }

@@ -1629,6 +1629,10 @@ export interface components {
     /**
      * ConversationRead
      * @description HTTP representation of a host-owned conversation.
+     *
+     *     `session_gap_seconds` and `latest_activity` let the frontend compute
+     *     whether the *next* message will land on a fresh pi session (see
+     *     `ConversationService.resolve_session`) without hardcoding the gap.
      */
     ConversationRead: {
       /**
@@ -1641,6 +1645,8 @@ export interface components {
        * Format: uuid7
        */
       id: string;
+      /** Latest Activity */
+      latest_activity: string | null;
       /**
        * Pi Session Id
        * Format: uuid7
@@ -1648,6 +1654,8 @@ export interface components {
       pi_session_id: string;
       /** Selected Model */
       selected_model: string | null;
+      /** Session Gap Seconds */
+      session_gap_seconds: number;
       /** Title */
       title: string | null;
     };
@@ -2060,6 +2068,24 @@ export interface components {
       p256dh: string;
     };
     /**
+     * SupadataUsageRead
+     * @description HTTP representation of Supadata's own separate monthly usage budget.
+     *
+     *     Distinct from `quota` (the YouTube Data API's per-day budget): Supadata is a
+     *     separate paid HTTP API with its own cap and monthly reset. `month` is the
+     *     UTC calendar month (`YYYY-MM`) `used`/`remaining` apply to.
+     */
+    SupadataUsageRead: {
+      /** Limit */
+      limit: number;
+      /** Month */
+      month: string;
+      /** Remaining */
+      remaining: number;
+      /** Used */
+      used: number;
+    };
+    /**
      * TetherRequest
      * @description Body for tethering a Memory at an observed `version`.
      *
@@ -2216,6 +2242,7 @@ export interface components {
      *     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
      *     ...     api_paused_until=None,
      *     ...     transcript_providers_paused=[],
+     *     ...     supadata=None,
      *     ... )
      *     >>> read.videos_total
      *     3
@@ -2226,6 +2253,8 @@ export interface components {
       /** Last Synced At */
       last_synced_at: string | null;
       quota: components["schemas"]["QuotaMeta"];
+      /** @default null */
+      supadata: components["schemas"]["SupadataUsageRead"] | null;
       /** Transcript Providers Paused */
       transcript_providers_paused: components["schemas"]["TranscriptProviderPauseRead"][];
       /** Transcripts Done */

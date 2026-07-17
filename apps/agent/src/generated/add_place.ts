@@ -10,7 +10,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const add_placeParameters = Type.Object({
   name: Type.String(),
-  intent_context: Type.String(),
+  intent_context: Type.Optional(Type.String()),
   location: Type.Optional(Type.String()),
 });
 
@@ -22,8 +22,10 @@ export const add_placeTool: ToolDefinition<
 > = {
   name: "add_place",
   label: "AddPlace",
-  description: "Params for Adding a `place` Bucket item.",
-  promptSnippet: "Params for Adding a `place` Bucket item.",
+  description:
+    "Params for Adding a `place` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
+  promptSnippet:
+    "Params for Adding a `place` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
   parameters: add_placeParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

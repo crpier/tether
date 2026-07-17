@@ -15,11 +15,15 @@ from typing import Any
 from snektest import assert_eq, assert_raises, test
 
 from tether.youtube import (
+    FallbackTranscriptProvider,
+    NullTranscriptProvider,
     TranscriptTransientError,
     TranscriptUnavailableError,
+    YouTubeQuotaExceededError,
 )
 from tether.youtube_oauth import (
     CaptionsTranscriptProvider,
+    bind_captions_daily_quota,
     parse_srt_transcript,
 )
 
@@ -226,3 +230,85 @@ async def provider_decodes_bytes_and_str_downloads() -> None:
     fetched = await provider(captions).fetch("v1")
 
     assert_eq(fetched.text.startswith("Async IO"), True)
+
+
+# --- Daily-quota charging: only captions spends the YouTube Data API budget --
+
+
+@test()
+async def fetch_charges_the_bound_daily_quota_before_the_live_call() -> None:
+    """A bound `charge` callback fires once, before the list/download calls."""
+    captions = FakeCaptions(
+        list_items=[track("t1")], download_result=SRT.encode("utf-8")
+    )
+    calls: list[str] = []
+
+    async def charge() -> None:
+        calls.append("charged")
+
+    result = provider(captions)
+    result.charge = charge
+
+    fetched = await result.fetch("v1")
+
+    assert_eq(calls, ["charged"])
+    assert_eq(fetched.source, "youtube_captions")
+
+
+@test()
+async def fetch_with_no_bound_charge_is_a_no_op() -> None:
+    """An unbound provider (the test default) never charges anything — no crash."""
+    captions = FakeCaptions(
+        list_items=[track("t1")], download_result=SRT.encode("utf-8")
+    )
+
+    _ = await provider(captions).fetch("v1")
+
+
+@test()
+async def an_exhausted_charge_raises_before_any_live_call() -> None:
+    """A depleted daily budget raises from `charge` before list/download ever runs."""
+    captions = FakeCaptions(list_items=[track("t1")], download_result=b"unused")
+
+    async def charge() -> None:
+        raise YouTubeQuotaExceededError("day exhausted")
+
+    result = provider(captions)
+    result.charge = charge
+
+    with assert_raises(YouTubeQuotaExceededError):
+        _ = await result.fetch("v1")
+    assert_eq(captions.download_ids, [])
+
+
+@test()
+async def binding_the_charge_reaches_captions_inside_a_fallback_chain() -> None:
+    """`bind_captions_daily_quota` walks a composite to bind the captions leaf."""
+    captions_provider = provider(FakeCaptions(list_items=[]))
+    chain = FallbackTranscriptProvider(
+        captions_provider, fallbacks=[NullTranscriptProvider()]
+    )
+    calls: list[str] = []
+
+    async def charge() -> None:
+        calls.append("charged")
+
+    bind_captions_daily_quota(chain, charge)
+    with assert_raises(TranscriptUnavailableError):
+        _ = await captions_provider.fetch("v1")
+
+    assert_eq(calls, ["charged"])
+
+
+@test()
+async def binding_the_charge_is_a_no_op_with_no_captions_in_the_chain() -> None:
+    """A chain with no captions leaf (e.g. the default supadata/library order) is
+    left untouched — nothing to bind, and no error."""
+    chain = FallbackTranscriptProvider(
+        NullTranscriptProvider(), fallbacks=[NullTranscriptProvider()]
+    )
+
+    async def charge() -> None:
+        raise AssertionError("should never be called")
+
+    bind_captions_daily_quota(chain, charge)

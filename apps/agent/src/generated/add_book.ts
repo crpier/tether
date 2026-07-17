@@ -10,7 +10,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const add_bookParameters = Type.Object({
   title: Type.String(),
-  intent_context: Type.String(),
+  intent_context: Type.Optional(Type.String()),
   author: Type.Optional(Type.String()),
 });
 
@@ -22,8 +22,10 @@ export const add_bookTool: ToolDefinition<
 > = {
   name: "add_book",
   label: "AddBook",
-  description: "Params for Adding a `book` Bucket item.",
-  promptSnippet: "Params for Adding a `book` Bucket item.",
+  description:
+    "Params for Adding a `book` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
+  promptSnippet:
+    "Params for Adding a `book` Bucket item.\n\n`intent_context` is optional — add the item now even without one; a reason\ncan be attached later with `set_bucket_item_intent`.",
   parameters: add_bookParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

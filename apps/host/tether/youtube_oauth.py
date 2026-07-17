@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +32,7 @@ from types import ModuleType
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from tether.youtube import (
+    FallbackTranscriptProvider,
     FetchedTranscript,
     LikedPage,
     RawYouTubeVideo,
@@ -689,6 +690,10 @@ def _classify_caption_error(video_id: str, error: Exception) -> Exception:
     return TranscriptTransientError(f"caption fetch for {video_id} failed: {error}")
 
 
+async def _no_charge() -> None:
+    """The default no-op charge: a captions provider with no bound daily budget."""
+
+
 class CaptionsTranscriptProvider(TranscriptProvider):
     """The first `TranscriptProvider`: the OAuth-backed YouTube captions API.
 
@@ -697,15 +702,30 @@ class CaptionsTranscriptProvider(TranscriptProvider):
     transcript text plus timed segments. No tracks, an empty download, or a 403
     (the owner-only API refusing a third-party video) is the *unavailable* outcome
     so the composite falls through to the fallbacks; a 401 and transport/5xx/rate
-    errors are *transient*. Blocking Data API calls run in a worker thread. It
-    holds no budget — the worker and on-demand path charge the daily budget before
-    calling `fetch`.
+    errors are *transient*. Blocking Data API calls run in a worker thread.
+
+    This is the only transcript source that spends the YouTube Data API's daily
+    quota (`captions.list` + `captions.download` are billed Data API calls; the
+    free `youtube_transcript_api` library scrapes the page and Supadata is a
+    separate paid HTTP API, so neither should count against it). It charges the
+    budget itself, right before its own live call, via `charge` — a callback
+    late-bound by `bind_captions_daily_quota` once the budgeted client exists (the
+    provider tree is built from settings first, mirroring how Supadata's spend
+    guard is late-bound). Unbound (e.g. in tests), `charge` is a no-op.
     """
 
     source: str = "youtube_captions"
 
-    def __init__(self, resource: _YouTubeResource) -> None:
+    def __init__(
+        self,
+        resource: _YouTubeResource,
+        *,
+        charge: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._resource: _YouTubeResource = resource
+        # Public so the wiring can late-bind the daily-quota charge once the
+        # budgeted `YouTubeApiClient` exists; a no-op by default.
+        self.charge: Callable[[], Awaitable[None]] = charge or _no_charge
 
     @classmethod
     def from_config(cls, config: OAuthConfig) -> CaptionsTranscriptProvider:
@@ -728,10 +748,16 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
     ) -> FetchedTranscript:
-        """Fetch and parse the best caption track, or raise a typed signal."""
+        """Fetch and parse the best caption track, or raise a typed signal.
+
+        Charges the daily Data API budget first (raising `YouTubeQuotaExceededError`
+        before any live call when the day is exhausted); the free library and
+        Supadata providers never reach this method, so they never spend it.
+        """
         # The captions API is never blockable, so the worker's pause hook is a
         # no-op here; the composite provider is what skips its blockable sources.
         _ = (paused_sources, skip_sources)
+        await self.charge()
         items = await asyncio.to_thread(self._list_captions, video_id)
         track_id = _select_caption_track(items)
         if track_id is None:
@@ -774,6 +800,33 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         if isinstance(raw, bytes):
             return raw.decode("utf-8", errors="replace")
         return raw
+
+
+def _iter_captions_providers(
+    provider: TranscriptProvider,
+) -> Iterable[CaptionsTranscriptProvider]:
+    """Yield every `CaptionsTranscriptProvider` reachable from `provider`."""
+    if isinstance(provider, CaptionsTranscriptProvider):
+        yield provider
+    elif isinstance(provider, FallbackTranscriptProvider):
+        for child in provider.leaf_providers():
+            yield from _iter_captions_providers(child)
+
+
+def bind_captions_daily_quota(
+    provider: TranscriptProvider, charge: Callable[[], Awaitable[None]]
+) -> None:
+    """Late-bind the YouTube Data API daily-quota charge onto every captions leaf.
+
+    Mirrors `bind_supadata_spend_guard`: the provider tree is built from settings
+    before the budgeted `YouTubeApiClient` exists, so the charge callback (its
+    `charge_transcript`) is attached here at wire time. A no-op when the chain has
+    no captions provider — the common case, since the default order
+    (`supadata,library`) omits it, and the library/Supadata legs never spend this
+    budget at all.
+    """
+    for leaf in _iter_captions_providers(provider):
+        leaf.charge = charge
 
 
 class _InstalledAppFlow(Protocol):

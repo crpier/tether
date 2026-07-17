@@ -382,6 +382,39 @@ def conversations_route_creates_default_conversation() -> None:
 
 
 @test()
+def conversations_route_exposes_session_freshness_fields() -> None:
+    """`ConversationRead` carries the gap and last-activity signal, not a hardcode."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation = client.get("/api/conversations").json()[0]
+
+    assert_eq(conversation["session_gap_seconds"], 300)
+    assert_eq(conversation["latest_activity"], None)
+
+
+@test()
+def latest_activity_reflects_the_most_recent_turn() -> None:
+    """After a user row lands, `latest_activity` reports its timestamp."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "hello",
+                }
+            )
+            _ = websocket.receive_json()
+
+        conversation = client.get("/api/conversations").json()[0]
+
+    assert_true(conversation["latest_activity"] is not None)
+
+
+@test()
 def configured_default_model_is_stored_on_new_conversations() -> None:
     """New conversation rows inherit the global default model id."""
     with (

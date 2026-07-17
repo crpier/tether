@@ -22,12 +22,14 @@ from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 from tether.transcript_supadata import (
     HttpSupadataTransport,
     PersistentSupadataSpendGuard,
+    ProviderSupadataUsageReader,
     SupadataBudgetExhaustedError,
     SupadataConfig,
     SupadataConfigurationError,
     SupadataResponse,
     SupadataSpendGuard,
     SupadataTranscriptProvider,
+    UnlimitedSupadataSpend,
     _retry_after_seconds,
     _submit_params,
     bind_supadata_spend_guard,
@@ -35,6 +37,7 @@ from tether.transcript_supadata import (
 from tether.youtube import (
     FallbackTranscriptProvider,
     NullTranscriptProvider,
+    SupadataUsage,
     TranscriptBlockedError,
     TranscriptTransientError,
     TranscriptUnavailableError,
@@ -287,6 +290,17 @@ class _CountingGuard(SupadataSpendGuard):
             raise SupadataBudgetExhaustedError(self.charges, self._cap)
         self.charges += 1
 
+    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+        _ = now
+        if self._cap is None:
+            return None
+        return SupadataUsage(
+            used=self.charges,
+            limit=self._cap,
+            remaining=max(0, self._cap - self.charges),
+            month="2026-07",
+        )
+
 
 @test()
 def native_is_the_default_mode() -> None:
@@ -426,6 +440,80 @@ async def binding_the_cap_reaches_supadata_inside_a_fallback_chain() -> None:
     bind_supadata_spend_guard(chain, db, max_uses=5)
 
     assert_true(isinstance(supadata.spend_guard, PersistentSupadataSpendGuard))
+
+
+# --- Monthly usage snapshot (separate from the YouTube daily quota) ---------
+
+
+@test()
+async def guard_snapshot_reports_used_limit_and_month_without_charging() -> None:
+    """`snapshot` reads the month's usage but never reserves a use."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 7, 20, 12, 0, tzinfo=UTC))
+    guard = PersistentSupadataSpendGuard(db, max_uses=3000, clock=clock)
+    await guard.charge()
+    await guard.charge()
+
+    usage = await guard.snapshot(now=clock.now())
+
+    assert_eq(usage.used, 2)
+    assert_eq(usage.limit, 3000)
+    assert_eq(usage.remaining, 2998)
+    assert_eq(usage.month, "2026-07")
+    # A snapshot never spends: a further charge still counts from 2, not 3.
+    await guard.charge()
+    assert_eq((await guard.snapshot(now=clock.now())).used, 3)
+
+
+@test()
+async def guard_snapshot_reports_zero_used_with_no_prior_charge() -> None:
+    """A month with no charges yet snapshots as fully unused, not an error."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    guard = PersistentSupadataSpendGuard(db, max_uses=10)
+
+    usage = await guard.snapshot(now=datetime(2026, 7, 1, tzinfo=UTC))
+
+    assert_eq(usage.used, 0)
+    assert_eq(usage.remaining, 10)
+
+
+@test()
+async def unlimited_guard_snapshot_is_none() -> None:
+    """The unbounded default guard reports no usage (there is no cap)."""
+    usage = await UnlimitedSupadataSpend().snapshot(
+        now=datetime(2026, 7, 1, tzinfo=UTC)
+    )
+
+    assert_is_none(usage)
+
+
+@test()
+async def usage_reader_reads_the_bound_supadata_leaf_inside_a_chain() -> None:
+    """`ProviderSupadataUsageReader` finds Supadata inside a fallback chain."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    supadata = _provider(FakeSupadataTransport(submit=[SupadataResponse(200, {})]))
+    chain = FallbackTranscriptProvider(supadata, fallbacks=[NullTranscriptProvider()])
+    bind_supadata_spend_guard(chain, db, max_uses=100)
+    reader = ProviderSupadataUsageReader(chain)
+
+    usage = await reader.snapshot(now=datetime(2026, 7, 1, tzinfo=UTC))
+
+    assert usage is not None
+    assert_eq(usage.used, 0)
+    assert_eq(usage.limit, 100)
+
+
+@test()
+async def usage_reader_is_none_with_no_supadata_in_the_chain() -> None:
+    """A chain with no Supadata leaf (e.g. captions/library only) reports no usage."""
+    reader = ProviderSupadataUsageReader(NullTranscriptProvider())
+
+    usage = await reader.snapshot(now=datetime(2026, 7, 1, tzinfo=UTC))
+
+    assert_is_none(usage)
 
 
 # --- Request pacing: stay under the plan's per-request rate limit ------------

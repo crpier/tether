@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import os
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
@@ -30,7 +30,13 @@ from tether.chat_frames import (
     ToolStartFrame,
     UserMessageFrame,
 )
-from tether.conversations import ConversationNotFoundError, MessageDraft
+from tether.conversations import (
+    SESSION_GAP as _SESSION_GAP,
+)
+from tether.conversations import (
+    ConversationNotFoundError,
+    MessageDraft,
+)
 from tether.events import HubEvent, NotifyEvent
 from tether.pi_runtime import (
     AgentEnded,
@@ -47,14 +53,6 @@ from tether.pi_runtime import (
 
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
-_SESSION_GAP = timedelta(minutes=5)
-"""Idle window after which a new turn rotates onto a fresh pi session.
-
-Roughly the provider's automatic prompt-cache warmth window: inside it we reuse
-the live session (cache hit); past it we start clean rather than resend a stale,
-uncached history — which also matches the usual "after a few minutes it's a new
-topic" shape of these conversations.
-"""
 _LOCALTIME_PATH = Path("/etc/localtime")
 _ZONEINFO_MARKER = "zoneinfo/"
 

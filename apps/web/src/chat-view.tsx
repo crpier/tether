@@ -20,13 +20,16 @@ import type {
   ConnectionStatus,
   CreateChatBus,
 } from "./chat-bus";
+import { isPinned, restoredScrollTop } from "./chat-scroll";
 import {
   deriveRows,
   emptyTurn,
   isAwaitingFirstToken,
   reduceFrame,
+  stabilizeRows,
   startTurn,
 } from "./chat-timeline";
+import { willStartFreshSession } from "./session-freshness";
 import type {
   ChatRole,
   LiveTurn,
@@ -35,6 +38,7 @@ import type {
 } from "./chat-timeline";
 import { MessageContent } from "./components/message-content";
 import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
+import { formatToolResult } from "./lib/tool-result";
 import { BucketPanel } from "./panels/bucket";
 import { MemoriesPanel } from "./panels/memories";
 import { NotificationsPanel } from "./panels/notifications";
@@ -207,7 +211,11 @@ function MessageRow(props: { row: TimelineRow }) {
       <Match when={props.row.kind === "tool" && props.row}>
         {(tool) => {
           const args = () => formatToolDetail(tool().args);
-          const result = () => formatToolDetail(tool().result);
+          // Results get the deep-parse + trim treatment (see lib/tool-result):
+          // huge/nested tool payloads only need to convey shape, not
+          // completeness. Arguments stay untouched — they're small and the
+          // model needs to see them verbatim to debug a call.
+          const result = () => formatToolResult(tool().result);
           return (
             <article
               aria-label="Tool activity"
@@ -325,23 +333,37 @@ function MessageRows(props: {
   working: boolean;
   startedAt: number | null;
   stopped: boolean;
-  // Returns whether an older-page fetch actually started, so the caller only
-  // arms the scroll-restore snapshot when rows are really about to prepend.
+  // Triggers a fetch of the next-older page; a no-op if one is already in
+  // flight or history is exhausted. Returns whether a fetch actually started,
+  // so the caller only arms its scroll-position restore when rows are really
+  // about to prepend.
   onNearTop: () => boolean;
 }) {
   let viewport: HTMLElement | undefined;
-  const [following, setFollowing] = createSignal(true);
+  // Pinned ⇔ the viewport is within PINNED_THRESHOLD_PX of the bottom. This
+  // is the *only* thing that decides whether content changes move the
+  // viewport, and it is only ever recomputed from a real `scroll` event —
+  // never flipped directly by our own follow-scroll. That's safe because a
+  // follow-scroll always lands exactly at the bottom, so recomputing from
+  // geometry after it fires still reports pinned.
+  const [pinned, setPinned] = createSignal(true);
   // Set right before an older-page fetch so the next render (which prepends
-  // rows) restores the viewport to the same visual position instead of
-  // jumping, since `overflow-anchor: none` disables the browser's own anchor.
+  // rows above the fold) restores the viewport to the same visual position
+  // instead of jumping. Needed because `overflow-anchor` is off below — the
+  // pinned-follow rule owns scroll position, so nothing else may adjust it.
   let pendingRestore: { scrollHeight: number; scrollTop: number } | null = null;
 
-  const atBottom = () => {
+  const updatePinned = () => {
     if (!viewport) {
-      return true;
+      setPinned(true);
+      return;
     }
-    return (
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48
+    setPinned(
+      isPinned(
+        viewport.scrollTop,
+        viewport.scrollHeight,
+        viewport.clientHeight,
+      ),
     );
   };
   const scrollToEnd = () => {
@@ -350,20 +372,27 @@ function MessageRows(props: {
     }
   };
 
-  // Follow the stream while the user sits at the bottom; the moment they scroll
-  // up we stop yanking them back and offer an explicit jump affordance instead.
-  // A pending scroll-restore (from loading an older page) takes priority over
-  // both, since the rows changed for a reason unrelated to the live turn.
+  // The explicit pinned-follow rule: on *any* content change (new message,
+  // streamed token, tool call start/end, a row settling, history hydrating),
+  // a pinned viewport snaps to the bottom instantly (no smooth behavior); a
+  // non-pinned viewport is left completely untouched so content can append
+  // below without moving the viewport under the user. A pending scroll
+  // restore from an older-page prepend takes priority over both, since those
+  // rows changed for a reason unrelated to the live turn.
   createEffect(() => {
     void props.rows;
     void props.working;
     if (pendingRestore !== null && viewport !== undefined) {
       const { scrollHeight, scrollTop } = pendingRestore;
-      viewport.scrollTop = scrollTop + (viewport.scrollHeight - scrollHeight);
+      viewport.scrollTop = restoredScrollTop(
+        scrollTop,
+        scrollHeight,
+        viewport.scrollHeight,
+      );
       pendingRestore = null;
       return;
     }
-    if (following()) {
+    if (pinned()) {
       queueMicrotask(scrollToEnd);
     }
   });
@@ -382,7 +411,7 @@ function MessageRows(props: {
         aria-label="Chat transcript"
         class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-4 shadow-sm"
         onScroll={() => {
-          setFollowing(atBottom());
+          updatePinned();
           if (
             viewport !== undefined &&
             viewport.scrollTop < NEAR_TOP_THRESHOLD_PX
@@ -420,11 +449,11 @@ function MessageRows(props: {
           </p>
         </Show>
       </section>
-      <Show when={!following()}>
+      <Show when={!pinned()}>
         <Button
           class="absolute bottom-3 left-1/2 -translate-x-1/2 shadow"
           onClick={() => {
-            setFollowing(true);
+            setPinned(true);
             scrollToEnd();
           }}
           size="sm"
@@ -463,6 +492,30 @@ export function ChatView(props: {
   }));
   const conversation = createMemo(() => conversationsQuery.data?.[0]);
   const conversationId = createMemo(() => conversation()?.id);
+
+  // Ticks the "will this land on a fresh pi session" indicator forward without
+  // a refetch — a plain `Date.now()` read at render time would never update
+  // while the user just sits looking at the composer.
+  const [nowTick, setNowTick] = createSignal(Date.now());
+  onMount(() => {
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+    }, 5000);
+    onCleanup(() => {
+      clearInterval(interval);
+    });
+  });
+  const startsFreshSession = createMemo(() => {
+    const current = conversation();
+    if (current === undefined) {
+      return false;
+    }
+    return willStartFreshSession(
+      current.latest_activity,
+      current.session_gap_seconds,
+      nowTick(),
+    );
+  });
 
   // Settled history is paginated: `messagesQuery` only ever fetches the latest
   // page (bounded by `MESSAGES_PAGE_SIZE`); `accumulated` is the union-by-seq
@@ -530,9 +583,18 @@ export function ChatView(props: {
         role: message.role,
         content: message.content,
         toolName: message.tool_name,
+        toolArgs: message.tool_args,
+        toolResult: message.tool_result,
       })),
   );
-  const rows = createMemo(() => deriveRows(storedMessages(), turn()));
+  // Reconciled against the previous frame's output so rows whose rendered
+  // content hasn't changed keep the same object reference — see
+  // `stabilizeRows` for why that matters (it's what stops the whole
+  // transcript remounting on every streamed token).
+  const rows = createMemo<TimelineRow[]>(
+    (previous) => stabilizeRows(previous, deriveRows(storedMessages(), turn())),
+    [],
+  );
   const working = createMemo(() => isAwaitingFirstToken(turn()));
 
   // Clear the live turn once settled history catches up. Tracks only the stored
@@ -801,6 +863,14 @@ export function ChatView(props: {
               stopped={turn().stopped || interrupted()}
               working={working()}
             />
+            <Show when={startsFreshSession() && !generating()}>
+              <p
+                class="text-muted-foreground text-xs"
+                title="The assistant's working context resets after a few minutes idle; chat history stays."
+              >
+                Next message starts a fresh session
+              </p>
+            </Show>
             <form class="space-y-2" onSubmit={onSubmit}>
               <TextField onChange={setDraft} value={draft()}>
                 <TextFieldLabel>Message</TextFieldLabel>

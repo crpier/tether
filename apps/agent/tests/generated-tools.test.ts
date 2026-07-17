@@ -34,6 +34,7 @@ describe("generated tool extension", () => {
       "complete_bucket_item",
       "delete_bucket_item",
       "search_bucket_items",
+      "set_bucket_item_intent",
       "triage_report",
       "browse_youtube",
       "search_youtube",
@@ -47,6 +48,7 @@ describe("generated tool extension", () => {
       "list_due_recall_prompts",
       "answer_recall_prompt",
       "propose_essay_grade",
+      "read_conversation_history",
     ]);
   });
 });
