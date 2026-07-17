@@ -481,6 +481,16 @@ class FallbackTranscriptProvider(TranscriptProvider):
     with `source=None` (a deferral) rather than *unavailable*, so the worker keeps
     the video pending for after the cooldown instead of marking it terminal on a
     source it never tried.
+
+    `skip_sources` (e.g. Supadata gated off a caption-less video) deprioritizes
+    rather than excludes: a gated source is dropped from the normal pass so a
+    clean *unavailable* from the rest of the chain still goes terminal without
+    spending it (the cost-avoidance intent). But when the *only* reason nothing
+    else succeeded is that a real fallback was paused (not cleanly unavailable),
+    a gated source that is itself reachable (not also paused) is tried as a
+    genuine last resort instead of leaving the video deferring forever — it
+    should never be true that every configured, reachable source is excluded
+    at once (issue #182).
     """
 
     def __init__(
@@ -501,6 +511,31 @@ class FallbackTranscriptProvider(TranscriptProvider):
         """The composed providers (primary first) for wiring to walk and late-bind."""
         return (self._primary, *self._fallbacks)
 
+    async def _attempt(
+        self,
+        provider: TranscriptProvider,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str],
+        skip_sources: frozenset[str],
+    ) -> FetchedTranscript | TranscriptUnavailableError:
+        """Fetch from one provider: the transcript, or its *unavailable* to fold in.
+
+        Any other outcome (*excluded*, *transient*, *blocked*) surfaces immediately;
+        a source-less block is stamped with this provider's source so the worker
+        pauses the right one.
+        """
+        try:
+            return await provider.fetch(
+                video_id, paused_sources=paused_sources, skip_sources=skip_sources
+            )
+        except TranscriptUnavailableError as error:
+            return error
+        except TranscriptBlockedError as error:
+            if error.source is None:
+                error.source = provider.source
+            raise
+
     async def fetch(
         self,
         video_id: str,
@@ -510,47 +545,52 @@ class FallbackTranscriptProvider(TranscriptProvider):
     ) -> FetchedTranscript:
         """Try the primary, then each reachable fallback, surfacing the best outcome.
 
-        A source in `skip_sources` is dropped from this fetch as if unconfigured —
-        the primary included — and never defers; a source in `paused_sources` is
-        skipped but defers (keeps the video pending) rather than going terminal.
+        A source in `skip_sources` is dropped from the normal pass — the primary
+        included — deprioritizing it rather than excluding it outright: it is
+        retried as a last resort (see below) before this ever defers or goes
+        terminal. A source in `paused_sources` is skipped and defers (keeps the
+        video pending) rather than going terminal.
         """
         last_unavailable: TranscriptUnavailableError | None = None
         skipped_paused = False
+        # Gated (skip_sources) providers that are still reachable (not also
+        # paused) — tried only as a last resort, after the normal chain below.
+        gated_last_resort: list[TranscriptProvider] = []
         # The primary and fallbacks are one ordered chain for skip/pause handling;
         # only the primary is exempt from the pause skip (it is never blockable).
-        if self._primary.source in skip_sources:
-            pass
-        else:
-            try:
-                return await self._primary.fetch(
-                    video_id, paused_sources=paused_sources, skip_sources=skip_sources
-                )
-            except TranscriptUnavailableError as error:
-                last_unavailable = error
-        # The primary had nothing (or was skipped). Try each fallback in order,
-        # dropping skipped sources entirely and deferring paused ones. A real block
-        # propagates, stamped with the source that raised it so the worker pauses
-        # that provider specifically.
-        for fallback in self._fallbacks:
-            if fallback.source in skip_sources:
+        for provider in (self._primary, *self._fallbacks):
+            if provider.source in skip_sources:
+                if provider.source not in paused_sources:
+                    gated_last_resort.append(provider)
                 continue
-            if fallback.source in paused_sources:
+            if provider is not self._primary and provider.source in paused_sources:
                 skipped_paused = True
                 continue
-            try:
-                return await fallback.fetch(
-                    video_id, paused_sources=paused_sources, skip_sources=skip_sources
-                )
-            except TranscriptUnavailableError as error:
-                last_unavailable = error
-            except TranscriptBlockedError as error:
-                if error.source is None:
-                    error.source = fallback.source
-                raise
-        # Every reachable source was unavailable. If a paused fallback was skipped,
-        # defer (a source-less *blocked*) so the video stays pending for the
-        # cooldown rather than going terminal on a source we never tried.
+            outcome = await self._attempt(
+                provider,
+                video_id,
+                paused_sources=paused_sources,
+                skip_sources=skip_sources,
+            )
+            if not isinstance(outcome, TranscriptUnavailableError):
+                return outcome
+            last_unavailable = outcome
+        # Every non-gated reachable source was unavailable. If a paused fallback
+        # was skipped, a gated-but-reachable source (e.g. Supadata, normally
+        # deprioritized to save its paid use) is the only way left to make
+        # progress, so try it now as a genuine last resort rather than leaving
+        # the video deferring indefinitely behind the paused fallback's cooldown.
         if skipped_paused:
+            for provider in gated_last_resort:
+                outcome = await self._attempt(
+                    provider,
+                    video_id,
+                    paused_sources=paused_sources,
+                    skip_sources=skip_sources,
+                )
+                if not isinstance(outcome, TranscriptUnavailableError):
+                    return outcome
+                last_unavailable = outcome
             message = f"provider paused; skipped blockable fallbacks for {video_id}"
             raise TranscriptBlockedError(message)
         raise last_unavailable or TranscriptUnavailableError(video_id)
