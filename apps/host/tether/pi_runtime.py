@@ -566,14 +566,17 @@ class PiRuntime:
             "set_model", provider=model.provider, modelId=model.model_id
         )
         if response.get("success") is not True:
-            message = "pi rejected set_model"
+            message = f"pi rejected set_model: {response.get('error', 'unknown error')}"
             raise PiRuntimeError(message)
         if model.thinking_level is not None:
             thinking_response = await self.client.request(
                 "set_thinking_level", level=model.thinking_level
             )
             if thinking_response.get("success") is not True:
-                message = "pi rejected set_thinking_level"
+                message = (
+                    "pi rejected set_thinking_level: "
+                    f"{thinking_response.get('error', 'unknown error')}"
+                )
                 raise PiRuntimeError(message)
 
     def drain_events(self) -> int:
