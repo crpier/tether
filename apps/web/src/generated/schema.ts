@@ -1481,6 +1481,9 @@ export interface components {
       model_id: string;
       /** Provider */
       provider: string;
+      /** Thinking Level */
+      thinking_level:
+        ("off" | "minimal" | "low" | "medium" | "high" | "xhigh") | null;
     };
     /**
      * AnswerOutcomeRead

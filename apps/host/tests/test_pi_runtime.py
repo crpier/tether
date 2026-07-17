@@ -240,15 +240,20 @@ async def client_correlates_out_of_order_responses_by_id() -> None:
 
 
 class ScriptedRpcClient:
-    """RPC client double returning one canned response and logging requests."""
+    """RPC client double returning canned responses and logging requests."""
 
-    def __init__(self, *, success: bool) -> None:
+    def __init__(self, *, success: bool, thinking_success: bool | None = None) -> None:
         self._success: bool = success
+        self._thinking_success: bool = (
+            success if thinking_success is None else thinking_success
+        )
         self.requests: list[tuple[str, dict[str, object]]] = []
 
     async def request(self, command_type: str, **fields: object) -> dict[str, object]:
         """Log the command and answer with the scripted success flag."""
         self.requests.append((command_type, fields))
+        if command_type == "set_thinking_level":
+            return {"success": self._thinking_success}
         return {"success": self._success}
 
 
@@ -257,6 +262,14 @@ _TEST_MODEL = AgentModelConfig(
     id="cheap",
     model_id="tether-chat-cheap-faux",
     provider="faux",
+)
+
+_TEST_MODEL_WITH_THINKING = AgentModelConfig(
+    display_name="Terra Faux",
+    id="terra",
+    model_id="tether-chat-terra-faux",
+    provider="faux",
+    thinking_level="medium",
 )
 
 
@@ -291,6 +304,51 @@ async def apply_model_raises_when_pi_rejects_the_switch() -> None:
 
     with assert_raises(PiRuntimeError):
         await runtime.apply_model(_TEST_MODEL)
+
+
+@test()
+async def apply_model_sends_thinking_level_when_the_model_carries_one() -> None:
+    """A model with a configured thinking level also sends `set_thinking_level`."""
+    client = ScriptedRpcClient(success=True)
+    runtime = _runtime_with_client(client)
+
+    await runtime.apply_model(_TEST_MODEL_WITH_THINKING)
+
+    assert_eq(
+        client.requests,
+        [
+            (
+                "set_model",
+                {"provider": "faux", "modelId": "tether-chat-terra-faux"},
+            ),
+            ("set_thinking_level", {"level": "medium"}),
+        ],
+    )
+
+
+@test()
+async def apply_model_skips_thinking_level_when_the_model_has_none() -> None:
+    """A model with no configured thinking level sends only `set_model`."""
+    client = ScriptedRpcClient(success=True)
+    runtime = _runtime_with_client(client)
+
+    await runtime.apply_model(_TEST_MODEL)
+
+    assert_eq(
+        client.requests,
+        [("set_model", {"provider": "faux", "modelId": "tether-chat-cheap-faux"})],
+    )
+
+
+@test()
+async def apply_model_raises_when_pi_rejects_the_thinking_level() -> None:
+    """A non-success `set_thinking_level` response surfaces as a `PiRuntimeError`."""
+    runtime = _runtime_with_client(
+        ScriptedRpcClient(success=True, thinking_success=False)
+    )
+
+    with assert_raises(PiRuntimeError):
+        await runtime.apply_model(_TEST_MODEL_WITH_THINKING)
 
 
 @test()
