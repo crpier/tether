@@ -718,6 +718,52 @@ def _reconcile_loop_tasks(
     return tasks
 
 
+_BACKGROUND_TASK_SHUTDOWN_GRACE_SECONDS = 5.0
+"""Bound on how long lifespan shutdown waits for background tasks to unwind.
+
+Previously the finally block awaited every background task with no bound. A
+task that doesn't propagate `CancelledError` back out promptly — including,
+in practice, the YouTube/transcript sync loops while inside a synchronous
+`asyncio.to_thread` upstream call, which the cancelling task can't interrupt
+mid-call — could hold shutdown open for however long that happened to take
+(observed: up to ~2 minutes under `just dev`, which the reload supervisor's
+`process.join()` then waits on in turn, leaving the whole process tree
+running well after ctrl-c). Past this grace period we log and abandon
+whatever hasn't finished instead of blocking on it further. Note this bounds
+our own `await`, not the underlying OS thread a `to_thread` call may still be
+running in the background — `just dev`'s cleanup trap force-kills the
+process group as the outer backstop for that.
+"""
+
+
+async def _shutdown_background_tasks(
+    tasks: Sequence[asyncio.Task[None]],
+    *,
+    logger: Logger,
+    grace_seconds: float = _BACKGROUND_TASK_SHUTDOWN_GRACE_SECONDS,
+) -> None:
+    """Cancel `tasks` and await them without blocking shutdown indefinitely.
+
+    Tasks that finish (by honoring cancellation) within `grace_seconds` are
+    awaited normally. Anything still outstanding past the grace period is
+    logged and left to run to completion in the background — the process is
+    exiting either way, so nothing further awaits it.
+    """
+    for task in tasks:
+        _ = task.cancel()
+    if not tasks:
+        return
+    done, pending = await asyncio.wait(tasks, timeout=grace_seconds)
+    for task in pending:
+        logger.warning(
+            "Background task did not stop within the shutdown grace period; abandoning it",
+            task=task.get_name(),
+        )
+    for task in done:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 def _lifespan(
     *,
     config: AppConfig,
@@ -875,11 +921,7 @@ def _lifespan(
             try:
                 yield
             finally:
-                for task in background_tasks:
-                    _ = task.cancel()
-                for task in background_tasks:
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
+                await _shutdown_background_tasks(background_tasks, logger=app_logger)
                 await scheduler.shutdown()
                 await runtime_registry.shutdown_all()
                 telemetry.shutdown()

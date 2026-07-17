@@ -24,6 +24,16 @@ web:
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Job control: `&` jobs each get their own process group instead of
+    # sharing this script's. That lets the cleanup trap below signal a job's
+    # *whole* subtree — uv's child chain, uvicorn's `--reload` worker and its
+    # multiprocessing reload-supervisor machinery, pnpm's vite/esbuild
+    # children — instead of just the immediate uv/pnpm pid. Without this,
+    # `kill "$host_pid"` only reaches `uv run`; deeper descendants are never
+    # signaled and can outlive ctrl-c by minutes (e.g. while the host drains
+    # an in-flight sync task; see `_shutdown_background_tasks` in
+    # apps/host/tether/server.py for the in-process half of that fix).
+    set -m
     echo "web → http://127.0.0.1:3000  (open this)   host → http://127.0.0.1:8000"
     # Logs stream to the terminal (colorized, TTY) *and* to files under
     # .tether/logs so an agent can read back what happened on a reported bug.
@@ -45,7 +55,18 @@ dev:
     # the dev server directly; tee mirrors Vite's output to the log file.
     pnpm -C apps/web dev > >(tee .tether/logs/web.log) 2>&1 &
     web_pid=$!
-    trap 'kill "$host_pid" "$web_pid" 2>/dev/null || true' EXIT INT TERM
+    cleanup() {
+        # `-$host_pid`/`-$web_pid` (negative pid) targets each job's whole
+        # process group (see `set -m` above), not just its immediate pid.
+        # SIGTERM first for a graceful shutdown attempt, then SIGKILL after a
+        # short grace period for anything still alive — guarantees ctrl-c
+        # returns control within a few seconds even if the host is mid a slow
+        # shutdown (e.g. draining a background sync task).
+        kill -TERM -"$host_pid" -"$web_pid" 2>/dev/null || true
+        sleep 2
+        kill -KILL -"$host_pid" -"$web_pid" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
     # return as soon as either process exits; the trap tears the other down
     wait -n
 
