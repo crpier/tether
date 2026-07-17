@@ -27,9 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
-from uuid import uuid7
 
-from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
 from tether.agent_trace import AgentTraceRecorder, RunKind, record_run
@@ -41,8 +39,10 @@ from tether.pi_runtime import (
     MessageSettled,
     ModelTurnStarted,
     PiRuntime,
-    PiRuntimeConfig,
     PiRuntimeError,
+    PiSpawner,
+    PiSpawnRequest,
+    spawn_pi_runtime,
 )
 from tether.system_prompt import system_prompt_for
 from tether.tools import SessionRegistry
@@ -169,25 +169,29 @@ class EphemeralPiPromptRunner:
     caller, which is the host's source of truth.
     """
 
-    def __init__(self, config: EphemeralPiConfig) -> None:
+    def __init__(
+        self, config: EphemeralPiConfig, *, spawn: PiSpawner = PiRuntime.spawn
+    ) -> None:
         self.config: EphemeralPiConfig = config
+        self._spawn: PiSpawner = spawn
 
     async def run(self, prompt: str) -> str:
         """Spawn pi, run `prompt`, and return its final assistant text."""
-        session_id = str(uuid7())
-        session_dir = self.config.session_root / session_id
-        await AsyncPath(session_dir).mkdir(parents=True, exist_ok=True)
-        runtime = await PiRuntime.spawn(
-            PiRuntimeConfig(
+        # Ephemeral lifecycle: a fresh session id is generated per run, names
+        # its own throwaway session dir, and the runtime is torn down in the
+        # `finally` below rather than kept alive across calls.
+        runtime, session_id = await spawn_pi_runtime(
+            PiSpawnRequest(
                 extra_extension_paths=self.config.extra_extension_paths,
                 pi_binary=self.config.pi_binary,
-                session_dir=session_dir,
-                session_id=session_id,
+                session_dir=lambda sid: self.config.session_root / sid,
+                session_id=None,
                 system_prompt=system_prompt_for(self.config.run_kind),
                 tool_base_url=self.config.tool_base_url,
                 tool_secret=self.config.tool_secret,
             ),
             session_registry=self.config.session_registry,
+            spawn=self._spawn,
         )
         try:
             with record_run(

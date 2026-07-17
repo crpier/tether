@@ -8,9 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
-from typing import Protocol
 
-from anyio import Path as AsyncPath
 from snekql.sqlite import Fetched
 
 from tether.conversations import Conversation
@@ -19,7 +17,7 @@ from tether.model_selection import (
     AgentModelConfig,
     ModelNotAllowedError,
 )
-from tether.pi_runtime import PiRuntime, PiRuntimeConfig
+from tether.pi_runtime import PiRuntime, PiSpawner, PiSpawnRequest, spawn_pi_runtime
 from tether.system_prompt import system_prompt_for
 from tether.tools import SessionRegistry
 
@@ -36,16 +34,6 @@ class RuntimeRegistryConfig:
     tool_base_url: str
     tool_secret: str
     idle_seconds: float = 30 * 60
-
-
-class PiSpawner(Protocol):
-    """Spawn seam for pi runtimes, injectable so tests avoid real subprocesses."""
-
-    async def __call__(
-        self, config: PiRuntimeConfig, *, session_registry: SessionRegistry
-    ) -> PiRuntime:
-        """Spawn a pi runtime for `config`, registered with `session_registry`."""
-        ...
 
 
 @dataclass(slots=True)
@@ -109,19 +97,21 @@ class ConversationRuntimeRegistry:
                 return slot.runtime
             await slot.runtime.shutdown()
             _ = self._runtimes.pop(conversation_key, None)
-        session_dir = self.config.session_root / conversation_key
-        await AsyncPath(session_dir).mkdir(parents=True, exist_ok=True)
-        runtime = await self._spawn(
-            PiRuntimeConfig(
+        # Persistent lifecycle: the conversation's own pi session id names both
+        # the runtime and its on-disk session dir, so the runtime is reusable
+        # across turns and reaped on idle rather than torn down after one run.
+        runtime, _ = await spawn_pi_runtime(
+            PiSpawnRequest(
                 extra_extension_paths=self.config.extra_extension_paths,
                 pi_binary=self.config.pi_binary,
-                session_dir=session_dir,
+                session_dir=self.config.session_root / conversation_key,
                 session_id=str(conversation.pi_session_id),
                 system_prompt=system_prompt_for("conversation"),
                 tool_base_url=self.config.tool_base_url,
                 tool_secret=self.config.tool_secret,
             ),
             session_registry=self.config.session_registry,
+            spawn=self._spawn,
         )
         try:
             selected_model = self.config.model_catalog.resolve(

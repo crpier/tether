@@ -15,53 +15,12 @@ from tether.chat_engine import (
 )
 from tether.conversations import Conversation
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
-from tether.pi_runtime import PiRuntime, PiRuntimeConfig, PiRuntimeError
+from tether.pi_runtime import PiRuntime, PiRuntimeError
 from tether.system_prompt import CONVERSATION_SYSTEM_PROMPT
 from tether.tools import SessionRegistry
 
-
-class FakeProcess:
-    """Minimal process state used by registry health checks."""
-
-    def __init__(self) -> None:
-        self.returncode: int | None = None
-
-
-class FakeRuntime:
-    """Runtime double recording shutdown, applied models, and pi session id."""
-
-    def __init__(self, session_id: str = "session") -> None:
-        self.process: FakeProcess = FakeProcess()
-        self.session_id: str = session_id
-        self.shutdown_count: int = 0
-        self.applied_models: list[AgentModelConfig] = []
-
-    async def apply_model(self, model: AgentModelConfig) -> None:
-        """Record the model the registry asked this runtime to adopt."""
-        self.applied_models.append(model)
-
-    async def shutdown(self) -> None:
-        """Mark the runtime as stopped."""
-        self.shutdown_count += 1
-        self.process.returncode = 0
-
-
-class RecordingSpawner:
-    """Spawn seam that returns fakes bound to the requested pi session id."""
-
-    def __init__(self) -> None:
-        self.configs: list[PiRuntimeConfig] = []
-        self.spawned: list[FakeRuntime] = []
-
-    async def __call__(
-        self, config: PiRuntimeConfig, *, session_registry: SessionRegistry
-    ) -> PiRuntime:
-        """Return a fake runtime tagged with the spawned session id."""
-        _ = session_registry
-        self.configs.append(config)
-        runtime = FakeRuntime(session_id=str(config.session_id))
-        self.spawned.append(runtime)
-        return cast("PiRuntime", runtime)
+from .pi_runtime_fakes import FakePiRuntime as FakeRuntime
+from .pi_runtime_fakes import ModelRejectingRuntime, RecordingSpawner
 
 
 class FakeConversation:
@@ -150,34 +109,15 @@ async def runtime_for_applies_the_resolved_model_on_spawn() -> None:
     assert_eq(cast("FakeRuntime", runtime).applied_models, [_CHEAP_MODEL])
 
 
-class ModelRejectingRuntime(FakeRuntime):
-    """Runtime double whose pi rejects every model switch."""
-
-    async def apply_model(self, model: AgentModelConfig) -> None:
-        """Refuse the switch the way a live pi does on a failed set_model."""
-        _ = model
-        message = "pi rejected set_model"
-        raise PiRuntimeError(message)
-
-
-class ModelRejectingSpawner(RecordingSpawner):
-    """Spawn seam producing runtimes that reject model switches."""
-
-    async def __call__(
-        self, config: PiRuntimeConfig, *, session_registry: SessionRegistry
-    ) -> PiRuntime:
-        """Return a model-rejecting fake tagged with the spawned session id."""
-        _ = session_registry
-        runtime = ModelRejectingRuntime(session_id=str(config.session_id))
-        self.spawned.append(runtime)
-        return cast("PiRuntime", runtime)
-
-
 @test()
 async def runtime_for_shuts_down_the_spawn_when_the_model_is_rejected() -> None:
     """A spawn whose model push fails is torn down, not leaked as an orphan."""
     conversation = FakeConversation(uuid7())
-    spawner = ModelRejectingSpawner()
+    spawner = RecordingSpawner(
+        runtime_factory=lambda config: ModelRejectingRuntime(
+            session_id=str(config.session_id)
+        )
+    )
     with TemporaryDirectory() as directory:
         registry = make_model_registry(directory, spawner)
         with assert_raises(PiRuntimeError):
