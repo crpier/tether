@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -10,6 +11,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from tether.openapi import EndpointRoute, endpoint
+
+ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+"""Reasoning-effort levels the pi `set_thinking_level` RPC accepts."""
 
 
 class ModelSelectionConfigError(Exception):
@@ -39,6 +43,11 @@ class AgentModelConfig:
     id: str
     model_id: str
     provider: str
+    thinking_level: ThinkingLevel | None = None
+    """Reasoning effort to request via `set_thinking_level` after `set_model`.
+
+    `None` means the model has no configured thinking level and the runtime
+    skips the RPC entirely, matching pre-thinking-level behaviour."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +114,7 @@ class AgentModelRead(BaseModel):
     id: str
     model_id: str
     provider: str
+    thinking_level: ThinkingLevel | None
 
     @classmethod
     def from_config(cls, model: AgentModelConfig) -> AgentModelRead:
@@ -114,6 +124,7 @@ class AgentModelRead(BaseModel):
             id=model.id,
             model_id=model.model_id,
             provider=model.provider,
+            thinking_level=model.thinking_level,
         )
 
 

@@ -240,16 +240,36 @@ async def client_correlates_out_of_order_responses_by_id() -> None:
 
 
 class ScriptedRpcClient:
-    """RPC client double returning one canned response and logging requests."""
+    """RPC client double returning canned responses and logging requests."""
 
-    def __init__(self, *, success: bool) -> None:
+    def __init__(
+        self,
+        *,
+        success: bool,
+        thinking_success: bool | None = None,
+        error: str | None = None,
+        thinking_error: str | None = None,
+    ) -> None:
         self._success: bool = success
+        self._thinking_success: bool = (
+            success if thinking_success is None else thinking_success
+        )
+        self._error: str | None = error
+        self._thinking_error: str | None = thinking_error
         self.requests: list[tuple[str, dict[str, object]]] = []
 
     async def request(self, command_type: str, **fields: object) -> dict[str, object]:
         """Log the command and answer with the scripted success flag."""
         self.requests.append((command_type, fields))
-        return {"success": self._success}
+        if command_type == "set_thinking_level":
+            response: dict[str, object] = {"success": self._thinking_success}
+            if not self._thinking_success and self._thinking_error is not None:
+                response["error"] = self._thinking_error
+            return response
+        response = {"success": self._success}
+        if not self._success and self._error is not None:
+            response["error"] = self._error
+        return response
 
 
 _TEST_MODEL = AgentModelConfig(
@@ -257,6 +277,14 @@ _TEST_MODEL = AgentModelConfig(
     id="cheap",
     model_id="tether-chat-cheap-faux",
     provider="faux",
+)
+
+_TEST_MODEL_WITH_THINKING = AgentModelConfig(
+    display_name="Terra Faux",
+    id="terra",
+    model_id="tether-chat-terra-faux",
+    provider="faux",
+    thinking_level="medium",
 )
 
 
@@ -291,6 +319,83 @@ async def apply_model_raises_when_pi_rejects_the_switch() -> None:
 
     with assert_raises(PiRuntimeError):
         await runtime.apply_model(_TEST_MODEL)
+
+
+@test()
+async def apply_model_error_includes_pis_rejection_detail() -> None:
+    """The raised error carries pi's own explanation, e.g. an unknown model id."""
+    runtime = _runtime_with_client(
+        ScriptedRpcClient(
+            success=False, error="Model not found: openai-codex/gpt-5.6-luna"
+        )
+    )
+
+    with assert_raises(PiRuntimeError) as exc_info:
+        await runtime.apply_model(_TEST_MODEL)
+
+    assert_in("Model not found: openai-codex/gpt-5.6-luna", str(exc_info.exception))
+
+
+@test()
+async def apply_model_sends_thinking_level_when_the_model_carries_one() -> None:
+    """A model with a configured thinking level also sends `set_thinking_level`."""
+    client = ScriptedRpcClient(success=True)
+    runtime = _runtime_with_client(client)
+
+    await runtime.apply_model(_TEST_MODEL_WITH_THINKING)
+
+    assert_eq(
+        client.requests,
+        [
+            (
+                "set_model",
+                {"provider": "faux", "modelId": "tether-chat-terra-faux"},
+            ),
+            ("set_thinking_level", {"level": "medium"}),
+        ],
+    )
+
+
+@test()
+async def apply_model_skips_thinking_level_when_the_model_has_none() -> None:
+    """A model with no configured thinking level sends only `set_model`."""
+    client = ScriptedRpcClient(success=True)
+    runtime = _runtime_with_client(client)
+
+    await runtime.apply_model(_TEST_MODEL)
+
+    assert_eq(
+        client.requests,
+        [("set_model", {"provider": "faux", "modelId": "tether-chat-cheap-faux"})],
+    )
+
+
+@test()
+async def apply_model_raises_when_pi_rejects_the_thinking_level() -> None:
+    """A non-success `set_thinking_level` response surfaces as a `PiRuntimeError`."""
+    runtime = _runtime_with_client(
+        ScriptedRpcClient(success=True, thinking_success=False)
+    )
+
+    with assert_raises(PiRuntimeError):
+        await runtime.apply_model(_TEST_MODEL_WITH_THINKING)
+
+
+@test()
+async def apply_model_thinking_level_error_includes_pis_rejection_detail() -> None:
+    """The raised error carries pi's own explanation for a thinking-level rejection."""
+    runtime = _runtime_with_client(
+        ScriptedRpcClient(
+            success=True,
+            thinking_success=False,
+            thinking_error="Model does not support thinking level: medium",
+        )
+    )
+
+    with assert_raises(PiRuntimeError) as exc_info:
+        await runtime.apply_model(_TEST_MODEL_WITH_THINKING)
+
+    assert_in("Model does not support thinking level: medium", str(exc_info.exception))
 
 
 @test()

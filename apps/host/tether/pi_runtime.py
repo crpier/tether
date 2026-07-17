@@ -555,16 +555,29 @@ class PiRuntime:
     async def apply_model(self, model: AgentModelConfig) -> None:
         """Select the provider model for later turns, raising if pi rejects it.
 
-        The one place the `set_model` RPC lives; callers hand it an already
-        resolved `AgentModelConfig` so the raw command shape and its
-        success check never leak past the runtime.
+        The one place the `set_model`/`set_thinking_level` RPCs live; callers
+        hand it an already resolved `AgentModelConfig` so the raw command
+        shapes and their success checks never leak past the runtime. The
+        thinking-level RPC is only sent when the model carries a configured
+        level; models with none keep the pre-thinking-level behaviour of a
+        single `set_model` call.
         """
         response = await self.client.request(
             "set_model", provider=model.provider, modelId=model.model_id
         )
         if response.get("success") is not True:
-            message = "pi rejected set_model"
+            message = f"pi rejected set_model: {response.get('error', 'unknown error')}"
             raise PiRuntimeError(message)
+        if model.thinking_level is not None:
+            thinking_response = await self.client.request(
+                "set_thinking_level", level=model.thinking_level
+            )
+            if thinking_response.get("success") is not True:
+                message = (
+                    "pi rejected set_thinking_level: "
+                    f"{thinking_response.get('error', 'unknown error')}"
+                )
+                raise PiRuntimeError(message)
 
     def drain_events(self) -> int:
         """Discard pending events left over from a previous turn."""

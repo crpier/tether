@@ -126,6 +126,7 @@ def host_settings_read_tether_environment_variables() -> None:
                         "id": "cheap",
                         "model_id": "tether-chat-cheap-faux",
                         "provider": "faux",
+                        "thinking_level": "medium",
                     }
                 ]
             ),
@@ -154,6 +155,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.default_model, "cheap")
     assert_eq(settings.model_allowlist[0].id, "cheap")
     assert_eq(settings.model_allowlist[0].model_id, "tether-chat-cheap-faux")
+    assert_eq(settings.model_allowlist[0].thinking_level, "medium")
     assert_eq(settings.port, 9001)
     assert_true(settings.reload)
     assert_eq(settings.session_secret, "configured-session-secret")

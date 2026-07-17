@@ -49,12 +49,14 @@ export const models: ModelList = {
       id: "openai:gpt-4.1",
       model_id: "gpt-4.1",
       provider: "openai",
+      thinking_level: null,
     },
     {
       display_name: "Claude Sonnet",
       id: "anthropic:claude-sonnet-4",
       model_id: "claude-sonnet-4",
       provider: "anthropic",
+      thinking_level: "medium",
     },
   ],
 };
