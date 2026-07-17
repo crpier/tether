@@ -832,7 +832,44 @@ async def sync_preserves_enriched_metadata() -> None:
     assert_eq(stored.channel_id, "UC123")
     assert_eq(stored.duration_seconds, 600)
     assert_eq(stored.caption_available, 1)
-    assert_is_not_none(stored.liked_at)
+    assert_eq(stored.liked_at, liked_at)
+
+
+@test()
+async def sync_keeps_the_liked_page_timestamp_through_enrichment() -> None:
+    """The detail fetch has no playlist context, so the page's liked_at must win.
+
+    Regression: mirroring upserted the enriched detail record verbatim, whose
+    liked_at is always None, so every live-synced row lost its liked timestamp
+    and sank below older rows in liked_at-ordered browse.
+    """
+    newer = datetime(2026, 7, 2, 12, 0, tzinfo=UTC)
+    older = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    api = InMemoryYouTubeApi(
+        liked=[video("v-new", liked_at=newer), video("v-old", liked_at=older)]
+    )
+    env = await load_fixture(make_env(api))
+    _ = await env.sync.sync(logger=test_logger())
+
+    listed = await env.service.browse(limit=10, logger=test_logger())
+
+    assert_eq([item.video_id for item in listed.videos], ["v-new", "v-old"])
+    assert_eq([item.liked_at for item in listed.videos], [newer, older])
+
+
+@test()
+async def resync_without_liked_at_keeps_the_existing_timestamp() -> None:
+    """An upsert whose raw carries no liked_at leaves the stored timestamp alone."""
+    liked_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+    async with env.db.transaction() as tx:
+        await upsert_ingested_video(tx, video("v1", liked_at=liked_at))
+    async with env.db.transaction() as tx:
+        await upsert_ingested_video(tx, video("v1"))
+
+    stored = await env.service.get_video("v1")
+
+    assert_eq(stored.liked_at, liked_at)
 
 
 # --- Ignore / retry survive re-sync ---

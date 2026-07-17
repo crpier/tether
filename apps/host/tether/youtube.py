@@ -293,8 +293,10 @@ class InMemoryYouTubeApi(YouTubeApi):
 
     Seeded with an ordered liked list (newest first), it serves fixed-size pages
     with synthetic cursors and counts its calls so tests can prove ingestion
-    stays within budget. `fetch_video_metadata` returns the same seeded objects,
-    standing in for the live detail call. It also satisfies `TranscriptProvider`
+    stays within budget. `fetch_video_metadata` returns the seeded objects with
+    `liked_at` stripped, matching the live `videos.list` call, which has no
+    playlist context and so never carries a liked timestamp — that field only
+    arrives on liked-page items. It also satisfies `TranscriptProvider`
     via `fetch`, returning a seeded transcript or signalling unavailability — so
     one fake backs both the list/metadata surface and the transcript port.
 
@@ -317,7 +319,9 @@ class InMemoryYouTubeApi(YouTubeApi):
         # `videos.list` call silently omits.
         unavailable_ids = set(unavailable)
         self._by_id: dict[str, RawYouTubeVideo] = {
-            v.video_id: v for v in self._liked if v.video_id not in unavailable_ids
+            v.video_id: v.model_copy(update={"liked_at": None})
+            for v in self._liked
+            if v.video_id not in unavailable_ids
         }
         self._transcripts: dict[str, str] = dict(transcripts or {})
         self.list_calls: int = 0
@@ -1253,7 +1257,13 @@ async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
         .set(IngestedVideo.topic.to(raw.topic))
         .set(IngestedVideo.description.to(raw.description))
         .set(IngestedVideo.channel_id.to(raw.channel_id))
-        .set(IngestedVideo.liked_at.to(raw.liked_at))
+        # A raw without liked_at (e.g. a detail-only record) must not clear a
+        # timestamp an earlier liked-page pass already recorded.
+        .set(
+            IngestedVideo.liked_at.to(
+                raw.liked_at if raw.liked_at is not None else existing.liked_at
+            )
+        )
         .set(IngestedVideo.video_published_at.to(raw.video_published_at))
         .set(IngestedVideo.duration_seconds.to(raw.duration_seconds))
         .set(IngestedVideo.category_id.to(raw.category_id))
@@ -1532,6 +1542,10 @@ class YouTubeSyncService:
                     # this known, un-ingestable gap in rather than alarming on it.
                     skipped.add(raw.video_id)
                     continue
+                if raw.liked_at is not None:
+                    # Only the liked-page item knows when the user liked the
+                    # video; the detail fetch has no playlist context.
+                    enriched = enriched.model_copy(update={"liked_at": raw.liked_at})
                 await self._upsert(tx, enriched)
                 # A previously-skipped video that now ingests self-corrects the set.
                 ingested.add(raw.video_id)
