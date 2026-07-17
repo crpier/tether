@@ -71,16 +71,18 @@ export function YouTubeSyncPanel(props: { api: TetherApi }) {
                 <span class="text-muted-foreground text-xs">Daily quota</span>
                 <span>{`${String(status().quota.used)} / ${String(status().quota.limit)}`}</span>
               </div>
-              <Show when={status().supadata}>
-                {(supadata) => (
+              <For each={Object.entries(status().usage)}>
+                {([source, usage]) => (
                   <div class="flex items-baseline justify-between">
                     <span class="text-muted-foreground text-xs">
-                      Supadata (monthly)
+                      {source === "supadata"
+                        ? "Supadata (monthly)"
+                        : `${source} usage`}
                     </span>
-                    <span>{`${String(supadata().used)} / ${String(supadata().limit)}`}</span>
+                    <span>{`${String(usage.used)} / ${String(usage.limit)}`}</span>
                   </div>
                 )}
-              </Show>
+              </For>
               <Show when={status().api_paused_until}>
                 {(until) => (
                   <p class="text-destructive text-xs" role="status">

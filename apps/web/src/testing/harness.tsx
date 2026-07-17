@@ -234,7 +234,7 @@ export class FakeApi implements TetherApi {
     api_paused_until: null,
     last_synced_at: null,
     quota: { limit: 10000, remaining: 10000, used: 0 },
-    supadata: null,
+    usage: {},
     transcript_providers_paused: [],
     transcripts_done: 0,
     transcripts_pending: 0,
