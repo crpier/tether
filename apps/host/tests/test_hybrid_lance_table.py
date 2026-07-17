@@ -46,6 +46,24 @@ _LANCE_CORRUPTION_MESSAGE = (
     "length of values 3031848"
 )
 
+# The masked message pyo3 attaches to a lance panic (lance-format/lance#7653):
+# no useful detail, just a fallback string.
+_RUST_PANIC_MESSAGE = "rust future panicked: unknown error"
+
+
+class RustPanic(Exception):
+    """Stand-in for the real `pyo3_async_runtimes.RustPanic`.
+
+    That module is synthesized by the Rust runtime and isn't importable from
+    Python (`import pyo3_async_runtimes` fails), even though pyo3 stamps it as
+    the raised exception's `__module__` at runtime. `_is_rust_panic` in
+    `hybrid_lance_table` matches on that name/module pair, so this fake
+    reproduces the same pair instead of importing the real type.
+    """
+
+
+RustPanic.__module__ = "pyo3_async_runtimes"
+
 
 def _logger() -> Logger:
     return structlog.stdlib.get_logger("test.hybrid_lance_table")
@@ -83,6 +101,27 @@ class _RaiseOnceOptimize:
         if not self.raised:
             self.raised = True
             raise RuntimeError(_LANCE_CORRUPTION_MESSAGE)
+        return await self._table.optimize(*args, **kwargs)
+
+
+class _RaiseOnceRustPanicOptimize:
+    """Wraps a real AsyncTable, raising a RustPanic on first optimize().
+
+    Mirrors `_RaiseOnceOptimize` but for the manifestation where lance panics
+    (lance-format/lance#7653) instead of raising a `RuntimeError`.
+    """
+
+    def __init__(self, table: Any) -> None:
+        self._table = table
+        self.raised = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._table, name)
+
+    async def optimize(self, *args: Any, **kwargs: Any) -> Any:
+        if not self.raised:
+            self.raised = True
+            raise RustPanic(_RUST_PANIC_MESSAGE)
         return await self._table.optimize(*args, **kwargs)
 
 
@@ -433,4 +472,57 @@ async def optimize_reraises_errors_that_are_not_lance_corruption() -> None:
         table._table = _RaiseUnrelated(table._table)  # pyright: ignore[reportAttributeAccessIssue]
 
         with assert_raises(RuntimeError):
+            await table.optimize(logger=_logger())
+
+
+@test()
+async def optimize_self_heals_a_rust_panic_without_losing_rows() -> None:
+    """The same corruption class can surface as a RustPanic, not a RuntimeError.
+
+    lance-format/lance#7653: lancedb 0.33.0 can panic instead of returning
+    `Err` when compaction merges an unindexed FTS tail. Pyo3 surfaces that as
+    `pyo3_async_runtimes.RustPanic` — an `Exception` subclass but not a
+    `RuntimeError` — so it must still trigger the same salvage rewrite as the
+    `RuntimeError` manifestation.
+    """
+    async with TemporaryDirectory() as tmp:
+        table = await _open(Path(tmp) / "index")
+        kept = [
+            _doc("android developer signing", [1.0, 0.0, 0.0, 0.0]),
+            _doc("grocery shopping list", [0.0, 1.0, 0.0, 0.0]),
+        ]
+        await table.upsert(kept)
+        before = await table.list_ids()
+        table._table = _RaiseOnceRustPanicOptimize(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+
+        await table.optimize(logger=_logger())  # self-heals instead of raising
+
+        assert_eq(await table.list_ids(), before)
+        # The rewrite left a healthy dataset: a follow-up optimize is clean, and
+        # search still resolves against the salvaged rows.
+        await table.optimize(logger=_logger())
+        found = await table.search(text="android", vector=[1.0, 0.0, 0.0, 0.0], limit=5)
+        assert_in(kept[0].id, _ids(found))
+
+
+@test()
+async def optimize_reraises_non_runtime_errors_that_are_not_rust_panic() -> None:
+    """Arbitrary non-RuntimeError failures must not be swallowed as RustPanic."""
+
+    class _RaiseValueError:
+        def __init__(self, table: Any) -> None:
+            self._table = table
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._table, name)
+
+        async def optimize(self, *args: Any, **kwargs: Any) -> Any:
+            raise ValueError("unexpected shape")
+
+    async with TemporaryDirectory() as tmp:
+        table = await _open(Path(tmp) / "index")
+        await table.upsert([_doc("android", [1.0, 0.0, 0.0, 0.0])])
+        table._table = _RaiseValueError(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+
+        with assert_raises(ValueError):
             await table.optimize(logger=_logger())
