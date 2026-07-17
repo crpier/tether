@@ -7,7 +7,7 @@ import { defineConfig } from "@playwright/test";
  * to a running host). The bash harness `scripts/validate-web-smoke.sh` owns the
  * host + dev-server lifecycle on ephemeral ports and points us at it via
  * `TETHER_E2E_BASE_URL`. For interactive dev, run `just host` + `just web` and
- * point at the default `http://127.0.0.1:3000`.
+ * point at the default `http://127.0.0.1:5000`.
  *
  * Headed vs headless is configurable: set `TETHER_E2E_HEADED=1` (or pass
  * `--headed`) to watch the browser; the default is headless for gate runs.
@@ -18,7 +18,7 @@ import { defineConfig } from "@playwright/test";
 const baseURL =
   process.env.TETHER_E2E_BASE_URL ??
   process.env.TETHER_SMOKE_WEB_URL ??
-  "http://127.0.0.1:3000";
+  "http://127.0.0.1:5000";
 
 const headed = process.env.TETHER_E2E_HEADED === "1";
 
