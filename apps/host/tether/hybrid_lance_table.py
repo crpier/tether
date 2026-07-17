@@ -12,7 +12,9 @@ for transcript chunks) re-shape into their own document/candidate types:
   flat-scan cosine search over the caller-supplied query vector, fusing the two
   with Reciprocal Rank Fusion (`RRFReranker`);
 - `optimize` runs LanceDB's background hygiene and self-heals the known lance
-  compaction corruption by rewriting the table from its own readable rows.
+  compaction corruption — surfaced as either a `RuntimeError` or a
+  `pyo3_async_runtimes.RustPanic` (lance-format/lance#7653) — by rewriting the
+  table from its own readable rows.
 
 Design choices baked in here:
 
@@ -57,6 +59,13 @@ if TYPE_CHECKING:
 # overruns its values buffer). Matched case-insensitively on the message.
 _LANCE_INTERNAL_ERROR_MARKER = "encountered internal error"
 
+# The same corruption class can panic instead of raising (lance-format/lance#7653),
+# which pyo3 surfaces as this type. `pyo3_async_runtimes` is synthesized by the
+# Rust runtime and is not `import`-able from Python, so detection matches the
+# name/module pair pyo3 stamps on the instance rather than `isinstance`.
+_RUST_PANIC_MODULE = "pyo3_async_runtimes"
+_RUST_PANIC_NAME = "RustPanic"
+
 _ID_COLUMN = "id"
 _CONTENT_COLUMN = "content"
 _VECTOR_COLUMN = "vector"
@@ -70,6 +79,19 @@ def _is_lance_internal_error(error: Exception) -> bool:
     Scoped to that marker on purpose: unrelated runtime failures (a full disk, a
     permissions error) must propagate rather than trigger a table rewrite."""
     return _LANCE_INTERNAL_ERROR_MARKER in str(error).lower()
+
+
+def _is_rust_panic(error: Exception) -> bool:
+    """Whether `error` is a `pyo3_async_runtimes.RustPanic` from the lance runtime.
+
+    Unlike `_is_lance_internal_error`, there is no message to inspect: a panic
+    is masked down to "rust future panicked: unknown error" by the time it
+    reaches Python. Any RustPanic surfacing from `optimize()` is treated as the
+    same corruption class, since that is the only known cause."""
+    return (
+        type(error).__module__ == _RUST_PANIC_MODULE
+        and type(error).__name__ == _RUST_PANIC_NAME
+    )
 
 
 def _schema(payload_columns: tuple[str, ...], vector_dim: int) -> pa.Schema:
@@ -284,7 +306,13 @@ class HybridLanceTable:
         wide compaction decode trips the bug), and this projection is disposable,
         so we salvage in place: read every row back out, recreate the table, and
         re-add them — no data lost and no re-embedding, since the vectors survive
-        the round-trip. Any other failure propagates untouched."""
+        the round-trip. Any other failure propagates untouched.
+
+        The same bug class can also panic instead of raising (lance-format/lance
+        #7653, seen with `FTS(with_position=True)` merging an unindexed tail on
+        lancedb 0.33.0): pyo3 surfaces that as `pyo3_async_runtimes.RustPanic`,
+        an `Exception` subclass but not a `RuntimeError`. Any RustPanic here is
+        salvaged the same way."""
         try:
             _ = await self._table.optimize()
         except RuntimeError as error:
@@ -299,6 +327,16 @@ class HybridLanceTable:
             logger.info(
                 "Lance table salvaged after internal error", table=self._table_name
             )
+        except Exception as error:
+            if not _is_rust_panic(error):
+                raise
+            logger.warning(
+                "Lance table optimize hit a rust panic; salvaging",
+                table=self._table_name,
+                error=str(error),
+            )
+            await self._salvage_rewrite()
+            logger.info("Lance table salvaged after rust panic", table=self._table_name)
 
     @staticmethod
     async def _verify_dimension(table: AsyncTable, vector_dim: int) -> None:
