@@ -382,4 +382,100 @@ describe("Chat view", () => {
       expect(api.selectedModel).toBe("anthropic:claude-sonnet-4");
     });
   });
+
+  test("only fetches the latest page of history by default", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      messages: [message({ content: "hi", role: "user", seq: 1 })],
+    });
+    renderApp(api);
+
+    await waitFor(() => {
+      expect(api.listMessagesCalls.length).toBeGreaterThan(0);
+    });
+    expect(api.listMessagesCalls[0]).toEqual({
+      limit: 30,
+      beforeSeq: undefined,
+    });
+  });
+
+  test("scrolling near the top loads and prepends the older page", async () => {
+    const messages = Array.from({ length: 32 }, (_, index) =>
+      message({
+        content: `msg-${(index + 1).toString()}`,
+        role: "user",
+        seq: index + 1,
+      }),
+    );
+    const api = new FakeApi({ authenticated: true, messages });
+    renderApp(api);
+
+    // The default page is the newest 30 rows (seq 3..32); the oldest two are
+    // not yet loaded.
+    expect(await screen.findByText("msg-32")).toBeInTheDocument();
+    expect(screen.queryByText("msg-1")).not.toBeInTheDocument();
+
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+
+    expect(await screen.findByText("msg-1")).toBeInTheDocument();
+    expect(screen.getByText("msg-2")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.listMessagesCalls).toEqual([
+        { limit: 30, beforeSeq: undefined },
+        { limit: 30, beforeSeq: 3 },
+      ]);
+    });
+  });
+
+  test("stops fetching once the oldest page is smaller than the limit", async () => {
+    const messages = [message({ content: "only one", role: "user", seq: 1 })];
+    const api = new FakeApi({ authenticated: true, messages });
+    renderApp(api);
+
+    expect(await screen.findByText("only one")).toBeInTheDocument();
+    const callsAfterInitialLoad = api.listMessagesCalls.length;
+
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+
+    // hasMore is false (the first page came back under the limit), so the
+    // near-top scroll must not trigger another fetch.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(api.listMessagesCalls.length).toBe(callsAfterInitialLoad);
+  });
+
+  test("New chat resets accumulated pagination state", async () => {
+    const messages = Array.from({ length: 32 }, (_, index) =>
+      message({
+        content: `msg-${(index + 1).toString()}`,
+        role: "user",
+        seq: index + 1,
+      }),
+    );
+    const api = new FakeApi({ authenticated: true, messages });
+    renderApp(api);
+
+    expect(await screen.findByText("msg-32")).toBeInTheDocument();
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+    expect(await screen.findByText("msg-1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await waitFor(() => {
+      expect(api.clearConversationCalls).toBe(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("msg-1")).not.toBeInTheDocument();
+    });
+
+    // Scrolling after the reset must not reissue a fetch for the now-stale
+    // pre-clear cursor (seq 3): the accumulated map and hasMore were reset.
+    const callsAfterClear = api.listMessagesCalls.length;
+    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      api.listMessagesCalls
+        .slice(callsAfterClear)
+        .every((call) => call?.beforeSeq === undefined),
+    ).toBe(true);
+  });
 });

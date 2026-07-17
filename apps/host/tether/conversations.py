@@ -312,19 +312,35 @@ class ConversationService:
             raise ConversationNotFoundError(conversation_id)
         return conversation
 
-    async def fetch_messages(self, conversation_id: UUID) -> list[Message[Fetched]]:
-        """Return settled transcript rows for a conversation in display order."""
+    async def fetch_messages(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int | None = None,
+        before_seq: int | None = None,
+    ) -> list[Message[Fetched]]:
+        """Return settled transcript rows for a conversation in display order.
+
+        With no `limit`/`before_seq`, this is the full unbounded history in
+        ascending `seq` order (unchanged from before pagination existed). A
+        `limit` windows to the newest `limit` rows at or before `before_seq`
+        (or the newest overall when `before_seq` is absent) — fetched newest
+        first so `LIMIT` keeps the right end of the window, then reversed back
+        to ascending `seq` so callers never see a backwards page.
+        """
         async with self.database.transaction() as tx:
             conversation = await tx.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
             if conversation is None:
                 raise ConversationNotFoundError(conversation_id)
-            return await tx.fetch_all(
-                select(Message)
-                .where(Message.conversation_id.eq(conversation_id))
-                .order_by(Message.seq.asc())
-            )
+            query = select(Message).where(Message.conversation_id.eq(conversation_id))
+            if before_seq is not None:
+                query = query.where(Message.seq.lt(before_seq))
+            if limit is None:
+                return await tx.fetch_all(query.order_by(Message.seq.asc()))
+            page = await tx.fetch_all(query.order_by(Message.seq.desc()).limit(limit))
+            return list(reversed(page))
 
     async def append_message(self, draft: MessageDraft) -> Message[Fetched]:
         """Append one settled transcript row with a monotonic per-thread sequence."""
@@ -392,11 +408,33 @@ async def list_conversations(request: Request) -> Response:
     )
 
 
-async def _messages_response(request: Request, conversation_id: UUID) -> Response:
+class MessagesQuery(BaseModel):
+    """Query string for windowed transcript pagination.
+
+    No params means the full unbounded history, exactly as before pagination
+    existed. `limit` alone windows to the newest `limit` rows; `before_seq`
+    paired with `limit` walks backwards from a cursor (the oldest `seq` seen
+    so far) to fetch the next-older page.
+
+    >>> MessagesQuery().limit is None
+    True
+    """
+
+    limit: PositiveInt | None = None
+    before_seq: PositiveInt | None = None
+
+
+async def _messages_response(
+    request: Request,
+    conversation_id: UUID,
+    *,
+    limit: int | None = None,
+    before_seq: int | None = None,
+) -> Response:
     """Serialize settled transcript rows or translate absence to 404."""
     try:
         messages = await request.app.state.conversation_service.fetch_messages(
-            conversation_id
+            conversation_id, limit=limit, before_seq=before_seq
         )
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
@@ -442,15 +480,20 @@ async def set_conversation_model(
     )
 
 
-@endpoint(response=MessageRead, response_is_list=True)
-async def list_messages(request: Request) -> Response:
+@endpoint(query=MessagesQuery, response=MessageRead, response_is_list=True)
+async def list_messages(request: Request, query: MessagesQuery) -> Response:
     """List settled transcript rows for one conversation."""
     raw_conversation_id = request.path_params["conversation_id"]
     try:
         conversation_id = UUID(raw_conversation_id)
     except ValueError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    return await _messages_response(request, conversation_id)
+    return await _messages_response(
+        request,
+        conversation_id,
+        limit=query.limit,
+        before_seq=query.before_seq,
+    )
 
 
 @endpoint(response=ConversationRead)

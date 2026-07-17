@@ -13,6 +13,7 @@ import type {
   DedupAdvisory,
   DuePrompt,
   EssayGradeProposal,
+  ListMessagesOptions,
   Memory,
   MemoryState,
   Message,
@@ -290,9 +291,22 @@ export class FakeApi implements TetherApi {
     return Promise.resolve([this.storedConversation]);
   }
 
-  listMessages() {
+  listMessagesCalls: (ListMessagesOptions | undefined)[] = [];
+
+  listMessages(_conversationId: string, options?: ListMessagesOptions) {
     this.messageCalls += 1;
-    return Promise.resolve(this.storedMessages);
+    this.listMessagesCalls.push(options);
+    const windowed =
+      options?.beforeSeq === undefined
+        ? this.storedMessages
+        : this.storedMessages.filter(
+            (candidate) => candidate.seq < (options.beforeSeq ?? Infinity),
+          );
+    const page =
+      options?.limit === undefined
+        ? windowed
+        : windowed.slice(Math.max(0, windowed.length - options.limit));
+    return Promise.resolve(page);
   }
 
   clearConversation() {

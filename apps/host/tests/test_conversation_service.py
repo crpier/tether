@@ -125,3 +125,62 @@ async def clear_conversation_resets_the_sequence_counter() -> None:
     )
 
     assert_eq(appended.seq, 1)
+
+
+@test()
+async def fetch_messages_without_params_returns_full_ascending_history() -> None:
+    """No params keeps the existing unbounded, ascending-seq behavior."""
+    service = await load_fixture(conversation_service())
+    conversation = (await service.list_conversations())[0]
+    for content in ["one", "two", "three"]:
+        _ = await service.append_message(
+            MessageDraft(content=content, conversation_id=conversation.id, role="user")
+        )
+
+    full = await service.fetch_messages(conversation.id)
+
+    assert_eq([message.content for message in full], ["one", "two", "three"])
+
+
+@test()
+async def fetch_messages_windows_to_the_latest_page_when_limit_is_given() -> None:
+    """A `limit` returns only the newest rows, still in ascending seq order."""
+    service = await load_fixture(conversation_service())
+    conversation = (await service.list_conversations())[0]
+    for content in ["one", "two", "three", "four"]:
+        _ = await service.append_message(
+            MessageDraft(content=content, conversation_id=conversation.id, role="user")
+        )
+
+    page = await service.fetch_messages(conversation.id, limit=2)
+
+    assert_eq([message.content for message in page], ["three", "four"])
+
+
+@test()
+async def fetch_messages_before_seq_walks_backwards_through_history() -> None:
+    """`before_seq` paired with `limit` returns the window just older than it."""
+    service = await load_fixture(conversation_service())
+    conversation = (await service.list_conversations())[0]
+    for content in ["one", "two", "three", "four"]:
+        _ = await service.append_message(
+            MessageDraft(content=content, conversation_id=conversation.id, role="user")
+        )
+
+    page = await service.fetch_messages(conversation.id, limit=2, before_seq=3)
+
+    assert_eq([message.content for message in page], ["one", "two"])
+
+
+@test()
+async def fetch_messages_before_seq_past_the_start_is_empty() -> None:
+    """Requesting rows older than the first seq is an empty window, not an error."""
+    service = await load_fixture(conversation_service())
+    conversation = (await service.list_conversations())[0]
+    _ = await service.append_message(
+        MessageDraft(content="only", conversation_id=conversation.id, role="user")
+    )
+
+    page = await service.fetch_messages(conversation.id, limit=10, before_seq=1)
+
+    assert_eq(page, [])

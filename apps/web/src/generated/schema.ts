@@ -377,7 +377,10 @@ export interface paths {
     /** List settled transcript rows for one conversation. */
     get: {
       parameters: {
-        query?: never;
+        query?: {
+          limit?: number | null;
+          before_seq?: number | null;
+        };
         header?: never;
         path: {
           conversation_id: string;

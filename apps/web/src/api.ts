@@ -25,6 +25,15 @@ type AnswerPromptRequest = components["schemas"]["AnswerPromptRequest"];
 // answer_text, essay sends answer_text plus the human-confirmed
 // confirmed_correct (the model only proposes a grade). The per-kind fields are
 // optional here; the client fills the wire's `null` defaults.
+// Pagination window for `listMessages`: `limit` caps the page size (the
+// default full-history fetch omits both), `beforeSeq` is the cursor for
+// "older than this seq" — the oldest `seq` seen so far in the accumulated
+// transcript, for walking further back in history.
+export interface ListMessagesOptions {
+  limit?: number;
+  beforeSeq?: number;
+}
+
 export type RecallAnswerInput = Pick<AnswerPromptRequest, "response_ms"> &
   Partial<
     Pick<
@@ -49,7 +58,10 @@ export interface TetherApi {
   login(password: string): Promise<void>;
   logout(): Promise<void>;
   listConversations(): Promise<Conversation[]>;
-  listMessages(conversationId: string): Promise<Message[]>;
+  listMessages(
+    conversationId: string,
+    options?: ListMessagesOptions,
+  ): Promise<Message[]>;
   clearConversation(conversationId: string): Promise<Conversation>;
   listModels(): Promise<ModelList>;
   setConversationModel(
@@ -152,10 +164,18 @@ export function createRestApi(
       const { data, response } = await client.GET("/api/conversations");
       return requireData(data, response);
     },
-    async listMessages(conversationId) {
+    async listMessages(conversationId, options) {
       const { data, response } = await client.GET(
         "/api/conversations/{conversation_id}/messages",
-        { params: { path: { conversation_id: conversationId } } },
+        {
+          params: {
+            path: { conversation_id: conversationId },
+            query: {
+              limit: options?.limit,
+              before_seq: options?.beforeSeq,
+            },
+          },
+        },
       );
       return requireData(data, response);
     },

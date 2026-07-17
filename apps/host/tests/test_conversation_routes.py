@@ -1161,6 +1161,111 @@ def clearing_a_conversation_empties_the_transcript() -> None:
 
 
 @test()
+def messages_route_limit_returns_only_the_newest_page() -> None:
+    """`?limit=` windows the response to the newest rows, ascending seq."""
+    with (
+        TemporaryDirectory() as directory,
+        make_faux_chat_client(Path(directory)) as client,
+    ):
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        for index in range(4):
+            prompt_until_agent_end(
+                client, conversation_id=conversation_id, content=f"turn {index}"
+            )
+        full = client.get(f"/api/conversations/{conversation_id}/messages").json()
+
+        response = client.get(
+            f"/api/conversations/{conversation_id}/messages", params={"limit": 2}
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), full[-2:])
+
+
+@test()
+def messages_route_before_seq_pages_backwards() -> None:
+    """`?limit=&before_seq=` fetches the window just older than a cursor."""
+    with (
+        TemporaryDirectory() as directory,
+        make_faux_chat_client(Path(directory)) as client,
+    ):
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        for index in range(4):
+            prompt_until_agent_end(
+                client, conversation_id=conversation_id, content=f"turn {index}"
+            )
+        full = client.get(f"/api/conversations/{conversation_id}/messages").json()
+        cursor = full[-2]["seq"]
+        expected = [message for message in full if message["seq"] < cursor][-2:]
+
+        response = client.get(
+            f"/api/conversations/{conversation_id}/messages",
+            params={"limit": 2, "before_seq": cursor},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), expected)
+
+
+@test()
+def messages_route_rejects_a_non_positive_limit() -> None:
+    """`?limit=0` is a validation error, not a silently-empty page."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        response = client.get(
+            f"/api/conversations/{conversation_id}/messages", params={"limit": 0}
+        )
+
+    assert_eq(response.status_code, 422)
+
+
+@test()
+def messages_route_rejects_a_non_integer_limit() -> None:
+    """`?limit=abc` is a validation error."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        response = client.get(
+            f"/api/conversations/{conversation_id}/messages", params={"limit": "abc"}
+        )
+
+    assert_eq(response.status_code, 422)
+
+
+@test()
+def messages_route_without_params_still_returns_full_history() -> None:
+    """No query params keeps the pre-pagination unbounded response."""
+    with (
+        TemporaryDirectory() as directory,
+        make_faux_chat_client(Path(directory)) as client,
+    ):
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        for index in range(4):
+            prompt_until_agent_end(
+                client, conversation_id=conversation_id, content=f"turn {index}"
+            )
+
+        unbounded = client.get(f"/api/conversations/{conversation_id}/messages")
+        generously_limited = client.get(
+            f"/api/conversations/{conversation_id}/messages", params={"limit": 1000}
+        )
+
+    assert_eq(unbounded.status_code, 200)
+    # At least the 4 user turns must be present; the exact total also depends on
+    # how many assistant rows the faux script settles, which isn't this test's
+    # concern — the invariant under test is "no params == a sufficiently large
+    # limit", i.e. nothing is silently truncated by default.
+    assert_true(len(unbounded.json()) >= 4)
+    assert_eq(unbounded.json(), generously_limited.json())
+
+
+@test()
 def clearing_a_missing_conversation_returns_404() -> None:
     """A DELETE for an unknown conversation id is a clean 404."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
