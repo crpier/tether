@@ -93,3 +93,22 @@ async def the_conversation_prompt_covers_the_tool_belt() -> None:
 async def the_conversation_prompt_speaks_recall_vocabulary() -> None:
     """The full prompt uses the recall-prompt vocabulary."""
     assert_in("recall prompt", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_names_the_widget_vocabulary() -> None:
+    """The full prompt tells the agent about the closed Widget vocabulary
+    (ADR 0011): GFM tables, mermaid fences, vega-lite fences, nothing else."""
+    assert_in("```mermaid```", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("```vega-lite```", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("table", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_task_prompt_does_not_mention_widgets() -> None:
+    """Unattended runs return plain text, not chat turns, so the widget
+    vocabulary guidance is conversation-only."""
+    assert_in("mermaid", CONVERSATION_SYSTEM_PROMPT)
+    assert not any(
+        "mermaid" in line.lower() for line in TASK_SYSTEM_PROMPT.splitlines()
+    )

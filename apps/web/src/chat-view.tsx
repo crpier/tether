@@ -316,7 +316,10 @@ function MessageRow(props: { row: TimelineRow }) {
               }
               when={message().role === "assistant"}
             >
-              <MessageContent text={message().text} />
+              <MessageContent
+                text={message().text}
+                streaming={message().streaming}
+              />
             </Show>
           </article>
         )}
