@@ -28,7 +28,7 @@ from snektest import assert_eq, test
 
 from tether.bucket_items import BucketItem, Fetched
 from tether.logging import Logger
-from tether.memories import Memory
+from tether.memories import Memory, MemoryProvenance
 from tether.search_fusion import FusedHit, FusedItem, SourceType, fuse
 
 
@@ -36,10 +36,18 @@ def _logger() -> Logger:
     return structlog.stdlib.get_logger("test.search_fusion")
 
 
-def _memory(label: str) -> Memory[Fetched]:
+def _memory(
+    label: str, *, provenance: MemoryProvenance | None = None
+) -> Memory[Fetched]:
     """A detached Memory carrying only what `fuse()` needs: id + content."""
     return cast(
-        "Memory[Fetched]", Memory.construct(content=label, id=uuid7(), version=1)
+        "Memory[Fetched]",
+        Memory.construct(
+            content=label,
+            id=uuid7(),
+            version=1,
+            provenance=provenance or MemoryProvenance(kind="manual"),
+        ),
     )
 
 
@@ -198,3 +206,92 @@ async def fuse_truncates_the_combined_result_to_limit() -> None:
     hits = await fuse([memory_arm, bucket_arm], "query", limit=2, logger=_logger())
 
     assert_eq(_labels(hits), ["m0", "b0"])
+
+
+@test()
+async def human_proved_memory_outranks_human_asserted_for_equal_match_strength() -> (
+    None
+):
+    """A Memory tethered by proving retention through Recall outranks one that
+    was merely typed by hand, when both match the query equally well."""
+    proved = _memory("proved", provenance=MemoryProvenance(kind="manual"))
+    asserted = _memory("asserted", provenance=MemoryProvenance(kind="manual"))
+    memory_arm = StubArm("memory", [asserted, proved])
+
+    hits = await fuse(
+        [memory_arm],
+        "query",
+        limit=10,
+        human_proved_memory_ids=frozenset({proved.id}),
+        logger=_logger(),
+    )
+
+    assert_eq(_labels(hits), ["proved", "asserted"])
+
+
+@test()
+async def human_asserted_memory_outranks_machine_synced_for_equal_match_strength() -> (
+    None
+):
+    """A manually-captured Memory outranks an equally-matching synced one."""
+    synced = _memory("synced", provenance=MemoryProvenance(kind="youtube"))
+    asserted = _memory("asserted", provenance=MemoryProvenance(kind="manual"))
+    memory_arm = StubArm("memory", [synced, asserted])
+
+    hits = await fuse([memory_arm], "query", limit=10, logger=_logger())
+
+    assert_eq(_labels(hits), ["asserted", "synced"])
+
+
+@test()
+async def bucket_item_outranks_machine_synced_memory_for_equal_match_strength() -> None:
+    """Bucket items sit at the human-asserted tier, above machine-synced Memories."""
+    synced = _memory("synced", provenance=MemoryProvenance(kind="web"))
+    item = _bucket_item("item")
+    memory_arm = StubArm("memory", [synced])
+    bucket_arm = StubArm("bucket_item", [item])
+
+    hits = await fuse([memory_arm, bucket_arm], "query", limit=10, logger=_logger())
+
+    assert_eq(_labels(hits), ["item", "synced"])
+
+
+@test()
+async def a_memory_without_a_completed_study_item_is_not_human_proved() -> None:
+    """`human_proved_memory_ids` gates the boost — an absent id keeps a Memory
+    at its ordinary derived tier, ranked by match strength alone."""
+    plain = _memory("plain", provenance=MemoryProvenance(kind="manual"))
+    memory_arm = StubArm("memory", [plain])
+
+    hits = await fuse(
+        [memory_arm],
+        "query",
+        limit=10,
+        human_proved_memory_ids=frozenset(),
+        logger=_logger(),
+    )
+
+    assert_eq(_labels(hits), ["plain"])
+
+
+@test()
+async def trust_weighting_composes_with_diversity_capping() -> None:
+    """Trust reorders results first; diversity capping then trims per source,
+    so a lower-trust Memory can still be dropped in favor of a higher-trust
+    Bucket item once both compete for the same capped slots."""
+    proved = _memory("proved", provenance=MemoryProvenance(kind="manual"))
+    synced_1 = _memory("synced1", provenance=MemoryProvenance(kind="youtube"))
+    synced_2 = _memory("synced2", provenance=MemoryProvenance(kind="youtube"))
+    memory_arm = StubArm("memory", [synced_1, synced_2, proved])
+    bucket_arm = StubArm("bucket_item", [_bucket_item("item")])
+
+    hits = await fuse(
+        [memory_arm, bucket_arm],
+        "query",
+        limit=10,
+        diversity_cap=1,
+        human_proved_memory_ids=frozenset({proved.id}),
+        logger=_logger(),
+    )
+
+    assert_eq(_labels(hits), ["proved", "item"])

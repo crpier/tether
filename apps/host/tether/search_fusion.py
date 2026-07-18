@@ -35,10 +35,11 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from pydantic import PositiveInt
-from snekql.sqlite import Fetched
+from snekql.sqlite import Fetched, select
 
 from tether.bucket_items import BucketItem, BucketItemService
 from tether.memories import EmptySearchQueryError, Memory, MemoryService
+from tether.recall import StudyItem
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -51,6 +52,15 @@ type SourceType = Literal["memory", "bucket_item"]
 type FusedItem = Memory[Fetched] | BucketItem[Fetched]
 """The hydrated payload types fusion carries; a future arm extends this union."""
 
+type TrustClass = Literal["human_proved", "human_asserted", "machine_synced"]
+"""A fused result's provenance trust tier, derived fresh per call — never stored.
+
+`human_proved` (a Memory that tethered by proving retention through Recall)
+outranks `human_asserted` (typed or imported by a human, or any Bucket item —
+Bucket items are always human-authored past the Candidate gate), which
+outranks `machine_synced` (verbatim-synced from an external source, never
+retention-proved)."""
+
 RRF_FUSION_K: int = 60
 """Rank-fusion smoothing constant — the standard RRF discount factor, applied
 here to each arm's own rank position rather than to a shared item's rank
@@ -62,6 +72,29 @@ DEFAULT_DIVERSITY_CAP: int = 30
 A cap, not a quota: a source with fewer matches than this is never topped up.
 The single tunable knob for diversity — retuning it is a one-line change here,
 not a change to `fuse()`'s logic."""
+
+HUMAN_PROVED_TRUST_MULTIPLIER: float = 1.5
+"""Applied to a Memory tethered by proving retention through Recall."""
+
+HUMAN_ASSERTED_TRUST_MULTIPLIER: float = 1.2
+"""Applied to a Memory typed or imported by a human, and to every Bucket item."""
+
+MACHINE_SYNCED_TRUST_MULTIPLIER: float = 1.0
+"""Applied to a Memory synced verbatim from an external source (YouTube, web).
+
+The identity multiplier: today's un-boosted rank fusion, kept as the floor
+every other tier is defined relative to."""
+
+TRUST_MULTIPLIERS: dict[TrustClass, float] = {
+    "human_proved": HUMAN_PROVED_TRUST_MULTIPLIER,
+    "human_asserted": HUMAN_ASSERTED_TRUST_MULTIPLIER,
+    "machine_synced": MACHINE_SYNCED_TRUST_MULTIPLIER,
+}
+"""The one place provenance-trust strength is tuned — retuning ranking pull is
+a one-line edit here, never a change to `_adjust_scores`'s logic."""
+
+_HUMAN_ASSERTED_PROVENANCE_KINDS = frozenset({"manual", "import"})
+"""`MemoryProvenance.kind` values that read as human-asserted rather than synced."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +222,14 @@ class SearchFusionService:
             msg = "fused Search requires a non-empty query"
             raise EmptySearchQueryError(msg)
         arms = self._build_arms(facets=facets, sources=sources)
-        return await fuse(arms, normalised_query, limit=limit, logger=logger)
+        human_proved_memory_ids = await self._human_proved_memory_ids()
+        return await fuse(
+            arms,
+            normalised_query,
+            limit=limit,
+            human_proved_memory_ids=human_proved_memory_ids,
+            logger=logger,
+        )
 
     def _build_arms(
         self,
@@ -210,16 +250,60 @@ class SearchFusionService:
             )
         return arms
 
+    async def _human_proved_memory_ids(self) -> frozenset[UUID]:
+        """The Recall-tethered set: Memory ids behind a completed `StudyItem`.
+
+        One query per Search call, covering every arm's hits at once, rather
+        than one lookup per result — and recomputed every call, never cached
+        (ADR 0006), so a `StudyItem` completing between two Searches is picked
+        up immediately."""
+        async with self.memory_service.database.transaction() as tx:
+            completed_study_items = await tx.fetch_all(
+                select(StudyItem).where(StudyItem.state.eq("completed"))
+            )
+        return frozenset(study_item.memory_id for study_item in completed_study_items)
+
+
+def _trust_class(
+    item: FusedItem, *, human_proved_memory_ids: frozenset[UUID]
+) -> TrustClass:
+    """Derive a fused result's provenance trust tier from the hydrated item alone.
+
+    `human_proved_memory_ids` is the one piece of state this can't derive from
+    the item itself — the Recall-completion fact lives in `StudyItem`, not on
+    `Memory` — so the caller (`SearchFusionService`) supplies it, recomputed
+    fresh per Search call rather than cached. Bucket items have no Recall path
+    and are always human-authored past the Candidate gate, so they sit at the
+    human-asserted tier unconditionally."""
+    if not isinstance(item, Memory):
+        return "human_asserted"
+    if item.id in human_proved_memory_ids:
+        return "human_proved"
+    if item.provenance["kind"] in _HUMAN_ASSERTED_PROVENANCE_KINDS:
+        return "human_asserted"
+    return "machine_synced"
+
 
 def _adjust_scores(
     scored: list[tuple[float, FusedHit]],
+    *,
+    human_proved_memory_ids: frozenset[UUID],
 ) -> list[tuple[float, FusedHit]]:
-    """Seam for post-fusion score adjustment; identity today.
+    """Reweight each fused RRF score by its result's provenance trust tier.
 
-    Provenance-trust weighting (human-proved > human-asserted > machine-synced)
-    and any future time-window score effects both land here, as a rewrite over
-    the already rank-fused scores, before diversity capping ever runs."""
-    return scored
+    Multiplicative and applied after rank fusion, so it reorders already-fused
+    results by trust rather than distorting the rank-position math RRF depends
+    on. Any future time-window score effect lands here too, alongside trust."""
+    return [
+        (
+            score
+            * TRUST_MULTIPLIERS[
+                _trust_class(hit.item, human_proved_memory_ids=human_proved_memory_ids)
+            ],
+            hit,
+        )
+        for score, hit in scored
+    ]
 
 
 def _cap_diversity(
@@ -243,12 +327,13 @@ def _cap_diversity(
     return capped
 
 
-async def fuse(
+async def fuse(  # noqa: PLR0913 - each param is an independent fusion knob
     arms: Sequence[FusionArm],
     query: str,
     *,
     limit: PositiveInt,
     diversity_cap: int = DEFAULT_DIVERSITY_CAP,
+    human_proved_memory_ids: frozenset[UUID] | None = None,
     logger: Logger,
 ) -> list[FusedHit]:
     """Fuse every arm's ranked, hydrated hits into one capped, source-tagged list.
@@ -256,12 +341,14 @@ async def fuse(
     Each arm's raw candidates are hydrated and re-filtered through its own
     service, then scored by their position in that *filtered* order — a
     reciprocal-rank score, computed per arm since arms share no ids to jointly
-    rank. Every arm's scored hits are merged, sorted by that score (the single
-    seam `_adjust_scores` reserves for steps 3-4's provenance/time-window
-    adjustments), and finally diversity-capped: the sorted list is walked once,
-    counting hits per source, and a source that reaches `diversity_cap` stops
-    contributing so the next-best hit from another arm fills the freed slot —
-    no arm is topped up to a minimum."""
+    rank. Every arm's scored hits are merged and reweighted by provenance trust
+    tier (`_adjust_scores`, given `human_proved_memory_ids` — the Recall-tethered
+    Memory ids this call's caller resolved), then sorted by that adjusted score,
+    and finally diversity-capped: the sorted list is walked once, counting hits
+    per source, and a source that reaches `diversity_cap` stops contributing so
+    the next-best hit from another arm fills the freed slot — no arm is topped
+    up to a minimum."""
+    proved_ids = human_proved_memory_ids or frozenset()
     scored: list[tuple[float, FusedHit]] = []
     for arm in arms:
         raw_candidates = await arm.candidates(query, limit=limit, logger=logger)
@@ -279,6 +366,6 @@ async def fuse(
             )
             for position, item in enumerate(ranked_items)
         )
-    scored = _adjust_scores(scored)
+    scored = _adjust_scores(scored, human_proved_memory_ids=proved_ids)
     scored.sort(key=lambda entry: entry[0], reverse=True)
     return _cap_diversity(scored, limit=limit, diversity_cap=diversity_cap)

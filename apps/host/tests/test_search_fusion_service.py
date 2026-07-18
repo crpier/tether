@@ -19,13 +19,13 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid7
 
 import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database
+from snekql.sqlite import Config, Database, insert
 from snektest import (
     assert_eq,
     assert_not_in,
@@ -46,6 +46,7 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
+from tether.recall import StudyItem, StudyItemState, create_recall_schema
 from tether.reconciler import SearchReconciler
 from tether.search_fusion import FusedHit, SearchFusionService
 from tether.search_index import SearchCandidate, SearchDocument
@@ -146,6 +147,7 @@ async def harness() -> AsyncGenerator[Harness]:
     await create_memory_schema(db)
     await create_bucket_item_schema(db)
     await create_search_meta_schema(db)
+    await create_recall_schema(db)
     meta = SearchMetaService(database=db)
     memory_index = FakeSearchIndex(vector_dim=_DIM)
     bucket_item_index = FakeBucketItemIndex(vector_dim=_DIM)
@@ -184,6 +186,25 @@ async def harness() -> AsyncGenerator[Harness]:
 
 def _sources(hits: list[FusedHit]) -> list[str]:
     return [hit.source for hit in hits]
+
+
+async def _insert_study_item(
+    database: Database, *, memory_id: UUID, state: StudyItemState
+) -> None:
+    """Seed a `StudyItem` row directly, bypassing `RecallService`'s own
+    generator/grader machinery — only the memory_id/state pairing matters for
+    Search's human-proved derivation."""
+    async with database.transaction() as tx:
+        await tx.execute(
+            insert(
+                StudyItem(
+                    memory_id=memory_id,
+                    source_video_id=str(uuid7()),
+                    source_title="a source",
+                    state=state,
+                )
+            )
+        )
 
 
 @test()
@@ -287,3 +308,49 @@ async def blank_query_raises_empty_search_query_error() -> None:
 
     with assert_raises(EmptySearchQueryError):
         _ = await h.fusion.search("   ", logger=_logger())
+
+
+@test()
+async def a_recall_completed_memory_outranks_a_better_matching_asserted_memory() -> (
+    None
+):
+    """A Memory behind a completed `StudyItem` outranks a manually-captured
+    Memory even when the fusion engine ranked it second by raw match."""
+    h = await load_fixture(harness())
+    asserted = await h.memory_service.capture("asserted fact", logger=_logger())
+    asserted = await h.memory_service.tether(asserted, logger=_logger())
+    proved = await h.memory_service.capture("proved fact", logger=_logger())
+    proved = await h.memory_service.tether(proved, logger=_logger())
+    await _insert_study_item(
+        h.memory_service.database, memory_id=proved.id, state="completed"
+    )
+    h.memory_index.search_results = [
+        SearchCandidate(id=asserted.id, score=1.0),
+        SearchCandidate(id=proved.id, score=0.9),
+    ]
+
+    hits = await h.fusion.search("fact", logger=_logger())
+
+    assert_eq([hit.item.id for hit in hits], [proved.id, asserted.id])
+
+
+@test()
+async def a_memory_with_a_non_completed_study_item_is_not_human_proved() -> None:
+    """A `studying` (not yet `completed`) `StudyItem` grants no boost — its
+    Memory keeps its ordinary rank order, unaffected by trust weighting."""
+    h = await load_fixture(harness())
+    asserted = await h.memory_service.capture("asserted fact", logger=_logger())
+    asserted = await h.memory_service.tether(asserted, logger=_logger())
+    studying = await h.memory_service.capture("studying fact", logger=_logger())
+    studying = await h.memory_service.tether(studying, logger=_logger())
+    await _insert_study_item(
+        h.memory_service.database, memory_id=studying.id, state="studying"
+    )
+    h.memory_index.search_results = [
+        SearchCandidate(id=asserted.id, score=1.0),
+        SearchCandidate(id=studying.id, score=0.9),
+    ]
+
+    hits = await h.fusion.search("fact", logger=_logger())
+
+    assert_eq([hit.item.id for hit in hits], [asserted.id, studying.id])
