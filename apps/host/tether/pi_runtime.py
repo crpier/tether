@@ -7,11 +7,13 @@ import contextlib
 import json
 import os
 import uuid
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, Self, cast
 from uuid import UUID
+
+from anyio import Path as AsyncPath
 
 from tether.model_selection import AgentModelConfig
 from tether.tools import SessionRegistry
@@ -126,6 +128,82 @@ class PiRuntimeConfig:
     off pi's AGENTS.md/CLAUDE.md context-file discovery: those are coding-agent
     context that would pollute the persona and vary with the host's cwd.
     """
+
+
+class PiSpawner(Protocol):
+    """Spawn seam for pi runtimes, injectable so tests avoid real subprocesses.
+
+    Both the persistent (chat) and ephemeral (scheduled/recall) call sites take
+    this seam as an injectable collaborator instead of calling `PiRuntime.spawn`
+    directly, so each can be exercised with a type-checked fake.
+    """
+
+    async def __call__(
+        self, config: PiRuntimeConfig, *, session_registry: SessionRegistry
+    ) -> PiRuntime:
+        """Spawn a pi runtime for `config`, registered with `session_registry`."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class PiSpawnRequest:
+    """Shared inputs to constructing and spawning a pi runtime.
+
+    `session_dir` is either a fixed path (a persistent, conversation-keyed
+    runtime already knows its directory) or a callable from the resolved
+    session id to a path (an ephemeral runtime's directory is named after the
+    session id it generates). `session_id` is used verbatim when given
+    (persistent runtimes are keyed by the conversation's own pi session id);
+    when `None`, a fresh UUIDv7 is derived the same way `PiRuntime.spawn` would.
+    """
+
+    session_dir: Path | Callable[[str], Path]
+    session_id: str | None
+    system_prompt: str
+    tool_base_url: str
+    tool_secret: str
+    extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
+    pi_binary: Path | None = None
+
+
+async def spawn_pi_runtime(
+    request: PiSpawnRequest,
+    *,
+    session_registry: SessionRegistry,
+    spawn: PiSpawner,
+) -> tuple[PiRuntime, str]:
+    """Create the session dir, resolve the session id, and spawn pi.
+
+    This is the one shared spawn-construction seam: session-dir creation,
+    session-id derivation, and `PiRuntimeConfig` assembly happen here so
+    persistent (chat) and ephemeral (scheduled/recall) callers no longer
+    hand-roll their own divergent copies of this ritual. The
+    persistent-vs-ephemeral lifecycle split (explicit vs. generated session id,
+    reuse vs. teardown-in-`finally`) stays an explicit choice at the call site;
+    this seam only covers the construction, not the lifecycle.
+
+    Returns the resolved session id alongside the runtime because ephemeral
+    callers need it to generate the directory and would otherwise have to
+    re-derive it.
+    """
+    resolved_session_id = request.session_id or str(uuid.uuid7())
+    resolved_session_dir = (
+        request.session_dir(resolved_session_id)
+        if callable(request.session_dir)
+        else request.session_dir
+    )
+    await AsyncPath(resolved_session_dir).mkdir(parents=True, exist_ok=True)
+    config = PiRuntimeConfig(
+        tool_base_url=request.tool_base_url,
+        tool_secret=request.tool_secret,
+        extra_extension_paths=request.extra_extension_paths,
+        pi_binary=request.pi_binary,
+        session_dir=resolved_session_dir,
+        session_id=resolved_session_id,
+        system_prompt=request.system_prompt,
+    )
+    runtime = await spawn(config, session_registry=session_registry)
+    return runtime, resolved_session_id
 
 
 class PiRpcClient:

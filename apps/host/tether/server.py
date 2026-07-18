@@ -29,7 +29,7 @@ from starlette.status import HTTP_404_NOT_FOUND
 from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.auth import AppSessionMiddleware
 from tether.bucket_items import (
     BucketItemService,
@@ -505,6 +505,41 @@ def _start_youtube_workers(
     return tasks
 
 
+def _ephemeral_pi_config(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    kb_root: Path,
+    run_kind: RunKind,
+    model: AgentModelConfig | None,
+) -> EphemeralPiConfig:
+    """Build the wiring shared by every ephemeral pi runner (scheduled, recall).
+
+    The two run kinds differ only in their session subdir (named after
+    `run_kind` itself) and the `run_kind` carried on the config (which selects
+    the system prompt and trace-run label); everything else (session registry,
+    tool credentials, extension paths, trace recorder) comes straight from
+    `app.state`/`config`, so a future shared field (like `trace_recorder`) only
+    needs to be added here once.
+    """
+    session_root = (
+        Path(config.pi_session_root)
+        if config.pi_session_root is not None
+        else kb_root / "pi-sessions"
+    )
+    return EphemeralPiConfig(
+        session_registry=app.state.session_registry,
+        session_root=session_root / run_kind,
+        tool_base_url=config.tool_base_url,
+        tool_secret=app.state.tool_secret,
+        model=model,
+        extra_extension_paths=config.extra_extension_paths,
+        pi_binary=config.pi_binary,
+        trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+        run_kind=run_kind,
+    )
+
+
 def _build_scheduler(
     app: Starlette,
     *,
@@ -529,22 +564,13 @@ def _build_scheduler(
     )
     app.state.notification_service = notification_service
     model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
-    session_root = (
-        Path(config.pi_session_root)
-        if config.pi_session_root is not None
-        else kb_root / "pi-sessions"
-    )
     prompt_runner = EphemeralPiPromptRunner(
-        EphemeralPiConfig(
-            session_registry=app.state.session_registry,
-            session_root=session_root / "scheduled",
-            tool_base_url=config.tool_base_url,
-            tool_secret=app.state.tool_secret,
-            model=model_catalog.default_config,
-            extra_extension_paths=config.extra_extension_paths,
-            pi_binary=config.pi_binary,
-            trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+        _ephemeral_pi_config(
+            app,
+            config=config,
+            kb_root=kb_root,
             run_kind="scheduled",
+            model=model_catalog.default_config,
         )
     )
     return Scheduler(
@@ -582,22 +608,13 @@ def _build_recall_service(
     grader: AnswerGrader | None = config.answer_grader
     if generator is None or grader is None:
         model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
-        session_root = (
-            Path(config.pi_session_root)
-            if config.pi_session_root is not None
-            else kb_root / "pi-sessions"
-        )
         runner = EphemeralPiPromptRunner(
-            EphemeralPiConfig(
-                session_registry=app.state.session_registry,
-                session_root=session_root / "recall",
-                tool_base_url=config.tool_base_url,
-                tool_secret=app.state.tool_secret,
-                model=model_catalog.default_config,
-                extra_extension_paths=config.extra_extension_paths,
-                pi_binary=config.pi_binary,
-                trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+            _ephemeral_pi_config(
+                app,
+                config=config,
+                kb_root=kb_root,
                 run_kind="recall",
+                model=model_catalog.default_config,
             )
         )
         generator = generator or PiStudyItemGenerator(runner)
