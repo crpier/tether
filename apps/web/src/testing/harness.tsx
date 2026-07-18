@@ -156,6 +156,7 @@ export function memory(overrides: Partial<Memory>): Memory {
   return {
     content: "I prefer aisle seats",
     created_at: "2026-01-01T00:00:00Z",
+    facets: {},
     id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
     state: "loose",
     tethered_at: null,

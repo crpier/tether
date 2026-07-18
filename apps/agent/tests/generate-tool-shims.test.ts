@@ -62,4 +62,32 @@ describe("renderTypeBoxProperty", () => {
       'source: Type.Optional(StringEnum(["liked", "watch_later"] as const))',
     );
   });
+
+  test("renders a string-map object as Type.Record", () => {
+    const rendered = renderTypeBoxProperty(
+      "facets",
+      { additionalProperties: { type: "string" }, type: "object" },
+      true,
+    );
+
+    expect(rendered).toBe("facets: Type.Record(Type.String(), Type.String())");
+  });
+
+  test("unwraps a nullable optional string-map object to Type.Record", () => {
+    const rendered = renderTypeBoxProperty(
+      "facets",
+      {
+        anyOf: [
+          { additionalProperties: { type: "string" }, type: "object" },
+          { type: "null" },
+        ],
+        default: null,
+      },
+      false,
+    );
+
+    expect(rendered).toBe(
+      "facets: Type.Optional(Type.Record(Type.String(), Type.String()))",
+    );
+  });
 });

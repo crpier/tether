@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from snektest import assert_eq, assert_in, test
+from snektest import assert_eq, assert_in, assert_not_in, test
 
 from tether.bucket_tools import internal_bucket_tool_routes
 from tether.conversation_history_tools import (
@@ -33,6 +33,9 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "tether",
             "edit",
             "reject",
+            "facet_overview",
+            "rename_facet_key",
+            "merge_facet_value",
             "add_movie",
             "add_place",
             "add_book",
@@ -73,6 +76,46 @@ def tool_schema_document_describes_the_internal_tools() -> None:
     )
     assert_eq(search_schema["properties"]["limit"]["default"], 50)
     assert_in("memory_id", tether_schema["required"])
+
+
+@test()
+def bulk_facet_curation_tools_require_prior_chat_approval_by_description() -> None:
+    """`rename_facet_key`/`merge_facet_value` schemas warn the model to ask first.
+
+    These bulk-rewrite every carrying Memory row; the approval gate is a
+    convention enforced by what the model reads in its tool description, not by
+    the host, so the description text is the load-bearing artifact under test.
+    """
+    document = build_tool_schema_document()
+    tools = {tool["name"]: tool for tool in document["tools"]}
+
+    rename_schema = cast("dict[str, Any]", tools["rename_facet_key"]["schema"])
+    merge_schema = cast("dict[str, Any]", tools["merge_facet_value"]["schema"])
+
+    assert_in("approval", cast("str", rename_schema["description"]).lower())
+    assert_in("approval", cast("str", merge_schema["description"]).lower())
+
+
+@test()
+def capture_tool_exposes_an_optional_facets_object() -> None:
+    """The `capture` schema carries an optional `facets` string-map field."""
+    document = build_tool_schema_document()
+    tools = {tool["name"]: tool for tool in document["tools"]}
+    capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
+
+    assert_not_in_required(capture_schema, "facets")
+    facets_schema = capture_schema["properties"]["facets"]
+    non_null_member = next(
+        member for member in facets_schema["anyOf"] if member.get("type") != "null"
+    )
+    assert_eq(non_null_member["type"], "object")
+    assert_eq(non_null_member["additionalProperties"], {"type": "string"})
+
+
+def assert_not_in_required(schema: dict[str, Any], field: str) -> None:
+    """Assert `field` is present as a property but absent from `required`."""
+    assert_in(field, schema["properties"])
+    assert_not_in(field, schema.get("required", []))
 
 
 @test()

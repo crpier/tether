@@ -14,7 +14,7 @@ Searches only tethered, non-deleted Memories.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
 from uuid import uuid7
 
 from anyio import NamedTemporaryFile, Path
@@ -98,6 +98,18 @@ class ProjectionStructureError(Exception):
     """Raised when a projection file is not structured as expected."""
 
 
+class FacetOverviewEntry(BaseModel):
+    """One distinct `(key, value)` facet pair and how many Memories carry it.
+
+    >>> FacetOverviewEntry(key="sensitivity", value="private", count=3).count
+    3
+    """
+
+    key: str
+    value: str
+    count: PositiveInt
+
+
 def _debug(logger: Logger, event: str, **context: object) -> None:
     """Emit a debug event using caller-supplied logging context."""
     logger.debug(event, **context)
@@ -139,6 +151,13 @@ class Memory[S = Pending](Model[S, "Memory[Fetched]"]):
         default_factory=lambda: MemoryProvenance(kind="manual"),
     )
     """The origin of a Captured Memory."""
+    facets: Memory.Col[Json[dict[str, str]]] = Text(default_factory=dict[str, str])
+    """The Commons facet set: a flat `{"key": "value"}` map, one string value per
+    key. Naming convention is lowercase snake_case keys and free-form lowercase
+    string values, documented but not validated here — key/value drift is
+    handled by curation (`rename_facet_key` / `merge_facet_value`), not code.
+    `sensitivity` is a reserved key name but stored and treated like any other
+    facet; there is no special-cased code path for it."""
     created_at: Memory.GenCol[datetime] = Text(default=CurrentTimestamp)
     updated_at: Memory.GenCol[datetime] = Text(default=CurrentTimestamp)
     tethered_at: Memory.Col[datetime | None] = Text(
@@ -173,6 +192,7 @@ class FrontMatter(BaseModel):
     updated_at: datetime
     provenance: MemoryProvenance
     tethered_at: datetime | None
+    facets: dict[str, str] = {}
 
 
 class FrontMatterConversion:
@@ -180,16 +200,21 @@ class FrontMatterConversion:
     @staticmethod
     def generate_frontmatter(memory: Memory[Fetched]) -> str:
         """Generate a string containing the YAML frontmatter for a Memory,
-        including its separators."""
-        yaml_string = safe_dump(
-            {
-                "id": str(memory.id),
-                "created_at": memory.created_at,
-                "updated_at": memory.updated_at,
-                "provenance": memory.provenance,
-                "tethered_at": memory.tethered_at,
-            }
-        )
+        including its separators.
+
+        `facets` is omitted entirely when the Memory carries none, rather than
+        projected as an empty mapping — an empty `facets:` key would read as
+        "curated to nothing" instead of "no Commons facets yet"."""
+        frontmatter: dict[str, object] = {
+            "id": str(memory.id),
+            "created_at": memory.created_at,
+            "updated_at": memory.updated_at,
+            "provenance": memory.provenance,
+            "tethered_at": memory.tethered_at,
+        }
+        if memory.facets:
+            frontmatter["facets"] = memory.facets
+        yaml_string = safe_dump(frontmatter)
         return f"---\n{yaml_string}---\n"
 
     # TODO: I'm a bit sad about how inconsistent the API of these 2 methods is
@@ -302,6 +327,7 @@ class MemoryService:
         content: str,
         *,
         provenance: MemoryProvenance | None = None,
+        facets: dict[str, str] | None = None,
         logger: Logger,
     ) -> Memory[Fetched]:
         """Capture a loose Memory from content.
@@ -309,11 +335,14 @@ class MemoryService:
         Always lands `loose` — there is no direct-to-tethered path. `provenance`
         defaults to manual; a non-manual producer (import, YouTube, web) passes
         its own origin so downstream Review can calibrate scrutiny and grouping.
+        `facets` defaults to an empty Commons facet set (`{}`) when omitted, and
+        is persisted verbatim otherwise.
         """
         normalised_content = _normalise_content(content)
         memory_provenance = (
             provenance if provenance is not None else MemoryProvenance(kind="manual")
         )
+        memory_facets = facets if facets is not None else {}
         with self.tracer.start_as_current_span(
             "MemoryService.capture",
             attributes={"memory.content_length": len(normalised_content)},
@@ -326,6 +355,7 @@ class MemoryService:
                         Memory(
                             content=normalised_content,
                             provenance=memory_provenance,
+                            facets=memory_facets,
                         )
                     ).returning()
                 )
@@ -349,6 +379,7 @@ class MemoryService:
         query: str,
         limit: PositiveInt = 50,
         *,
+        facets: dict[str, str] | None = None,
         logger: Logger,
     ) -> list[Memory[Fetched]]:
         """Hybrid Search the assistant uses to pull context.
@@ -360,7 +391,15 @@ class MemoryService:
         drifted index (an orphan a missed event left behind) can surface a
         candidate, but a loose or deleted Memory is dropped here and never
         reaches the assistant. Results keep the index's
-        relevance order; the SQLite round-trip preserves it, not recency."""
+        relevance order; the SQLite round-trip preserves it, not recency.
+
+        `facets`, when supplied, is an exact-match AND filter applied at this
+        same re-fetch stage: a Memory must carry every given key with exactly
+        that value to survive, composing with (not replacing) the tethered /
+        deleted invariant. LanceDB's index is untouched by this — it only ever
+        stores id/content/vector — so the filter runs against the re-fetched
+        SQLite rows, same as the trust predicate. Omitted or empty `facets`
+        preserves the unfiltered-by-facet behavior."""
         normalised_query = query.strip()
         if not normalised_query:
             msg = "keyword Search requires a non-empty query"
@@ -393,6 +432,14 @@ class MemoryService:
                 memories = await tx.fetch_all(
                     MemoryService.tethered_corpus().where(Memory.id.in_(*rank))
                 )
+            if facets:
+                memories = [
+                    memory
+                    for memory in memories
+                    if all(
+                        memory.facets.get(key) == value for key, value in facets.items()
+                    )
+                ]
             memories.sort(key=lambda memory: rank[memory.id])
             span.set_attribute("memory.search.result_count", len(memories))
             _debug(
@@ -525,6 +572,7 @@ class MemoryService:
         memory: Memory[Fetched],
         content: str,
         *,
+        facets: dict[str, str] | None = None,
         logger: Logger,
     ) -> Memory[Fetched]:
         """Edit a Memory's content and bump `updated_at`.
@@ -532,6 +580,10 @@ class MemoryService:
         Authorship gates trust: a human edit *is* the review, so a
         tethered Memory stays tethered (its projection refreshes) and a loose one
         stays loose. Editing an absent or deleted Memory raises.
+
+        `facets`, when supplied, replaces the stored Commons facet set verbatim
+        (an empty dict clears it). `None` (the default) leaves facets unchanged
+        — the same "omit means don't touch" convention `provenance` uses.
         """
         normalised_content = _normalise_content(content)
         _debug(
@@ -543,12 +595,16 @@ class MemoryService:
         )
 
         async def _edit_content(tx: Transaction) -> Memory[Fetched]:
-            matched_rows = await tx.execute(
+            edit_query = (
                 update(Memory)
                 .set(Memory.content.to(normalised_content))
                 .set(Memory.updated_at.to(CurrentTimestamp))
                 .set(Memory.version.to(memory.version + 1))
-                .where(Memory.id.eq(memory.id))
+            )
+            if facets is not None:
+                edit_query = edit_query.set(Memory.facets.to(facets))
+            matched_rows = await tx.execute(
+                edit_query.where(Memory.id.eq(memory.id))
                 .where(Memory.deleted_at.is_null())
                 .where(Memory.version.eq(memory.version))
             )
@@ -686,6 +742,156 @@ class MemoryService:
             removed_count=removed_count,
         )
 
+    async def facet_overview(self, *, logger: Logger) -> list[FacetOverviewEntry]:
+        """Report distinct Commons facet keys/values and how many Memories carry each.
+
+        The Proposal-lite curation surface's read side (issue #185): computed
+        with SQLite's `json_each` over the `facets` column, grouped by
+        `(key, value)`. Scoped to non-deleted Memories — both loose and tethered
+        — because facet drift can exist before a Memory is ever tethered, and
+        curation should be able to see (and later fix, via `rename_facet_key` /
+        `merge_facet_value`) drift on the whole live corpus, not just the
+        assistant-visible tethered slice. A soft-deleted Memory's facets are
+        excluded: it is no longer part of the corpus curation is about.
+        """
+        _debug(logger, "Computing facet overview")
+        overview_sql = (
+            "SELECT je.key, je.value, COUNT(*) "
+            'FROM "memory", json_each("memory"."facets") AS je '
+            'WHERE "memory"."deleted_at" IS NULL '
+            "GROUP BY je.key, je.value "
+            "ORDER BY je.key, je.value"
+        )
+        async with self.database.transaction() as tx:
+            connection = tx.require_connection()
+            cursor = await connection.execute(overview_sql, ())
+            rows = await cursor.fetchall()
+            await cursor.close()
+        entries = [
+            FacetOverviewEntry(
+                key=str(row[0]),
+                value=str(row[1]),
+                count=cast("int", row[2]),
+            )
+            for row in rows
+        ]
+        _debug(logger, "Facet overview computed", entry_count=len(entries))
+        return entries
+
+    async def rename_facet_key(
+        self,
+        old_key: str,
+        new_key: str,
+        *,
+        logger: Logger,
+    ) -> int:
+        """Rename a Commons facet key across every non-deleted Memory that carries it.
+
+        Bulk curation (issue #185, "Proposal-lite"): the calling tool surface
+        must have obtained explicit user approval in chat *before* invoking
+        this — that requirement lives in the tool description, not in this
+        method, so any caller of the service directly must honor it too. Only
+        rows that actually carry `old_key` are touched; each touched row's
+        `version`/`updated_at` bumps exactly once, and a tethered row's KB
+        projection refreshes immediately so `regenerate_knowledge_base` is not
+        the only path that picks up the change. Returns the count of rows
+        changed.
+        """
+
+        async def _rename(tx: Transaction) -> list[Memory[Fetched]]:
+            rows = await tx.fetch_all(select(Memory).where(Memory.deleted_at.is_null()))
+            changed: list[Memory[Fetched]] = []
+            for row in rows:
+                if old_key not in row.facets:
+                    continue
+                renamed_facets = dict(row.facets)
+                renamed_facets[new_key] = renamed_facets.pop(old_key)
+                matched_rows = await tx.execute(
+                    update(Memory)
+                    .set(Memory.facets.to(renamed_facets))
+                    .set(Memory.version.to(row.version + 1))
+                    .set(Memory.updated_at.to(CurrentTimestamp))
+                    .where(Memory.id.eq(row.id))
+                    .where(Memory.version.eq(row.version))
+                )
+                if matched_rows:
+                    changed.append(await self._fetch_active(tx, row.id))
+            return changed
+
+        changed_memories = await run_in_transaction(self.database, _rename)
+        for memory in changed_memories:
+            if memory.tethered_at is not None:
+                await self._try_set_projection(memory, logger=logger)
+        _info(
+            logger,
+            "Facet key renamed",
+            old_key=old_key,
+            new_key=new_key,
+            changed_count=len(changed_memories),
+        )
+        if changed_memories:
+            await self.event_publisher.publish(
+                InvalidateEvent(keys=["memories", "review-queue"])
+            )
+        return len(changed_memories)
+
+    async def merge_facet_value(
+        self,
+        key: str,
+        old_value: str,
+        new_value: str,
+        *,
+        logger: Logger,
+    ) -> int:
+        """Rewrite one facet value to another across every Memory carrying it.
+
+        Bulk curation (issue #185, "Proposal-lite"): the calling tool surface
+        must have obtained explicit user approval in chat *before* invoking
+        this — that requirement lives in the tool description, not in this
+        method. Only non-deleted rows where `facets[key] == old_value` are
+        touched; each touched row's `version`/`updated_at` bumps exactly once,
+        and a tethered row's KB projection refreshes immediately. Returns the
+        count of rows changed.
+        """
+
+        async def _merge(tx: Transaction) -> list[Memory[Fetched]]:
+            rows = await tx.fetch_all(select(Memory).where(Memory.deleted_at.is_null()))
+            changed: list[Memory[Fetched]] = []
+            for row in rows:
+                if row.facets.get(key) != old_value:
+                    continue
+                merged_facets = dict(row.facets)
+                merged_facets[key] = new_value
+                matched_rows = await tx.execute(
+                    update(Memory)
+                    .set(Memory.facets.to(merged_facets))
+                    .set(Memory.version.to(row.version + 1))
+                    .set(Memory.updated_at.to(CurrentTimestamp))
+                    .where(Memory.id.eq(row.id))
+                    .where(Memory.version.eq(row.version))
+                )
+                if matched_rows:
+                    changed.append(await self._fetch_active(tx, row.id))
+            return changed
+
+        changed_memories = await run_in_transaction(self.database, _merge)
+        for memory in changed_memories:
+            if memory.tethered_at is not None:
+                await self._try_set_projection(memory, logger=logger)
+        _info(
+            logger,
+            "Facet value merged",
+            key=key,
+            old_value=old_value,
+            new_value=new_value,
+            changed_count=len(changed_memories),
+        )
+        if changed_memories:
+            await self.event_publisher.publish(
+                InvalidateEvent(keys=["memories", "review-queue"])
+            )
+        return len(changed_memories)
+
     async def _try_set_projection(
         self,
         memory: Memory[Fetched],
@@ -797,6 +1003,11 @@ _MEMORY_MIGRATIONS: dict[str, str] = {
     "002_memory_embedding": 'ALTER TABLE "memory" ADD COLUMN "embedding" BLOB',
     "003_memory_embedded_version": (
         'ALTER TABLE "memory" ADD COLUMN "embedded_version" INTEGER'
+    ),
+    # Commons facets (issue #185): a flat JSON `{"key": "value"}` map. Existing
+    # rows backfill to '{}' via the column default.
+    "004_memory_facets": (
+        'ALTER TABLE "memory" ADD COLUMN "facets" TEXT NOT NULL DEFAULT \'{}\''
     ),
 }
 

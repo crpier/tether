@@ -15,6 +15,21 @@
         "properties": {
           "content": {
             "$ref": "#/$defs/MemoryContent"
+          },
+          "facets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Facets"
           }
         },
         "required": ["content"],
@@ -55,7 +70,7 @@
       "name": "search",
       "params_model": "SearchParams",
       "schema": {
-        "description": "Params for the assistant's keyword Search over tethered Memories.",
+        "description": "Params for the assistant's keyword Search over tethered Memories.\n\n`facets`, when supplied, is an exact-match AND filter: a Memory must carry\nevery given key with exactly that value to be returned.",
         "properties": {
           "q": {
             "title": "Q",
@@ -66,6 +81,21 @@
             "exclusiveMinimum": 0,
             "title": "Limit",
             "type": "integer"
+          },
+          "facets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Facets"
           }
         },
         "required": ["q"],
@@ -118,7 +148,7 @@
             "type": "string"
           }
         },
-        "description": "Params for editing a Memory's content at an observed version.",
+        "description": "Params for editing a Memory's content at an observed version.\n\n`facets`, when supplied, replaces the stored Commons facet set verbatim\n(an empty object clears it); omitted, facets stay unchanged.",
         "properties": {
           "memory_id": {
             "format": "uuid7",
@@ -132,6 +162,21 @@
             "exclusiveMinimum": 0,
             "title": "Version",
             "type": "integer"
+          },
+          "facets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Facets"
           }
         },
         "required": ["memory_id", "content", "version"],
@@ -159,6 +204,63 @@
         },
         "required": ["memory_id", "version"],
         "title": "RejectParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/facet_overview",
+      "name": "facet_overview",
+      "params_model": "FacetOverviewParams",
+      "schema": {
+        "description": "Params for the Commons facet overview: distinct keys/values with counts.\n\nRead-only; takes no inputs beyond the session identity the gate already\nrequires.",
+        "properties": {},
+        "title": "FacetOverviewParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/rename_facet_key",
+      "name": "rename_facet_key",
+      "params_model": "RenameFacetKeyParams",
+      "schema": {
+        "description": "Params for bulk-renaming a Commons facet key across every Memory that carries it.\n\nDestructive to the old key name across the whole corpus: the assistant\nmust obtain the user's explicit approval in chat before calling this tool.",
+        "properties": {
+          "old_key": {
+            "title": "Old Key",
+            "type": "string"
+          },
+          "new_key": {
+            "title": "New Key",
+            "type": "string"
+          }
+        },
+        "required": ["old_key", "new_key"],
+        "title": "RenameFacetKeyParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/merge_facet_value",
+      "name": "merge_facet_value",
+      "params_model": "MergeFacetValueParams",
+      "schema": {
+        "description": "Params for bulk-rewriting a Commons facet value across every Memory that carries it.\n\nDestructive to the old value across the whole corpus: the assistant must\nobtain the user's explicit approval in chat before calling this tool.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "old_value": {
+            "title": "Old Value",
+            "type": "string"
+          },
+          "new_value": {
+            "title": "New Value",
+            "type": "string"
+          }
+        },
+        "required": ["key", "old_value", "new_value"],
+        "title": "MergeFacetValueParams",
         "type": "object"
       }
     },

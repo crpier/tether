@@ -310,6 +310,143 @@ def internal_surface_is_absent_from_the_public_openapi() -> None:
 
 
 @test()
+def capture_tool_persists_supplied_facets() -> None:
+    """`capture(facets=...)` at the tool seam persists the facet set verbatim."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "capture",
+            content="I prefer aisle seats",
+            facets={"topic": "travel"},
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"]["facets"], {"topic": "travel"})
+
+
+@test()
+def edit_tool_facets_round_trip_and_omission_leaves_unchanged() -> None:
+    """`edit(facets=...)` replaces facets; omitting it leaves them unchanged."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        memory = tool_capture(client, "I live in Berlin")
+        first_edit = call_tool(
+            client,
+            "edit",
+            memory_id=memory["id"],
+            content="I live in Berlin",
+            version=memory["version"],
+            facets={"topic": "housing"},
+        )
+        second_edit = call_tool(
+            client,
+            "edit",
+            memory_id=memory["id"],
+            content="I live in Munich",
+            version=first_edit["result"]["version"],
+        )
+
+    assert_eq(first_edit["result"]["facets"], {"topic": "housing"})
+    assert_eq(second_edit["result"]["facets"], {"topic": "housing"})
+
+
+@test()
+def search_tool_filters_by_facets() -> None:
+    """`search(facets=...)` at the tool seam keeps only exact-matching Memories."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        travel = tool_capture(client, "needle travel note")
+        _ = call_tool(
+            client,
+            "edit",
+            memory_id=travel["id"],
+            content="needle travel note",
+            version=travel["version"],
+            facets={"topic": "travel"},
+        )
+        edited_travel = call_tool(client, "browse", state="loose")["result"][0]
+        tethered_travel = call_tool(
+            client, "tether", memory_id=travel["id"], version=edited_travel["version"]
+        )["result"]
+
+        other = tool_capture(client, "needle shopping note")
+        tethered_other = call_tool(
+            client, "tether", memory_id=other["id"], version=other["version"]
+        )["result"]
+
+        filtered = call_tool(client, "search", q="needle", facets={"topic": "travel"})
+
+    found = [hit["id"] for hit in filtered["result"]]
+    assert_in(tethered_travel["id"], found)
+    assert_not_in(tethered_other["id"], found)
+
+
+@test()
+def facet_overview_tool_reports_counts() -> None:
+    """`facet_overview` reports distinct keys/values and counts through the tool seam."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _ = call_tool(client, "capture", content="first", facets={"topic": "travel"})
+        _ = call_tool(client, "capture", content="second", facets={"topic": "travel"})
+
+        envelope = call_tool(client, "facet_overview")
+
+    entries = {
+        (entry["key"], entry["value"]): entry["count"] for entry in envelope["result"]
+    }
+    assert_eq(entries[("topic", "travel")], 2)
+
+
+@test()
+def rename_facet_key_tool_renames_across_the_corpus() -> None:
+    """`rename_facet_key` at the tool seam renames the key on every carrier."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        memory = tool_capture(client, "a fact")
+        _ = call_tool(
+            client,
+            "edit",
+            memory_id=memory["id"],
+            content="a fact",
+            version=memory["version"],
+            facets={"topik": "travel"},
+        )
+
+        envelope = call_tool(
+            client, "rename_facet_key", old_key="topik", new_key="topic"
+        )
+
+        browsed = call_tool(client, "browse", state="loose")
+
+    assert_eq(envelope["result"], {"changed_count": 1})
+    assert_eq(browsed["result"][0]["facets"], {"topic": "travel"})
+
+
+@test()
+def merge_facet_value_tool_merges_across_the_corpus() -> None:
+    """`merge_facet_value` at the tool seam rewrites the value on every carrier."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        memory = tool_capture(client, "a fact")
+        _ = call_tool(
+            client,
+            "edit",
+            memory_id=memory["id"],
+            content="a fact",
+            version=memory["version"],
+            facets={"topic": "travle"},
+        )
+
+        envelope = call_tool(
+            client,
+            "merge_facet_value",
+            key="topic",
+            old_value="travle",
+            new_value="travel",
+        )
+
+        browsed = call_tool(client, "browse", state="loose")
+
+    assert_eq(envelope["result"], {"changed_count": 1})
+    assert_eq(browsed["result"][0]["facets"], {"topic": "travel"})
+
+
+@test()
 def configured_database_path_persists_between_app_instances() -> None:
     """A configured SQLite path survives app shutdown and restart."""
     with TemporaryDirectory() as directory:
