@@ -4,6 +4,8 @@ import { ApiError } from "../api";
 import type {
   AddBucketItem,
   AnswerOutcome,
+  Artifact,
+  ArtifactEvent,
   BucketItem,
   BucketItemAdded,
   BucketItemState,
@@ -166,6 +168,17 @@ export function memory(overrides: Partial<Memory>): Memory {
   };
 }
 
+export function artifact(overrides: Partial<Artifact>): Artifact {
+  return {
+    created_at: "2026-01-01T00:00:00Z",
+    html: "<p>hello</p>",
+    id: "018f0000-0000-7000-8000-0000000003aa",
+    title: "Untitled artifact",
+    version: 1,
+    ...overrides,
+  };
+}
+
 export const emptyTriageReport: BucketTriageReport = {
   active: [],
   duplicates: [],
@@ -269,6 +282,11 @@ export class FakeApi implements TetherApi {
   // make the proposal request fail while answering still works.
   proposeRejections: ApiError[] = [];
   correctIndices: Record<string, number> = {};
+  storedArtifacts: Artifact[] = [];
+  getArtifactCalls: string[] = [];
+  getArtifactRejections: ApiError[] = [];
+  postArtifactEventCalls: { artifactId: string; payload: unknown }[] = [];
+  postArtifactEventRejections: ApiError[] = [];
 
   constructor(options: {
     authenticated: boolean;
@@ -777,6 +795,40 @@ export class FakeApi implements TetherApi {
       existing.id === bucketItemId ? terminal : existing,
     );
     return Promise.resolve(terminal);
+  }
+
+  getArtifact(artifactId: string): Promise<Artifact> {
+    this.getArtifactCalls.push(artifactId);
+    const forced = this.getArtifactRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const found = this.storedArtifacts.find(
+      (candidate) => candidate.id === artifactId,
+    );
+    if (found === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    return Promise.resolve(found);
+  }
+
+  postArtifactEvent(
+    artifactId: string,
+    payload: Record<string, unknown>,
+  ): Promise<ArtifactEvent> {
+    this.postArtifactEventCalls.push({ artifactId, payload });
+    const forced = this.postArtifactEventRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    return Promise.resolve({
+      artifact_id: artifactId,
+      created_at: "2026-01-02T00:00:00Z",
+      id: `018f0000-0000-7000-8000-0000000004${this.postArtifactEventCalls.length
+        .toString()
+        .padStart(2, "0")}`,
+      payload,
+    });
   }
 
   private placeholderPrompt(promptId: string): DuePrompt["prompt"] {

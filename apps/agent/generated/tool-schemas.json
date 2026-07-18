@@ -915,6 +915,67 @@
         "title": "ReadConversationHistoryParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/create_artifact",
+      "name": "create_artifact",
+      "params_model": "CreateArtifactParams",
+      "schema": {
+        "description": "Params for creating a new artifact at version 1.",
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "html": {
+            "title": "Html",
+            "type": "string"
+          }
+        },
+        "required": ["title", "html"],
+        "title": "CreateArtifactParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/update_artifact",
+      "name": "update_artifact",
+      "params_model": "UpdateArtifactParams",
+      "schema": {
+        "description": "Params for appending a new version onto an existing artifact.\n\n`id` names the stable artifact identity (not a specific version's own row\nid); the title carries forward from the latest version unchanged.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "html": {
+            "title": "Html",
+            "type": "string"
+          }
+        },
+        "required": ["id", "html"],
+        "title": "UpdateArtifactParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_artifact_events",
+      "name": "list_artifact_events",
+      "params_model": "ListArtifactEventsParams",
+      "schema": {
+        "description": "Params for listing an artifact's events, oldest first.",
+        "properties": {
+          "artifact_id": {
+            "format": "uuid7",
+            "title": "Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": ["artifact_id"],
+        "title": "ListArtifactEventsParams",
+        "type": "object"
+      }
     }
   ]
 }

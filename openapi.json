@@ -177,6 +177,110 @@
         "title": "AnswerPromptRequest",
         "type": "object"
       },
+      "ArtifactEventRead": {
+        "description": "HTTP representation of one artifact event.",
+        "properties": {
+          "artifact_id": {
+            "format": "uuid7",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "artifact_id",
+          "payload",
+          "created_at"
+        ],
+        "title": "ArtifactEventRead",
+        "type": "object"
+      },
+      "ArtifactRead": {
+        "description": "Full HTTP representation of one artifact version, `html` included.\n\nServed by the REST reads (latest / by version) the browser fetches to\nmount an artifact's sandboxed iframe.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "html": {
+            "title": "Html",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "html",
+          "version",
+          "created_at"
+        ],
+        "title": "ArtifactRead",
+        "type": "object"
+      },
+      "ArtifactSummaryRead": {
+        "description": "Overview HTTP representation of an artifact's latest version, no `html`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "version",
+          "created_at"
+        ],
+        "title": "ArtifactSummaryRead",
+        "type": "object"
+      },
       "BucketItemRead": {
         "description": "HTTP representation of a Bucket item, exposing its derived `state`.\n\n>>> read = BucketItemRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     item_type=\"movie\",\n...     state=\"active\",\n...     title=\"Dune\",\n...     data={\"title\": \"Dune\"},\n...     intent_context=\"recommended\",\n...     version=1,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     completed_at=None,\n...     deleted_at=None,\n... )\n>>> read.state\n'active'",
         "properties": {
@@ -915,6 +1019,23 @@
           "created_at"
         ],
         "title": "NotificationRead",
+        "type": "object"
+      },
+      "PostArtifactEventRequest": {
+        "description": "Body for relaying one artifact event.\n\n`payload` is opaque, free-form JSON \u2014 the `postMessage` payload a\nsandboxed artifact posted to its parent, relayed verbatim under the\nbrowser's own session; no schema is enforced beyond \"a JSON object\".\n\n>>> PostArtifactEventRequest(payload={\"type\": \"answer\", \"value\": 3}).payload\n{'type': 'answer', 'value': 3}",
+        "properties": {
+          "payload": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "payload"
+        ],
+        "title": "PostArtifactEventRequest",
         "type": "object"
       },
       "ProposeEssayGradeRequest": {
@@ -1775,6 +1896,153 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/artifacts": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactSummaryRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List every artifact's latest version as lightweight summaries."
+      }
+    },
+    "/api/artifacts/{artifact_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Fetch an artifact's newest version, `html` included."
+      }
+    },
+    "/api/artifacts/{artifact_id}/events": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactEventRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List an artifact's events, oldest first."
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostArtifactEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactEventRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Append one free-form event to an artifact's log."
+      }
+    },
+    "/api/artifacts/{artifact_id}/versions/{version}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Fetch one specific past version of an artifact, `html` included."
+      }
+    },
     "/api/auth/login": {
       "post": {
         "requestBody": {

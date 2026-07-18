@@ -2,6 +2,11 @@ import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import { createEffect, createMemo } from "solid-js";
 
+import type {
+  ArtifactPointer,
+  ArtifactWidgetContext,
+} from "./widgets/artifact-widget";
+import { renderArtifactWidget } from "./widgets/artifact-widget";
 import { renderMermaidWidget } from "./widgets/mermaid-widget";
 import { renderVegaLiteWidget } from "./widgets/vega-lite-widget";
 
@@ -50,21 +55,29 @@ function ensureNewTabHook(): void {
   newTabHookRegistered = true;
 }
 
-// Widget vocabulary v1 (ADR 0011): a closed, literal switch over exactly
-// these two fence languages. GFM tables need no dispatch — `marked`'s native
-// table support plus the prose styling above already renders them as a
-// first-class element. Everything else (typos, unsupported tags) falls
-// through untouched to the plain code block `marked` already produces —
-// there is no generalized "looks like a widget" heuristic, deliberately, so
-// growing the vocabulary stays a reviewed code change (a new case here, a new
-// renderer module) rather than something the agent can trigger by guessing a
-// fence tag.
-type WidgetLanguage = "mermaid" | "vega-lite";
+// Widget vocabulary v1 (ADR 0011) plus the `artifact` fence added in #188: a
+// closed, literal switch over exactly these fence languages. GFM tables need
+// no dispatch — `marked`'s native table support plus the prose styling above
+// already renders them as a first-class element. Everything else (typos,
+// unsupported tags) falls through untouched to the plain code block `marked`
+// already produces — there is no generalized "looks like a widget"
+// heuristic, deliberately, so growing the vocabulary stays a reviewed code
+// change (a new case here, a new renderer module) rather than something the
+// agent can trigger by guessing a fence tag.
+type WidgetLanguage = "artifact" | "mermaid" | "vega-lite";
 
+// `artifact`'s renderer additionally takes a context carrying the
+// open-overlay callback (see artifact-widget.ts); `mermaid`/`vega-lite`
+// ignore the extra argument, which JS callbacks are free to do.
 const widgetRenderers: Record<
   WidgetLanguage,
-  (mount: HTMLElement, spec: string) => Promise<void>
+  (
+    mount: HTMLElement,
+    spec: string,
+    context: ArtifactWidgetContext,
+  ) => Promise<void>
 > = {
+  artifact: renderArtifactWidget,
   mermaid: renderMermaidWidget,
   "vega-lite": renderVegaLiteWidget,
 };
@@ -74,6 +87,9 @@ function widgetLanguageOf(code: HTMLElement): WidgetLanguage | null {
   // `language-<lang>`, trimmed of any trailing info-string content — so a
   // typo'd or unsupported tag never matches the literal strings below.
   for (const lang of code.classList) {
+    if (lang === "language-artifact") {
+      return "artifact";
+    }
     if (lang === "language-mermaid") {
       return "mermaid";
     }
@@ -84,14 +100,17 @@ function widgetLanguageOf(code: HTMLElement): WidgetLanguage | null {
   return null;
 }
 
-// Walks a freshly-sanitized message fragment for `mermaid`/`vega-lite` fences
-// and promotes each to a rendered widget in place of its `<pre>` block. Only
-// called once a message has settled (see the `streaming` gate in
-// `MessageContent`) — never on a per-token basis. Each widget's render is
+// Walks a freshly-sanitized message fragment for `mermaid`/`vega-lite`/
+// `artifact` fences and promotes each to a rendered widget in place of its
+// `<pre>` block. Only called once a message has settled (see the `streaming`
+// gate in `MessageContent`) — never on a per-token basis. Each widget's render is
 // isolated: a throw from one (bad spec, a rejected Vega-Lite schema) leaves
 // that fence's code block visible and appends a short inline note, without
 // touching sibling widgets or the rest of the message.
-async function dispatchWidgets(container: HTMLElement): Promise<void> {
+async function dispatchWidgets(
+  container: HTMLElement,
+  context: ArtifactWidgetContext,
+): Promise<void> {
   const codeBlocks = Array.from(
     container.querySelectorAll<HTMLElement>("pre > code"),
   );
@@ -109,7 +128,7 @@ async function dispatchWidgets(container: HTMLElement): Promise<void> {
       const mount = document.createElement("div");
       mount.setAttribute("data-widget", lang);
       try {
-        await widgetRenderers[lang](mount, spec);
+        await widgetRenderers[lang](mount, spec, context);
         // The container may have been unmounted (or re-rendered with fresh
         // markup) while the widget's async render was in flight; skip the
         // DOM mutation rather than clobbering a stale/detached tree.
@@ -155,7 +174,11 @@ function renderMarkdown(text: string): string {
 // promoting any recognized fence to a live widget. Defaults to settled
 // (`false`) so callers rendering already-final text (e.g. tests) don't need
 // to pass it.
-export function MessageContent(props: { text: string; streaming?: boolean }) {
+export function MessageContent(props: {
+  text: string;
+  streaming?: boolean;
+  onOpenArtifact?: (artifact: ArtifactPointer) => void;
+}) {
   let containerEl: HTMLDivElement | undefined;
   const html = createMemo(() => renderMarkdown(props.text));
 
@@ -168,7 +191,11 @@ export function MessageContent(props: { text: string; streaming?: boolean }) {
     if (containerEl === undefined || streaming) {
       return;
     }
-    void dispatchWidgets(containerEl);
+    void dispatchWidgets(containerEl, {
+      onOpenArtifact: (pointer) => {
+        props.onOpenArtifact?.(pointer);
+      },
+    });
   });
 
   // innerHTML is fed only DOMPurify-sanitized markup (see renderMarkdown).

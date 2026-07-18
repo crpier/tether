@@ -9,6 +9,7 @@ from typing import Any
 
 from starlette.routing import Route
 
+from tether.artifact_routes import artifact_routes
 from tether.auth import auth_routes
 from tether.bucket_routes import bucket_item_routes
 from tether.conversations import conversation_routes
@@ -43,6 +44,7 @@ def public_api_routes() -> list[Route]:
         *push_routes,
         *recall_routes,
         *notification_routes,
+        *artifact_routes,
     ]
 
 

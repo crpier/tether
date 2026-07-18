@@ -34,6 +34,9 @@ import { registerListDueRecallPromptsTool } from "./list_due_recall_prompts.js";
 import { registerAnswerRecallPromptTool } from "./answer_recall_prompt.js";
 import { registerProposeEssayGradeTool } from "./propose_essay_grade.js";
 import { registerReadConversationHistoryTool } from "./read_conversation_history.js";
+import { registerCreateArtifactTool } from "./create_artifact.js";
+import { registerUpdateArtifactTool } from "./update_artifact.js";
+import { registerListArtifactEventsTool } from "./list_artifact_events.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -68,4 +71,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerAnswerRecallPromptTool(pi);
   registerProposeEssayGradeTool(pi);
   registerReadConversationHistoryTool(pi);
+  registerCreateArtifactTool(pi);
+  registerUpdateArtifactTool(pi);
+  registerListArtifactEventsTool(pi);
 }

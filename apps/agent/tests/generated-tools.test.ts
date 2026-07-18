@@ -52,6 +52,9 @@ describe("generated tool extension", () => {
       "answer_recall_prompt",
       "propose_essay_grade",
       "read_conversation_history",
+      "create_artifact",
+      "update_artifact",
+      "list_artifact_events",
     ]);
   });
 });

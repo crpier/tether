@@ -52,6 +52,8 @@ export type DedupAdvisory = components["schemas"]["DedupAdvisoryRead"];
 export type BucketTriageReport = components["schemas"]["TriageReport"];
 export type Memory = components["schemas"]["MemoryRead"];
 export type MemoryState = components["schemas"]["MemoryState"];
+export type Artifact = components["schemas"]["ArtifactRead"];
+export type ArtifactEvent = components["schemas"]["ArtifactEventRead"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -107,6 +109,17 @@ export interface TetherApi {
   ): Promise<Memory>;
   tetherMemory(memoryId: string, version: number): Promise<Memory>;
   rejectMemory(memoryId: string, version: number): Promise<Memory>;
+  // Fetches an artifact's latest version, `html` included — the viewer calls
+  // this fresh on every open (no pre-fetch/cache warm, see #188), so a
+  // re-open always reflects the current latest version.
+  getArtifact(artifactId: string): Promise<Artifact>;
+  // Relays one opaque `postMessage` payload from a sandboxed artifact's
+  // viewer to the host, under the browser's own session (ADR 0011's sole
+  // talk-back channel).
+  postArtifactEvent(
+    artifactId: string,
+    payload: Record<string, unknown>,
+  ): Promise<ArtifactEvent>;
 }
 
 // Carries the HTTP status so callers can react to specific failures (e.g. a 409
@@ -375,6 +388,23 @@ export function createRestApi(
         "/api/memories/{memory_id}",
         {
           params: { path: { memory_id: memoryId }, query: { version } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async getArtifact(artifactId) {
+      const { data, response } = await client.GET(
+        "/api/artifacts/{artifact_id}",
+        { params: { path: { artifact_id: artifactId } } },
+      );
+      return requireData(data, response);
+    },
+    async postArtifactEvent(artifactId, payload) {
+      const { data, response } = await client.POST(
+        "/api/artifacts/{artifact_id}/events",
+        {
+          body: { payload },
+          params: { path: { artifact_id: artifactId } },
         },
       );
       return requireData(data, response);

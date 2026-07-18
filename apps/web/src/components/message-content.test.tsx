@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { MessageContent } from "./message-content";
@@ -135,6 +135,91 @@ describe("MessageContent", () => {
       expect(container.querySelector("[data-widget-error]")).not.toBeNull();
     });
     expect(container.querySelector("pre code.language-mermaid")).not.toBeNull();
+  });
+
+  test("a settled message with an artifact fence renders a card", async () => {
+    const onOpenArtifact = vi.fn();
+    const fence =
+      '```artifact\n{"id": "018f0000-0000-7000-8000-000000000abc", "title": "Quiz"}\n```';
+
+    const { container } = render(() => (
+      <MessageContent
+        onOpenArtifact={onOpenArtifact}
+        streaming={false}
+        text={fence}
+      />
+    ));
+
+    const card = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(
+        "[data-widget='artifact']",
+      );
+      expect(found).not.toBeNull();
+      return found;
+    });
+    expect(card?.getAttribute("data-artifact-id")).toBe(
+      "018f0000-0000-7000-8000-000000000abc",
+    );
+    expect(card?.textContent).toContain("Quiz");
+    expect(container.querySelector("pre code.language-artifact")).toBeNull();
+
+    const openButton = card?.querySelector("button");
+    expect(openButton).not.toBeNull();
+    if (openButton) {
+      fireEvent.click(openButton);
+    }
+    expect(onOpenArtifact).toHaveBeenCalledTimes(1);
+    expect(onOpenArtifact).toHaveBeenCalledWith({
+      id: "018f0000-0000-7000-8000-000000000abc",
+      title: "Quiz",
+    });
+  });
+
+  test("an artifact fence with malformed JSON falls back to a code block", async () => {
+    const fence = '```artifact\n{"id": "abc"\n```';
+
+    const { container } = render(() => (
+      <MessageContent streaming={false} text={fence} />
+    ));
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-widget-error]")).not.toBeNull();
+    });
+    expect(
+      container.querySelector("pre code.language-artifact"),
+    ).not.toBeNull();
+    expect(container.querySelector("[data-widget='artifact']")).toBeNull();
+  });
+
+  test("an artifact fence missing required fields falls back to a code block", async () => {
+    const fence =
+      '```artifact\n{"id": "018f0000-0000-7000-8000-000000000abc"}\n```';
+
+    const { container } = render(() => (
+      <MessageContent streaming={false} text={fence} />
+    ));
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-widget-error]")).not.toBeNull();
+    });
+    expect(
+      container.querySelector("pre code.language-artifact"),
+    ).not.toBeNull();
+  });
+
+  test("a streaming message with an artifact fence still renders a plain code block", async () => {
+    const fence =
+      '```artifact\n{"id": "018f0000-0000-7000-8000-000000000abc", "title": "Quiz"}\n```';
+
+    const { container } = render(() => (
+      <MessageContent streaming={true} text={fence} />
+    ));
+
+    await Promise.resolve();
+    expect(
+      container.querySelector("pre code.language-artifact"),
+    ).not.toBeNull();
+    expect(container.querySelector("[data-widget='artifact']")).toBeNull();
   });
 
   test("a GFM table renders as sanitized table markup", () => {

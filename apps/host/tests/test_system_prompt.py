@@ -105,6 +105,23 @@ async def the_conversation_prompt_names_the_widget_vocabulary() -> None:
 
 
 @test()
+async def the_conversation_prompt_names_the_artifact_tools_and_fence_contract() -> None:
+    """The full prompt tells the agent to link a created artifact with an
+    `artifact` fence, and names the tools that author/read one."""
+    assert_in("`create_artifact`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`update_artifact`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`list_artifact_events`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("```artifact```", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_forbids_reading_artifact_html_back() -> None:
+    """The prompt states the agent never reads an artifact's HTML/DOM back —
+    only its event log, matching ADR 0011's talk-back boundary."""
+    assert_in("never returns to you", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
 async def the_task_prompt_does_not_mention_widgets() -> None:
     """Unattended runs return plain text, not chat turns, so the widget
     vocabulary guidance is conversation-only."""

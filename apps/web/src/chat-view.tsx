@@ -36,7 +36,9 @@ import type {
   StoredMessage,
   TimelineRow,
 } from "./chat-timeline";
+import { ArtifactOverlay } from "./components/artifact-viewer";
 import { MessageContent } from "./components/message-content";
+import type { ArtifactPointer } from "./components/widgets/artifact-widget";
 import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
 import { formatToolResult } from "./lib/tool-result";
 import { BucketPanel } from "./panels/bucket";
@@ -205,7 +207,10 @@ function WorkingIndicator(props: { startedAt: number }) {
   );
 }
 
-function MessageRow(props: { row: TimelineRow }) {
+function MessageRow(props: {
+  row: TimelineRow;
+  onOpenArtifact: (artifact: ArtifactPointer) => void;
+}) {
   return (
     <Switch>
       <Match when={props.row.kind === "tool" && props.row}>
@@ -317,8 +322,9 @@ function MessageRow(props: { row: TimelineRow }) {
               when={message().role === "assistant"}
             >
               <MessageContent
-                text={message().text}
+                onOpenArtifact={props.onOpenArtifact}
                 streaming={message().streaming}
+                text={message().text}
               />
             </Show>
           </article>
@@ -341,6 +347,7 @@ function MessageRows(props: {
   // so the caller only arms its scroll-position restore when rows are really
   // about to prepend.
   onNearTop: () => boolean;
+  onOpenArtifact: (artifact: ArtifactPointer) => void;
 }) {
   let viewport: HTMLElement | undefined;
   // Pinned ⇔ the viewport is within PINNED_THRESHOLD_PX of the bottom. This
@@ -429,7 +436,11 @@ function MessageRows(props: {
           }
         }}
       >
-        <For each={props.rows}>{(row) => <MessageRow row={row} />}</For>
+        <For each={props.rows}>
+          {(row) => (
+            <MessageRow onOpenArtifact={props.onOpenArtifact} row={row} />
+          )}
+        </For>
         <Show when={props.working && props.startedAt !== null}>
           <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
         </Show>
@@ -486,6 +497,12 @@ export function ChatView(props: {
   // marker stays on the (now persisted) partial reply instead of flashing away.
   const [interrupted, setInterrupted] = createSignal(false);
   const [clearing, setClearing] = createSignal(false);
+  // Signal-driven overlay (#188, no router): set by an artifact card's Open
+  // click, cleared to `null` on close. `null` both hides the overlay and
+  // (via ArtifactOverlay's own effect) tears down its iframe.
+  const [openArtifact, setOpenArtifact] = createSignal<ArtifactPointer | null>(
+    null,
+  );
   const generating = createMemo(() => turn().generating);
   const canSend = createMemo(() => !generating() && draft().trim().length > 0);
 
@@ -861,6 +878,7 @@ export function ChatView(props: {
           >
             <MessageRows
               onNearTop={loadOlderMessages}
+              onOpenArtifact={setOpenArtifact}
               rows={rows()}
               startedAt={turn().startedAt}
               stopped={turn().stopped || interrupted()}
@@ -908,6 +926,13 @@ export function ChatView(props: {
           <PushControl api={props.api} />
         </aside>
       </div>
+      <ArtifactOverlay
+        api={props.api}
+        artifact={openArtifact()}
+        onClose={() => {
+          setOpenArtifact(null);
+        }}
+      />
     </main>
   );
 }
