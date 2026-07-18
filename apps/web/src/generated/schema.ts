@@ -1279,6 +1279,8 @@ export interface paths {
         query: {
           limit?: number;
           q: string;
+          after?: string | null;
+          before?: string | null;
         };
         header?: never;
         path?: never;

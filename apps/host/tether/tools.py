@@ -32,7 +32,7 @@ from time import perf_counter
 from typing import Any, cast
 
 import structlog
-from pydantic import UUID7, BaseModel, PositiveInt, ValidationError
+from pydantic import UUID7, AwareDatetime, BaseModel, PositiveInt, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, request_response
@@ -185,13 +185,18 @@ class SearchParams(BaseModel):
     `facets`, when supplied, is an exact-match AND filter applied to the
     Memory arm only: a Memory must carry every given key with exactly that
     value to be returned. `sources`, when supplied, restricts fusion to that
-    subset of arms; omitted, every arm runs.
+    subset of arms; omitted, every arm runs. `after`/`before`, when supplied,
+    bound every arm's own capture timestamp (a Memory's `tethered_at`, a
+    Bucket item's `created_at`), inclusive on both ends; either or both may
+    be given, and supplying `after` later than `before` is rejected.
     """
 
     q: str
     limit: PositiveInt = 50
     facets: dict[str, str] | None = None
     sources: list[SourceType] | None = None
+    after: AwareDatetime | None = None
+    before: AwareDatetime | None = None
 
 
 class ReviewDigestParams(BaseModel):

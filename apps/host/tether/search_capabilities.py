@@ -19,13 +19,16 @@ from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.logging import get_request_logger
 from tether.memories import EmptySearchQueryError, Memory
 from tether.memory_capabilities import MemoryRead
-from tether.search_fusion import SourceType
+from tether.search_fusion import InvalidSearchWindowError, SourceType
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from tether.search_fusion import FusedHit
 
 SEARCH_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((EmptySearchQueryError,), "invalid_input", 400),
+    ErrorRule((InvalidSearchWindowError,), "invalid_input", 400),
 )
 """The fused Search domain→code map both surfaces translate failures through."""
 
@@ -54,22 +57,29 @@ class FusedSearchResultRead(BaseModel):
         return cls(source=hit.source, bucket_item=BucketItemRead.from_item(hit.item))
 
 
-async def search(
+async def search(  # noqa: PLR0913 - each param is an independent Search knob
     request: Request,
     q: str,
     limit: int = 50,
     facets: dict[str, str] | None = None,
     sources: list[SourceType] | None = None,
+    after: datetime | None = None,
+    before: datetime | None = None,
 ) -> CapabilityOutcome:
     """Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged.
 
     `facets` applies only to the Memory arm; `sources`, when supplied,
-    restricts fusion to that subset of arms (default: every arm)."""
+    restricts fusion to that subset of arms (default: every arm). `after`/
+    `before` bound every arm's own capture timestamp, inclusive; both
+    surfaces (`GET /api/search` and the agent's `search` tool) expose them
+    identically since both call this one execute function."""
     hits = await request.app.state.search_fusion_service.search(
         q,
         limit=limit,
         facets=facets,
         sources=sources,
+        after=after,
+        before=before,
         logger=get_request_logger(request),
     )
     return CapabilityOutcome(

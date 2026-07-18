@@ -31,6 +31,7 @@ satisfy the `FusionArm` protocol; `fuse()` itself never changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
@@ -97,6 +98,10 @@ _HUMAN_ASSERTED_PROVENANCE_KINDS = frozenset({"manual", "import"})
 """`MemoryProvenance.kind` values that read as human-asserted rather than synced."""
 
 
+class InvalidSearchWindowError(Exception):
+    """A fused Search's `after`/`before` bounds describe an empty, backwards window."""
+
+
 @dataclass(frozen=True, slots=True)
 class FusedHit:
     """One fused, source-tagged Search result."""
@@ -139,10 +144,13 @@ class MemoryFusionArm:
 
     `facets`, when supplied, is bound once per Search call and applies only to
     this arm — the Bucket-item arm's `hydrate` takes no facets, so both arms
-    keep the same `FusionArm` shape."""
+    keep the same `FusionArm` shape. `after`/`before` are bound the same way
+    and apply to `tethered_at`."""
 
     facets: Mapping[str, str] | None
     memory_service: MemoryService
+    after: datetime | None = None
+    before: datetime | None = None
 
     @property
     def source(self) -> SourceType:
@@ -159,15 +167,21 @@ class MemoryFusionArm:
         self, ids: Sequence[UUID], *, logger: Logger
     ) -> Sequence[FusedItem]:
         return await self.memory_service.hydrate_tethered(
-            ids, facets=self.facets, logger=logger
+            ids, facets=self.facets, after=self.after, before=self.before, logger=logger
         )
 
 
 @dataclass(frozen=True, slots=True)
 class BucketItemFusionArm:
-    """The Bucket-item arm: `BucketItemService`'s searcher plus its active re-filter."""
+    """The Bucket-item arm: `BucketItemService`'s searcher plus its active re-filter.
+
+    `after`/`before` are bound once per Search call and apply to `created_at`
+    — Bucket items have no `tethered_at` equivalent, so creation time is the
+    window bound."""
 
     bucket_item_service: BucketItemService
+    after: datetime | None = None
+    before: datetime | None = None
 
     @property
     def source(self) -> SourceType:
@@ -183,7 +197,9 @@ class BucketItemFusionArm:
     async def hydrate(
         self, ids: Sequence[UUID], *, logger: Logger
     ) -> Sequence[FusedItem]:
-        return await self.bucket_item_service.hydrate_active(ids, logger=logger)
+        return await self.bucket_item_service.hydrate_active(
+            ids, after=self.after, before=self.before, logger=logger
+        )
 
 
 class SearchFusionService:
@@ -203,25 +219,38 @@ class SearchFusionService:
         self.memory_service: MemoryService = memory_service
         self.bucket_item_service: BucketItemService = bucket_item_service
 
-    async def search(
+    async def search(  # noqa: PLR0913 - each param is an independent Search knob
         self,
         query: str,
         limit: PositiveInt = 50,
         *,
         facets: dict[str, str] | None = None,
         sources: Sequence[SourceType] | None = None,
+        after: datetime | None = None,
+        before: datetime | None = None,
         logger: Logger,
     ) -> list[FusedHit]:
         """Fused Search over the selected arms (default: every arm).
 
         `facets` applies only to the Memory arm, exact-match AND, exactly as
         `MemoryService.search` documents. `sources`, when supplied, restricts
-        fusion to that subset of arms; omitted or `None` runs every arm."""
+        fusion to that subset of arms; omitted or `None` runs every arm.
+        `after`/`before` bound every arm's own capture timestamp (`tethered_at`
+        for Memories, `created_at` for Bucket items), inclusive on both ends;
+        either or both may be supplied, and both omitted is unbounded, as
+        today. Supplying both with `after` later than `before` describes an
+        impossible window and is rejected outright rather than silently
+        returning no results."""
         normalised_query = query.strip()
         if not normalised_query:
             msg = "fused Search requires a non-empty query"
             raise EmptySearchQueryError(msg)
-        arms = self._build_arms(facets=facets, sources=sources)
+        if after is not None and before is not None and after > before:
+            msg = "Search window requires after <= before"
+            raise InvalidSearchWindowError(msg)
+        arms = self._build_arms(
+            facets=facets, sources=sources, after=after, before=before
+        )
         human_proved_memory_ids = await self._human_proved_memory_ids()
         return await fuse(
             arms,
@@ -236,17 +265,28 @@ class SearchFusionService:
         *,
         facets: Mapping[str, str] | None,
         sources: Sequence[SourceType] | None,
+        after: datetime | None,
+        before: datetime | None,
     ) -> list[FusionArm]:
         """Build the arm list a call runs, honoring an optional `sources` filter."""
         selected = frozenset(sources) if sources is not None else None
         arms: list[FusionArm] = []
         if selected is None or "memory" in selected:
             arms.append(
-                MemoryFusionArm(facets=facets, memory_service=self.memory_service)
+                MemoryFusionArm(
+                    facets=facets,
+                    memory_service=self.memory_service,
+                    after=after,
+                    before=before,
+                )
             )
         if selected is None or "bucket_item" in selected:
             arms.append(
-                BucketItemFusionArm(bucket_item_service=self.bucket_item_service)
+                BucketItemFusionArm(
+                    bucket_item_service=self.bucket_item_service,
+                    after=after,
+                    before=before,
+                )
             )
         return arms
 

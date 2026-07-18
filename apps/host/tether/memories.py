@@ -461,22 +461,33 @@ class MemoryService:
         ids: Sequence[UUID],
         *,
         facets: Mapping[str, str] | None = None,
+        after: datetime | None = None,
+        before: datetime | None = None,
         logger: Logger,
     ) -> list[Memory[Fetched]]:
-        """Re-fetch candidate ids from SQLite, filtered to tethered ∧ ¬deleted (+facets).
+        """Re-fetch candidate ids from SQLite, filtered to tethered ∧ ¬deleted (+facets/window).
 
         The shared re-filter step `search` and fusion both need: candidate ids
         from the index carry no guarantee they're still valid rows, so this is
         where the assistant-only-sees-tethered invariant (ADR 0001) and ADR
-        0009's per-arm re-filter both land. Result order is not preserved —
+        0009's per-arm re-filter both land. `after`/`before`, when supplied,
+        bound `tethered_at` (inclusive) the same way a Memory is timestamped
+        for Search — a hard SQLite-stage filter, applied alongside the
+        tethered/deleted predicate rather than as a rank signal. Like `facets`,
+        a narrow window can shrink the hydrated set below the candidate count
+        the index returned; callers do not re-fetch to compensate, matching
+        the existing facet-filter behavior. Result order is not preserved —
         callers sort by their own candidate ranking."""
         _debug(logger, "Hydrating tethered Memory candidates", candidate_count=len(ids))
         if not ids:
             return []
+        query = MemoryService.tethered_corpus().where(Memory.id.in_(*ids))
+        if after is not None:
+            query = query.where(Memory.tethered_at.gte(after))
+        if before is not None:
+            query = query.where(Memory.tethered_at.lte(before))
         async with self.database.transaction() as tx:
-            memories = await tx.fetch_all(
-                MemoryService.tethered_corpus().where(Memory.id.in_(*ids))
-            )
+            memories = await tx.fetch_all(query)
         if facets:
             memories = [
                 memory

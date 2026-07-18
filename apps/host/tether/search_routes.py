@@ -11,7 +11,7 @@ outcome is served as a list of source-tagged `FusedSearchResultRead` JSON.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, PositiveInt
+from pydantic import AwareDatetime, BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
@@ -25,12 +25,17 @@ from tether.search_capabilities import SEARCH_ERRORS, FusedSearchResultRead
 class SearchQuery(BaseModel):
     """Query string for the fused, cross-source Search.
 
+    `after`/`before` bound every arm's own capture timestamp, inclusive on
+    both ends; either or both may be supplied.
+
     >>> SearchQuery(q="aisle").limit
     50
     """
 
     limit: PositiveInt = 50
     q: str
+    after: AwareDatetime | None = None
+    before: AwareDatetime | None = None
 
 
 _translate_domain_errors = translate_domain_errors(SEARCH_ERRORS)
@@ -40,7 +45,13 @@ _translate_domain_errors = translate_domain_errors(SEARCH_ERRORS)
 @_translate_domain_errors
 async def search_fused(request: Request, query: SearchQuery) -> Response:
     """Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged."""
-    outcome = await search_capabilities.search(request, query.q, limit=query.limit)
+    outcome = await search_capabilities.search(
+        request,
+        query.q,
+        limit=query.limit,
+        after=query.after,
+        before=query.before,
+    )
     return rest_response(outcome)
 
 

@@ -517,27 +517,41 @@ class BucketItemService:
         return await self.searcher.candidates(query, limit=limit, logger=logger)
 
     async def hydrate_active(
-        self, ids: Sequence[UUID], *, logger: Logger
+        self,
+        ids: Sequence[UUID],
+        *,
+        after: datetime | None = None,
+        before: datetime | None = None,
+        logger: Logger,
     ) -> list[BucketItem[Fetched]]:
-        """Re-fetch candidate ids from SQLite, filtered to active-only.
+        """Re-fetch candidate ids from SQLite, filtered to active-only (+window).
 
         The shared re-filter step `search` and fusion both need: candidate ids
         from the index carry no guarantee they're still active rows, so this
-        is where ADR 0009's per-arm re-filter happens. Result order is not
-        preserved — callers sort by their own candidate ranking."""
+        is where ADR 0009's per-arm re-filter happens. `after`/`before`, when
+        supplied, bound `created_at` (inclusive) — Bucket items have no
+        `tethered_at` equivalent, so their creation timestamp is the capture
+        moment a time window bounds. A narrow window can shrink the hydrated
+        set below the candidate count the index returned; callers do not
+        re-fetch to compensate, mirroring the Memory arm's facet-filter
+        behavior. Result order is not preserved — callers sort by their own
+        candidate ranking."""
         _debug(
             logger, "Hydrating active Bucket item candidates", candidate_count=len(ids)
         )
         if not ids:
             return []
+        query = select(BucketItem).where(
+            BucketItem.completed_at.is_null()
+            & BucketItem.deleted_at.is_null()
+            & BucketItem.id.in_(*ids)
+        )
+        if after is not None:
+            query = query.where(BucketItem.created_at.gte(after))
+        if before is not None:
+            query = query.where(BucketItem.created_at.lte(before))
         async with self.database.transaction() as tx:
-            return await tx.fetch_all(
-                select(BucketItem).where(
-                    BucketItem.completed_at.is_null()
-                    & BucketItem.deleted_at.is_null()
-                    & BucketItem.id.in_(*ids)
-                )
-            )
+            return await tx.fetch_all(query)
 
     async def browse_by_state(
         self,

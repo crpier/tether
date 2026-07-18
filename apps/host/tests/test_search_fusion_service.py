@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from uuid import UUID, uuid7
 
 import structlog
@@ -34,21 +36,29 @@ from snektest import (
     load_fixture,
     test,
 )
+from starlette.requests import Request
 
+from tether import search_capabilities
 from tether.bucket_item_index import BucketItemCandidate, BucketItemDocument
 from tether.bucket_item_reconciler import BucketItemReconciler
-from tether.bucket_items import BucketItemService, create_bucket_item_schema
+from tether.bucket_items import (
+    BucketItem,
+    BucketItemService,
+    Fetched,
+    create_bucket_item_schema,
+)
 from tether.embeddings import FakeEmbedder
 from tether.logging import Logger
 from tether.memories import (
     EmptySearchQueryError,
     KnowledgeBaseService,
+    Memory,
     MemoryService,
     create_memory_schema,
 )
 from tether.recall import StudyItem, StudyItemState, create_recall_schema
 from tether.reconciler import SearchReconciler
-from tether.search_fusion import FusedHit, SearchFusionService
+from tether.search_fusion import FusedHit, InvalidSearchWindowError, SearchFusionService
 from tether.search_index import SearchCandidate, SearchDocument
 from tether.search_meta import SearchMetaService, create_search_meta_schema
 
@@ -186,6 +196,38 @@ async def harness() -> AsyncGenerator[Harness]:
 
 def _sources(hits: list[FusedHit]) -> list[str]:
     return [hit.source for hit in hits]
+
+
+async def _insert_tethered_memory(
+    database: Database, *, content: str, tethered_at: datetime
+) -> Memory[Fetched]:
+    """Seed an already-tethered Memory with an explicit `tethered_at`, bypassing
+    `MemoryService.capture`/`tether`'s own `CurrentTimestamp` stamping — the
+    time-window tests need a controllable, non-`now` timestamp."""
+    async with database.transaction() as tx:
+        return await tx.execute(
+            insert(Memory(content=content, tethered_at=tethered_at)).returning()
+        )
+
+
+async def _insert_active_bucket_item(
+    database: Database, *, title: str, created_at: datetime
+) -> BucketItem[Fetched]:
+    """Seed an active Bucket item with an explicit `created_at`, bypassing
+    `BucketItemService.add`'s own `CurrentTimestamp` stamping."""
+    async with database.transaction() as tx:
+        return await tx.execute(
+            insert(
+                BucketItem(
+                    item_type="movie",
+                    title=title,
+                    dedup_key=title.lower(),
+                    data={"title": title},
+                    intent_context="",
+                    created_at=created_at,
+                )
+            ).returning()
+        )
 
 
 async def _insert_study_item(
@@ -354,3 +396,223 @@ async def a_memory_with_a_non_completed_study_item_is_not_human_proved() -> None
     hits = await h.fusion.search("fact", logger=_logger())
 
     assert_eq([hit.item.id for hit in hits], [asserted.id, studying.id])
+
+
+@test()
+async def after_excludes_a_memory_tethered_before_the_bound() -> None:
+    """`after` drops a Memory whose `tethered_at` falls before the bound."""
+    h = await load_fixture(harness())
+    old = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="old fact",
+        tethered_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    new = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="new fact",
+        tethered_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    h.memory_index.search_results = [
+        SearchCandidate(id=old.id, score=1.0),
+        SearchCandidate(id=new.id, score=0.9),
+    ]
+
+    hits = await h.fusion.search(
+        "fact", after=datetime(2026, 1, 15, tzinfo=UTC), logger=_logger()
+    )
+
+    assert_eq([hit.item.id for hit in hits], [new.id])
+
+
+@test()
+async def before_excludes_a_memory_tethered_after_the_bound() -> None:
+    """`before` drops a Memory whose `tethered_at` falls after the bound."""
+    h = await load_fixture(harness())
+    old = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="old fact",
+        tethered_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    new = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="new fact",
+        tethered_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    h.memory_index.search_results = [
+        SearchCandidate(id=old.id, score=1.0),
+        SearchCandidate(id=new.id, score=0.9),
+    ]
+
+    hits = await h.fusion.search(
+        "fact", before=datetime(2026, 1, 15, tzinfo=UTC), logger=_logger()
+    )
+
+    assert_eq([hit.item.id for hit in hits], [old.id])
+
+
+@test()
+async def both_bounds_narrow_the_window_to_the_memory_between_them() -> None:
+    """`after` and `before` together keep only the Memory strictly inside them."""
+    h = await load_fixture(harness())
+    early = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="early fact",
+        tethered_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    middle = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="middle fact",
+        tethered_at=datetime(2026, 1, 15, tzinfo=UTC),
+    )
+    late = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="late fact",
+        tethered_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    h.memory_index.search_results = [
+        SearchCandidate(id=early.id, score=1.0),
+        SearchCandidate(id=middle.id, score=0.9),
+        SearchCandidate(id=late.id, score=0.8),
+    ]
+
+    hits = await h.fusion.search(
+        "fact",
+        after=datetime(2026, 1, 10, tzinfo=UTC),
+        before=datetime(2026, 1, 20, tzinfo=UTC),
+        logger=_logger(),
+    )
+
+    assert_eq([hit.item.id for hit in hits], [middle.id])
+
+
+@test()
+async def a_window_excluding_every_candidate_returns_an_empty_result() -> None:
+    """A window with no matching timestamps is a clean empty list, not an error."""
+    h = await load_fixture(harness())
+    memory = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="a fact",
+        tethered_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    h.memory_index.search_results = [SearchCandidate(id=memory.id, score=1.0)]
+
+    hits = await h.fusion.search(
+        "fact",
+        after=datetime(2026, 3, 1, tzinfo=UTC),
+        before=datetime(2026, 3, 31, tzinfo=UTC),
+        logger=_logger(),
+    )
+
+    assert_eq(hits, [])
+
+
+@test()
+async def bucket_items_are_bounded_by_created_at_not_tethered_at() -> None:
+    """Bucket items have no `tethered_at`; the window bounds their `created_at`."""
+    h = await load_fixture(harness())
+    old = await _insert_active_bucket_item(
+        h.bucket_item_service.database,
+        title="Old Movie",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    new = await _insert_active_bucket_item(
+        h.bucket_item_service.database,
+        title="New Movie",
+        created_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    h.bucket_item_index.search_results = [
+        BucketItemCandidate(id=old.id, score=1.0),
+        BucketItemCandidate(id=new.id, score=0.9),
+    ]
+
+    hits = await h.fusion.search(
+        "movie", after=datetime(2026, 1, 15, tzinfo=UTC), logger=_logger()
+    )
+
+    assert_eq([hit.item.id for hit in hits], [new.id])
+
+
+@test()
+async def after_later_than_before_raises_invalid_search_window_error() -> None:
+    """A backwards window (`after` past `before`) is rejected outright."""
+    h = await load_fixture(harness())
+
+    with assert_raises(InvalidSearchWindowError):
+        _ = await h.fusion.search(
+            "fact",
+            after=datetime(2026, 2, 1, tzinfo=UTC),
+            before=datetime(2026, 1, 1, tzinfo=UTC),
+            logger=_logger(),
+        )
+
+
+@dataclass
+class _StubAppState:
+    """Just enough of `app.state` for `search_capabilities.search` to read."""
+
+    search_fusion_service: SearchFusionService
+
+
+@dataclass
+class _StubApp:
+    state: _StubAppState
+
+
+@dataclass
+class _StubRequestState:
+    """Just enough of `request.state` for `get_request_logger` to read."""
+
+    logger: Logger
+
+
+@dataclass
+class _StubRequest:
+    """A duck-typed stand-in for `starlette.requests.Request`.
+
+    `search_capabilities.search` only ever reads `request.app.state` and
+    `request.state.logger`, so a real `Request`/app/ASGI stack is unnecessary
+    to prove the capability execute — the one function both the HTTP route
+    and the tool endpoint call — applies `after`/`before` identically to
+    calling `SearchFusionService.search` directly.
+    """
+
+    app: _StubApp
+    state: _StubRequestState
+
+
+@test()
+async def the_shared_capability_execute_applies_the_same_time_window_as_the_service() -> (
+    None
+):
+    """`search_capabilities.search` — the one execute both `GET /api/search`
+    and the agent's `search` tool call — filters by `after` exactly like
+    calling `SearchFusionService.search` directly, since both surfaces run
+    through this one function."""
+    h = await load_fixture(harness())
+    old = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="old fact",
+        tethered_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    new = await _insert_tethered_memory(
+        h.memory_service.database,
+        content="new fact",
+        tethered_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    h.memory_index.search_results = [
+        SearchCandidate(id=old.id, score=1.0),
+        SearchCandidate(id=new.id, score=0.9),
+    ]
+    request = _StubRequest(
+        app=_StubApp(state=_StubAppState(search_fusion_service=h.fusion)),
+        state=_StubRequestState(logger=_logger()),
+    )
+
+    outcome = await search_capabilities.search(
+        cast("Request", request), "fact", after=datetime(2026, 1, 15, tzinfo=UTC)
+    )
+
+    assert_eq(
+        [cast("dict[str, str]", r["memory"])["id"] for r in outcome.result],
+        [str(new.id)],
+    )
