@@ -8,12 +8,12 @@ afterEach(() => {
 });
 
 describe("YouTube sync panel", () => {
-  test("renders the daily quota but no Supadata line when it isn't configured", async () => {
+  test("renders the daily quota but no per-source usage line when none is configured", async () => {
     const api = new FakeApi({ authenticated: true });
     api.youTubeSyncStatus = {
       ...api.youTubeSyncStatus,
       quota: { limit: 10000, remaining: 9994, used: 6 },
-      supadata: null,
+      usage: {},
     };
     renderApp(api);
 
@@ -28,7 +28,9 @@ describe("YouTube sync panel", () => {
     api.youTubeSyncStatus = {
       ...api.youTubeSyncStatus,
       quota: { limit: 10000, remaining: 10000, used: 0 },
-      supadata: { limit: 3000, month: "2026-07", remaining: 2979, used: 21 },
+      usage: {
+        supadata: { limit: 3000, period: "2026-07", remaining: 2979, used: 21 },
+      },
     };
     renderApp(api);
 
@@ -39,5 +41,20 @@ describe("YouTube sync panel", () => {
     expect(section).toHaveTextContent("0 / 10000");
     expect(section).toHaveTextContent("Supadata (monthly)");
     expect(section).toHaveTextContent("21 / 3000");
+  });
+
+  test("renders a generic usage line for a non-Supadata metered source", async () => {
+    const api = new FakeApi({ authenticated: true });
+    api.youTubeSyncStatus = {
+      ...api.youTubeSyncStatus,
+      quota: { limit: 10000, remaining: 10000, used: 0 },
+      usage: { widget: { limit: 5, period: "", remaining: 3, used: 2 } },
+    };
+    renderApp(api);
+
+    const section = await screen.findByLabelText("YouTube sync");
+    await screen.findByText("Daily quota");
+    expect(section).toHaveTextContent("widget usage");
+    expect(section).toHaveTextContent("2 / 5");
   });
 });

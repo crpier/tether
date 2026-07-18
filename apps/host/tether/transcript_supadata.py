@@ -4,8 +4,9 @@ The OAuth captions Data API is owner-only — it 403s for nearly every third-par
 (liked) video — and the free `youtube-transcript-api` library is IP-block-prone,
 so on their own they transcribe almost none of the liked corpus. Supadata is an
 HTTP transcript API (with an API key, billed per call) that reliably does, so when
-it is configured it becomes the *primary* source (see `tether.server`); the free
-providers trail it as best-effort fallbacks.
+it is configured it becomes the *primary* source (see
+`tether.transcript_provider_composition`); the free providers trail it as
+best-effort fallbacks.
 
 This wraps Supadata behind the `TranscriptProvider` port so the composite
 (`FallbackTranscriptProvider`) slots it in with no structural change to the
@@ -48,9 +49,8 @@ from snekql.sqlite import Database, Transaction, insert, select, update
 from tether.db_retry import run_in_transaction
 from tether.youtube import (
     Clock,
-    FallbackTranscriptProvider,
     FetchedTranscript,
-    SupadataUsage,
+    SourceUsage,
     SystemClock,
     TranscriptBlockedError,
     TranscriptProvider,
@@ -58,6 +58,7 @@ from tether.youtube import (
     TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeSyncState,
+    find_transcript_provider_leaves,
 )
 
 _SOURCE = "supadata"
@@ -304,7 +305,7 @@ class SupadataSpendGuard(Protocol):
         """Reserve one use, or raise `SupadataBudgetExhaustedError` if the cap is hit."""
         ...
 
-    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+    async def snapshot(self, *, now: datetime) -> SourceUsage | None:
         """The current month's usage without charging, or None when uncapped."""
         ...
 
@@ -315,7 +316,7 @@ class UnlimitedSupadataSpend(SupadataSpendGuard):
     async def charge(self) -> None:
         """A no-op — spending is unbounded."""
 
-    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+    async def snapshot(self, *, now: datetime) -> SourceUsage | None:
         """None — there is no cap to report usage against."""
         _ = now
         return None
@@ -371,7 +372,7 @@ class PersistentSupadataSpendGuard(SupadataSpendGuard):
 
         await run_in_transaction(self._database, _reserve)
 
-    async def snapshot(self, *, now: datetime) -> SupadataUsage:
+    async def snapshot(self, *, now: datetime) -> SourceUsage:
         """Report the current UTC month's usage against the cap, without charging."""
         month_key = _month_key(now)
         async with self._database.transaction() as tx:
@@ -379,42 +380,12 @@ class PersistentSupadataSpendGuard(SupadataSpendGuard):
                 select(YouTubeSyncState).where(YouTubeSyncState.key.eq(month_key))
             )
         used = int(row.value) if row is not None else 0
-        return SupadataUsage(
+        return SourceUsage(
             used=used,
             limit=self._max_uses,
             remaining=max(0, self._max_uses - used),
-            month=month_key.removeprefix(f"{_SPEND_KEY_PREFIX}:"),
+            period=month_key.removeprefix(f"{_SPEND_KEY_PREFIX}:"),
         )
-
-
-def _iter_supadata_providers(
-    provider: TranscriptProvider,
-) -> Iterable[SupadataTranscriptProvider]:
-    """Yield every `SupadataTranscriptProvider` reachable from `provider`."""
-    if isinstance(provider, SupadataTranscriptProvider):
-        yield provider
-    elif isinstance(provider, FallbackTranscriptProvider):
-        for child in provider.leaf_providers():
-            yield from _iter_supadata_providers(child)
-
-
-class ProviderSupadataUsageReader:
-    """A `SupadataUsageReader` reading the first Supadata leaf's bound guard.
-
-    Built once at wire time over the resolved provider tree (mirrors
-    `bind_supadata_spend_guard`'s walk). `snapshot` returns None when the chain
-    has no Supadata leaf, or when its guard reports no cap (`UnlimitedSupadataSpend`,
-    the default before a guard is late-bound).
-    """
-
-    def __init__(self, provider: TranscriptProvider) -> None:
-        self._provider: TranscriptProvider = provider
-
-    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
-        """The current month's Supadata usage, or None when unavailable."""
-        for leaf in _iter_supadata_providers(self._provider):
-            return await leaf.spend_guard.snapshot(now=now)
-        return None
 
 
 def bind_supadata_spend_guard(
@@ -428,13 +399,15 @@ def bind_supadata_spend_guard(
 
     The provider tree is built from settings before the database exists, so the
     hard cap is attached here (at wire time) the same way the semantic-search
-    collaborator is. Walks a `FallbackTranscriptProvider`'s leaves so a Supadata
-    primary *or* fallback is covered; a no-op when the chain has no Supadata.
+    collaborator is. Uses the generic `find_transcript_provider_leaves` walk (by
+    the `"supadata"` source tag) so a Supadata primary *or* fallback is covered;
+    a no-op when the chain has no Supadata.
     """
-    for leaf in _iter_supadata_providers(provider):
-        leaf.spend_guard = PersistentSupadataSpendGuard(
-            database, max_uses=max_uses, clock=clock
-        )
+    for leaf in find_transcript_provider_leaves(provider, source=_SOURCE):
+        if isinstance(leaf, SupadataTranscriptProvider):
+            leaf.spend_guard = PersistentSupadataSpendGuard(
+                database, max_uses=max_uses, clock=clock
+            )
 
 
 class SupadataTranscriptProvider(TranscriptProvider):
@@ -472,6 +445,11 @@ class SupadataTranscriptProvider(TranscriptProvider):
         # Public so the wiring can late-bind the persisted cap once the database
         # exists (the tree is built from settings first); unbounded by default.
         self.spend_guard: SupadataSpendGuard = spend_guard or UnlimitedSupadataSpend()
+
+    async def usage_snapshot(self, *, now: datetime) -> SourceUsage | None:
+        """This leaf's `UsageReportingProvider` capability: the bound guard's own
+        snapshot, or None when no persisted cap has been bound yet."""
+        return await self.spend_guard.snapshot(now=now)
 
     async def _throttle(self) -> None:
         """Wait out the min-interval since the previous submit, if one is configured.

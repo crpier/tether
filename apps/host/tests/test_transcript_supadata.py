@@ -8,8 +8,8 @@ makes the bounded async-job polling resolve instantly. Covered: a direct hit
 *unavailable*, a 404 -> *unavailable*, a 429 / quota body -> *blocked* with its
 retry-after and source, the async job model (pending then complete), a failed
 job -> *unavailable*, an over-budget poll -> *transient*, and the transport's
-key/`Retry-After` handling. The flag/key gating is asserted against the server
-wiring helper.
+key/`Retry-After` handling. The flag/key gating is asserted against the
+`tether.transcript_provider_composition` wiring helpers.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 from tether.transcript_supadata import (
     HttpSupadataTransport,
     PersistentSupadataSpendGuard,
-    ProviderSupadataUsageReader,
     SupadataBudgetExhaustedError,
     SupadataConfig,
     SupadataConfigurationError,
@@ -37,11 +36,12 @@ from tether.transcript_supadata import (
 from tether.youtube import (
     FallbackTranscriptProvider,
     NullTranscriptProvider,
-    SupadataUsage,
+    SourceUsage,
     TranscriptBlockedError,
     TranscriptTransientError,
     TranscriptUnavailableError,
     create_youtube_schema,
+    transcript_provider_usage,
 )
 
 
@@ -290,15 +290,15 @@ class _CountingGuard(SupadataSpendGuard):
             raise SupadataBudgetExhaustedError(self.charges, self._cap)
         self.charges += 1
 
-    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
+    async def snapshot(self, *, now: datetime) -> SourceUsage | None:
         _ = now
         if self._cap is None:
             return None
-        return SupadataUsage(
+        return SourceUsage(
             used=self.charges,
             limit=self._cap,
             remaining=max(0, self._cap - self.charges),
-            month="2026-07",
+            period="2026-07",
         )
 
 
@@ -460,7 +460,7 @@ async def guard_snapshot_reports_used_limit_and_month_without_charging() -> None
     assert_eq(usage.used, 2)
     assert_eq(usage.limit, 3000)
     assert_eq(usage.remaining, 2998)
-    assert_eq(usage.month, "2026-07")
+    assert_eq(usage.period, "2026-07")
     # A snapshot never spends: a further charge still counts from 2, not 3.
     await guard.charge()
     assert_eq((await guard.snapshot(now=clock.now())).used, 3)
@@ -490,30 +490,31 @@ async def unlimited_guard_snapshot_is_none() -> None:
 
 
 @test()
-async def usage_reader_reads_the_bound_supadata_leaf_inside_a_chain() -> None:
-    """`ProviderSupadataUsageReader` finds Supadata inside a fallback chain."""
+async def usage_finds_the_bound_supadata_leaf_inside_a_chain() -> None:
+    """`transcript_provider_usage` finds Supadata inside a fallback chain, keyed
+    by its `"supadata"` source — the generic replacement for
+    `ProviderSupadataUsageReader`."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
     supadata = _provider(FakeSupadataTransport(submit=[SupadataResponse(200, {})]))
     chain = FallbackTranscriptProvider(supadata, fallbacks=[NullTranscriptProvider()])
     bind_supadata_spend_guard(chain, db, max_uses=100)
-    reader = ProviderSupadataUsageReader(chain)
 
-    usage = await reader.snapshot(now=datetime(2026, 7, 1, tzinfo=UTC))
+    usage = await transcript_provider_usage(chain, now=datetime(2026, 7, 1, tzinfo=UTC))
 
-    assert usage is not None
-    assert_eq(usage.used, 0)
-    assert_eq(usage.limit, 100)
+    assert "supadata" in usage
+    assert_eq(usage["supadata"].used, 0)
+    assert_eq(usage["supadata"].limit, 100)
 
 
 @test()
-async def usage_reader_is_none_with_no_supadata_in_the_chain() -> None:
+async def usage_is_empty_with_no_supadata_in_the_chain() -> None:
     """A chain with no Supadata leaf (e.g. captions/library only) reports no usage."""
-    reader = ProviderSupadataUsageReader(NullTranscriptProvider())
+    usage = await transcript_provider_usage(
+        NullTranscriptProvider(), now=datetime(2026, 7, 1, tzinfo=UTC)
+    )
 
-    usage = await reader.snapshot(now=datetime(2026, 7, 1, tzinfo=UTC))
-
-    assert_is_none(usage)
+    assert_eq(usage, {})
 
 
 # --- Request pacing: stay under the plan's per-request rate limit ------------
