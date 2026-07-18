@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
@@ -745,28 +745,87 @@ class TranscriptProviderPause:
 
 
 @dataclass(frozen=True, slots=True)
-class SupadataUsage:
-    """A snapshot of Supadata's own *monthly* billed-use budget.
+class SourceUsage:
+    """A snapshot of one transcript source's own metered-use budget.
 
-    Distinct from `QuotaMeta` (the YouTube Data API's per-*day* budget): Supadata
-    is a separate paid HTTP API with its own cap, reset cadence, and spend, so
-    mixing the two into one number would be meaningless. `month` is the UTC
-    calendar month (`YYYY-MM`) the count applies to; a new month starts fresh.
+    Distinct from `QuotaMeta` (the YouTube Data API's per-*day* budget, shared by
+    every source that calls it): some transcript sources (Supadata) are separate
+    paid APIs with their own cap, reset cadence, and spend, so mixing them into
+    one number would be meaningless. `period` is a free-form label for the
+    reporting window (Supadata's UTC calendar month, e.g. `"2026-07"`); a source
+    with no natural period concept leaves it empty.
     """
 
     used: int
     limit: int
     remaining: int
-    month: str
+    period: str = ""
 
 
 @runtime_checkable
-class SupadataUsageReader(Protocol):
-    """Reads Supadata's monthly usage without charging it."""
+class UsageReportingProvider(Protocol):
+    """A transcript-provider leaf that can report its own usage against a cap.
 
-    async def snapshot(self, *, now: datetime) -> SupadataUsage | None:
-        """The current month's Supadata usage, or None when Supadata isn't wired."""
+    Opt-in: most providers (the free library, captions charged against the
+    shared YouTube daily quota) have no per-source cap of their own and don't
+    implement this. Only a leaf with its own metered budget (Supadata) does, so
+    `transcript_provider_usage` silently skips every other leaf it walks past.
+    """
+
+    source: str
+
+    async def usage_snapshot(self, *, now: datetime) -> SourceUsage | None:
+        """This source's current usage without charging it, or None if uncapped."""
         ...
+
+
+def iter_transcript_provider_leaves(
+    provider: TranscriptProvider,
+) -> Iterator[TranscriptProvider]:
+    """Walk `provider`'s tree and yield every non-composite leaf, primary first.
+
+    The one generic replacement for a bind helper's own bespoke isinstance
+    tree-walk: composing a new provider, or wiring a new per-source capability
+    (a spend guard, a quota charge, a usage reader), needs only this shared walk
+    plus a `source` (or type) filter on the yielded leaves — not its own copy of
+    the recursion over `FallbackTranscriptProvider.leaf_providers()`.
+    """
+    if isinstance(provider, FallbackTranscriptProvider):
+        for child in provider.leaf_providers():
+            yield from iter_transcript_provider_leaves(child)
+    else:
+        yield provider
+
+
+def find_transcript_provider_leaves(
+    provider: TranscriptProvider, *, source: str
+) -> Iterator[TranscriptProvider]:
+    """Yield every leaf reachable from `provider` whose `.source` is `source`."""
+    return (
+        leaf
+        for leaf in iter_transcript_provider_leaves(provider)
+        if leaf.source == source
+    )
+
+
+async def transcript_provider_usage(
+    provider: TranscriptProvider, *, now: datetime
+) -> dict[str, SourceUsage]:
+    """The per-source usage map for every metered leaf reachable from `provider`.
+
+    Walks the whole tree (bare leaf or composite alike) and collects a snapshot
+    from each leaf that implements `UsageReportingProvider`, keyed by its
+    `source`. A leaf with no cap (or that doesn't report usage at all) is
+    silently absent from the result — the map is empty when nothing in the
+    chain is metered, so a bare status read costs no extra query in that case.
+    """
+    usage: dict[str, SourceUsage] = {}
+    for leaf in iter_transcript_provider_leaves(provider):
+        if isinstance(leaf, UsageReportingProvider):
+            snapshot = await leaf.usage_snapshot(now=now)
+            if snapshot is not None:
+                usage[leaf.source] = snapshot
+    return usage
 
 
 @dataclass(frozen=True, slots=True)
@@ -779,10 +838,11 @@ class YouTubeSyncStatus:
     (``transcripts_unavailable``); their sum is ``videos_total``. `last_synced_at`
     is when the likes sync last ran, `quota` the day's YouTube Data API budget
     (only actual Data API usage — captions.list/download and the liked-list/
-    metadata calls — counts against it), `supadata` Supadata's own separate
-    monthly budget (`None` when Supadata isn't configured), and the two pause
-    fields explain a stall (a live Data API block, or a per-source transcript
-    provider block).
+    metadata calls — counts against it), `usage` a per-source map of any
+    transcript source's own separate metered budget (e.g. Supadata's monthly
+    cap; empty when no configured source is metered), and the two pause fields
+    explain a stall (a live Data API block, or a per-source transcript provider
+    block).
     """
 
     videos_total: int
@@ -793,7 +853,7 @@ class YouTubeSyncStatus:
     quota: QuotaMeta
     api_paused_until: datetime | None
     transcript_providers_paused: list[TranscriptProviderPause]
-    supadata: SupadataUsage | None = None
+    usage: Mapping[str, SourceUsage] = field(default_factory=dict[str, SourceUsage])
 
 
 @dataclass(frozen=True, slots=True)
@@ -1755,11 +1815,6 @@ class YouTubeService:
         # lexical fallback; left None (search disabled), `search` keeps the SQLite
         # LIKE behaviour.
         self.transcript_search: TranscriptSearchService | None = None
-        # Optional, late-bound reader for Supadata's separate monthly usage
-        # (wired by the composition root after construction, once the provider
-        # tree's Supadata leaf — if any — has its persisted guard bound). None
-        # (the default) reports no Supadata usage on the status surface.
-        self.supadata_usage: SupadataUsageReader | None = None
 
     async def browse(
         self,
@@ -1839,11 +1894,7 @@ class YouTubeService:
             for source, pause in sorted(pauses.items())
             if pause.is_paused(now) and pause.paused_until is not None
         ]
-        supadata = (
-            await self.supadata_usage.snapshot(now=now)
-            if self.supadata_usage is not None
-            else None
-        )
+        usage = await transcript_provider_usage(self.provider, now=now)
         status = YouTubeSyncStatus(
             videos_total=total,
             transcripts_done=total - owed,
@@ -1853,7 +1904,7 @@ class YouTubeService:
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
             transcript_providers_paused=providers_paused,
-            supadata=supadata,
+            usage=usage,
         )
         _debug(
             logger,

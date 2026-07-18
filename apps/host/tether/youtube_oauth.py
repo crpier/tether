@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +32,6 @@ from types import ModuleType
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from tether.youtube import (
-    FallbackTranscriptProvider,
     FetchedTranscript,
     LikedPage,
     RawYouTubeVideo,
@@ -41,6 +40,7 @@ from tether.youtube import (
     TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeQuotaExceededError,
+    find_transcript_provider_leaves,
 )
 
 YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
@@ -802,17 +802,6 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         return raw
 
 
-def _iter_captions_providers(
-    provider: TranscriptProvider,
-) -> Iterable[CaptionsTranscriptProvider]:
-    """Yield every `CaptionsTranscriptProvider` reachable from `provider`."""
-    if isinstance(provider, CaptionsTranscriptProvider):
-        yield provider
-    elif isinstance(provider, FallbackTranscriptProvider):
-        for child in provider.leaf_providers():
-            yield from _iter_captions_providers(child)
-
-
 def bind_captions_daily_quota(
     provider: TranscriptProvider, charge: Callable[[], Awaitable[None]]
 ) -> None:
@@ -820,13 +809,18 @@ def bind_captions_daily_quota(
 
     Mirrors `bind_supadata_spend_guard`: the provider tree is built from settings
     before the budgeted `YouTubeApiClient` exists, so the charge callback (its
-    `charge_transcript`) is attached here at wire time. A no-op when the chain has
+    `charge_transcript`) is attached here at wire time, using the generic
+    `find_transcript_provider_leaves` walk (by the `"youtube_captions"` source
+    tag) rather than a bespoke isinstance tree-walk. A no-op when the chain has
     no captions provider — the common case, since the default order
     (`supadata,library`) omits it, and the library/Supadata legs never spend this
     budget at all.
     """
-    for leaf in _iter_captions_providers(provider):
-        leaf.charge = charge
+    for leaf in find_transcript_provider_leaves(
+        provider, source=CaptionsTranscriptProvider.source
+    ):
+        if isinstance(leaf, CaptionsTranscriptProvider):
+            leaf.charge = charge
 
 
 class _InstalledAppFlow(Protocol):

@@ -1995,6 +1995,30 @@ export interface components {
       selected_model: string;
     };
     /**
+     * SourceUsageRead
+     * @description HTTP representation of one transcript source's own metered-use budget.
+     *
+     *     Distinct from `quota` (the YouTube Data API's per-day budget, shared by
+     *     every source that calls it): a source with its own cap (e.g. Supadata's
+     *     monthly budget) reports one of these, keyed by its source name on
+     *     `YouTubeSyncStatusRead.usage`. `period` is the UTC calendar month
+     *     (`YYYY-MM`) Supadata's `used`/`remaining` apply to; a source with no
+     *     natural period concept leaves it empty.
+     */
+    SourceUsageRead: {
+      /** Limit */
+      limit: number;
+      /**
+       * Period
+       * @default
+       */
+      period: string;
+      /** Remaining */
+      remaining: number;
+      /** Used */
+      used: number;
+    };
+    /**
      * StaleItem
      * @description An active item old enough to reconsider, with its decayed intent context.
      */
@@ -2066,24 +2090,6 @@ export interface components {
       endpoint: string;
       /** P256Dh */
       p256dh: string;
-    };
-    /**
-     * SupadataUsageRead
-     * @description HTTP representation of Supadata's own separate monthly usage budget.
-     *
-     *     Distinct from `quota` (the YouTube Data API's per-day budget): Supadata is a
-     *     separate paid HTTP API with its own cap and monthly reset. `month` is the
-     *     UTC calendar month (`YYYY-MM`) `used`/`remaining` apply to.
-     */
-    SupadataUsageRead: {
-      /** Limit */
-      limit: number;
-      /** Month */
-      month: string;
-      /** Remaining */
-      remaining: number;
-      /** Used */
-      used: number;
     };
     /**
      * TetherRequest
@@ -2242,7 +2248,7 @@ export interface components {
      *     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
      *     ...     api_paused_until=None,
      *     ...     transcript_providers_paused=[],
-     *     ...     supadata=None,
+     *     ...     usage={},
      *     ... )
      *     >>> read.videos_total
      *     3
@@ -2253,8 +2259,6 @@ export interface components {
       /** Last Synced At */
       last_synced_at: string | null;
       quota: components["schemas"]["QuotaMeta"];
-      /** @default null */
-      supadata: components["schemas"]["SupadataUsageRead"] | null;
       /** Transcript Providers Paused */
       transcript_providers_paused: components["schemas"]["TranscriptProviderPauseRead"][];
       /** Transcripts Done */
@@ -2263,6 +2267,13 @@ export interface components {
       transcripts_pending: number;
       /** Transcripts Unavailable */
       transcripts_unavailable: number;
+      /**
+       * Usage
+       * @default {}
+       */
+      usage: {
+        [key: string]: components["schemas"]["SourceUsageRead"];
+      };
       /** Videos Total */
       videos_total: number;
     };

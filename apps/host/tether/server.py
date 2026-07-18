@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import secrets
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -88,17 +88,13 @@ from tether.telemetry import (
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
 from tether.transcript_index import TranscriptIndex
-from tether.transcript_library import LibraryPassBudget, YouTubeTranscriptApiProvider
+from tether.transcript_provider_composition import (
+    build_configured_transcript_provider,
+    resolve_transcript_provider,
+)
 from tether.transcript_reconciler import TranscriptReconciler
 from tether.transcript_search import TranscriptSearchService
-from tether.transcript_supadata import (
-    HttpSupadataTransport,
-    ProviderSupadataUsageReader,
-    SupadataConfig,
-    SupadataMode,
-    SupadataTranscriptProvider,
-    bind_supadata_spend_guard,
-)
+from tether.transcript_supadata import SupadataMode
 from tether.transcript_worker import TranscriptSyncService
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
@@ -106,9 +102,7 @@ from tether.trigger_tools import internal_trigger_tool_routes
 from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
     DailyQuota,
-    FallbackTranscriptProvider,
     InMemoryYouTubeApi,
-    NullTranscriptProvider,
     TranscriptProvider,
     TranscriptSyncConfig,
     YouTubeApi,
@@ -120,12 +114,7 @@ from tether.youtube import (
     YouTubeSyncService,
     create_youtube_schema,
 )
-from tether.youtube_oauth import (
-    CaptionsTranscriptProvider,
-    OAuthConfig,
-    OAuthYouTubeApi,
-    bind_captions_daily_quota,
-)
+from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
 from tether.youtube_tools import internal_youtube_tool_routes
 
 
@@ -339,34 +328,6 @@ async def _create_schemas(db: Database) -> None:
     await create_notification_schema(db)
 
 
-def _resolve_transcript_provider(
-    config: AppConfig, api: YouTubeApi, database: Database, client: YouTubeApiClient
-) -> TranscriptProvider:
-    """Pick the transcript provider and bind its persisted budgets/caps.
-
-    The on-demand fetch path always needs a provider: prefer the explicitly
-    configured one (the composed captions/Supadata chain in production), else reuse
-    the upstream fake when it doubles as a `TranscriptProvider` (the in-memory test
-    double), else a null provider that reports every video unavailable. Two things
-    are late-bound here — the provider tree is built from settings before the
-    database/client exist:
-
-    * The Supadata monthly use cap (a no-op when the chain has no Supadata).
-    * The YouTube Data API daily-quota charge, onto any captions provider in the
-      chain (a no-op when the chain has no captions — the default order). Only
-      captions calls consume the Data API's daily budget; the free library and
-      Supadata never do, so they are never bound to it.
-    """
-    provider = config.transcript_provider or (
-        api if isinstance(api, InMemoryYouTubeApi) else NullTranscriptProvider()
-    )
-    bind_supadata_spend_guard(
-        provider, database, max_uses=config.transcript_supadata_max_uses
-    )
-    bind_captions_daily_quota(provider, client.charge_transcript)
-    return provider
-
-
 def _build_youtube_client(
     api: YouTubeApi, config: AppConfig, database: Database
 ) -> YouTubeApiClient:
@@ -420,7 +381,13 @@ async def _wire_youtube(
     tracer = cast("Telemetry", app.state.telemetry).tracer
     api = config.youtube_api or InMemoryYouTubeApi()
     client = _build_youtube_client(api, config, database)
-    provider = _resolve_transcript_provider(config, api, database, client)
+    provider = resolve_transcript_provider(
+        configured_provider=config.transcript_provider,
+        api=api,
+        database=database,
+        client=client,
+        supadata_max_uses=config.transcript_supadata_max_uses,
+    )
     transcript_config = _build_transcript_sync_config(config)
     youtube_service = YouTubeService(
         database=database,
@@ -429,14 +396,13 @@ async def _wire_youtube(
         event_publisher=event_publisher,
         tracer=tracer,
     )
-    # Late-bind the on-demand retry config to the same one the worker uses, the
-    # optional semantic-search collaborator (None when search is disabled, leaving
-    # the lexical LIKE fallback in place), and the Supadata monthly-usage reader
-    # (a no-op when the chain has no Supadata) so the status surface can report
-    # its spend separately from the YouTube daily quota.
+    # Late-bind the on-demand retry config to the same one the worker uses, and
+    # the optional semantic-search collaborator (None when search is disabled,
+    # leaving the lexical LIKE fallback in place). Per-source usage (e.g.
+    # Supadata's monthly spend) is read straight off `provider` by the status
+    # surface — no separate late-bound reader needed.
     youtube_service.config = transcript_config
     youtube_service.transcript_search = transcript_search
-    youtube_service.supadata_usage = ProviderSupadataUsageReader(provider)
     app.state.youtube_service = youtube_service
     sync = YouTubeSyncService(
         database=database,
@@ -1057,158 +1023,6 @@ def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
     if not settings.youtube_token_path.exists():
         return None
     return OAuthYouTubeApi.from_config(_youtube_oauth_config(settings))
-
-
-_KNOWN_TRANSCRIPT_SOURCES: frozenset[str] = frozenset(
-    {"supadata", "captions", "library"}
-)
-"""The transcript source names accepted in `TETHER_TRANSCRIPT_PROVIDER_ORDER`."""
-
-
-class TranscriptProviderConfigError(Exception):
-    """The configured transcript provider order is unusable.
-
-    Raised at wire time when `TETHER_TRANSCRIPT_PROVIDER_ORDER` names an unknown
-    source, or when every named source is unconfigured so no provider remains to
-    compose.
-
-    ```python
-    _compose_transcript_provider(["typo"], {})  # raises
-    ```
-    """
-
-
-def _parse_transcript_provider_order(raw: str) -> list[str]:
-    """Split the comma-separated order flag into normalized source names."""
-    return [name.strip().lower() for name in raw.split(",") if name.strip()]
-
-
-def _parse_transcript_languages(raw: str) -> tuple[str, ...]:
-    """Split the comma-separated language flag into normalized ISO codes."""
-    return tuple(code.strip() for code in raw.split(",") if code.strip())
-
-
-def build_configured_transcript_provider(
-    settings: HostSettings,
-) -> TranscriptProvider | None:
-    """Build the transcript provider chain from the configured source order.
-
-    The chain is composed from `TETHER_TRANSCRIPT_PROVIDER_ORDER` (primary first).
-    Each named source is included only when it is actually configured: `captions`
-    is always available once a token exists, `library` unless disabled, and
-    `supadata` only when keyed + enabled. The default order leads with Supadata (the
-    only source that reliably transcribes third-party liked videos) and trails with
-    the free `youtube-transcript-api` library; the owner-only captions API is
-    available by name but dropped from the default because it transcribes almost
-    none of the corpus. With no token, returns `None` so the on-demand path falls
-    back to a null provider and the background transcript worker stays off.
-
-    The per-call Supadata use cap is late-bound at wire time (it needs the
-    database), so it is not applied here.
-    """
-    if not settings.youtube_token_path.exists():
-        return None
-    # An empty flag falls back to English so the library/Supadata always get a hint.
-    languages = _parse_transcript_languages(settings.transcript_languages) or ("en",)
-    available: dict[str, TranscriptProvider] = {
-        "captions": CaptionsTranscriptProvider.from_config(
-            _youtube_oauth_config(settings)
-        )
-    }
-    library = _build_library_provider(settings, languages=languages)
-    if library is not None:
-        available["library"] = library
-    supadata = _build_supadata_provider(settings, languages=languages)
-    if supadata is not None:
-        available["supadata"] = supadata
-    return _compose_transcript_provider(
-        _parse_transcript_provider_order(settings.transcript_provider_order), available
-    )
-
-
-def _build_library_provider(
-    settings: HostSettings, *, languages: tuple[str, ...] = ()
-) -> YouTubeTranscriptApiProvider | None:
-    """Build the free `youtube-transcript-api` provider, unless disabled.
-
-    Threads the strict per-pass request budget and mandatory request spacing from
-    settings so they reach the real provider — the same way `_build_supadata_
-    provider` threads Supadata's own pacing. Both default to deliberately
-    conservative values (issue #179): the library gets the host IP-blocked in
-    bursts of roughly 10+ rapid requests, so a single sync pass must never be
-    allowed to fire dozens at it.
-    """
-    if not settings.transcript_library_enabled:
-        return None
-    return YouTubeTranscriptApiProvider(
-        languages=languages,
-        budget=LibraryPassBudget(
-            max_requests_per_pass=settings.transcript_library_max_requests_per_pass,
-            min_request_interval=timedelta(
-                seconds=settings.transcript_library_min_request_interval_seconds
-            ),
-        ),
-    )
-
-
-def _compose_transcript_provider(
-    order: Sequence[str], available: Mapping[str, TranscriptProvider]
-) -> TranscriptProvider:
-    """Compose the configured sources into one chain, primary first.
-
-    Walks `order`, keeping each named source that is actually available (skipping
-    the unconfigured ones), and composes the survivors as
-    `FallbackTranscriptProvider(primary, fallbacks=rest)`. A single survivor is
-    returned uncomposed. An unknown name, or an order that leaves no available
-    source, raises `TranscriptProviderConfigError`.
-    """
-    selected: list[TranscriptProvider] = []
-    for name in order:
-        if name not in _KNOWN_TRANSCRIPT_SOURCES:
-            message = (
-                f"unknown transcript source {name!r} in "
-                f"TETHER_TRANSCRIPT_PROVIDER_ORDER; known sources are "
-                f"{sorted(_KNOWN_TRANSCRIPT_SOURCES)}"
-            )
-            raise TranscriptProviderConfigError(message)
-        provider = available.get(name)
-        if provider is not None:
-            selected.append(provider)
-    if not selected:
-        message = (
-            f"no transcript source in {list(order)} is configured; check "
-            f"TETHER_TRANSCRIPT_PROVIDER_ORDER and each source's credentials"
-        )
-        raise TranscriptProviderConfigError(message)
-    if len(selected) == 1:
-        return selected[0]
-    return FallbackTranscriptProvider(selected[0], fallbacks=selected[1:])
-
-
-def _build_supadata_provider(
-    settings: HostSettings, *, languages: tuple[str, ...] = ()
-) -> SupadataTranscriptProvider | None:
-    """Build the paid Supadata provider only when its key *and* flag are both set.
-
-    Either missing makes Supadata a true no-op (omitted from the chain), so the
-    free providers behave exactly as before and no cost can be incurred by
-    accident. `languages` sets the preferred caption language sent on each submit.
-    """
-    if not (settings.supadata_enabled and settings.supadata_api_key):
-        return None
-    config = SupadataConfig(
-        base_url=settings.supadata_base_url,
-        languages=languages,
-        timeout=timedelta(seconds=settings.supadata_timeout_seconds),
-        poll_interval=timedelta(seconds=settings.supadata_poll_interval_seconds),
-        max_poll_attempts=settings.supadata_max_poll_attempts,
-        mode=settings.supadata_mode,
-        min_request_interval=timedelta(
-            seconds=settings.supadata_min_request_interval_seconds
-        ),
-    )
-    transport = HttpSupadataTransport(settings.supadata_api_key, config=config)
-    return SupadataTranscriptProvider(transport, config=config)
 
 
 def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:

@@ -1066,6 +1066,35 @@
         "title": "SetConversationModelRequest",
         "type": "object"
       },
+      "SourceUsageRead": {
+        "description": "HTTP representation of one transcript source's own metered-use budget.\n\nDistinct from `quota` (the YouTube Data API's per-day budget, shared by\nevery source that calls it): a source with its own cap (e.g. Supadata's\nmonthly budget) reports one of these, keyed by its source name on\n`YouTubeSyncStatusRead.usage`. `period` is the UTC calendar month\n(`YYYY-MM`) Supadata's `used`/`remaining` apply to; a source with no\nnatural period concept leaves it empty.",
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "period": {
+            "default": "",
+            "title": "Period",
+            "type": "string"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "limit",
+          "remaining"
+        ],
+        "title": "SourceUsageRead",
+        "type": "object"
+      },
       "StaleItem": {
         "description": "An active item old enough to reconsider, with its decayed intent context.",
         "properties": {
@@ -1188,35 +1217,6 @@
           "auth"
         ],
         "title": "SubscribeRequest",
-        "type": "object"
-      },
-      "SupadataUsageRead": {
-        "description": "HTTP representation of Supadata's own separate monthly usage budget.\n\nDistinct from `quota` (the YouTube Data API's per-day budget): Supadata is a\nseparate paid HTTP API with its own cap and monthly reset. `month` is the\nUTC calendar month (`YYYY-MM`) `used`/`remaining` apply to.",
-        "properties": {
-          "limit": {
-            "title": "Limit",
-            "type": "integer"
-          },
-          "month": {
-            "title": "Month",
-            "type": "string"
-          },
-          "remaining": {
-            "title": "Remaining",
-            "type": "integer"
-          },
-          "used": {
-            "title": "Used",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "used",
-          "limit",
-          "remaining",
-          "month"
-        ],
-        "title": "SupadataUsageRead",
         "type": "object"
       },
       "TetherRequest": {
@@ -1549,7 +1549,7 @@
         "type": "string"
       },
       "YouTubeSyncStatusRead": {
-        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n...     supadata=None,\n... )\n>>> read.videos_total\n3",
+        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n...     usage={},\n... )\n>>> read.videos_total\n3",
         "properties": {
           "api_paused_until": {
             "anyOf": [
@@ -1578,17 +1578,6 @@
           "quota": {
             "$ref": "#/components/schemas/QuotaMeta"
           },
-          "supadata": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SupadataUsageRead"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
           "transcript_providers_paused": {
             "items": {
               "$ref": "#/components/schemas/TranscriptProviderPauseRead"
@@ -1607,6 +1596,14 @@
           "transcripts_unavailable": {
             "title": "Transcripts Unavailable",
             "type": "integer"
+          },
+          "usage": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SourceUsageRead"
+            },
+            "default": {},
+            "title": "Usage",
+            "type": "object"
           },
           "videos_total": {
             "title": "Videos Total",
