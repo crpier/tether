@@ -14,10 +14,12 @@ The service under test is `tether.bucket_items.BucketItemService`:
     browse_by_state(state)               -> list[BucketItem]
 """
 
-import asyncio
 from collections.abc import AsyncGenerator, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
+from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from pydantic import PositiveInt
@@ -33,6 +35,8 @@ from snektest import (
     test,
 )
 
+from tether.bucket_item_index import BucketItemDocument, BucketItemIndex
+from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_items import (
     AddOutcome,
     BucketItem,
@@ -40,6 +44,7 @@ from tether.bucket_items import (
     BucketItemNotFoundError,
     BucketItemService,
     BucketItemState,
+    BucketSearchUnavailableError,
     EmptyBucketSearchQueryError,
     EmptyIntentContextError,
     InvalidItemDataError,
@@ -47,7 +52,9 @@ from tether.bucket_items import (
     create_bucket_item_schema,
     derive_state,
 )
+from tether.embeddings import FakeEmbedder
 from tether.logging import Logger
+from tether.search_meta import SearchMetaService, create_search_meta_schema
 
 
 def noop_tracer() -> Tracer:
@@ -116,6 +123,59 @@ async def bucket_item_service() -> AsyncGenerator[LoggedBucketItemService]:
         BucketItemService(database=db, tracer=noop_tracer()),
         logger=structlog.stdlib.get_logger("test.bucket_item_service"),
     )
+    await db.close()
+
+
+_SEARCH_DIM = 64
+"""FakeEmbedder width for search fixtures: wide enough to avoid token collisions."""
+
+
+@dataclass
+class SearchableHarness:
+    """A BucketItemService wired with the real search seam, plus its internals.
+
+    Exposes the underlying `BucketItemIndex` so tests can deliberately drift it
+    (index an id SQLite would never return) and prove the active-only
+    re-filter holds."""
+
+    service: LoggedBucketItemService
+    index: BucketItemIndex
+    embedder: FakeEmbedder
+    logger: Logger
+
+
+@fixture
+async def searchable_bucket_item_service() -> AsyncGenerator[SearchableHarness]:
+    """A BucketItemService backed by a real LanceDB index + deterministic embedder.
+
+    Uses `FakeEmbedder` (no model download) and a throwaway on-disk index, so
+    the full add/complete/delete -> index -> hybrid-search path runs in the
+    gate, mirroring `test_memories_service.py`'s `searchable_memory_service`.
+    """
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_bucket_item_schema(db)
+    await create_search_meta_schema(db)
+    embedder = FakeEmbedder(vector_dim=_SEARCH_DIM)
+    logger = structlog.stdlib.get_logger("test.bucket_item_service.search")
+    async with TemporaryDirectory() as root:
+        index = await BucketItemIndex.open(
+            index_dir=Path(root) / "index", vector_dim=_SEARCH_DIM
+        )
+        reconciler = BucketItemReconciler(
+            database=db,
+            index=index,
+            embedder=embedder,
+            meta=SearchMetaService(database=db),
+        )
+        service = BucketItemService(
+            database=db, tracer=noop_tracer(), searcher=reconciler
+        )
+        yield SearchableHarness(
+            service=LoggedBucketItemService(service, logger=logger),
+            index=index,
+            embedder=embedder,
+            logger=logger,
+        )
     await db.close()
 
 
@@ -683,60 +743,15 @@ async def dedup_does_not_span_movie_and_book() -> None:
     assert_eq(outcome.severity, "none")
 
 
-# --- Search: matching active items ---
-
-
-@test()
-async def search_returns_matching_active_items() -> None:
-    """Keyword Search returns active items whose title matches."""
-    service = await load_fixture(bucket_item_service())
-    item = await add_item(service, "movie", {"title": "Blade Runner"})
-
-    found = [hit.id for hit in await service.search("Blade")]
-
-    assert_in(item.id, found)
-
-
-@test()
-async def search_excludes_completed_items() -> None:
-    """A completed item drops out of the active Search."""
-    service = await load_fixture(bucket_item_service())
-    item = await add_item(service, "movie", {"title": "Blade Runner"})
-    _ = await service.complete(item)
-
-    found = [hit.id for hit in await service.search("Blade")]
-
-    assert_not_in(item.id, found)
-
-
-@test()
-async def search_excludes_deleted_items() -> None:
-    """A deleted item drops out of the active Search."""
-    service = await load_fixture(bucket_item_service())
-    item = await add_item(service, "movie", {"title": "Blade Runner"})
-    _ = await service.delete(item)
-
-    found = [hit.id for hit in await service.search("Blade")]
-
-    assert_not_in(item.id, found)
-
-
-@test()
-async def search_ands_terms_together() -> None:
-    """Keyword Search includes items containing every query term."""
-    service = await load_fixture(bucket_item_service())
-    matching = await add_item(service, "movie", {"title": "Blade Runner 2049"})
-    non_matching = await add_item(service, "movie", {"title": "Blade of the Immortal"})
-
-    found = [hit.id for hit in await service.search("Blade Runner")]
-
-    assert_in(matching.id, found)
-    assert_not_in(non_matching.id, found)
+# --- Search: ranked hybrid retrieval over active items ---
 
 
 @test()
 async def search_requires_a_non_empty_query() -> None:
-    """Keyword Search rejects blank queries instead of listing everything."""
+    """Search rejects blank queries instead of listing everything.
+
+    The blank-query guard runs ahead of the searcher check, so a bare service
+    (no search seam) still rejects rather than embedding an empty string."""
     service = await load_fixture(bucket_item_service())
 
     with assert_raises(EmptyBucketSearchQueryError):
@@ -744,28 +759,108 @@ async def search_requires_a_non_empty_query() -> None:
 
 
 @test()
-async def search_orders_matches_newest_first() -> None:
-    """Keyword Search is unranked, so recency orders equal LIKE matches."""
+async def search_requires_a_configured_searcher() -> None:
+    """A service wired without a search seam cannot rank results."""
     service = await load_fixture(bucket_item_service())
-    older = await add_item(service, "movie", {"title": "needle older"})
-    await asyncio.sleep(0.01)
-    newer = await add_item(service, "movie", {"title": "needle newer"})
+    _ = await add_item(service, "movie", {"title": "Blade Runner"})
 
-    found = [hit.id for hit in await service.search("needle")]
+    with assert_raises(BucketSearchUnavailableError):
+        _ = await service.search("Blade")
 
-    assert_eq(found, [newer.id, older.id])
+
+@test()
+async def search_returns_matching_active_items() -> None:
+    """Ranked Search returns active items whose title matches."""
+    service = (await load_fixture(searchable_bucket_item_service())).service
+    item = await add_item(service, "movie", {"title": "Blade Runner"})
+
+    found = [hit.id for hit in await service.search("Blade Runner")]
+
+    assert_in(item.id, found)
+
+
+@test()
+async def search_excludes_completed_items() -> None:
+    """A completed item drops out of the active Search."""
+    service = (await load_fixture(searchable_bucket_item_service())).service
+    item = await add_item(service, "movie", {"title": "Blade Runner"})
+    _ = await service.complete(item)
+
+    found = [hit.id for hit in await service.search("Blade Runner")]
+
+    assert_not_in(item.id, found)
+
+
+@test()
+async def search_excludes_deleted_items() -> None:
+    """A deleted item drops out of the active Search."""
+    service = (await load_fixture(searchable_bucket_item_service())).service
+    item = await add_item(service, "movie", {"title": "Blade Runner"})
+    _ = await service.delete(item)
+
+    found = [hit.id for hit in await service.search("Blade Runner")]
+
+    assert_not_in(item.id, found)
+
+
+@test()
+async def search_ranks_the_more_relevant_item_first() -> None:
+    """A closer title/text match ranks ahead of a looser one."""
+    service = (await load_fixture(searchable_bucket_item_service())).service
+    close = await add_item(
+        service, "book", {"title": "Dune", "author": "Frank Herbert"}
+    )
+    _ = await add_item(service, "book", {"title": "Foundation", "author": "Isaac"})
+
+    found = [hit.id for hit in await service.search("Dune Frank Herbert")]
+
+    assert_eq(found[0], close.id)
+
+
+@test()
+async def search_excludes_an_orphan_left_in_a_drifted_index() -> None:
+    """The active-only invariant is enforced by the SQLite re-filter, not the
+    index.
+
+    A missed event can leave the index holding a Bucket item that is no
+    longer active. Even when such an orphan is the top candidate, the
+    re-filter against SQLite drops it. Here a completed item's index entry is
+    reinserted directly (simulating drift) and must not surface."""
+    harness = await load_fixture(searchable_bucket_item_service())
+    service = harness.service
+    item = await add_item(service, "movie", {"title": "orphaned laserdisc"})
+    _ = await service.complete(item)
+    vector = await harness.embedder.embed_documents(["orphaned laserdisc"])
+
+    await harness.index.upsert(
+        [BucketItemDocument(id=item.id, content="orphaned laserdisc", vector=vector[0])]
+    )
+
+    found = [hit.id for hit in await service.search("orphaned laserdisc")]
+    assert_not_in(item.id, found)
 
 
 @test()
 async def search_caps_results_at_the_given_limit() -> None:
-    """Keyword Search returns at most `limit` matches."""
-    service = await load_fixture(bucket_item_service())
+    """Ranked Search returns at most `limit` matches."""
+    service = (await load_fixture(searchable_bucket_item_service())).service
     for index in range(3):
         _ = await add_item(service, "movie", {"title": f"needle {index}"})
 
     found = await service.search("needle", limit=2)
 
     assert_eq(len(found), 2)
+
+
+@test()
+async def search_matches_secondary_item_type_text() -> None:
+    """A book is findable by its author, not only its title (item-type text)."""
+    service = (await load_fixture(searchable_bucket_item_service())).service
+    item = await add_item(service, "book", {"title": "Dune", "author": "Frank Herbert"})
+
+    found = [hit.id for hit in await service.search("Frank Herbert")]
+
+    assert_in(item.id, found)
 
 
 # --- Browse by state: active list + retained history ---

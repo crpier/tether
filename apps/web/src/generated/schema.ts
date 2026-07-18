@@ -1266,6 +1266,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged. */
+    get: {
+      parameters: {
+        query: {
+          limit?: number;
+          q: string;
+          sources?: components["schemas"]["SourceType"][] | null;
+          after?: string | null;
+          before?: string | null;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["FusedSearchResultRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/triggers": {
     parameters: {
       query?: never;
@@ -2012,6 +2054,25 @@ export interface components {
       /** Rubric */
       rubric: string;
     };
+    /**
+     * FusedSearchResultRead
+     * @description One fused, source-tagged Search result.
+     *
+     *     Exactly one of `memory` / `bucket_item` is populated, matching `source` —
+     *     a discriminated shape so a heterogeneous result list is self-describing
+     *     without a second round trip.
+     *
+     *     >>> read = FusedSearchResultRead.from_hit(hit)
+     *     >>> read.source
+     *     'bucket_item'
+     */
+    FusedSearchResultRead: {
+      /** @default null */
+      bucket_item: components["schemas"]["BucketItemRead"] | null;
+      /** @default null */
+      memory: components["schemas"]["MemoryRead"] | null;
+      source: components["schemas"]["SourceType"];
+    };
     /** @enum {string} */
     IngestState: "active" | "ignored";
     IntentContext: string;
@@ -2263,6 +2324,8 @@ export interface components {
       /** Selected Model */
       selected_model: string;
     };
+    /** @enum {string} */
+    SourceType: "memory" | "bucket_item";
     /**
      * SourceUsageRead
      * @description HTTP representation of one transcript source's own metered-use budget.

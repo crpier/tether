@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypedDict
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
@@ -49,6 +49,12 @@ from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from uuid import UUID
+
+    from tether.bucket_item_index import BucketItemCandidate
 
 type BucketItemState = Literal["active", "completed", "deleted"]
 """A Bucket item's lifecycle state, derived from its terminal timestamps."""
@@ -82,6 +88,14 @@ class BucketItemConflictError(Exception):
 
 class EmptyBucketSearchQueryError(Exception):
     """Raised when a keyword Search is asked to run on a blank query."""
+
+
+class BucketSearchUnavailableError(Exception):
+    """Raised when `search` is called on a service wired without a searcher.
+
+    Search needs the embedder + index seam (a `BucketItemReconciler`). A bare
+    service (as most non-search tests construct) cannot rank results — mirrors
+    `MemoryService`'s `SearchUnavailableError`."""
 
 
 class EmptyIntentContextError(Exception):
@@ -128,6 +142,11 @@ def _debug(logger: Logger, event: str, **context: object) -> None:
 def _info(logger: Logger, event: str, **context: object) -> None:
     """Emit an info event using caller-supplied logging context."""
     logger.info(event, **context)
+
+
+def _exception(logger: Logger, event: str, **context: object) -> None:
+    """Emit an exception event (with traceback) using caller-supplied context."""
+    logger.exception(event, **context)
 
 
 def _normalise_key(text: str) -> str:
@@ -273,6 +292,35 @@ def derive_state(item: BucketItem[Fetched]) -> BucketItemState:
     return "active"
 
 
+def bucket_item_index_text(item: BucketItem[Fetched]) -> str:
+    """The searchable projection of a Bucket item: title + type-relevant text.
+
+    Mirrors `_describe_item`'s derivation of `title`/`dedup_key` from the
+    already-validated payload, but composes the fuller text a hybrid search
+    index should match against — the title plus whichever secondary
+    item-type field carries additional identifying text (an author, a
+    location, a season), not the raw JSON payload."""
+    parts = [item.title]
+    match item.item_type:
+        case "movie":
+            movie = MovieData.model_validate(item.data)
+            if movie.year is not None:
+                parts.append(str(movie.year))
+        case "place":
+            place = PlaceData.model_validate(item.data)
+            if place.location is not None:
+                parts.append(place.location)
+        case "book":
+            book = BookData.model_validate(item.data)
+            if book.author is not None:
+                parts.append(book.author)
+        case "travel":
+            travel = TravelData.model_validate(item.data)
+            if travel.season is not None:
+                parts.append(travel.season)
+    return "\n".join(parts)
+
+
 @dataclass(frozen=True, slots=True)
 class AddOutcome:
     """The result of Adding a Bucket item: the new item plus a dedup advisory.
@@ -297,6 +345,22 @@ def _dedup_severity(duplicates: list[BucketItem[Fetched]]) -> DedupSeverity:
     return "inform"
 
 
+class BucketItemSearcher(Protocol):
+    """The search seam the service needs: the query read-path plus index hooks.
+
+    A structural Protocol (satisfied by `BucketItemReconciler`) so this module
+    does not import the concrete reconciler — that import would close a cycle,
+    since the reconciler depends on `BucketItem`. Mirrors `MemorySearcher`."""
+
+    async def candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[BucketItemCandidate]: ...
+    async def index_item(
+        self, item: BucketItem[Fetched], *, logger: Logger
+    ) -> None: ...
+    async def deindex_item(self, item_id: UUID7, *, logger: Logger) -> None: ...
+
+
 class BucketItemService:
     """Capability surface for Bucket items, over a snekql database.
 
@@ -309,10 +373,17 @@ class BucketItemService:
         database: Database,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
+        searcher: BucketItemSearcher | None = None,
     ) -> None:
         self.database: Database = database
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.tracer: Tracer = tracer
+        self.searcher: BucketItemSearcher | None = searcher
+        """Search seam (embedder + index + reconciler hooks); `None` if unwired.
+
+        Optional because many service tests construct a bare service that never
+        searches. The mutation sites best-effort index/deindex through it;
+        `search` requires it."""
 
     async def add(
         self,
@@ -377,6 +448,7 @@ class BucketItemService:
                 duplicate_count=len(duplicates),
             )
             await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
+            await self._try_index(item, logger=logger)
             return AddOutcome(item=item, duplicates=duplicates, severity=severity)
 
     async def search(
@@ -386,34 +458,100 @@ class BucketItemService:
         *,
         logger: Logger,
     ) -> list[BucketItem[Fetched]]:
-        """Keyword Search over active Bucket items.
+        """Ranked hybrid Search over active Bucket items.
 
-        Placeholder matcher mirroring the Memory spine: the query is split into
-        whitespace terms, each matched case-insensitively with `LIKE` against the
-        title and AND-ed; results are active-only, newest-first, unranked, capped
-        at `limit` (default 50)."""
-        terms = query.split()
-        if not terms:
+        Mirrors `MemoryService.search`: the query is embedded and run through
+        the index's lexical + semantic arms, fused by RRF; the ranked candidate
+        ids are then re-fetched from SQLite and re-filtered to active-only
+        (non-completed, non-deleted). Results keep the index's relevance order,
+        capped at `limit` (default 50)."""
+        normalised_query = query.strip()
+        if not normalised_query:
             msg = "keyword Search requires a non-empty query"
             raise EmptyBucketSearchQueryError(msg)
-        _debug(logger, "Searching Bucket items", terms_count=len(terms), limit=limit)
-        active_matches = select(BucketItem).where(
-            BucketItem.completed_at.is_null() & BucketItem.deleted_at.is_null()
-        )
-        for term in terms:
-            active_matches = active_matches.where(BucketItem.title.like(f"%{term}%"))
-        async with self.database.transaction() as tx:
-            items = await tx.fetch_all(
-                active_matches.order_by(BucketItem.created_at.desc()).limit(limit)
+        with self.tracer.start_as_current_span(
+            "BucketItemService.search",
+            attributes={"bucket_item.search.limit": limit},
+        ) as span:
+            _debug(logger, "Searching Bucket items", limit=limit)
+            candidates = await self.search_candidates(
+                normalised_query, limit=limit, logger=logger
             )
+            span.set_attribute("bucket_item.search.candidate_count", len(candidates))
+            if not candidates:
+                _debug(
+                    logger,
+                    "Bucket item Search completed",
+                    limit=limit,
+                    candidate_count=0,
+                    result_count=0,
+                )
+                return []
+            rank = {
+                candidate.id: position for position, candidate in enumerate(candidates)
+            }
+            items = await self.hydrate_active(list(rank), logger=logger)
+            items.sort(key=lambda item: rank[item.id])
+            span.set_attribute("bucket_item.search.result_count", len(items))
+            _debug(
+                logger,
+                "Bucket item Search completed",
+                limit=limit,
+                candidate_count=len(candidates),
+                result_count=len(items),
+            )
+            return items
+
+    async def search_candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[BucketItemCandidate]:
+        """Raw ranked candidate ids from the index, unfiltered by lifecycle state.
+
+        The read half of the fusion seam (`tether.search_fusion`): a caller
+        doing its own cross-source ranking needs candidates before the SQLite
+        re-filter, whereas `search` does both steps in one call. Assumes
+        `query` is already non-empty."""
+        if self.searcher is None:
+            msg = "BucketItemService.search_candidates requires a configured searcher"
+            raise BucketSearchUnavailableError(msg)
+        return await self.searcher.candidates(query, limit=limit, logger=logger)
+
+    async def hydrate_active(
+        self,
+        ids: Sequence[UUID],
+        *,
+        after: datetime | None = None,
+        before: datetime | None = None,
+        logger: Logger,
+    ) -> list[BucketItem[Fetched]]:
+        """Re-fetch candidate ids from SQLite, filtered to active-only (+window).
+
+        The shared re-filter step `search` and fusion both need: candidate ids
+        from the index carry no guarantee they're still active rows, so this
+        is where ADR 0009's per-arm re-filter happens. `after`/`before`, when
+        supplied, bound `created_at` (inclusive) — Bucket items have no
+        `tethered_at` equivalent, so their creation timestamp is the capture
+        moment a time window bounds. A narrow window can shrink the hydrated
+        set below the candidate count the index returned; callers do not
+        re-fetch to compensate, mirroring the Memory arm's facet-filter
+        behavior. Result order is not preserved — callers sort by their own
+        candidate ranking."""
         _debug(
-            logger,
-            "Bucket item Search completed",
-            terms_count=len(terms),
-            limit=limit,
-            result_count=len(items),
+            logger, "Hydrating active Bucket item candidates", candidate_count=len(ids)
         )
-        return items
+        if not ids:
+            return []
+        query = select(BucketItem).where(
+            BucketItem.completed_at.is_null()
+            & BucketItem.deleted_at.is_null()
+            & BucketItem.id.in_(*ids)
+        )
+        if after is not None:
+            query = query.where(BucketItem.created_at.gte(after))
+        if before is not None:
+            query = query.where(BucketItem.created_at.lte(before))
+        async with self.database.transaction() as tx:
+            return await tx.fetch_all(query)
 
     async def browse_by_state(
         self,
@@ -571,6 +709,7 @@ class BucketItemService:
             version=fresh_item.version,
         )
         await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
+        await self._try_deindex(fresh_item.id, logger=logger)
         return fresh_item
 
     async def set_intent(
@@ -653,6 +792,53 @@ class BucketItemService:
         if item is None:
             raise BucketItemNotFoundError(bucket_item_id)
         return item
+
+    async def _try_index(
+        self,
+        item: BucketItem[Fetched],
+        *,
+        logger: Logger,
+    ) -> None:
+        """Best-effort index a Bucket item after an Add; never fails the write.
+
+        The index entry is a derived artifact and SQLite is canonical: a failed
+        hook is logged, not raised, because the reconciler's pass is the
+        correctness backstop. No-op when search is unwired."""
+        if self.searcher is None:
+            return
+        _debug(logger, "Indexing Bucket item for search", bucket_item_id=str(item.id))
+        try:
+            await self.searcher.index_item(item, logger=logger)
+        except Exception:
+            _exception(
+                logger,
+                "Failed to index Bucket item for search",
+                bucket_item_id=str(item.id),
+            )
+
+    async def _try_deindex(
+        self,
+        item_id: UUID7,
+        *,
+        logger: Logger,
+    ) -> None:
+        """Best-effort drop a Bucket item from the index after it terminates.
+
+        Never raises: complete/delete both leave the index entry as drift for
+        the reconciler's periodic pass to sweep if this best-effort call fails."""
+        if self.searcher is None:
+            return
+        _debug(
+            logger, "Deindexing Bucket item from search", bucket_item_id=str(item_id)
+        )
+        try:
+            await self.searcher.deindex_item(item_id, logger=logger)
+        except Exception:
+            _exception(
+                logger,
+                "Failed to deindex Bucket item from search",
+                bucket_item_id=str(item_id),
+            )
 
 
 async def create_bucket_item_schema(database: Database) -> None:

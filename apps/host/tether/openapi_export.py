@@ -19,6 +19,7 @@ from tether.openapi import build_openapi
 from tether.push import push_routes
 from tether.recall_routes import recall_routes
 from tether.routes import routes
+from tether.search_routes import search_routes
 from tether.trigger_routes import trigger_routes
 from tether.youtube_routes import youtube_routes
 
@@ -37,6 +38,7 @@ def public_api_routes() -> list[Route]:
         *auth_routes,
         *routes,
         *bucket_item_routes,
+        *search_routes,
         *youtube_routes,
         *conversation_routes,
         *model_routes,

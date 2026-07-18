@@ -716,6 +716,41 @@
         "title": "EssayGradeProposalRead",
         "type": "object"
       },
+      "FusedSearchResultRead": {
+        "description": "One fused, source-tagged Search result.\n\nExactly one of `memory` / `bucket_item` is populated, matching `source` \u2014\na discriminated shape so a heterogeneous result list is self-describing\nwithout a second round trip.\n\n>>> read = FusedSearchResultRead.from_hit(hit)\n>>> read.source\n'bucket_item'",
+        "properties": {
+          "bucket_item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BucketItemRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceType"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "FusedSearchResultRead",
+        "type": "object"
+      },
       "IngestState": {
         "enum": [
           "active",
@@ -1194,6 +1229,13 @@
         ],
         "title": "SetConversationModelRequest",
         "type": "object"
+      },
+      "SourceType": {
+        "enum": [
+          "memory",
+          "bucket_item"
+        ],
+        "type": "string"
       },
       "SourceUsageRead": {
         "description": "HTTP representation of one transcript source's own metered-use budget.\n\nDistinct from `quota` (the YouTube Data API's per-day budget, shared by\nevery source that calls it): a source with its own cap (e.g. Supadata's\nmonthly budget) reports one of these, keyed by its source name on\n`YouTubeSyncStatusRead.usage`. `period` is the UTC calendar month\n(`YYYY-MM`) Supadata's `used`/`remaining` apply to; a source with no\nnatural period concept leaves it empty.",
@@ -2922,6 +2964,104 @@
           }
         },
         "summary": "Promote an ingested educational video into a study item under Recall."
+      }
+    },
+    "/api/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceType"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sources"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FusedSearchResultRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged."
       }
     },
     "/api/triggers": {

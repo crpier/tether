@@ -141,7 +141,11 @@ async def scripted_model_drives_capture_tether_search_through_generated_shims() 
     search_hits = cast("list[Any]", search_hits_json)
     assert_in(
         tethered_memory["id"],
-        [_json_object(search_hit)["id"] for search_hit in search_hits],
+        [
+            _json_object(search_hit)["memory"]["id"]
+            for search_hit in search_hits
+            if _json_object(search_hit)["source"] == "memory"
+        ],
     )
 
 
