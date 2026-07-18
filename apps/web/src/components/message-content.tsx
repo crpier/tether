@@ -1,6 +1,9 @@
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
-import { createMemo } from "solid-js";
+import { createEffect, createMemo } from "solid-js";
+
+import { renderMermaidWidget } from "./widgets/mermaid-widget";
+import { renderVegaLiteWidget } from "./widgets/vega-lite-widget";
 
 // One Marked instance: GitHub-flavoured markdown with single newlines treated as
 // line breaks (chat text rarely uses the double-newline paragraph convention).
@@ -47,6 +50,87 @@ function ensureNewTabHook(): void {
   newTabHookRegistered = true;
 }
 
+// Widget vocabulary v1 (ADR 0011): a closed, literal switch over exactly
+// these two fence languages. GFM tables need no dispatch — `marked`'s native
+// table support plus the prose styling above already renders them as a
+// first-class element. Everything else (typos, unsupported tags) falls
+// through untouched to the plain code block `marked` already produces —
+// there is no generalized "looks like a widget" heuristic, deliberately, so
+// growing the vocabulary stays a reviewed code change (a new case here, a new
+// renderer module) rather than something the agent can trigger by guessing a
+// fence tag.
+type WidgetLanguage = "mermaid" | "vega-lite";
+
+const widgetRenderers: Record<
+  WidgetLanguage,
+  (mount: HTMLElement, spec: string) => Promise<void>
+> = {
+  mermaid: renderMermaidWidget,
+  "vega-lite": renderVegaLiteWidget,
+};
+
+function widgetLanguageOf(code: HTMLElement): WidgetLanguage | null {
+  // `marked` tags a fenced code block's language on the <code> element as
+  // `language-<lang>`, trimmed of any trailing info-string content — so a
+  // typo'd or unsupported tag never matches the literal strings below.
+  for (const lang of code.classList) {
+    if (lang === "language-mermaid") {
+      return "mermaid";
+    }
+    if (lang === "language-vega-lite") {
+      return "vega-lite";
+    }
+  }
+  return null;
+}
+
+// Walks a freshly-sanitized message fragment for `mermaid`/`vega-lite` fences
+// and promotes each to a rendered widget in place of its `<pre>` block. Only
+// called once a message has settled (see the `streaming` gate in
+// `MessageContent`) — never on a per-token basis. Each widget's render is
+// isolated: a throw from one (bad spec, a rejected Vega-Lite schema) leaves
+// that fence's code block visible and appends a short inline note, without
+// touching sibling widgets or the rest of the message.
+async function dispatchWidgets(container: HTMLElement): Promise<void> {
+  const codeBlocks = Array.from(
+    container.querySelectorAll<HTMLElement>("pre > code"),
+  );
+  await Promise.all(
+    codeBlocks.map(async (code) => {
+      const lang = widgetLanguageOf(code);
+      if (lang === null) {
+        return;
+      }
+      const pre = code.parentElement;
+      if (pre === null) {
+        return;
+      }
+      const spec = code.textContent;
+      const mount = document.createElement("div");
+      mount.setAttribute("data-widget", lang);
+      try {
+        await widgetRenderers[lang](mount, spec);
+        // The container may have been unmounted (or re-rendered with fresh
+        // markup) while the widget's async render was in flight; skip the
+        // DOM mutation rather than clobbering a stale/detached tree.
+        if (!container.isConnected || pre.parentElement === null) {
+          return;
+        }
+        pre.replaceWith(mount);
+      } catch {
+        if (!container.isConnected || pre.parentElement === null) {
+          return;
+        }
+        const note = document.createElement("p");
+        note.setAttribute("data-widget-error", lang);
+        note.className = "mt-1 text-xs opacity-70";
+        note.textContent = "Widget failed to render — showing raw source.";
+        pre.insertAdjacentElement("afterend", note);
+      }
+    }),
+  );
+}
+
 function renderMarkdown(text: string): string {
   ensureNewTabHook();
   // marked can return a Promise only with async extensions; this config is
@@ -62,8 +146,39 @@ function renderMarkdown(text: string): string {
 // Render assistant text as sanitized markdown. Used for settled and streaming
 // messages alike; partial markdown during a stream degrades gracefully (an
 // unclosed code fence just renders as text until the closing fence arrives).
-export function MessageContent(props: { text: string }) {
+//
+// `streaming` gates widget dispatch: while a message is still streaming,
+// `mermaid`/`vega-lite` fences render as ordinary code blocks like any other
+// fence (re-parsing/re-rendering a diagram on every delta would be wasted
+// work at best, a flickering half-diagram at worst). Once a message
+// transitions to settled, this re-renders once with fence interception on,
+// promoting any recognized fence to a live widget. Defaults to settled
+// (`false`) so callers rendering already-final text (e.g. tests) don't need
+// to pass it.
+export function MessageContent(props: { text: string; streaming?: boolean }) {
+  let containerEl: HTMLDivElement | undefined;
   const html = createMemo(() => renderMarkdown(props.text));
+
+  createEffect(() => {
+    // Track both signals so a message re-renders its widgets on the
+    // streaming -> settled transition, not just on text changes.
+    const currentHtml = html();
+    const streaming = props.streaming ?? false;
+    void currentHtml;
+    if (containerEl === undefined || streaming) {
+      return;
+    }
+    void dispatchWidgets(containerEl);
+  });
+
   // innerHTML is fed only DOMPurify-sanitized markup (see renderMarkdown).
-  return <div class={proseClass} innerHTML={html()} />;
+  return (
+    <div
+      ref={(el) => {
+        containerEl = el;
+      }}
+      class={proseClass}
+      innerHTML={html()}
+    />
+  );
 }

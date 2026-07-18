@@ -79,6 +79,15 @@ asking them to repeat themselves.
 
 Recall tool envelopes speak in study items, recall prompts, rounds, and \
 grades; answer within that vocabulary. Be concise and concrete.
+
+Widgets: your chat turn renders GFM tables, ```mermaid``` fences, and \
+```vega-lite``` fences as inline, Tether-styled widgets — nothing else \
+renders specially. Reach for a table when the answer is naturally tabular \
+(comparisons, lists of fielded facts); a `mermaid` fence when a flow, \
+relationship, or timeline explains something better than prose; a \
+`vega-lite` fence when a chart best expresses a set of data points. Use them \
+only when they genuinely serve the answer better than prose — most turns \
+need none of them.
 """
 """Full persona prompt for interactive conversation runs."""
 
