@@ -51,6 +51,9 @@ from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from uuid import UUID
+
     from tether.bucket_item_index import BucketItemCandidate
 
 type BucketItemState = Literal["active", "completed", "deleted"]
@@ -466,15 +469,12 @@ class BucketItemService:
         if not normalised_query:
             msg = "keyword Search requires a non-empty query"
             raise EmptyBucketSearchQueryError(msg)
-        if self.searcher is None:
-            msg = "BucketItemService.search requires a configured searcher"
-            raise BucketSearchUnavailableError(msg)
         with self.tracer.start_as_current_span(
             "BucketItemService.search",
             attributes={"bucket_item.search.limit": limit},
         ) as span:
             _debug(logger, "Searching Bucket items", limit=limit)
-            candidates = await self.searcher.candidates(
+            candidates = await self.search_candidates(
                 normalised_query, limit=limit, logger=logger
             )
             span.set_attribute("bucket_item.search.candidate_count", len(candidates))
@@ -490,14 +490,7 @@ class BucketItemService:
             rank = {
                 candidate.id: position for position, candidate in enumerate(candidates)
             }
-            async with self.database.transaction() as tx:
-                items = await tx.fetch_all(
-                    select(BucketItem).where(
-                        BucketItem.completed_at.is_null()
-                        & BucketItem.deleted_at.is_null()
-                        & BucketItem.id.in_(*rank)
-                    )
-                )
+            items = await self.hydrate_active(list(rank), logger=logger)
             items.sort(key=lambda item: rank[item.id])
             span.set_attribute("bucket_item.search.result_count", len(items))
             _debug(
@@ -508,6 +501,43 @@ class BucketItemService:
                 result_count=len(items),
             )
             return items
+
+    async def search_candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[BucketItemCandidate]:
+        """Raw ranked candidate ids from the index, unfiltered by lifecycle state.
+
+        The read half of the fusion seam (`tether.search_fusion`): a caller
+        doing its own cross-source ranking needs candidates before the SQLite
+        re-filter, whereas `search` does both steps in one call. Assumes
+        `query` is already non-empty."""
+        if self.searcher is None:
+            msg = "BucketItemService.search_candidates requires a configured searcher"
+            raise BucketSearchUnavailableError(msg)
+        return await self.searcher.candidates(query, limit=limit, logger=logger)
+
+    async def hydrate_active(
+        self, ids: Sequence[UUID], *, logger: Logger
+    ) -> list[BucketItem[Fetched]]:
+        """Re-fetch candidate ids from SQLite, filtered to active-only.
+
+        The shared re-filter step `search` and fusion both need: candidate ids
+        from the index carry no guarantee they're still active rows, so this
+        is where ADR 0009's per-arm re-filter happens. Result order is not
+        preserved — callers sort by their own candidate ranking."""
+        _debug(
+            logger, "Hydrating active Bucket item candidates", candidate_count=len(ids)
+        )
+        if not ids:
+            return []
+        async with self.database.transaction() as tx:
+            return await tx.fetch_all(
+                select(BucketItem).where(
+                    BucketItem.completed_at.is_null()
+                    & BucketItem.deleted_at.is_null()
+                    & BucketItem.id.in_(*ids)
+                )
+            )
 
     async def browse_by_state(
         self,

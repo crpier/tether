@@ -222,7 +222,9 @@ def capture_tether_search_invariant_holds_at_the_tool_seam() -> None:
 
         after = call_tool(client, "search", q="needle")
 
-    found = [hit["id"] for hit in after["result"]]
+    found = [
+        hit["memory"]["id"] for hit in after["result"] if hit["source"] == "memory"
+    ]
     assert_in(memory["id"], found)
     assert_is_none(after["provenance"])
 
@@ -374,7 +376,9 @@ def search_tool_filters_by_facets() -> None:
 
         filtered = call_tool(client, "search", q="needle", facets={"topic": "travel"})
 
-    found = [hit["id"] for hit in filtered["result"]]
+    found = [
+        hit["memory"]["id"] for hit in filtered["result"] if hit["source"] == "memory"
+    ]
     assert_in(tethered_travel["id"], found)
     assert_not_in(tethered_other["id"], found)
 

@@ -42,6 +42,9 @@ from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.logging import Logger
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from uuid import UUID
+
     from tether.search_index import SearchCandidate
 
 type MemoryState = Literal["loose", "tethered"]
@@ -404,15 +407,12 @@ class MemoryService:
         if not normalised_query:
             msg = "keyword Search requires a non-empty query"
             raise EmptySearchQueryError(msg)
-        if self.searcher is None:
-            msg = "MemoryService.search requires a configured searcher"
-            raise SearchUnavailableError(msg)
         with self.tracer.start_as_current_span(
             "MemoryService.search",
             attributes={"memory.search.limit": limit},
         ) as span:
             _debug(logger, "Searching Memories", limit=limit)
-            candidates = await self.searcher.candidates(
+            candidates = await self.search_candidates(
                 normalised_query, limit=limit, logger=logger
             )
             span.set_attribute("memory.search.candidate_count", len(candidates))
@@ -428,18 +428,9 @@ class MemoryService:
             rank = {
                 candidate.id: position for position, candidate in enumerate(candidates)
             }
-            async with self.database.transaction() as tx:
-                memories = await tx.fetch_all(
-                    MemoryService.tethered_corpus().where(Memory.id.in_(*rank))
-                )
-            if facets:
-                memories = [
-                    memory
-                    for memory in memories
-                    if all(
-                        memory.facets.get(key) == value for key, value in facets.items()
-                    )
-                ]
+            memories = await self.hydrate_tethered(
+                list(rank), facets=facets, logger=logger
+            )
             memories.sort(key=lambda memory: rank[memory.id])
             span.set_attribute("memory.search.result_count", len(memories))
             _debug(
@@ -450,6 +441,49 @@ class MemoryService:
                 result_count=len(memories),
             )
             return memories
+
+    async def search_candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[SearchCandidate]:
+        """Raw ranked candidate ids from the index, unfiltered by tether/delete state.
+
+        The read half of the fusion seam (`tether.search_fusion`): a caller
+        doing its own cross-source ranking needs candidates before the SQLite
+        re-filter, whereas `search` does both steps in one call. Assumes
+        `query` is already non-empty."""
+        if self.searcher is None:
+            msg = "MemoryService.search_candidates requires a configured searcher"
+            raise SearchUnavailableError(msg)
+        return await self.searcher.candidates(query, limit=limit, logger=logger)
+
+    async def hydrate_tethered(
+        self,
+        ids: Sequence[UUID],
+        *,
+        facets: Mapping[str, str] | None = None,
+        logger: Logger,
+    ) -> list[Memory[Fetched]]:
+        """Re-fetch candidate ids from SQLite, filtered to tethered ∧ ¬deleted (+facets).
+
+        The shared re-filter step `search` and fusion both need: candidate ids
+        from the index carry no guarantee they're still valid rows, so this is
+        where the assistant-only-sees-tethered invariant (ADR 0001) and ADR
+        0009's per-arm re-filter both land. Result order is not preserved —
+        callers sort by their own candidate ranking."""
+        _debug(logger, "Hydrating tethered Memory candidates", candidate_count=len(ids))
+        if not ids:
+            return []
+        async with self.database.transaction() as tx:
+            memories = await tx.fetch_all(
+                MemoryService.tethered_corpus().where(Memory.id.in_(*ids))
+            )
+        if facets:
+            memories = [
+                memory
+                for memory in memories
+                if all(memory.facets.get(key) == value for key, value in facets.items())
+            ]
+        return memories
 
     async def browse_by_state(
         self,

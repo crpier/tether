@@ -70,7 +70,13 @@
       "name": "search",
       "params_model": "SearchParams",
       "schema": {
-        "description": "Params for the assistant's keyword Search over tethered Memories.\n\n`facets`, when supplied, is an exact-match AND filter: a Memory must carry\nevery given key with exactly that value to be returned.",
+        "$defs": {
+          "SourceType": {
+            "enum": ["memory", "bucket_item"],
+            "type": "string"
+          }
+        },
+        "description": "Params for the assistant's cross-source Search (Memories + Bucket items).\n\n`facets`, when supplied, is an exact-match AND filter applied to the\nMemory arm only: a Memory must carry every given key with exactly that\nvalue to be returned. `sources`, when supplied, restricts fusion to that\nsubset of arms; omitted, every arm runs.",
         "properties": {
           "q": {
             "title": "Q",
@@ -96,6 +102,21 @@
             ],
             "default": null,
             "title": "Facets"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/SourceType"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources"
           }
         },
         "required": ["q"],

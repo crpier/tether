@@ -72,11 +72,11 @@ from tether.memory_capabilities import (
     rename_facet_key as rename_facet_key_memories,
 )
 from tether.memory_capabilities import (
-    search as search_memories,
-)
-from tether.memory_capabilities import (
     tether as tether_memory,
 )
+from tether.search_capabilities import SEARCH_ERRORS
+from tether.search_capabilities import search as search_fused
+from tether.search_fusion import SourceType
 from tether.youtube import CacheMeta, QuotaMeta
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
@@ -180,15 +180,18 @@ class BrowseParams(BaseModel):
 
 
 class SearchParams(BaseModel):
-    """Params for the assistant's keyword Search over tethered Memories.
+    """Params for the assistant's cross-source Search (Memories + Bucket items).
 
-    `facets`, when supplied, is an exact-match AND filter: a Memory must carry
-    every given key with exactly that value to be returned.
+    `facets`, when supplied, is an exact-match AND filter applied to the
+    Memory arm only: a Memory must carry every given key with exactly that
+    value to be returned. `sources`, when supplied, restricts fusion to that
+    subset of arms; omitted, every arm runs.
     """
 
     q: str
     limit: PositiveInt = 50
     facets: dict[str, str] | None = None
+    sources: list[SourceType] | None = None
 
 
 class ReviewDigestParams(BaseModel):
@@ -475,7 +478,7 @@ async def _review_digest(request: Request) -> CapabilityOutcome:
 MEMORY_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("capture", CaptureParams, bind_params(capture_memory), MEMORY_ERRORS),
     ToolSpec("browse", BrowseParams, bind_params(browse_memories), MEMORY_ERRORS),
-    ToolSpec("search", SearchParams, bind_params(search_memories), MEMORY_ERRORS),
+    ToolSpec("search", SearchParams, bind_params(search_fused), SEARCH_ERRORS),
     ToolSpec("review_digest", ReviewDigestParams, bind_params(_review_digest)),
     ToolSpec("tether", TetherParams, bind_params(tether_memory), MEMORY_ERRORS),
     ToolSpec("edit", EditParams, bind_params(edit_memory), MEMORY_ERRORS),

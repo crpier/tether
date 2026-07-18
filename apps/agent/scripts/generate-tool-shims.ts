@@ -15,6 +15,7 @@ interface JsonSchema {
   enum?: string[];
   exclusiveMinimum?: number;
   format?: string;
+  items?: JsonSchema;
   minLength?: number;
   properties?: Record<string, JsonSchema>;
   required?: string[];
@@ -94,6 +95,12 @@ function renderRequiredExpression(schema: JsonSchema): string {
     // `Type.Record` is the shape, not `Type.Object`.
     return "Type.Record(Type.String(), Type.String())";
   }
+  if (schema.type === "array" && schema.items !== undefined) {
+    // A Pydantic `list[T]` field (e.g. the fused Search `sources` filter):
+    // `resolvePropertySchema` has already inlined `items`'s `$ref` (a string
+    // enum's members), so this only needs to wrap that rendering.
+    return `Type.Array(${renderRequiredExpression(schema.items)})`;
+  }
   throw new Error(`unsupported schema: ${JSON.stringify(schema)}`);
 }
 
@@ -117,6 +124,11 @@ function resolvePropertySchema(
       ...schema,
       anyOf: schema.anyOf.map((member) => resolvePropertySchema(root, member)),
     };
+  }
+  if (schema.type === "array" && schema.items !== undefined) {
+    // A Pydantic `list[Enum]` field renders its member type as a nested
+    // `$ref` under `items`; resolve it the same way an `anyOf` branch is.
+    return { ...schema, items: resolvePropertySchema(root, schema.items) };
   }
   if (schema.$ref === undefined) {
     return schema;
@@ -159,6 +171,9 @@ function sentenceForTool(tool: ToolSchema): string {
 
 function schemaUsesEnum(schema: JsonSchema): boolean {
   if (schema.enum !== undefined) {
+    return true;
+  }
+  if (schema.items !== undefined && schemaUsesEnum(schema.items)) {
     return true;
   }
   return schema.anyOf?.some(schemaUsesEnum) ?? false;

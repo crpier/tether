@@ -17,6 +17,7 @@ from typing import cast
 
 import uvicorn
 from anyio import Path as AsyncPath
+from opentelemetry.trace import Tracer
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
@@ -80,6 +81,7 @@ from tether.scheduler import (
     SystemClock,
     TriggerDispatcher,
 )
+from tether.search_fusion import SearchFusionService
 from tether.search_index import SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
 from tether.telemetry import (
@@ -694,6 +696,31 @@ async def _build_bucket_item_search(
     return reconciler
 
 
+def _build_bucket_item_and_fusion_services(
+    *,
+    database: Database,
+    event_hub: EventHub,
+    memory_service: MemoryService,
+    searcher: BucketItemReconciler | None,
+    tracer: Tracer,
+) -> tuple[BucketItemService, SearchFusionService]:
+    """Wire the Bucket-item service and the cross-source fusion service above it.
+
+    Fusion depends on both the Bucket-item and Memory services existing, so
+    building them together keeps that dependency explicit at the one call site
+    instead of splitting it across two `_lifespan` statements."""
+    bucket_item_service = BucketItemService(
+        database=database,
+        event_publisher=event_hub,
+        tracer=tracer,
+        searcher=searcher,
+    )
+    search_fusion_service = SearchFusionService(
+        bucket_item_service=bucket_item_service, memory_service=memory_service
+    )
+    return bucket_item_service, search_fusion_service
+
+
 async def _build_transcript_search(
     *,
     database: Database,
@@ -894,11 +921,15 @@ def _lifespan(
                 index_dir=configured_kb_root / "bucket-item-index",
                 logger=app_logger,
             )
-            app.state.bucket_item_service = BucketItemService(
+            (
+                app.state.bucket_item_service,
+                app.state.search_fusion_service,
+            ) = _build_bucket_item_and_fusion_services(
                 database=db,
-                event_publisher=event_hub,
-                tracer=telemetry.tracer,
+                event_hub=event_hub,
+                memory_service=memory_service,
                 searcher=bucket_item_reconciler,
+                tracer=telemetry.tracer,
             )
             app.state.artifact_service = ArtifactService(
                 database=db,
