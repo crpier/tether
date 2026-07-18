@@ -16,8 +16,15 @@ from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 from starlette.testclient import TestClient
 
 from tests.surfaces import call_tool, login, surface_client
+from tether.embeddings import FakeEmbedder
 
 make_client = surface_client
+
+
+def make_search_client(root: Path) -> Any:
+    """A dual-surface app with a `FakeEmbedder` so ranked Bucket-item search
+    runs offline, mirroring `test_memory_surfaces.py`'s `make_client`."""
+    return surface_client(root, embedder=FakeEmbedder())
 
 
 def add_item(
@@ -179,7 +186,10 @@ def delete_bucket_item_moves_it_to_deleted() -> None:
 @test()
 def search_returns_only_active_matches() -> None:
     """`GET /api/bucket-items/search` returns active items matching the query."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+    with (
+        TemporaryDirectory() as directory,
+        make_search_client(Path(directory)) as client,
+    ):
         active = add_item(client, "movie", {"title": "Blade Runner"})
         done = add_item(client, "movie", {"title": "Blade of Glory"})
         client.post(
@@ -387,7 +397,10 @@ def add_travel_without_season_stores_a_null_season() -> None:
 @test()
 def add_blank_intent_yields_a_success_false_envelope() -> None:
     """Blank intent context is rejected as a well-formed envelope, adding nothing."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+    with (
+        TemporaryDirectory() as directory,
+        make_search_client(Path(directory)) as client,
+    ):
         envelope = call_tool(client, "add_movie", title="Dune", intent_context="   ")
 
         assert_eq(envelope["success"], False)
@@ -458,7 +471,10 @@ def completing_a_terminal_item_yields_a_conflict_envelope() -> None:
 @test()
 def tool_search_excludes_items_deleted_through_the_tool_seam() -> None:
     """Delete and Search work through the tool seam: terminal items drop out."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+    with (
+        TemporaryDirectory() as directory,
+        make_search_client(Path(directory)) as client,
+    ):
         active = call_tool(
             client, "add_movie", title="Blade Runner", intent_context="a"
         )

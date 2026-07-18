@@ -33,6 +33,8 @@ from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.artifact_tools import internal_artifact_tool_routes
 from tether.artifacts import ArtifactService, create_artifact_schema
 from tether.auth import AppSessionMiddleware
+from tether.bucket_item_index import BucketItemIndex
+from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_items import (
     BucketItemService,
     create_bucket_item_schema,
@@ -661,6 +663,37 @@ async def _build_search(
     return reconciler
 
 
+async def _build_bucket_item_search(
+    *,
+    database: Database,
+    embedder: Embedder | None,
+    index_dir: Path,
+    logger: Logger,
+) -> BucketItemReconciler | None:
+    """Wire the Bucket-item search subsystem when an embedder is supplied.
+
+    Mirrors `_build_search`: opens the index, converges it with SQLite once on
+    boot (embedding any owed active Bucket item and dropping orphans — a no-op
+    on an empty corpus), and returns the reconciler: the single search seam
+    `BucketItemService` reads through and the lifespan drives on a periodic
+    pass. With no embedder returns `None`: the index is never opened and no
+    model loads, and Bucket-item search stays unavailable (same as Memory
+    search)."""
+    if embedder is None:
+        return None
+    bucket_item_index = await BucketItemIndex.open(
+        index_dir=index_dir, vector_dim=embedder.vector_dim
+    )
+    reconciler = BucketItemReconciler(
+        database=database,
+        index=bucket_item_index,
+        embedder=embedder,
+        meta=SearchMetaService(database=database),
+    )
+    _ = await reconciler.reconcile(logger=logger)
+    return reconciler
+
+
 async def _build_transcript_search(
     *,
     database: Database,
@@ -688,6 +721,7 @@ async def _build_transcript_search(
 def _reconcile_loop_tasks(
     *,
     search_reconciler: SearchReconciler | None,
+    bucket_item_reconciler: BucketItemReconciler | None,
     transcript_reconciler: TranscriptReconciler | None,
     interval_seconds: float,
     logger: Logger,
@@ -695,15 +729,23 @@ def _reconcile_loop_tasks(
     """Periodic reconcile loops for the wired search indexes.
 
     Each loop is the correctness backstop for its index — sweeping orphans and
-    running `optimize()` while the host is up. The Memory loop complements its
-    boot reconcile; the transcript loop has no boot pass, so it is what fills the
-    transcript index shortly after startup. Either is absent when its index was
-    not wired (no embedder)."""
+    running `optimize()` while the host is up. The Memory and Bucket-item loops
+    complement their own boot reconcile; the transcript loop has no boot pass,
+    so it is what fills the transcript index shortly after startup. Any of the
+    three is absent when its index was not wired (no embedder)."""
     tasks: list[asyncio.Task[None]] = []
     if search_reconciler is not None:
         tasks.append(
             asyncio.create_task(
                 search_reconciler.reconcile_forever(
+                    interval_seconds=interval_seconds, logger=logger
+                )
+            )
+        )
+    if bucket_item_reconciler is not None:
+        tasks.append(
+            asyncio.create_task(
+                bucket_item_reconciler.reconcile_forever(
                     interval_seconds=interval_seconds, logger=logger
                 )
             )
@@ -846,10 +888,17 @@ def _lifespan(
             # contradiction recall when it is wired, keyword fallback when not.
             app.state.review_service = ReviewService(database=db, embedder=embedder)
             app.state.triage_service = TriageService(database=db)
+            bucket_item_reconciler = await _build_bucket_item_search(
+                database=db,
+                embedder=embedder,
+                index_dir=configured_kb_root / "bucket-item-index",
+                logger=app_logger,
+            )
             app.state.bucket_item_service = BucketItemService(
                 database=db,
                 event_publisher=event_hub,
                 tracer=telemetry.tracer,
+                searcher=bucket_item_reconciler,
             )
             app.state.artifact_service = ArtifactService(
                 database=db,
@@ -911,11 +960,13 @@ def _lifespan(
                 asyncio.create_task(runtime_registry.reap_idle_forever()),
                 asyncio.create_task(scheduler.run_forever()),
             ]
-            # The periodic search-index reconcile loops (Memory + transcript), each
-            # started only when its index was wired (an embedder was supplied).
+            # The periodic search-index reconcile loops (Memory + Bucket-item +
+            # transcript), each started only when its index was wired (an
+            # embedder was supplied).
             background_tasks.extend(
                 _reconcile_loop_tasks(
                     search_reconciler=search_reconciler,
+                    bucket_item_reconciler=bucket_item_reconciler,
                     transcript_reconciler=transcript_reconciler,
                     interval_seconds=config.search_reconcile_seconds,
                     logger=app_logger,
