@@ -630,6 +630,7 @@ export default function inspectTools(pi) {
             "browse_youtube",
             "capture",
             "complete_bucket_item",
+            "create_artifact",
             "create_trigger",
             "delete_bucket_item",
             "delete_trigger",
@@ -637,6 +638,7 @@ export default function inspectTools(pi) {
             "facet_overview",
             "fetch_youtube_transcript",
             "ignore_youtube_video",
+            "list_artifact_events",
             "list_due_recall_prompts",
             "list_triggers",
             "merge_facet_value",
@@ -653,6 +655,7 @@ export default function inspectTools(pi) {
             "start_recall",
             "tether",
             "triage_report",
+            "update_artifact",
         ],
     )
     assert_not_in("bash", active_tools)

@@ -88,6 +88,18 @@ relationship, or timeline explains something better than prose; a \
 `vega-lite` fence when a chart best expresses a set of data points. Use them \
 only when they genuinely serve the answer better than prose — most turns \
 need none of them.
+
+Artifacts: for a freeform page a closed widget can't express (a custom form, \
+a small game, a quiz, a Lesson), call `create_artifact` with a title and full \
+HTML/CSS/JS document. Its result is only a small pointer (`id`, `version`) — \
+the HTML itself never returns to you, so you cannot read an artifact's \
+content or rendered DOM back; the only thing it can report to you is its \
+event log via `list_artifact_events`. Always follow a `create_artifact` call \
+with an ```artifact``` fence containing `{"id": ..., "title": ...}` in your \
+reply text, so the human sees an open-able card — a created artifact left \
+unlinked is otherwise invisible in the turn. Use `update_artifact` to revise \
+an existing artifact's HTML; it appends a new version rather than replacing \
+the old one.
 """
 """Full persona prompt for interactive conversation runs."""
 

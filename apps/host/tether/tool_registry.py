@@ -10,6 +10,7 @@ nor shimmed without an endpoint.
 
 from __future__ import annotations
 
+from tether.artifact_tools import ARTIFACT_TOOL_SPECS
 from tether.bucket_tools import BUCKET_TOOL_SPECS
 from tether.conversation_history_tools import CONVERSATION_HISTORY_TOOL_SPECS
 from tether.recall_tools import RECALL_TOOL_SPECS
@@ -33,4 +34,5 @@ def all_tool_specs() -> tuple[ToolSpec, ...]:
         *TRIGGER_TOOL_SPECS,
         *RECALL_TOOL_SPECS,
         *CONVERSATION_HISTORY_TOOL_SPECS,
+        *ARTIFACT_TOOL_SPECS,
     )

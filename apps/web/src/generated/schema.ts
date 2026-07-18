@@ -4,6 +4,183 @@
  */
 
 export interface paths {
+  "/api/artifacts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every artifact's latest version as lightweight summaries. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ArtifactSummaryRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/artifacts/{artifact_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Fetch an artifact's newest version, `html` included. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          artifact_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ArtifactRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/artifacts/{artifact_id}/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List an artifact's events, oldest first. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          artifact_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ArtifactEventRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Append one free-form event to an artifact's log. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          artifact_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["PostArtifactEventRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ArtifactEventRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/artifacts/{artifact_id}/versions/{version}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Fetch one specific past version of an artifact, `html` included. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          artifact_id: string;
+          version: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ArtifactRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/login": {
     parameters: {
       query?: never;
@@ -1535,6 +1712,76 @@ export interface components {
       selected_index: number | null;
     };
     /**
+     * ArtifactEventRead
+     * @description HTTP representation of one artifact event.
+     */
+    ArtifactEventRead: {
+      /**
+       * Artifact Id
+       * Format: uuid7
+       */
+      artifact_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Payload */
+      payload: {
+        [key: string]: components["schemas"]["JsonValue"];
+      };
+    };
+    /**
+     * ArtifactRead
+     * @description Full HTTP representation of one artifact version, `html` included.
+     *
+     *     Served by the REST reads (latest / by version) the browser fetches to
+     *     mount an artifact's sandboxed iframe.
+     */
+    ArtifactRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Html */
+      html: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Title */
+      title: string;
+      /** Version */
+      version: number;
+    };
+    /**
+     * ArtifactSummaryRead
+     * @description Overview HTTP representation of an artifact's latest version, no `html`.
+     */
+    ArtifactSummaryRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Title */
+      title: string;
+      /** Version */
+      version: number;
+    };
+    /**
      * BucketItemRead
      * @description HTTP representation of a Bucket item, exposing its derived `state`.
      *
@@ -1900,6 +2147,23 @@ export interface components {
       source_label: string | null;
       /** Trigger Id */
       trigger_id: string | null;
+    };
+    /**
+     * PostArtifactEventRequest
+     * @description Body for relaying one artifact event.
+     *
+     *     `payload` is opaque, free-form JSON — the `postMessage` payload a
+     *     sandboxed artifact posted to its parent, relayed verbatim under the
+     *     browser's own session; no schema is enforced beyond "a JSON object".
+     *
+     *     >>> PostArtifactEventRequest(payload={"type": "answer", "value": 3}).payload
+     *     {'type': 'answer', 'value': 3}
+     */
+    PostArtifactEventRequest: {
+      /** Payload */
+      payload: {
+        [key: string]: components["schemas"]["JsonValue"];
+      };
     };
     /**
      * ProposeEssayGradeRequest

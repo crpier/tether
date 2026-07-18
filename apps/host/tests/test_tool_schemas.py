@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from snektest import assert_eq, assert_in, assert_not_in, test
 
+from tether.artifact_tools import internal_artifact_tool_routes
 from tether.bucket_tools import internal_bucket_tool_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
@@ -58,6 +59,9 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "answer_recall_prompt",
             "propose_essay_grade",
             "read_conversation_history",
+            "create_artifact",
+            "update_artifact",
+            "list_artifact_events",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
@@ -136,6 +140,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_trigger_tool_routes(),
             internal_recall_tool_routes(),
             internal_conversation_history_tool_routes(),
+            internal_artifact_tool_routes(),
         )
         for route in routes
     }

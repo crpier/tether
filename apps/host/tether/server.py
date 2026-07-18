@@ -30,6 +30,8 @@ from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
 from tether.agent_trace import AgentTraceRecorder, RunKind
+from tether.artifact_tools import internal_artifact_tool_routes
+from tether.artifacts import ArtifactService, create_artifact_schema
 from tether.auth import AppSessionMiddleware
 from tether.bucket_items import (
     BucketItemService,
@@ -326,6 +328,7 @@ async def _create_schemas(db: Database) -> None:
     await create_recall_schema(db)
     await create_search_meta_schema(db)
     await create_notification_schema(db)
+    await create_artifact_schema(db)
 
 
 def _build_youtube_client(
@@ -848,6 +851,11 @@ def _lifespan(
                 event_publisher=event_hub,
                 tracer=telemetry.tracer,
             )
+            app.state.artifact_service = ArtifactService(
+                database=db,
+                event_publisher=event_hub,
+                tracer=telemetry.tracer,
+            )
             youtube_tasks = await _wire_youtube(
                 app,
                 config=config,
@@ -992,6 +1000,7 @@ def create_app(
             *trace_routes(),
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
+            *internal_artifact_tool_routes(),
             *internal_triage_tool_routes(),
             *internal_youtube_tool_routes(),
             *internal_trigger_tool_routes(),
