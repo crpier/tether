@@ -1279,6 +1279,7 @@ export interface paths {
         query: {
           limit?: number;
           q: string;
+          sources?: components["schemas"]["SourceType"][] | null;
           after?: string | null;
           before?: string | null;
         };

@@ -2991,6 +2991,26 @@
           },
           {
             "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceType"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sources"
+            }
+          },
+          {
+            "in": "query",
             "name": "after",
             "required": false,
             "schema": {
