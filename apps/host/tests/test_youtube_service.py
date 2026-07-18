@@ -45,6 +45,7 @@ from tether.youtube import (
     YouTubeVideoNotFoundError,
     create_youtube_schema,
     derive_ingest_state,
+    state_set,
     upsert_ingested_video,
 )
 
@@ -1135,6 +1136,24 @@ async def sync_status_reports_last_run_quota_and_no_pauses_by_default() -> None:
     assert_eq(status.quota.used, 2)
     assert_is_none(status.api_paused_until)
     assert_eq(status.transcript_providers_paused, [])
+
+
+@test()
+async def sync_status_last_synced_at_matches_last_run_at_decoding() -> None:
+    """`sync_status` decodes the last-run timestamp the same way `last_run_at` does.
+
+    Both read through the shared `_read_last_run_at` decoder, so a legacy
+    naive-datetime value in state gets the same UTC normalization in both
+    places rather than diverging (one tz-aware, one naive).
+    """
+    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+    await state_set(env.db, "likes_last_run_at", "2026-01-01T00:00:00")
+
+    last_run = await env.sync.last_run_at()
+    status = await env.service.sync_status(logger=test_logger())
+
+    assert_eq(last_run, datetime(2026, 1, 1, tzinfo=UTC))
+    assert_eq(status.last_synced_at, last_run)
 
 
 @test()

@@ -649,6 +649,28 @@ def provider_pause_keys(source: str) -> PauseKeys:
     )
 
 
+async def _read_last_run_at(database: Database) -> datetime | None:
+    """The clock-sourced instant of the most recently completed likes sync pass.
+
+    None when no pass has completed yet, or the persisted value is malformed.
+    Shared by `YouTubeSyncService.last_run_at` and `YouTubeService.sync_status`
+    so both read the last-run time through one decoder rather than the raw
+    sync-state key.
+    """
+    raw_last_run = await state_get(database, _LIKES_LAST_RUN_KEY)
+    if not raw_last_run:
+        return None
+    try:
+        last_run = datetime.fromisoformat(raw_last_run)
+    except ValueError:
+        return None
+    return (
+        last_run.replace(tzinfo=UTC)
+        if last_run.tzinfo is None
+        else last_run.astimezone(UTC)
+    )
+
+
 def derive_ingest_state(video: IngestedVideo[Fetched]) -> IngestState:
     """Derive whether a video is live in ingestion or purged from it."""
     return "ignored" if video.ignored_at is not None else "active"
@@ -1096,18 +1118,7 @@ class YouTubeSyncService:
         interval gate and status surface both read the last-run time through
         this rather than the raw sync-state key.
         """
-        raw_last_run = await state_get(self.database, _LIKES_LAST_RUN_KEY)
-        if not raw_last_run:
-            return None
-        try:
-            last_run = datetime.fromisoformat(raw_last_run)
-        except ValueError:
-            return None
-        return (
-            last_run.replace(tzinfo=UTC)
-            if last_run.tzinfo is None
-            else last_run.astimezone(UTC)
-        )
+        return await _read_last_run_at(self.database)
 
     async def sync(self, *, logger: Logger) -> SyncReport:
         """Run one idempotent ingestion pass: hot pages then backfill pages."""
@@ -1820,7 +1831,7 @@ class YouTubeService:
             total = len(active)
             owed = len(untranscribed)
             pending_count = len(pending)
-            raw_last_run = await state_get(self.database, _LIKES_LAST_RUN_KEY)
+            last_run = await _read_last_run_at(self.database)
             api_paused_until = await self.client.api_paused_until(now=now)
             pauses = await load_all_provider_pauses(self.database)
         providers_paused = [
@@ -1838,9 +1849,7 @@ class YouTubeService:
             transcripts_done=total - owed,
             transcripts_pending=pending_count,
             transcripts_unavailable=owed - pending_count,
-            last_synced_at=datetime.fromisoformat(raw_last_run)
-            if raw_last_run
-            else None,
+            last_synced_at=last_run,
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
             transcript_providers_paused=providers_paused,
