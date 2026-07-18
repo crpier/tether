@@ -22,6 +22,7 @@ from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.logging import get_request_logger
 from tether.memories import (
     EmptySearchQueryError,
+    FacetOverviewEntry,
     Fetched,
     Memory,
     MemoryConflictError,
@@ -48,6 +49,7 @@ class MemoryRead(BaseModel):
     >>> read = MemoryRead(
     ...     content="I prefer aisle seats",
     ...     created_at=datetime(2026, 1, 1),
+    ...     facets={},
     ...     id="018f0000-0000-7000-8000-000000000000",
     ...     state="loose",
     ...     tethered_at=None,
@@ -60,6 +62,7 @@ class MemoryRead(BaseModel):
 
     content: str
     created_at: datetime
+    facets: dict[str, str]
     id: UUID7
     state: MemoryState
     tethered_at: datetime | None
@@ -76,6 +79,7 @@ class MemoryRead(BaseModel):
         return cls(
             content=memory.content,
             created_at=memory.created_at,
+            facets=memory.facets,
             id=memory.id,
             state="tethered" if memory.tethered_at is not None else "loose",
             tethered_at=memory.tethered_at,
@@ -116,10 +120,13 @@ def _many(memories: list[Memory[Fetched]]) -> CapabilityOutcome:
     )
 
 
-async def capture(request: Request, content: str) -> CapabilityOutcome:
+async def capture(
+    request: Request, content: str, facets: dict[str, str] | None = None
+) -> CapabilityOutcome:
     """Capture a loose Memory."""
     memory = await request.app.state.memory_service.capture(
         content,
+        facets=facets,
         logger=get_request_logger(request),
     )
     return _single(memory)
@@ -137,11 +144,17 @@ async def browse(
     return _many(memories)
 
 
-async def search(request: Request, q: str, limit: int = 50) -> CapabilityOutcome:
-    """Keyword Search over tethered Memories."""
+async def search(
+    request: Request,
+    q: str,
+    limit: int = 50,
+    facets: dict[str, str] | None = None,
+) -> CapabilityOutcome:
+    """Keyword Search over tethered Memories, optionally exact-match filtered by facets."""
     memories = await request.app.state.memory_service.search(
         q,
         limit=limit,
+        facets=facets,
         logger=get_request_logger(request),
     )
     return _many(memories)
@@ -159,12 +172,21 @@ async def tether(
 
 
 async def edit(
-    request: Request, memory_id: UUID, content: str, version: PositiveInt
+    request: Request,
+    memory_id: UUID,
+    content: str,
+    version: PositiveInt,
+    facets: dict[str, str] | None = None,
 ) -> CapabilityOutcome:
-    """Edit a Memory's `content`; a human edit keeps trust."""
+    """Edit a Memory's `content`; a human edit keeps trust.
+
+    `facets`, when supplied, replaces the stored Commons facet set verbatim;
+    omitted, it leaves facets unchanged.
+    """
     memory = await request.app.state.memory_service.edit_content(
         _memory_reference(memory_id, version),
         content,
+        facets=facets,
         logger=get_request_logger(request),
     )
     return _single(memory)
@@ -179,3 +201,40 @@ async def reject(
         logger=get_request_logger(request),
     )
     return _single(memory)
+
+
+async def facet_overview(request: Request) -> CapabilityOutcome:
+    """Report distinct Commons facet keys/values and how many Memories carry each."""
+    entries: list[
+        FacetOverviewEntry
+    ] = await request.app.state.memory_service.facet_overview(
+        logger=get_request_logger(request),
+    )
+    return CapabilityOutcome(
+        result=[entry.model_dump(mode="json") for entry in entries]
+    )
+
+
+async def rename_facet_key(
+    request: Request, old_key: str, new_key: str
+) -> CapabilityOutcome:
+    """Bulk-rename a Commons facet key. Requires prior explicit chat approval."""
+    changed_count = await request.app.state.memory_service.rename_facet_key(
+        old_key,
+        new_key,
+        logger=get_request_logger(request),
+    )
+    return CapabilityOutcome(result={"changed_count": changed_count})
+
+
+async def merge_facet_value(
+    request: Request, key: str, old_value: str, new_value: str
+) -> CapabilityOutcome:
+    """Bulk-rewrite a Commons facet value. Requires prior explicit chat approval."""
+    changed_count = await request.app.state.memory_service.merge_facet_value(
+        key,
+        old_value,
+        new_value,
+        logger=get_request_logger(request),
+    )
+    return CapabilityOutcome(result={"changed_count": changed_count})

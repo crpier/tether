@@ -8,6 +8,7 @@ const GENERATED_HEADER =
 interface JsonSchema {
   $defs?: Record<string, JsonSchema>;
   $ref?: string;
+  additionalProperties?: JsonSchema | boolean;
   anyOf?: JsonSchema[];
   default?: unknown;
   description?: string;
@@ -82,6 +83,16 @@ function renderRequiredExpression(schema: JsonSchema): string {
   }
   if (schema.type === "boolean") {
     return options === "" ? "Type.Boolean()" : `Type.Boolean(${options})`;
+  }
+  if (
+    schema.type === "object" &&
+    typeof schema.additionalProperties === "object" &&
+    schema.additionalProperties.type === "string"
+  ) {
+    // A Pydantic `dict[str, str]` field (e.g. Commons `facets`): a flat
+    // string-to-string map with no fixed property names, so TypeBox's
+    // `Type.Record` is the shape, not `Type.Object`.
+    return "Type.Record(Type.String(), Type.String())";
   }
   throw new Error(`unsupported schema: ${JSON.stringify(schema)}`);
 }

@@ -652,7 +652,7 @@
         "type": "string"
       },
       "MemoryRead": {
-        "description": "HTTP representation of a Memory, exposing its derived trust `state`.\n\n>>> read = MemoryRead(\n...     content=\"I prefer aisle seats\",\n...     created_at=datetime(2026, 1, 1),\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     state=\"loose\",\n...     tethered_at=None,\n...     updated_at=datetime(2026, 1, 1),\n...     version=1,\n... )\n>>> read.state\n'loose'",
+        "description": "HTTP representation of a Memory, exposing its derived trust `state`.\n\n>>> read = MemoryRead(\n...     content=\"I prefer aisle seats\",\n...     created_at=datetime(2026, 1, 1),\n...     facets={},\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     state=\"loose\",\n...     tethered_at=None,\n...     updated_at=datetime(2026, 1, 1),\n...     version=1,\n... )\n>>> read.state\n'loose'",
         "properties": {
           "content": {
             "title": "Content",
@@ -662,6 +662,13 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "facets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "object"
           },
           "id": {
             "format": "uuid7",
@@ -697,6 +704,7 @@
         "required": [
           "content",
           "created_at",
+          "facets",
           "id",
           "state",
           "tethered_at",

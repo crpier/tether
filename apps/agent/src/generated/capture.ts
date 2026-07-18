@@ -10,6 +10,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const captureParameters = Type.Object({
   content: Type.String({ minLength: 1 }),
+  facets: Type.Optional(Type.Record(Type.String(), Type.String())),
 });
 
 export type CaptureParams = Static<typeof captureParameters>;

@@ -12,6 +12,7 @@ const editParameters = Type.Object({
   memory_id: Type.String({ format: "uuid" }),
   content: Type.String({ minLength: 1 }),
   version: Type.Integer({ exclusiveMinimum: 0 }),
+  facets: Type.Optional(Type.Record(Type.String(), Type.String())),
 });
 
 export type EditParams = Static<typeof editParameters>;
@@ -22,9 +23,10 @@ export const editTool: ToolDefinition<
 > = {
   name: "edit",
   label: "Edit",
-  description: "Params for editing a Memory's content at an observed version.",
+  description:
+    "Params for editing a Memory's content at an observed version.\n\n`facets`, when supplied, replaces the stored Commons facet set verbatim\n(an empty object clears it); omitted, facets stay unchanged.",
   promptSnippet:
-    "Params for editing a Memory's content at an observed version.",
+    "Params for editing a Memory's content at an observed version.\n\n`facets`, when supplied, replaces the stored Commons facet set verbatim\n(an empty object clears it); omitted, facets stay unchanged.",
   parameters: editParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

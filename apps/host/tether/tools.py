@@ -60,7 +60,16 @@ from tether.memory_capabilities import (
     edit as edit_memory,
 )
 from tether.memory_capabilities import (
+    facet_overview as facet_overview_memories,
+)
+from tether.memory_capabilities import (
+    merge_facet_value as merge_facet_value_memories,
+)
+from tether.memory_capabilities import (
     reject as reject_memory,
+)
+from tether.memory_capabilities import (
+    rename_facet_key as rename_facet_key_memories,
 )
 from tether.memory_capabilities import (
     search as search_memories,
@@ -133,6 +142,7 @@ class CaptureParams(BaseModel):
     """Params for capturing a loose Memory."""
 
     content: MemoryContent
+    facets: dict[str, str] | None = None
 
 
 class TetherParams(BaseModel):
@@ -143,11 +153,16 @@ class TetherParams(BaseModel):
 
 
 class EditParams(BaseModel):
-    """Params for editing a Memory's content at an observed version."""
+    """Params for editing a Memory's content at an observed version.
+
+    `facets`, when supplied, replaces the stored Commons facet set verbatim
+    (an empty object clears it); omitted, facets stay unchanged.
+    """
 
     memory_id: UUID7
     content: MemoryContent
     version: PositiveInt
+    facets: dict[str, str] | None = None
 
 
 class RejectParams(BaseModel):
@@ -165,10 +180,15 @@ class BrowseParams(BaseModel):
 
 
 class SearchParams(BaseModel):
-    """Params for the assistant's keyword Search over tethered Memories."""
+    """Params for the assistant's keyword Search over tethered Memories.
+
+    `facets`, when supplied, is an exact-match AND filter: a Memory must carry
+    every given key with exactly that value to be returned.
+    """
 
     q: str
     limit: PositiveInt = 50
+    facets: dict[str, str] | None = None
 
 
 class ReviewDigestParams(BaseModel):
@@ -177,6 +197,37 @@ class ReviewDigestParams(BaseModel):
     The digest is computed over the whole live queue, so it takes no inputs
     beyond the session identity the gate already requires.
     """
+
+
+class FacetOverviewParams(BaseModel):
+    """Params for the Commons facet overview: distinct keys/values with counts.
+
+    Read-only; takes no inputs beyond the session identity the gate already
+    requires.
+    """
+
+
+class RenameFacetKeyParams(BaseModel):
+    """Params for bulk-renaming a Commons facet key across every Memory that carries it.
+
+    Destructive to the old key name across the whole corpus: the assistant
+    must obtain the user's explicit approval in chat before calling this tool.
+    """
+
+    old_key: str
+    new_key: str
+
+
+class MergeFacetValueParams(BaseModel):
+    """Params for bulk-rewriting a Commons facet value across every Memory that carries it.
+
+    Destructive to the old value across the whole corpus: the assistant must
+    obtain the user's explicit approval in chat before calling this tool.
+    """
+
+    key: str
+    old_value: str
+    new_value: str
 
 
 def _fail(code: ToolErrorCode, message: str) -> ToolEnvelope:
@@ -429,6 +480,23 @@ MEMORY_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("tether", TetherParams, bind_params(tether_memory), MEMORY_ERRORS),
     ToolSpec("edit", EditParams, bind_params(edit_memory), MEMORY_ERRORS),
     ToolSpec("reject", RejectParams, bind_params(reject_memory), MEMORY_ERRORS),
+    ToolSpec(
+        "facet_overview",
+        FacetOverviewParams,
+        bind_params(facet_overview_memories),
+    ),
+    ToolSpec(
+        "rename_facet_key",
+        RenameFacetKeyParams,
+        bind_params(rename_facet_key_memories),
+        MEMORY_ERRORS,
+    ),
+    ToolSpec(
+        "merge_facet_value",
+        MergeFacetValueParams,
+        bind_params(merge_facet_value_memories),
+        MEMORY_ERRORS,
+    ),
 )
 """The Memory capabilities exposed as internal tools, in generated-file order."""
 

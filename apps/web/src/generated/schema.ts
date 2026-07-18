@@ -1787,6 +1787,7 @@ export interface components {
      *     >>> read = MemoryRead(
      *     ...     content="I prefer aisle seats",
      *     ...     created_at=datetime(2026, 1, 1),
+     *     ...     facets={},
      *     ...     id="018f0000-0000-7000-8000-000000000000",
      *     ...     state="loose",
      *     ...     tethered_at=None,
@@ -1804,6 +1805,10 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** Facets */
+      facets: {
+        [key: string]: string;
+      };
       /**
        * Id
        * Format: uuid7

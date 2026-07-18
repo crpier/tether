@@ -11,6 +11,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 const searchParameters = Type.Object({
   q: Type.String(),
   limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
+  facets: Type.Optional(Type.Record(Type.String(), Type.String())),
 });
 
 export type SearchParams = Static<typeof searchParameters>;
@@ -22,9 +23,9 @@ export const searchTool: ToolDefinition<
   name: "search",
   label: "Search",
   description:
-    "Params for the assistant's keyword Search over tethered Memories.",
+    "Params for the assistant's keyword Search over tethered Memories.\n\n`facets`, when supplied, is an exact-match AND filter: a Memory must carry\nevery given key with exactly that value to be returned.",
   promptSnippet:
-    "Params for the assistant's keyword Search over tethered Memories.",
+    "Params for the assistant's keyword Search over tethered Memories.\n\n`facets`, when supplied, is an exact-match AND filter: a Memory must carry\nevery given key with exactly that value to be returned.",
   parameters: searchParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

@@ -22,6 +22,7 @@ import contextlib
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid7
 
 import structlog
 from anyio import TemporaryDirectory
@@ -52,6 +53,7 @@ from tether.logging import Logger
 from tether.memories import (
     EmptyMemoryContentError,
     EmptySearchQueryError,
+    FacetOverviewEntry,
     KnowledgeBaseService,
     Memory,
     MemoryConflictError,
@@ -92,19 +94,23 @@ class LoggedMemoryService:
         self,
         content: str,
         provenance: MemoryProvenance | None = None,
+        facets: dict[str, str] | None = None,
     ) -> Memory[Fetched]:
         """Capture through the wrapped service with logging context."""
         return await self.service.capture(
-            content, provenance=provenance, logger=self.logger
+            content, provenance=provenance, facets=facets, logger=self.logger
         )
 
     async def search(
         self,
         query: str,
         limit: PositiveInt = 50,
+        facets: dict[str, str] | None = None,
     ) -> list[Memory[Fetched]]:
         """Search through the wrapped service with logging context."""
-        return await self.service.search(query, limit=limit, logger=self.logger)
+        return await self.service.search(
+            query, limit=limit, facets=facets, logger=self.logger
+        )
 
     async def browse_by_state(
         self, state: MemoryState, limit: int | None = None
@@ -122,9 +128,12 @@ class LoggedMemoryService:
         self,
         memory: Memory[Fetched],
         content: str,
+        facets: dict[str, str] | None = None,
     ) -> Memory[Fetched]:
         """Edit through the wrapped service with logging context."""
-        return await self.service.edit_content(memory, content, logger=self.logger)
+        return await self.service.edit_content(
+            memory, content, facets=facets, logger=self.logger
+        )
 
     async def delete(self, memory: Memory[Fetched]) -> Memory[Fetched]:
         """Delete through the wrapped service with logging context."""
@@ -134,12 +143,28 @@ class LoggedMemoryService:
         """Regenerate projections with logging context."""
         await self.service.regenerate_knowledge_base(logger=self.logger)
 
+    async def facet_overview(self) -> list[FacetOverviewEntry]:
+        """Compute the facet overview through the wrapped service."""
+        return await self.service.facet_overview(logger=self.logger)
+
+    async def rename_facet_key(self, old_key: str, new_key: str) -> int:
+        """Rename a facet key through the wrapped service."""
+        return await self.service.rename_facet_key(old_key, new_key, logger=self.logger)
+
+    async def merge_facet_value(self, key: str, old_value: str, new_value: str) -> int:
+        """Merge a facet value through the wrapped service."""
+        return await self.service.merge_facet_value(
+            key, old_value, new_value, logger=self.logger
+        )
+
 
 async def capture_tethered_memory(
-    service: LoggedMemoryService, content: str
+    service: LoggedMemoryService,
+    content: str,
+    facets: dict[str, str] | None = None,
 ) -> Memory[Fetched]:
     """Create a tethered Memory as test setup."""
-    memory = await service.capture(content)
+    memory = await service.capture(content, facets=facets)
     return await service.tether(memory)
 
 
@@ -356,6 +381,29 @@ async def capture_stores_supplied_provenance() -> None:
         memory.provenance,
         {"kind": "youtube", "confidence": "low", "batch": "yt-2026-06"},
     )
+
+
+@test()
+async def capture_omitting_facets_defaults_to_empty_dict() -> None:
+    """A capture with no `facets` argument lands with an empty facet set."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture("I prefer aisle seats on flights")
+
+    assert_eq(memory.facets, {})
+
+
+@test()
+async def capture_stores_supplied_facets_verbatim() -> None:
+    """Capture persists a supplied facets dict verbatim."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture(
+        "I prefer aisle seats on flights",
+        facets={"topic": "travel", "sensitivity": "private"},
+    )
+
+    assert_eq(memory.facets, {"topic": "travel", "sensitivity": "private"})
 
 
 @test()
@@ -861,6 +909,30 @@ async def editing_a_memory_bumps_updated_at() -> None:
 
 
 @test()
+async def editing_facets_round_trips_the_new_value() -> None:
+    """Supplying `facets` on edit replaces the stored facet set verbatim."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("I live in Berlin", facets={"topic": "housing"})
+
+    edited = await service.edit_content(
+        memory, "I live in Berlin", facets={"topic": "relocation", "region": "eu"}
+    )
+
+    assert_eq(edited.facets, {"topic": "relocation", "region": "eu"})
+
+
+@test()
+async def editing_without_facets_leaves_them_unchanged() -> None:
+    """Omitting `facets` on edit is a no-op for the stored facet set."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("I live in Berlin", facets={"topic": "housing"})
+
+    edited = await service.edit_content(memory, "I live in Munich")
+
+    assert_eq(edited.facets, {"topic": "housing"})
+
+
+@test()
 async def deleting_a_memory_stamps_deleted_at() -> None:
     """reject stamps `deleted_at`."""
     service = await load_fixture(memory_service())
@@ -982,6 +1054,59 @@ async def projected_frontmatter_records_manual_provenance() -> None:
     contents = projection_path(service, memory).read_text()
 
     assert_in("kind: manual", contents)
+
+
+@test()
+async def projected_frontmatter_includes_facets_when_present() -> None:
+    """projection frontmatter carries a non-empty facet set as `facets:`."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(
+        service, "I prefer aisle seats on flights", facets={"topic": "travel"}
+    )
+
+    contents = projection_path(service, memory).read_text()
+
+    assert_in("facets:", contents)
+    assert_in("topic: travel", contents)
+
+
+@test()
+async def projected_frontmatter_omits_facets_key_when_empty() -> None:
+    """projection frontmatter has no `facets:` key for an empty facet set."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(service, "I prefer aisle seats on flights")
+
+    contents = projection_path(service, memory).read_text()
+
+    assert_not_in("facets:", contents)
+
+
+@test()
+async def regenerating_the_kb_reflects_current_facets() -> None:
+    """`regenerate_knowledge_base` projects each tethered Memory's live facets."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(
+        service, "I prefer aisle seats on flights", facets={"topic": "travel"}
+    )
+    _ = await service.edit_content(memory, memory.content, facets={"topic": "flying"})
+
+    await service.regenerate_knowledge_base()
+
+    contents = projection_path(service, memory).read_text()
+    assert_in("topic: flying", contents)
+
+
+@test()
+async def sensitivity_facet_round_trips_through_kb_frontmatter() -> None:
+    """`sensitivity` projects into frontmatter like any other facet key."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(
+        service, "a sensitive fact", facets={"sensitivity": "private"}
+    )
+
+    contents = projection_path(service, memory).read_text()
+
+    assert_in("sensitivity: private", contents)
 
 
 @test()
@@ -1276,6 +1401,328 @@ async def search_defaults_to_a_limit_of_fifty() -> None:
     assert_eq(len(found), 50)
 
 
+# --- Facet exact-match search filter ---
+
+
+@test()
+async def search_with_facets_filters_to_exact_matches() -> None:
+    """`search(facets=...)` keeps only Memories matching every given key/value."""
+    service = (await load_fixture(searchable_memory_service())).service
+    matching = await capture_tethered_memory(
+        service, "penicillin prescription notes", facets={"topic": "health"}
+    )
+    other_topic = await capture_tethered_memory(
+        service, "penicillin allergy grocery notes", facets={"topic": "shopping"}
+    )
+    no_facets = await capture_tethered_memory(service, "penicillin trivia")
+
+    found = [
+        hit.id for hit in await service.search("penicillin", facets={"topic": "health"})
+    ]
+
+    assert_in(matching.id, found)
+    assert_not_in(other_topic.id, found)
+    assert_not_in(no_facets.id, found)
+
+
+@test()
+async def search_with_multiple_facets_requires_all_to_match() -> None:
+    """`facets` is an AND filter: every given key/value must match."""
+    service = (await load_fixture(searchable_memory_service())).service
+    matching = await capture_tethered_memory(
+        service,
+        "penicillin prescription details",
+        facets={"topic": "health", "sensitivity": "private"},
+    )
+    partial = await capture_tethered_memory(
+        service,
+        "penicillin prescription reminder",
+        facets={"topic": "health", "sensitivity": "public"},
+    )
+
+    found = [
+        hit.id
+        for hit in await service.search(
+            "penicillin", facets={"topic": "health", "sensitivity": "private"}
+        )
+    ]
+
+    assert_in(matching.id, found)
+    assert_not_in(partial.id, found)
+
+
+@test()
+async def search_without_facets_is_unfiltered() -> None:
+    """Omitting `facets` preserves the existing unfiltered-by-facet behavior."""
+    service = (await load_fixture(searchable_memory_service())).service
+    with_facets = await capture_tethered_memory(
+        service, "penicillin note one", facets={"topic": "health"}
+    )
+    without_facets = await capture_tethered_memory(service, "penicillin note two")
+
+    found = [hit.id for hit in await service.search("penicillin")]
+
+    assert_in(with_facets.id, found)
+    assert_in(without_facets.id, found)
+
+
+@test()
+async def search_facets_compose_with_the_tethered_deleted_filter() -> None:
+    """A facet-matching but loose/deleted Memory is still excluded from Search."""
+    service = (await load_fixture(searchable_memory_service())).service
+    loose = await service.capture(
+        "penicillin note never tethered", facets={"topic": "health"}
+    )
+    deleted = await capture_tethered_memory(
+        service, "penicillin note rejected", facets={"topic": "health"}
+    )
+    _ = await service.delete(deleted)
+
+    found = [
+        hit.id for hit in await service.search("penicillin", facets={"topic": "health"})
+    ]
+
+    assert_not_in(loose.id, found)
+    assert_not_in(deleted.id, found)
+
+
+@test()
+async def sensitivity_facet_round_trips_through_search_filter() -> None:
+    """`sensitivity` behaves like any other facet key in the search filter."""
+    service = (await load_fixture(searchable_memory_service())).service
+    private = await capture_tethered_memory(
+        service, "penicillin sensitivity note", facets={"sensitivity": "private"}
+    )
+    public = await capture_tethered_memory(
+        service, "penicillin sensitivity note public", facets={"sensitivity": "public"}
+    )
+
+    found = [
+        hit.id
+        for hit in await service.search("penicillin", facets={"sensitivity": "private"})
+    ]
+
+    assert_in(private.id, found)
+    assert_not_in(public.id, found)
+
+
+# --- Facet overview: distinct keys/values with counts (Proposal-lite read side) ---
+
+
+@test()
+async def facet_overview_reports_distinct_keys_values_and_counts() -> None:
+    """The overview groups by (key, value) and counts how many Memories carry each."""
+    service = await load_fixture(memory_service())
+    _ = await service.capture("first", facets={"topic": "travel"})
+    _ = await service.capture("second", facets={"topic": "travel"})
+    _ = await service.capture("third", facets={"topic": "health"})
+
+    overview = await service.facet_overview()
+
+    entries = {(entry.key, entry.value): entry.count for entry in overview}
+    assert_eq(entries[("topic", "travel")], 2)
+    assert_eq(entries[("topic", "health")], 1)
+
+
+@test()
+async def facet_overview_includes_both_loose_and_tethered_memories() -> None:
+    """Overview scope is the whole live corpus, not just the tethered slice.
+
+    Facet drift can exist before a Memory is ever tethered, so curation must be
+    able to see it; this is the explicit scope decision the spec calls for."""
+    service = await load_fixture(memory_service())
+    loose = await service.capture("a loose fact", facets={"topic": "loose-topic"})
+    tethered = await capture_tethered_memory(
+        service, "a tethered fact", facets={"topic": "tethered-topic"}
+    )
+
+    overview = await service.facet_overview()
+
+    keys = {(entry.key, entry.value) for entry in overview}
+    assert_in(("topic", "loose-topic"), keys)
+    assert_in(("topic", "tethered-topic"), keys)
+    # both captures above are exercised so pyright doesn't flag unused locals
+    assert_is_not_none(loose)
+    assert_is_not_none(tethered)
+
+
+@test()
+async def facet_overview_excludes_soft_deleted_memories() -> None:
+    """A rejected Memory's facets drop out of the overview — it's no longer live."""
+    service = await load_fixture(memory_service())
+    rejected = await service.capture(
+        "a rejected fact", facets={"topic": "deleted-topic"}
+    )
+    _ = await service.delete(rejected)
+
+    overview = await service.facet_overview()
+
+    keys = {(entry.key, entry.value) for entry in overview}
+    assert_not_in(("topic", "deleted-topic"), keys)
+
+
+@test()
+async def facet_overview_is_empty_when_no_memory_carries_facets() -> None:
+    """An overview over an all-empty-facets corpus reports no entries."""
+    service = await load_fixture(memory_service())
+    _ = await service.capture("no facets here")
+
+    overview = await service.facet_overview()
+
+    assert_eq(overview, [])
+
+
+# --- Bulk curation: rename_facet_key / merge_facet_value (Proposal-lite write side) ---
+
+
+@test()
+async def rename_facet_key_renames_across_every_carrying_row() -> None:
+    """Renaming a key relocates its value under the new key on every carrier."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("a fact", facets={"topik": "travel"})
+
+    changed_count = await service.rename_facet_key("topik", "topic")
+
+    assert_eq(changed_count, 1)
+    row = await fetch_memory_row(service, memory)
+    assert row is not None
+    assert_eq(row.facets, {"topic": "travel"})
+
+
+@test()
+async def rename_facet_key_only_touches_rows_carrying_the_old_key() -> None:
+    """A row without `old_key` is untouched: no version bump, no facet change."""
+    service = await load_fixture(memory_service())
+    untouched = await service.capture("unrelated fact", facets={"topic": "health"})
+
+    _ = await service.rename_facet_key("topik", "topic")
+
+    row = await fetch_memory_row(service, untouched)
+    assert row is not None
+    assert_eq(row.version, untouched.version)
+    assert_eq(row.facets, {"topic": "health"})
+
+
+@test()
+async def rename_facet_key_bumps_version_only_on_changed_rows() -> None:
+    """A renamed row's `version`/`updated_at` both advance exactly once."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("a fact", facets={"topik": "travel"})
+
+    await asyncio.sleep(0.01)
+    _ = await service.rename_facet_key("topik", "topic")
+
+    row = await fetch_memory_row(service, memory)
+    assert row is not None
+    assert_eq(row.version, memory.version + 1)
+    assert_gt(row.updated_at, memory.updated_at)
+
+
+@test()
+async def rename_facet_key_is_reflected_in_kb_regen() -> None:
+    """A renamed key on a tethered Memory's projection refreshes immediately."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(
+        service, "a tethered fact", facets={"topik": "travel"}
+    )
+
+    _ = await service.rename_facet_key("topik", "topic")
+
+    contents = projection_path(service, memory).read_text()
+    assert_in("topic: travel", contents)
+    assert_not_in("topik", contents)
+
+
+@test()
+async def rename_facet_key_is_reflected_in_search_by_facet() -> None:
+    """A renamed key is immediately visible to the search facet filter."""
+    service = (await load_fixture(searchable_memory_service())).service
+    memory = await capture_tethered_memory(
+        service, "a searchable fact about travel", facets={"topik": "travel"}
+    )
+
+    _ = await service.rename_facet_key("topik", "topic")
+
+    found = [
+        hit.id for hit in await service.search("travel", facets={"topic": "travel"})
+    ]
+    assert_in(memory.id, found)
+
+
+@test()
+async def merge_facet_value_rewrites_every_matching_occurrence() -> None:
+    """Merging a value rewrites it wherever `key == old_value`."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("a fact", facets={"topic": "travle"})
+
+    changed_count = await service.merge_facet_value("topic", "travle", "travel")
+
+    assert_eq(changed_count, 1)
+    row = await fetch_memory_row(service, memory)
+    assert row is not None
+    assert_eq(row.facets, {"topic": "travel"})
+
+
+@test()
+async def merge_facet_value_only_touches_rows_with_the_old_value() -> None:
+    """A row with a different value for `key` is untouched by the merge."""
+    service = await load_fixture(memory_service())
+    untouched = await service.capture("unrelated fact", facets={"topic": "health"})
+
+    _ = await service.merge_facet_value("topic", "travle", "travel")
+
+    row = await fetch_memory_row(service, untouched)
+    assert row is not None
+    assert_eq(row.version, untouched.version)
+    assert_eq(row.facets, {"topic": "health"})
+
+
+@test()
+async def merge_facet_value_bumps_version_only_on_changed_rows() -> None:
+    """A merged row's `version`/`updated_at` both advance exactly once."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("a fact", facets={"topic": "travle"})
+
+    await asyncio.sleep(0.01)
+    _ = await service.merge_facet_value("topic", "travle", "travel")
+
+    row = await fetch_memory_row(service, memory)
+    assert row is not None
+    assert_eq(row.version, memory.version + 1)
+    assert_gt(row.updated_at, memory.updated_at)
+
+
+@test()
+async def merge_facet_value_is_reflected_in_kb_regen() -> None:
+    """A merged value on a tethered Memory's projection refreshes immediately."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(
+        service, "a tethered fact", facets={"topic": "travle"}
+    )
+
+    _ = await service.merge_facet_value("topic", "travle", "travel")
+
+    contents = projection_path(service, memory).read_text()
+    assert_in("topic: travel", contents)
+    assert_not_in("travle", contents)
+
+
+@test()
+async def merge_facet_value_is_reflected_in_search_by_facet() -> None:
+    """A merged value is immediately visible to the search facet filter."""
+    service = (await load_fixture(searchable_memory_service())).service
+    memory = await capture_tethered_memory(
+        service, "a searchable fact about travel", facets={"topic": "travle"}
+    )
+
+    _ = await service.merge_facet_value("topic", "travle", "travel")
+
+    found = [
+        hit.id for hit in await service.search("travel", facets={"topic": "travel"})
+    ]
+    assert_in(memory.id, found)
+
+
 @test()
 async def a_captured_memory_owes_an_embedding() -> None:
     """A fresh Memory has no embedding yet: both embedding columns are NULL.
@@ -1392,3 +1839,37 @@ async def create_memory_schema_upgrades_a_legacy_pre_embedding_database() -> Non
     assert stored is not None
     assert_eq(stored.embedding, payload)
     assert_eq(stored.embedded_version, memory.version)
+
+
+@test()
+async def create_memory_schema_backfills_facets_to_empty_dict() -> None:
+    """A pre-facets database's existing rows backfill `facets` to `{}`.
+
+    `001_memories` is never edited; the facets column arrives as its own
+    forward migration, same as `embedding` did. Reuses the frozen legacy DDL
+    (pre-embedding, pre-facets) so the full forward chain (002 through 004)
+    runs against a row that predates every one of them.
+    """
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await db.migrate({"001_memories": _LEGACY_MEMORY_DDL})
+    pre_facets_id = uuid7()
+    async with db.transaction() as tx:
+        connection = tx.require_connection()
+        insert_sql = (
+            'INSERT INTO "memory" (id, content, version, provenance) '
+            "VALUES (?, ?, ?, ?)"
+        )
+        _ = await connection.execute(
+            insert_sql,
+            (str(pre_facets_id), "a pre-facets memory", 1, '{"kind": "manual"}'),
+        )
+
+    await create_memory_schema(db)
+
+    async with db.transaction() as tx:
+        row = await tx.fetch_one_or_none(
+            select(Memory).where(Memory.id.eq(pre_facets_id))
+        )
+    assert row is not None, "the pre-migration row must survive the upgrade"
+    assert_eq(row.facets, {})
+    await db.close()
