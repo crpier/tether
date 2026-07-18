@@ -27,3 +27,9 @@ Convergence is safe *only* when "already in the end-state" carries no informatio
 The mechanism is **optimistic concurrency control** — the caller supplies the version it read, and the write is rejected as a conflict if the row has moved on since. This is *not* a multi-user concern (Tether is single-user; see architecture.md "Security"): one human running two conversations can unwittingly target the same Memory. Nor does it contradict ADR 0001's "a human edit *is* the review" — it decides *which* review wins rather than letting a race decide silently.
 
 Rule of thumb: if losing the prior value would cost the user real work to notice and recover, the operation is state-destructive and needs a precondition, not convergence.
+
+## No streak mechanics, no guilt accrual
+
+Nothing in Tether tracks consecutive-day streaks, and no state accrues a sense of falling behind during an absence — a user coming back after a week or a year sees the same thing they would after a day. This holds everywhere the temptation to add it recurs: Recall scheduling, Curriculum/Lesson progress, Triage, Bucket item staleness, proactive surfacing.
+
+This is a deliberate rejection of the common growth-hacking pattern where absence is framed as a broken streak or a debt to repay. A single-user tool with no engagement metrics to optimize has no reason to manufacture pressure, and a personal operating system that guilts its one user for living their life works against the reason it exists. Where an operation needs to *notice* time has passed (e.g. Recall's adaptive scheduling, Triage's staleness detection), it may use elapsed time to inform its own logic, but never to display a counter, a "your streak is broken" message, or any framing that makes the absence itself the subject.

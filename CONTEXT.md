@@ -2,11 +2,17 @@
 
 A single-user, self-hosted AI personal assistant. Its core loop is **capture → resurface**: get a thing out of your head reliably, and have it come back at the right moment. Its distinguishing value is **interconnection** — captured things reference each other, so resurfacing is informed by everything else you've stored.
 
+Tether is a personal operating system: memory is the substrate it is built on, not the product. Capture → resurface is the first loop built on that substrate, not the whole of it — presentation (widgets and artifacts), ingestion (gates and telemetry), proposals and earned autonomy, and typed verticals all layer on top of the same faceted memory pool and the same trust gates.
+
 ## Language
 
 **Memory**:
-A fact you want to retain — an amorphous blob of information with no domain and no fixed schema. It has no lifecycle of its own: it stays true until deleted (e.g. "I prefer aisle seats"), and is never "completed". A Memory is either loose or tethered.
+A fact you want to retain — an amorphous blob of information with no domain and no fixed schema, though it may carry Facets (annotations, not structure requirements). It has no lifecycle of its own: it stays true until deleted (e.g. "I prefer aisle seats"), and is never "completed". A Memory is either loose or tethered.
 _Avoid_: note, fact, knowledge
+
+**Facet**:
+A key/value annotation on a Memory (e.g. `domain: finance`, `sensitivity: medical`) — metadata, not schema. The agent invents facet keys freely as needed; drift across near-duplicate keys is handled by curation, not enforced by validation.
+_Avoid_: tag, property, attribute, field
 
 **Loose**:
 The state of a Memory that has been captured but not yet tethered (by either path — Review or Recall). Provisional and not yet trusted by the assistant.
@@ -32,6 +38,14 @@ _Avoid_: quiz, flashcard, question
 A loose Memory currently progressing through Recall — distilled from a source (e.g. a video transcript) and being drilled across scheduled rounds, not yet tethered.
 _Avoid_: flashcard deck, course, lesson
 
+**Curriculum**:
+A learning objective broken into ordered units with progress state (e.g. "learn conversational Spanish").
+_Avoid_: course, syllabus, program
+
+**Lesson**:
+A generated Artifact within a Curriculum. Its quiz results (Artifact events) feed regeneration of the next Lesson. Not Recall: a Lesson quiz is a feedback instrument shaping what's taught next, not a trust instrument that tethers a Memory.
+_Avoid_: quiz, exercise, unit
+
 **Knowledge base**:
 The body of tethered Memories, exposed as derived read-only markdown files (Obsidian-compatible). The trusted corpus the assistant searches and reasons over. Its source of truth is SQLite; the markdown is a projection.
 _Avoid_: vault, notes, sediment, wiki
@@ -43,6 +57,58 @@ _Avoid_: note, page, file, entry
 **Search**:
 Reading Memories by query, by filters, or both, with relevance ranking. State-agnostic as a mechanism — the same operation lists the loose review queue and pulls tethered context — so the trust boundary is not in the word: when the *assistant* searches for context it searches only tethered Memories (ADR 0001), and a Search is recomputed every time, never cached (ADR 0006). The sole means by which Memories connect — there is no stored graph; relevance emerges at the moment context is needed.
 _Avoid_: retrieval, lookup, recall, fetch
+
+**Commons**:
+The pool of faceted Memories where long-tail life domains live as conventions rather than code — no dedicated tables, panels, or lifecycle, just Memories plus Facets. The staging ground a domain occupies before it earns Promotion to a Vertical.
+_Avoid_: pool, general memories, unstructured store
+
+**Vertical**:
+A hand-built, typed slice of the domain (e.g. Cooking, Health) with its own tables and lifecycle. Admitted only when a domain actually needs a lifecycle, typed queries over time, or a dedicated panel — not merely because it has accumulated many Memories.
+_Avoid_: module, feature, app
+
+**Promotion**:
+The graduation of a Commons domain into a Vertical, justified once accumulated Facet shapes make the case (recurring keys, values that want structure, lifecycle needs). One-directional in practice — Verticals aren't demoted back to Commons.
+_Avoid_: migration, upgrade, graduation
+
+**Sensitivity**:
+A Facet governing presentation discretion only — which Memories are hidden in Public mode or suppressed from proactive surfacing. It never limits what the agent may reason over or send to an external LLM provider; that boundary doesn't exist in Tether.
+_Avoid_: privacy, visibility, access level
+
+**Public mode**:
+A session state that excludes sensitivity-faceted Memories from display and proactive surfacing (e.g. presenting Tether on a shared screen). A presentation-layer switch, not a trust or reasoning boundary.
+_Avoid_: private mode, incognito, safe mode
+
+**Ingestion gate**:
+A scheduled sync that brings external data in without a chat turn (Readwise, Gmail, Health Connect, ebooks). Content it produces carries machine-synced Provenance, trusted at capture.
+_Avoid_: sync job, importer, connector
+
+**Telemetry**:
+Raw time-series data landing through an Ingestion gate (heart rate, location, read events). Vertical data — it never enters the Memory pool as-is; only a Distillation derived from it can.
+_Avoid_: metrics, events, raw data
+
+**Distillation**:
+An agent-derived conclusion drawn from Telemetry or a Fusion (e.g. "sleep quality drops after late screen time"). Enters the Memory pool as agent-inferred content, so it takes the loose→tethered gate like any other agent guess.
+_Avoid_: insight, summary, inference
+
+**Fusion**:
+Cross-source correlation across Telemetry and/or Memories (e.g. location × heart rate) that produces a Distillation. The mechanism, not the output — the output is always a Distillation.
+_Avoid_: correlation, join, merge
+
+**Widget**:
+An inline, vetted, Tether-styled render spec placed in a chat turn (tables, Mermaid, Vega-Lite) — a constrained vocabulary, safe because it's constrained. Presentation only, never a source of truth.
+_Avoid_: chart, component, embed
+
+**Artifact**:
+A freeform, agent-generated page — sandboxed (iframe, strict CSP), versioned, linked from chat. Free to be anything precisely because it's sandboxed; the agent never reads an Artifact back.
+_Avoid_: page, app, generated UI
+
+**Artifact event**:
+An append-only JSON record an Artifact posts about itself (e.g. a quiz answer, a form submission) — the sole channel by which an Artifact talks back to Tether.
+_Avoid_: callback, webhook, artifact message
+
+**Synthetic panel**:
+A saved faceted query over the Commons, rendered through Widgets — a panel assembled from convention, with no dedicated code.
+_Avoid_: dashboard, view, report
 
 **Scheduled trigger**:
 A time-triggered action the human sets up: it fires once or on a recurrence (daily/weekly), and its action is either to deliver a fixed message or to run a prompt through the agent and deliver the result. The push half of the capture → resurface loop (a plain reminder is the fixed-message case).
@@ -65,12 +131,24 @@ An agent-produced report over the *active* Bucket items that surfaces problems �
 _Avoid_: review, grooming, cleanup, backlog review
 
 **Candidate**:
-An agent-*proposed* capture awaiting human acceptance — produced when the agent guesses at memories or bucket items rather than the human directly asking (most notably during conversation import). For a Memory this coincides with the loose state (Review accepts it). For a Bucket item it is a pre-active holding state that must be accepted before the item becomes active. The gate follows authorship: human-authored bucket items skip it; agent-proposed ones do not. Confidence may order or weight a candidate but never bypasses acceptance.
+An agent-*proposed* capture awaiting human acceptance — produced when the agent guesses at memories or bucket items rather than the human directly asking (most notably during conversation import). For a Memory this coincides with the loose state (Review accepts it). For a Bucket item it is a pre-active holding state that must be accepted before the item becomes active. The gate follows authorship: human-authored bucket items skip it; agent-proposed ones do not. Confidence may order or weight a candidate but never bypasses acceptance. Kin to Proposal: a Candidate awaits acceptance of a *thing*, a Proposal awaits approval of a *doing* — the gate follows authorship in both.
 _Avoid_: suggestion, proposal, draft
 
+**Proposal**:
+A concrete, inspectable set of actions the agent wants to take, awaiting human approval before it executes. The doing-side counterpart to Candidate.
+_Avoid_: suggestion, plan, action item
+
+**Autonomy grant**:
+An earned, per-action-category removal of the Proposal gate for a specific kind of action — visible to the human and revocable at any time.
+_Avoid_: permission, trust level, auto-approve
+
 **Provenance**:
-The objective origin of a captured thing — *where* it came from (a URL, a conversation import, a specific YouTube video, a manual entry). Recorded on every Memory and Bucket item. On a Memory it also calibrates Review: a capture from an unreliable source is scrutinized harder before it is tethered.
+The objective origin of a captured thing — *where* it came from (a URL, a conversation import, a specific YouTube video, a manual entry, a synced external source). Recorded on every Memory and Bucket item. On a Memory it now determines trust class: human-asserted and machine-synced content is trusted at the moment of capture, while agent-inferred content (guesses, Distillations, Fusions) still takes the loose→tethered gate — Review or Recall (ADR 0010).
 _Avoid_: source, source reference, citation, origin
+
+**Capture client**:
+A deliberately dumb client (phone app, watch tile) whose only job is getting a capture off the human quickly — share-target, voice-to-text, a tap. All intelligence (parsing, tethering, scheduling) stays server-side.
+_Avoid_: mobile app, frontend, client app
 
 ## Cooking
 
