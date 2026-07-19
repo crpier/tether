@@ -101,6 +101,17 @@ class LoggedMemoryService:
             content, provenance=provenance, facets=facets, logger=self.logger
         )
 
+    async def capture_tethered(
+        self,
+        content: str,
+        provenance: MemoryProvenance,
+        facets: dict[str, str] | None = None,
+    ) -> Memory[Fetched]:
+        """Machine-synced capture through the wrapped service with logging context."""
+        return await self.service.capture_tethered(
+            content, provenance=provenance, facets=facets, logger=self.logger
+        )
+
     async def search(
         self,
         query: str,
@@ -365,6 +376,68 @@ async def capture_records_manual_provenance() -> None:
     memory = await service.capture("I prefer aisle seats on flights")
 
     assert_eq(memory.provenance, {"kind": "manual"})
+
+
+@test()
+async def capture_tethered_lands_tethered() -> None:
+    """Machine-synced capture stamps `tethered_at` at insert, skipping Review."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture_tethered(
+        "Highlighted passage", provenance=MemoryProvenance(kind="readwise")
+    )
+
+    assert_is_not_none(memory.tethered_at)
+
+
+@test()
+async def capture_tethered_never_enters_the_loose_queue() -> None:
+    """A machine-synced Memory is absent from the Review queue."""
+    service = await load_fixture(memory_service())
+
+    _ = await service.capture_tethered(
+        "Highlighted passage", provenance=MemoryProvenance(kind="readwise")
+    )
+
+    assert_eq(await service.browse_by_state("loose"), [])
+
+
+@test()
+async def capture_tethered_records_the_syncing_provenance() -> None:
+    """Machine-synced capture persists the origin provenance verbatim."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture_tethered(
+        "Highlighted passage", provenance=MemoryProvenance(kind="readwise")
+    )
+
+    assert_eq(memory.provenance, {"kind": "readwise"})
+
+
+@test()
+async def capture_tethered_writes_the_projection_immediately() -> None:
+    """A machine-synced Memory's KB projection exists at capture, like a tether."""
+    service = await load_fixture(memory_service())
+
+    memory = await service.capture_tethered(
+        "Highlighted passage", provenance=MemoryProvenance(kind="readwise")
+    )
+
+    assert_true(projection_path(service, memory).exists())
+
+
+@test()
+async def capture_tethered_is_immediately_searchable() -> None:
+    """A machine-synced Memory is Searchable at once, no Review step needed."""
+    harness = await load_fixture(searchable_memory_service())
+
+    _ = await harness.service.capture_tethered(
+        "needle passage from a book",
+        provenance=MemoryProvenance(kind="readwise"),
+    )
+
+    hits = await harness.service.search("needle")
+    assert_eq([hit.content for hit in hits], ["needle passage from a book"])
 
 
 @test()

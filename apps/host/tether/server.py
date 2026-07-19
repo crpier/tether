@@ -62,6 +62,12 @@ from tether.openapi_export import public_api_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
 from tether.push import PushService, create_push_schema
+from tether.readwise import (
+    HttpReadwiseTransport,
+    ReadwiseClient,
+    ReadwiseSyncService,
+    create_readwise_schema,
+)
 from tether.recall import (
     AnswerGrader,
     PiAnswerGrader,
@@ -169,6 +175,9 @@ class AppConfig:
     transcript_retry_backoff_cap_seconds: float = 6 * 60 * 60
     transcript_block_pause_base_seconds: float = 2 * 60 * 60
     transcript_block_pause_cap_seconds: float = 24 * 60 * 60
+    readwise_api_key: str = ""
+    readwise_sync_enabled: bool = False
+    readwise_sync_interval_seconds: float = 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -307,6 +316,17 @@ class HostSettings(BaseSettings):
     """Hard cap on total Supadata uses, persisted across restarts. The background
     sweep stops calling Supadata once this many are spent (remaining videos stay
     pending), bounding spend to a limited plan. Raise it after topping up."""
+    readwise_api_key: str = ""
+    """Readwise API token. Empty (the default) keeps the ingestion gate off, so
+    the default install never calls Readwise. Paired with
+    `readwise_sync_enabled`; both are required for the worker to run."""
+    readwise_sync_enabled: bool = False
+    """Whether the background Readwise ingestion gate runs. Off by default and a
+    no-op unless `readwise_api_key` is also set, so mirroring highlights into the
+    Commons is a deliberate, credentialed choice."""
+    readwise_sync_interval_seconds: float = 60 * 60
+    """Seconds between Readwise export passes. The Export API is generous (240
+    req/min) but highlights change slowly, so an hourly cadence is ample."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -336,6 +356,7 @@ async def _create_schemas(db: Database) -> None:
     await create_notification_schema(db)
     await create_artifact_schema(db)
     await create_panel_schema(db)
+    await create_readwise_schema(db)
 
 
 def _build_youtube_client(
@@ -513,6 +534,53 @@ def _start_youtube_workers(
         transcript_boot_done.set()
 
     return tasks
+
+
+async def _wire_readwise(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    memory_service: MemoryService,
+) -> list[asyncio.Task[None]]:
+    """Wire the Readwise ingestion gate + its background worker onto state.
+
+    A no-op returning no tasks unless the gate is enabled and an API key is set —
+    the default install never calls Readwise. When enabled, the token is checked
+    off the startup critical path inside the worker task (a non-204 auth response
+    logs a warning and disables the worker for the run); a valid token runs an
+    idempotent boot pass and then the periodic export loop. The returned tasks
+    join the lifespan's cancelled-on-shutdown background tasks.
+    """
+    readwise_boot_done = asyncio.Event()
+    app.state.readwise_boot_done = readwise_boot_done
+    if not config.readwise_sync_enabled or not config.readwise_api_key:
+        readwise_boot_done.set()
+        return []
+    logger = cast("Logger", app.state.logger)
+    client = ReadwiseClient(transport=HttpReadwiseTransport(config.readwise_api_key))
+    sync = ReadwiseSyncService(
+        database=database, client=client, memory_service=memory_service
+    )
+    app.state.readwise_sync = sync
+
+    async def _run_readwise_sync() -> None:
+        try:
+            if not await client.verify_token(logger=logger):
+                logger.warning("Readwise token invalid; ingestion gate disabled")
+                return
+            _ = await sync.sync(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Readwise boot sync failed")
+        finally:
+            readwise_boot_done.set()
+        await sync.sync_forever(
+            interval_seconds=config.readwise_sync_interval_seconds, logger=logger
+        )
+
+    return [asyncio.create_task(_run_readwise_sync())]
 
 
 def _ephemeral_pi_config(
@@ -1034,9 +1102,15 @@ def _lifespan(
                     logger=app_logger,
                 )
             )
-            # The YouTube ingestion sync loop (empty unless a real client is
-            # configured) joins the cancelled-on-shutdown background tasks.
-            background_tasks.extend(youtube_tasks)
+            # The YouTube ingestion sync loop and the Readwise ingestion gate
+            # (each empty unless its upstream is configured) join the
+            # cancelled-on-shutdown background tasks.
+            background_tasks.extend(
+                youtube_tasks
+                + await _wire_readwise(
+                    app, config=config, database=db, memory_service=memory_service
+                )
+            )
             try:
                 yield
             finally:
@@ -1189,6 +1263,9 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         logging_level=settings.logging_level,
         log_file=settings.log_file,
         model_allowlist=settings.model_allowlist,
+        readwise_api_key=settings.readwise_api_key,
+        readwise_sync_enabled=settings.readwise_sync_enabled,
+        readwise_sync_interval_seconds=settings.readwise_sync_interval_seconds,
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
         web_dist=settings.web_dist,

@@ -60,7 +60,7 @@ class MemoryProvenance(TypedDict):
     both, so it still serializes to exactly `{"kind": "manual"}`.
     """
 
-    kind: Literal["manual", "import", "youtube", "web"]
+    kind: Literal["manual", "import", "youtube", "web", "readwise"]
     confidence: NotRequired[Literal["low", "medium", "high"]]
     batch: NotRequired[str]
 
@@ -372,6 +372,74 @@ class MemoryService:
                 memory_id=str(memory.id),
                 version=memory.version,
             )
+            await self.event_publisher.publish(
+                InvalidateEvent(keys=["memories", "review-queue"])
+            )
+            return memory
+
+    async def capture_tethered(
+        self,
+        content: str,
+        *,
+        provenance: MemoryProvenance,
+        facets: dict[str, str] | None = None,
+        logger: Logger,
+    ) -> Memory[Fetched]:
+        """Capture a machine-synced Memory that is trusted at insert.
+
+        The direct-to-tethered path for the machine-synced provenance class: an
+        Ingestion gate writing content verbatim from an external system of record
+        (a Readwise highlight, a calendar event). Unlike `capture`, the Memory
+        lands with `tethered_at` stamped, so it never enters the loose queue or
+        Review and is Searchable at once — the sync itself is the assertion of
+        fact, nothing is invented. Its projection and search-index entry are
+        written immediately, exactly as a tether would. `provenance` names the
+        syncing origin (never `manual`); `facets` default to the empty Commons
+        set (`{}`) and are persisted verbatim otherwise.
+        """
+        normalised_content = _normalise_content(content)
+        memory_facets = facets if facets is not None else {}
+        with self.tracer.start_as_current_span(
+            "MemoryService.capture_tethered",
+            attributes={"memory.content_length": len(normalised_content)},
+        ) as span:
+            _debug(
+                logger,
+                "Capturing tethered Memory",
+                content_length=len(normalised_content),
+            )
+
+            async def _capture(tx: Transaction) -> Memory[Fetched]:
+                inserted = await tx.execute(
+                    insert(
+                        Memory(
+                            content=normalised_content,
+                            provenance=provenance,
+                            facets=memory_facets,
+                        )
+                    ).returning()
+                )
+                # Stamp `tethered_at` from the DB clock in the same transaction so
+                # the row is never observable in a loose state — machine-synced
+                # content skips the loose→tethered gate entirely.
+                _ = await tx.execute(
+                    update(Memory)
+                    .set(Memory.tethered_at.to(CurrentTimestamp))
+                    .where(Memory.id.eq(inserted.id))
+                )
+                return await self._fetch_active(tx, inserted.id)
+
+            memory = await run_in_transaction(self.database, _capture)
+            span.set_attribute("memory.id", str(memory.id))
+            span.set_attribute("memory.provenance_kind", provenance["kind"])
+            _info(
+                logger,
+                "Tethered Memory captured",
+                memory_id=str(memory.id),
+                provenance_kind=provenance["kind"],
+            )
+            await self._try_set_projection(memory, logger=logger)
+            await self._try_index(memory, logger=logger)
             await self.event_publisher.publish(
                 InvalidateEvent(keys=["memories", "review-queue"])
             )
