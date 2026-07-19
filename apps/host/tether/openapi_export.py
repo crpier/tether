@@ -12,6 +12,7 @@ from starlette.routing import Route
 from tether.artifact_routes import artifact_routes
 from tether.auth import auth_routes
 from tether.bucket_routes import bucket_item_routes
+from tether.capture_routes import capture_routes
 from tether.conversations import conversation_routes
 from tether.kosync_routes import ebook_routes
 from tether.model_selection import model_routes
@@ -39,6 +40,7 @@ def public_api_routes() -> list[Route]:
     return [
         *auth_routes,
         *routes,
+        *capture_routes,
         *bucket_item_routes,
         *search_routes,
         *youtube_routes,

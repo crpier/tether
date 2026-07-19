@@ -508,6 +508,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/capture/voice": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Transcribe an uploaded audio note and capture it as a loose Memory. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["VoiceCaptureResponse"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/conversations": {
     parameters: {
       query?: never;
@@ -3014,6 +3050,30 @@ export interface components {
        * @default null
        */
       weekday: number | null;
+    };
+    /**
+     * VoiceCaptureResponse
+     * @description A transcribed voice note and the loose Memory it captured.
+     *
+     *     >>> VoiceCaptureResponse(
+     *     ...     memory=MemoryRead(
+     *     ...         content="buy oat milk",
+     *     ...         created_at=datetime(2026, 1, 1),
+     *     ...         facets={"source": "voice"},
+     *     ...         id="018f0000-0000-7000-8000-000000000000",
+     *     ...         state="loose",
+     *     ...         tethered_at=None,
+     *     ...         updated_at=datetime(2026, 1, 1),
+     *     ...         version=1,
+     *     ...     ),
+     *     ...     transcript="buy oat milk",
+     *     ... ).transcript
+     *     'buy oat milk'
+     */
+    VoiceCaptureResponse: {
+      memory: components["schemas"]["MemoryRead"];
+      /** Transcript */
+      transcript: string;
     };
     /** @constant */
     YouTubeSource: "liked";

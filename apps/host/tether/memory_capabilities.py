@@ -27,6 +27,7 @@ from tether.memories import (
     Memory,
     MemoryConflictError,
     MemoryNotFoundError,
+    MemoryProvenance,
     MemoryState,
 )
 
@@ -121,12 +122,21 @@ def _many(memories: list[Memory[Fetched]]) -> CapabilityOutcome:
 
 
 async def capture(
-    request: Request, content: str, facets: dict[str, str] | None = None
+    request: Request,
+    content: str,
+    facets: dict[str, str] | None = None,
+    provenance: MemoryProvenance | None = None,
 ) -> CapabilityOutcome:
-    """Capture a loose Memory."""
+    """Capture a loose Memory.
+
+    `provenance` defaults to manual (the text-capture path); a non-manual
+    human-asserted producer, such as a transcribed voice note, passes its own
+    origin so Review can calibrate scrutiny. Either way the Memory lands loose.
+    """
     memory = await request.app.state.memory_service.capture(
         content,
         facets=facets,
+        provenance=provenance,
         logger=get_request_logger(request),
     )
     return _single(memory)

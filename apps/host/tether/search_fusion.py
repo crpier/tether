@@ -94,8 +94,11 @@ TRUST_MULTIPLIERS: dict[TrustClass, float] = {
 """The one place provenance-trust strength is tuned — retuning ranking pull is
 a one-line edit here, never a change to `_adjust_scores`'s logic."""
 
-_HUMAN_ASSERTED_PROVENANCE_KINDS = frozenset({"manual", "import"})
-"""`MemoryProvenance.kind` values that read as human-asserted rather than synced."""
+_HUMAN_ASSERTED_PROVENANCE_KINDS = frozenset({"manual", "import", "voice"})
+"""`MemoryProvenance.kind` values that read as human-asserted rather than synced.
+
+`voice` is a spoken note the human asserted; transcription can err, so it lands
+loose for Review, but its trust class is the human's word, not a machine sync."""
 
 
 class InvalidSearchWindowError(Exception):

@@ -98,6 +98,7 @@ from tether.scheduler import (
 from tether.search_fusion import SearchFusionService
 from tether.search_index import SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.stt import HttpSttTransport, SttClient
 from tether.telemetry import (
     Telemetry,
     TelemetryExporter,
@@ -150,6 +151,7 @@ class AppConfig:
 
     app_password: str
     session_secret: str
+    api_token: str = ""
     database_path: str | Path = Path(".tether/tether.sqlite3")
     default_model: str | None = None
     default_model_id: str | None = None
@@ -195,6 +197,11 @@ class AppConfig:
     scheduler_tick_seconds: float = 30.0
     search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
+    stt_client: SttClient | None = None
+    stt_enabled: bool = False
+    stt_api_key: str = ""
+    stt_base_url: str = "https://api.openai.com/v1"
+    stt_model: str = "whisper-1"
     study_item_generator: StudyItemGenerator | None = None
     answer_grader: AnswerGrader | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
@@ -213,6 +220,12 @@ class HostSettings(BaseSettings):
 
     app_password: str = Field(default="", min_length=1)
     session_secret: str = Field(default="", min_length=1)
+    api_token: str = ""
+    """Static bearer token for non-browser clients (the mobile capture app).
+    Empty (the default) keeps token auth off — only the browser session cookie
+    authenticates. When set, a request carrying `Authorization: Bearer <token>`
+    passes the app-session gate exactly as a valid cookie would; revocation is
+    rotating this value."""
     database_path: Path = Path(".tether/tether.sqlite3")
     host: str = "127.0.0.1"
     kb_root: Path = Path(".tether")
@@ -351,6 +364,21 @@ class HostSettings(BaseSettings):
     readwise_sync_interval_seconds: float = 60 * 60
     """Seconds between Readwise export passes. The Export API is generous (240
     req/min) but highlights change slowly, so an hourly cadence is ample."""
+    stt_enabled: bool = False
+    """Whether the speech-to-text capability is available for voice capture. Off
+    by default and a no-op unless `stt_api_key` is also set, so transcription is
+    a deliberate, credentialed choice. When disabled, `POST /api/capture/voice`
+    returns 503."""
+    stt_api_key: str = ""
+    """API key for the OpenAI-compatible transcription endpoint. Empty (the
+    default) keeps voice capture unavailable, so the default install never calls
+    a transcription API."""
+    stt_base_url: str = "https://api.openai.com/v1"
+    """Root of the OpenAI-compatible transcription API. Point it at OpenAI, Groq,
+    or any compatible endpoint — the only per-provider knob is this URL."""
+    stt_model: str = "whisper-1"
+    """Transcription model requested with each upload (e.g. `whisper-1`,
+    `whisper-large-v3`), passed through verbatim to the configured endpoint."""
     readwise_reader_sync_enabled: bool = False
     """Whether the background Readwise Reader v3 progress rider runs. Off by
     default and a no-op unless `readwise_api_key` is also set, so polling reading
@@ -1211,6 +1239,24 @@ def _lifespan(
     return lifespan
 
 
+def _resolve_stt_client(config: AppConfig) -> SttClient | None:
+    """Build the voice-capture STT client from config, or `None` when disabled.
+
+    An injected `stt_client` (tests, a custom wiring) wins outright. Otherwise a
+    client is built only when the capability is enabled and keyed — the
+    off-by-default, credentialed opt-in that keeps the default install from ever
+    calling a transcription API. `None` leaves `POST /api/capture/voice` a 503.
+    """
+    if config.stt_client is not None:
+        return config.stt_client
+    if not (config.stt_enabled and config.stt_api_key):
+        return None
+    return SttClient(
+        transport=HttpSttTransport(config.stt_api_key, base_url=config.stt_base_url),
+        model=config.stt_model,
+    )
+
+
 class _SpaStaticFiles(StaticFiles):
     """Serve the built SPA, falling back to `index.html` for client routes.
 
@@ -1315,12 +1361,14 @@ def create_app(
     app.state.tool_secret = (
         tool_secret if tool_secret is not None else secrets.token_urlsafe(32)
     )
+    app.state.stt_client = _resolve_stt_client(config)
     app.add_middleware(ContextLoggerMiddleware)
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(
         AppSessionMiddleware,
         secure=config.secure_cookies,
         session_secret=config.session_secret,
+        api_token=config.api_token,
     )
     return app
 
@@ -1356,6 +1404,7 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     needs a YouTube OAuth token on disk to wire the background workers).
     """
     return AppConfig(
+        api_token=settings.api_token,
         app_password=settings.app_password,
         database_path=settings.database_path,
         default_model=settings.default_model,
@@ -1375,6 +1424,10 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         ),
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
+        stt_enabled=settings.stt_enabled,
+        stt_api_key=settings.stt_api_key,
+        stt_base_url=settings.stt_base_url,
+        stt_model=settings.stt_model,
         web_dist=settings.web_dist,
         youtube_api=build_configured_youtube_api(settings),
         youtube_likes_rewalk_interval_days=settings.youtube_likes_rewalk_interval_days,
