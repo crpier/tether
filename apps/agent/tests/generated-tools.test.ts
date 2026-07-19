@@ -55,6 +55,10 @@ describe("generated tool extension", () => {
       "create_artifact",
       "update_artifact",
       "list_artifact_events",
+      "create_panel",
+      "list_panels",
+      "update_panel",
+      "delete_panel",
     ]);
   });
 });

@@ -16,6 +16,7 @@ from tether.conversations import conversation_routes
 from tether.model_selection import model_routes
 from tether.notifications import notification_routes
 from tether.openapi import build_openapi
+from tether.panel_routes import panel_routes
 from tether.push import push_routes
 from tether.recall_routes import recall_routes
 from tether.routes import routes
@@ -47,6 +48,7 @@ def public_api_routes() -> list[Route]:
         *recall_routes,
         *notification_routes,
         *artifact_routes,
+        *panel_routes,
     ]
 
 

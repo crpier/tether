@@ -59,6 +59,8 @@ from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.notifications import NotificationService, create_notification_schema
 from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
+from tether.panel_tools import internal_panel_tool_routes
+from tether.panels import PanelService, create_panel_schema
 from tether.push import PushService, create_push_schema
 from tether.recall import (
     AnswerGrader,
@@ -333,6 +335,7 @@ async def _create_schemas(db: Database) -> None:
     await create_search_meta_schema(db)
     await create_notification_schema(db)
     await create_artifact_schema(db)
+    await create_panel_schema(db)
 
 
 def _build_youtube_client(
@@ -721,6 +724,32 @@ def _build_bucket_item_and_fusion_services(
     return bucket_item_service, search_fusion_service
 
 
+def _build_presentation_services(
+    app: Starlette,
+    *,
+    database: Database,
+    event_hub: EventHub,
+    memory_service: MemoryService,
+    tracer: Tracer,
+) -> None:
+    """Wire the presentation-side services: Artifacts and Synthetic panels.
+
+    Panels execute through the Memory search seam, so the service takes the
+    Memory service directly; both are pure app-state singletons with no
+    background tasks."""
+    app.state.artifact_service = ArtifactService(
+        database=database,
+        event_publisher=event_hub,
+        tracer=tracer,
+    )
+    app.state.panel_service = PanelService(
+        database=database,
+        memory_service=memory_service,
+        event_publisher=event_hub,
+        tracer=tracer,
+    )
+
+
 async def _build_transcript_search(
     *,
     database: Database,
@@ -931,9 +960,11 @@ def _lifespan(
                 searcher=bucket_item_reconciler,
                 tracer=telemetry.tracer,
             )
-            app.state.artifact_service = ArtifactService(
+            _build_presentation_services(
+                app,
                 database=db,
-                event_publisher=event_hub,
+                event_hub=event_hub,
+                memory_service=memory_service,
                 tracer=telemetry.tracer,
             )
             youtube_tasks = await _wire_youtube(
@@ -1088,6 +1119,7 @@ def create_app(
             *internal_trigger_tool_routes(),
             *internal_recall_tool_routes(),
             *internal_conversation_history_tool_routes(),
+            *internal_panel_tool_routes(),
             *websocket_routes,
             *docs,
             # The SPA catch-all mounts at "/", so it must come last — every API,

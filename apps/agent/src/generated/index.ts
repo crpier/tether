@@ -37,6 +37,10 @@ import { registerReadConversationHistoryTool } from "./read_conversation_history
 import { registerCreateArtifactTool } from "./create_artifact.js";
 import { registerUpdateArtifactTool } from "./update_artifact.js";
 import { registerListArtifactEventsTool } from "./list_artifact_events.js";
+import { registerCreatePanelTool } from "./create_panel.js";
+import { registerListPanelsTool } from "./list_panels.js";
+import { registerUpdatePanelTool } from "./update_panel.js";
+import { registerDeletePanelTool } from "./delete_panel.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -74,4 +78,8 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCreateArtifactTool(pi);
   registerUpdateArtifactTool(pi);
   registerListArtifactEventsTool(pi);
+  registerCreatePanelTool(pi);
+  registerListPanelsTool(pi);
+  registerUpdatePanelTool(pi);
+  registerDeletePanelTool(pi);
 }
