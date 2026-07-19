@@ -13,6 +13,7 @@ from __future__ import annotations
 from tether.artifact_tools import ARTIFACT_TOOL_SPECS
 from tether.bucket_tools import BUCKET_TOOL_SPECS
 from tether.conversation_history_tools import CONVERSATION_HISTORY_TOOL_SPECS
+from tether.kosync_tools import KOSYNC_TOOL_SPECS
 from tether.panel_tools import PANEL_TOOL_SPECS
 from tether.recall_tools import RECALL_TOOL_SPECS
 from tether.tools import MEMORY_TOOL_SPECS, ToolSpec
@@ -37,4 +38,5 @@ def all_tool_specs() -> tuple[ToolSpec, ...]:
         *CONVERSATION_HISTORY_TOOL_SPECS,
         *ARTIFACT_TOOL_SPECS,
         *PANEL_TOOL_SPECS,
+        *KOSYNC_TOOL_SPECS,
     )

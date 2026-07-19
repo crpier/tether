@@ -729,6 +729,37 @@
         "title": "DuplicateCluster",
         "type": "object"
       },
+      "EbookDocumentRead": {
+        "description": "HTTP/tool representation of a document Tether has seen progress for.\n\n`finished` collapses the internal `finished_captured_at` stamp to the only\nfact a surface needs \u2014 whether the one finished Memory has been minted.\n\n>>> EbookDocumentRead(document_hash=\"abc\", title=None, finished=False).finished\nFalse",
+        "properties": {
+          "document_hash": {
+            "title": "Document Hash",
+            "type": "string"
+          },
+          "finished": {
+            "title": "Finished",
+            "type": "boolean"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "document_hash",
+          "title",
+          "finished"
+        ],
+        "title": "EbookDocumentRead",
+        "type": "object"
+      },
       "EditRequest": {
         "description": "Body for editing a Memory's content at an observed `version`.\n\n>>> EditRequest(content=\"I prefer window seats\", version=1).version\n1",
         "properties": {
@@ -848,6 +879,27 @@
         "type": "string"
       },
       "JsonValue": {},
+      "LabelEbookRequest": {
+        "description": "Body for attaching a human title to a document hash.",
+        "properties": {
+          "document_hash": {
+            "minLength": 1,
+            "title": "Document Hash",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_hash",
+          "title"
+        ],
+        "title": "LabelEbookRequest",
+        "type": "object"
+      },
       "LoginRequest": {
         "description": "Body for app login with the shared password.",
         "properties": {
@@ -860,6 +912,21 @@
           "password"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "MatchEbookFilenameRequest": {
+        "description": "Body for labeling the document a filename hashes to.",
+        "properties": {
+          "filename": {
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename"
+        ],
+        "title": "MatchEbookFilenameRequest",
         "type": "object"
       },
       "MemoryContent": {
@@ -2752,6 +2819,80 @@
           }
         },
         "summary": "Select the model used for subsequent turns in one conversation."
+      }
+    },
+    "/api/ebooks/label": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelEbookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EbookDocumentRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Attach a human title to a document hash."
+      }
+    },
+    "/api/ebooks/match-filename": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchEbookFilenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EbookDocumentRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Label the document a filename hashes to, titled from the filename."
+      }
+    },
+    "/api/ebooks/unlabeled": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EbookDocumentRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List every ebook Tether has progress for that is still unlabeled."
       }
     },
     "/api/memories": {

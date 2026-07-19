@@ -1235,6 +1235,58 @@
         "title": "DeletePanelParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/label_ebook",
+      "name": "label_ebook",
+      "params_model": "LabelEbookParams",
+      "schema": {
+        "description": "Params for attaching a human title to a document hash.",
+        "properties": {
+          "document_hash": {
+            "minLength": 1,
+            "title": "Document Hash",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": ["document_hash", "title"],
+        "title": "LabelEbookParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/match_ebook_filename",
+      "name": "match_ebook_filename",
+      "params_model": "MatchEbookFilenameParams",
+      "schema": {
+        "description": "Params for labeling the document a filename hashes to.",
+        "properties": {
+          "filename": {
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": ["filename"],
+        "title": "MatchEbookFilenameParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_unlabeled_ebooks",
+      "name": "list_unlabeled_ebooks",
+      "params_model": "ListUnlabeledEbooksParams",
+      "schema": {
+        "description": "Params for listing documents still without a title (takes none).",
+        "properties": {},
+        "title": "ListUnlabeledEbooksParams",
+        "type": "object"
+      }
     }
   ]
 }
