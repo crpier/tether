@@ -9,6 +9,7 @@ from tether.bucket_tools import internal_bucket_tool_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
+from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.tool_schemas import build_tool_schema_document
@@ -67,6 +68,9 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "list_panels",
             "update_panel",
             "delete_panel",
+            "label_ebook",
+            "match_ebook_filename",
+            "list_unlabeled_ebooks",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
@@ -147,6 +151,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_conversation_history_tool_routes(),
             internal_artifact_tool_routes(),
             internal_panel_tool_routes(),
+            internal_kosync_tool_routes(),
         )
         for route in routes
     }

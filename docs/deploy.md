@@ -147,6 +147,31 @@ Once the token is present the background ingestion sync activates on the next
 host start. With no token, ingestion runs the in-memory fake and the sync stays
 off — the rest of Tether is unaffected.
 
+## KOReader ebook progress (kosync)
+
+Optional. Tether can *be* the KOReader sync server: KOReader devices push
+reading progress straight at the host, and a book crossing ~98% mints a single
+"Finished reading …" memory. Off by default; enable it by setting all three:
+
+```sh
+TETHER_KOSYNC_ENABLED=true
+TETHER_KOSYNC_USERNAME=<any username you pick>
+TETHER_KOSYNC_USERKEY=<md5 of the password you'll enter in KOReader>
+```
+
+`TETHER_KOSYNC_USERKEY` is the **MD5 of the password**, not the password —
+KOReader hashes it client-side and Tether compares the hash verbatim
+(`printf %s 'yourpassword' | md5sum`). With any of the three unset the `/kosync`
+routes are not mounted (404) and the rest of Tether is unaffected.
+
+On each device, in KOReader: **Tools → Progress sync → Custom sync server** and
+point it at your host's base URL with the `/kosync` path (e.g.
+`https://tether.example/kosync`), then register/login with the username and
+password above. Critically, set **Progress sync → Document matching method →
+Filename**: Tether maps a book by `md5(basename)`, and KOReader's default binary
+partial-MD5 cannot be mapped back to a title. Use `label_ebook` (or ask the
+assistant, which can `list_unlabeled_ebooks`) to attach titles to hashes.
+
 ## Logs
 
 The container emits structured JSON to stdout (captured by Docker). Render it

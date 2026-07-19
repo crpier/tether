@@ -59,6 +59,9 @@ describe("generated tool extension", () => {
       "list_panels",
       "update_panel",
       "delete_panel",
+      "label_ebook",
+      "match_ebook_filename",
+      "list_unlabeled_ebooks",
     ]);
   });
 });
