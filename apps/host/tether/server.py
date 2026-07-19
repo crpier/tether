@@ -66,7 +66,10 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
 from tether.push import PushService, create_push_schema
 from tether.readwise import (
+    HttpReaderTransport,
     HttpReadwiseTransport,
+    ReaderClient,
+    ReaderSyncService,
     ReadwiseClient,
     ReadwiseSyncService,
     create_readwise_schema,
@@ -184,6 +187,8 @@ class AppConfig:
     readwise_api_key: str = ""
     readwise_sync_enabled: bool = False
     readwise_sync_interval_seconds: float = 60 * 60
+    readwise_reader_sync_enabled: bool = False
+    readwise_reader_sync_interval_seconds: float = 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -346,6 +351,14 @@ class HostSettings(BaseSettings):
     readwise_sync_interval_seconds: float = 60 * 60
     """Seconds between Readwise export passes. The Export API is generous (240
     req/min) but highlights change slowly, so an hourly cadence is ample."""
+    readwise_reader_sync_enabled: bool = False
+    """Whether the background Readwise Reader v3 progress rider runs. Off by
+    default and a no-op unless `readwise_api_key` is also set, so polling reading
+    progress into the ebook Telemetry tables is a deliberate, credentialed
+    choice."""
+    readwise_reader_sync_interval_seconds: float = 60 * 60
+    """Seconds between Reader v3 list passes. The list API is rate-limited (20
+    req/min) and reading progress changes slowly, so an hourly cadence is ample."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -601,6 +614,46 @@ async def _wire_readwise(
         )
 
     return [asyncio.create_task(_run_readwise_sync())]
+
+
+async def _wire_reader(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    memory_service: MemoryService,
+) -> list[asyncio.Task[None]]:
+    """Wire the Readwise Reader v3 progress rider + its worker onto state.
+
+    A no-op returning no tasks unless the rider is enabled and the shared
+    `readwise_api_key` is set — the default install never polls Reader. When
+    enabled, the worker runs an idempotent boot pass (off the startup critical
+    path) and then the periodic list-poll loop; the returned task joins the
+    lifespan's cancelled-on-shutdown background tasks.
+    """
+    if not config.readwise_reader_sync_enabled or not config.readwise_api_key:
+        return []
+    logger = cast("Logger", app.state.logger)
+    sync = ReaderSyncService(
+        database=database,
+        client=ReaderClient(transport=HttpReaderTransport(config.readwise_api_key)),
+        memory_service=memory_service,
+    )
+    app.state.reader_sync = sync
+
+    async def _run_reader_sync() -> None:
+        try:
+            _ = await sync.sync(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Readwise Reader boot sync failed")
+        await sync.sync_forever(
+            interval_seconds=config.readwise_reader_sync_interval_seconds,
+            logger=logger,
+        )
+
+    return [asyncio.create_task(_run_reader_sync())]
 
 
 def _ephemeral_pi_config(
@@ -1143,6 +1196,9 @@ def _lifespan(
                 + await _wire_readwise(
                     app, config=config, database=db, memory_service=memory_service
                 )
+                + await _wire_reader(
+                    app, config=config, database=db, memory_service=memory_service
+                )
             )
             try:
                 yield
@@ -1313,6 +1369,10 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         readwise_api_key=settings.readwise_api_key,
         readwise_sync_enabled=settings.readwise_sync_enabled,
         readwise_sync_interval_seconds=settings.readwise_sync_interval_seconds,
+        readwise_reader_sync_enabled=settings.readwise_reader_sync_enabled,
+        readwise_reader_sync_interval_seconds=(
+            settings.readwise_reader_sync_interval_seconds
+        ),
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
         web_dist=settings.web_dist,
