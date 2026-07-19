@@ -2001,6 +2001,24 @@
         "title": "UpdateTriggerRequest",
         "type": "object"
       },
+      "VoiceCaptureResponse": {
+        "description": "A transcribed voice note and the loose Memory it captured.\n\n>>> VoiceCaptureResponse(\n...     memory=MemoryRead(\n...         content=\"buy oat milk\",\n...         created_at=datetime(2026, 1, 1),\n...         facets={\"source\": \"voice\"},\n...         id=\"018f0000-0000-7000-8000-000000000000\",\n...         state=\"loose\",\n...         tethered_at=None,\n...         updated_at=datetime(2026, 1, 1),\n...         version=1,\n...     ),\n...     transcript=\"buy oat milk\",\n... ).transcript\n'buy oat milk'",
+        "properties": {
+          "memory": {
+            "$ref": "#/components/schemas/MemoryRead"
+          },
+          "transcript": {
+            "title": "Transcript",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory",
+          "transcript"
+        ],
+        "title": "VoiceCaptureResponse",
+        "type": "object"
+      },
       "YouTubeSource": {
         "const": "liked",
         "type": "string"
@@ -2604,6 +2622,23 @@
           }
         },
         "summary": "Complete a Bucket item, moving it to terminal history."
+      }
+    },
+    "/api/capture/voice": {
+      "post": {
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceCaptureResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Transcribe an uploaded audio note and capture it as a loose Memory."
       }
     },
     "/api/conversations": {

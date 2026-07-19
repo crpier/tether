@@ -5,12 +5,20 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snektest import assert_eq, assert_in, assert_is_not_none, assert_true, test
+from snektest import (
+    assert_eq,
+    assert_in,
+    assert_is_none,
+    assert_is_not_none,
+    assert_true,
+    test,
+)
 from starlette.testclient import TestClient
 
 from tether.auth import (
     SESSION_COOKIE,
     Principal,
+    authenticate_bearer_token,
     mint_session_cookie,
     verify_session_cookie,
 )
@@ -19,13 +27,17 @@ from tether.telemetry import TelemetrySettings
 
 APP_PASSWORD = "correct horse battery staple"
 SESSION_SECRET = "stable-test-session-secret"
+API_TOKEN = "mobile-static-bearer-token"
 
 
-def make_client(root: Path, *, secure_cookies: bool = False) -> TestClient:
+def make_client(
+    root: Path, *, secure_cookies: bool = False, api_token: str = ""
+) -> TestClient:
     """Create a test app with auth configured like a real host."""
     return TestClient(
         create_app(
             config=AppConfig(
+                api_token=api_token,
                 app_password=APP_PASSWORD,
                 database_path=root / "tether.sqlite3",
                 kb_root=root / ".tether",
@@ -178,6 +190,107 @@ def auth_guard_exempts_internal_tools_and_docs() -> None:
     assert_eq(internal.status_code, 401)
     assert_eq(openapi.status_code, 200)
     assert_eq(docs.status_code, 200)
+
+
+@test()
+def bearer_token_matches_configured_token() -> None:
+    """A correct `Authorization: Bearer` value authenticates the app principal."""
+    principal = authenticate_bearer_token(f"Bearer {API_TOKEN}", API_TOKEN)
+
+    assert_is_not_none(principal)
+
+
+@test()
+def wrong_bearer_token_is_rejected() -> None:
+    """A mismatched bearer value never authenticates."""
+    assert_is_none(authenticate_bearer_token("Bearer nope", API_TOKEN))
+
+
+@test()
+def bearer_auth_is_off_when_no_token_configured() -> None:
+    """With no configured token, even a well-formed bearer is rejected."""
+    assert_is_none(authenticate_bearer_token(f"Bearer {API_TOKEN}", ""))
+
+
+@test()
+def non_bearer_authorization_header_is_rejected() -> None:
+    """A non-`Bearer` scheme is not a mobile token."""
+    assert_is_none(authenticate_bearer_token(f"Token {API_TOKEN}", API_TOKEN))
+
+
+@test()
+def configured_bearer_token_passes_public_rest_without_a_cookie() -> None:
+    """A mobile client with the static token reaches public REST cookie-free."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api_token=API_TOKEN) as client,
+    ):
+        response = client.get(
+            "/api/memories",
+            params={"state": "loose"},
+            headers={"Authorization": f"Bearer {API_TOKEN}"},
+        )
+
+    assert_eq(response.status_code, 200)
+
+
+@test()
+def wrong_bearer_token_is_rejected_by_public_rest() -> None:
+    """A mismatched bearer token is denied like an anonymous request."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api_token=API_TOKEN) as client,
+    ):
+        response = client.get(
+            "/api/memories",
+            params={"state": "loose"},
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+
+    assert_eq(response.status_code, 401)
+
+
+@test()
+def bearer_auth_stays_off_when_token_unset() -> None:
+    """With no configured token, a bearer header does not open public REST."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        response = client.get(
+            "/api/memories",
+            params={"state": "loose"},
+            headers={"Authorization": f"Bearer {API_TOKEN}"},
+        )
+
+    assert_eq(response.status_code, 401)
+
+
+@test()
+def bearer_request_is_not_issued_a_session_cookie() -> None:
+    """Token auth is stateless: a bearer request gets no `Set-Cookie` back."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api_token=API_TOKEN) as client,
+    ):
+        response = client.get(
+            "/api/memories",
+            params={"state": "loose"},
+            headers={"Authorization": f"Bearer {API_TOKEN}"},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_is_none(response.headers.get("set-cookie"))
+
+
+@test()
+def cookie_auth_still_works_with_a_token_configured() -> None:
+    """Configuring a mobile token leaves the browser cookie path unchanged."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), api_token=API_TOKEN) as client,
+    ):
+        login(client)
+        response = client.get("/api/memories", params={"state": "loose"})
+
+    assert_eq(response.status_code, 200)
 
 
 @test()

@@ -62,6 +62,30 @@ def authenticate_password(password: str, configured_password: str) -> Principal 
     return None
 
 
+_BEARER_PREFIX = "Bearer "
+
+
+def authenticate_bearer_token(
+    authorization_header: str, configured_token: str
+) -> Principal | None:
+    """Validate a mobile static bearer token in constant time.
+
+    The non-browser auth path: a `Authorization: Bearer <token>` header whose
+    value matches the single configured token authenticates the same app
+    principal a session cookie would. An empty `configured_token` turns the
+    feature off entirely — no header ever authenticates — so token auth is a
+    deliberate, credentialed opt-in and revocation is rotating the value.
+    """
+    if not configured_token:
+        return None
+    if not authorization_header.startswith(_BEARER_PREFIX):
+        return None
+    presented = authorization_header[len(_BEARER_PREFIX) :]
+    if secrets.compare_digest(presented.encode(), configured_token.encode()):
+        return Principal(sub=_SESSION_SUBJECT)
+    return None
+
+
 def mint_session_cookie(
     principal: Principal,
     session_secret: str,
@@ -138,20 +162,40 @@ def clear_session_cookie(response: Response, *, secure: bool) -> None:
 class AppSessionMiddleware(BaseHTTPMiddleware):
     """Require a valid app session for browser-facing REST routes."""
 
-    def __init__(self, app: ASGIApp, *, secure: bool, session_secret: str) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        secure: bool,
+        session_secret: str,
+        api_token: str = "",
+    ) -> None:
         super().__init__(app)
         self.secure: bool = secure
         self.session_secret: str = session_secret
+        self.api_token: str = api_token
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        """Gate `/api/*` except auth routes, refreshing valid sessions."""
+        """Gate `/api/*` except auth routes, accepting a cookie or bearer token.
+
+        A valid session cookie and a valid mobile bearer token are both accepted;
+        the bearer path is stateless, so only a cookie-authenticated request has
+        its session refreshed on the way out. When a token is configured the
+        bearer is checked first so a mobile client authenticates without a cookie.
+        """
         if not request.url.path.startswith("/api/") or request.url.path.startswith(
             "/api/auth/"
         ):
+            return await call_next(request)
+        bearer_principal = authenticate_bearer_token(
+            request.headers.get("Authorization", ""), self.api_token
+        )
+        if bearer_principal is not None:
+            request.state.principal = bearer_principal
             return await call_next(request)
         principal = verify_session_cookie(
             request.cookies.get(SESSION_COOKIE, ""), self.session_secret
