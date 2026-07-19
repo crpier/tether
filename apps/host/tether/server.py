@@ -47,6 +47,7 @@ from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
 from tether.conversations import ConversationService, create_conversation_schema
+from tether.ebook_stats import EbookStatsSyncService, create_ebook_stats_schema
 from tether.embeddings import Embedder, FastEmbedder
 from tether.events import EventHub
 from tether.kosync import KosyncService, create_kosync_schema
@@ -156,6 +157,8 @@ class AppConfig:
     default_model: str | None = None
     default_model_id: str | None = None
     default_model_provider: str | None = None
+    ebook_statistics_db_path: str = ""
+    ebook_statistics_sync_interval_seconds: float = 5 * 60
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     kb_root: str | Path = Path(".tether")
     kosync_enabled: bool = False
@@ -387,6 +390,16 @@ class HostSettings(BaseSettings):
     readwise_reader_sync_interval_seconds: float = 60 * 60
     """Seconds between Reader v3 list passes. The list API is rate-limited (20
     req/min) and reading progress changes slowly, so an hourly cadence is ample."""
+    ebook_statistics_db_path: str = ""
+    """Host-visible path to a Syncthing-mirrored copy of KOReader's
+    `statistics.sqlite`. Empty (the default) keeps the ingestion worker off, so
+    the default install never touches a stats file. The live path is never
+    opened directly — only a private snapshot copy is, since Syncthing may have
+    it mid-write."""
+    ebook_statistics_sync_interval_seconds: float = 5 * 60
+    """Seconds between statistics-file stat checks. A local file stat is cheap
+    and KOReader flushes stats on every page turn, so a five-minute cadence
+    keeps the Telemetry reasonably fresh without busy-polling."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -418,6 +431,7 @@ async def _create_schemas(db: Database) -> None:
     await create_panel_schema(db)
     await create_readwise_schema(db)
     await create_kosync_schema(db)
+    await create_ebook_stats_schema(db)
 
 
 def _build_youtube_client(
@@ -682,6 +696,41 @@ async def _wire_reader(
         )
 
     return [asyncio.create_task(_run_reader_sync())]
+
+
+async def _wire_ebook_stats(
+    app: Starlette, *, config: AppConfig, database: Database
+) -> list[asyncio.Task[None]]:
+    """Wire the KOReader statistics-file ingestion worker onto state.
+
+    A no-op returning no tasks unless `ebook_statistics_db_path` is set — the
+    default install never touches a stats file. When configured, the worker
+    runs an idempotent boot pass (off the startup critical path) and then the
+    periodic stat-check loop; the returned task joins the lifespan's
+    cancelled-on-shutdown background tasks.
+    """
+    if not config.ebook_statistics_db_path:
+        return []
+    logger = cast("Logger", app.state.logger)
+    sync = EbookStatsSyncService(
+        database=database,
+        statistics_db_path=Path(config.ebook_statistics_db_path),
+    )
+    app.state.ebook_stats_sync = sync
+
+    async def _run_ebook_stats_sync() -> None:
+        try:
+            _ = await sync.sync(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ebook statistics boot sync failed")
+        await sync.sync_forever(
+            interval_seconds=config.ebook_statistics_sync_interval_seconds,
+            logger=logger,
+        )
+
+    return [asyncio.create_task(_run_ebook_stats_sync())]
 
 
 def _ephemeral_pi_config(
@@ -1227,6 +1276,7 @@ def _lifespan(
                 + await _wire_reader(
                     app, config=config, database=db, memory_service=memory_service
                 )
+                + await _wire_ebook_stats(app, config=config, database=db)
             )
             try:
                 yield
@@ -1408,6 +1458,10 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         app_password=settings.app_password,
         database_path=settings.database_path,
         default_model=settings.default_model,
+        ebook_statistics_db_path=settings.ebook_statistics_db_path,
+        ebook_statistics_sync_interval_seconds=(
+            settings.ebook_statistics_sync_interval_seconds
+        ),
         kb_root=settings.kb_root,
         kosync_enabled=settings.kosync_enabled,
         kosync_username=settings.kosync_username,
