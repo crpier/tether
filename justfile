@@ -314,3 +314,16 @@ youtube-token-install token=".tether/youtube-oauth-token.json":
     docker compose exec -T host mkdir -p /data/youtube
     docker compose cp "{{token}}" host:/data/youtube/token.json
     echo "installed at /data/youtube/token.json; pick it up with: docker compose restart host"
+
+# Build the Android capture client's debug APK (apps/capture-android). Not part
+# of the JS/Python validation gate; needs a local Android SDK + a machine-local
+# apps/capture-android/local.properties (see that app's README). Uses the pinned
+# Gradle wrapper (AGP 8.7 is incompatible with system Gradle 9.6); picks a
+# JDK 17 if one is installed (AGP rejects the very newest JDKs).
+android-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for jdk in /usr/lib/jvm/java-17-openjdk /usr/lib/jvm/java-21-openjdk; do
+      if [ -x "$jdk/bin/java" ]; then export JAVA_HOME="$jdk"; break; fi
+    done
+    cd apps/capture-android && ./gradlew assembleDebug

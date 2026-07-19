@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tether Capture</string>
+    <string name="hold_to_record">Hold to record</string>
+    <string name="recording">Recording…</string>
+    <string name="settings_title">Settings</string>
+    <string name="host_url_label">Host base URL</string>
+    <string name="host_url_hint">https://tether.example.com</string>
+    <string name="token_label">API token</string>
+    <string name="token_hint">TETHER_API_TOKEN value</string>
+    <string name="save">Save</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="not_configured">Set host URL and token in Settings first</string>
+    <string name="nothing_to_share">Nothing to capture</string>
+    <string name="captured">Captured</string>
+    <string name="capture_failed">Capture failed: %1$s</string>
+    <string name="upload_failed">Upload failed: %1$s</string>
+    <string name="transcript_prefix">Captured: %1$s</string>
+    <string name="recording_too_short">Recording too short</string>
+    <string name="mic_permission_denied">Microphone permission is required to record</string>
+</resources>
