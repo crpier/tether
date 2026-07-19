@@ -631,8 +631,10 @@ export default function inspectTools(pi) {
             "capture",
             "complete_bucket_item",
             "create_artifact",
+            "create_panel",
             "create_trigger",
             "delete_bucket_item",
+            "delete_panel",
             "delete_trigger",
             "edit",
             "facet_overview",
@@ -640,6 +642,7 @@ export default function inspectTools(pi) {
             "ignore_youtube_video",
             "list_artifact_events",
             "list_due_recall_prompts",
+            "list_panels",
             "list_triggers",
             "merge_facet_value",
             "propose_essay_grade",
@@ -656,6 +659,7 @@ export default function inspectTools(pi) {
             "tether",
             "triage_report",
             "update_artifact",
+            "update_panel",
         ],
     )
     assert_not_in("bash", active_tools)
