@@ -17,6 +17,11 @@ export const queryKeys = {
   messages: (conversationId: string) => ["messages", conversationId] as const,
   models: ["models"] as const,
   notifications: ["notifications"] as const,
+  // The "panels" prefix matches the host's InvalidateEvent key, so a panel
+  // CRUD from any surface (agent tool or REST) refetches the saved list and
+  // every per-panel results query.
+  panels: ["panels"] as const,
+  panelResults: (panelId: string) => ["panels", "results", panelId] as const,
   push: ["push"] as const,
   recall: ["recall"] as const,
   session: ["session"] as const,

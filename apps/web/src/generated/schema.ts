@@ -984,6 +984,172 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/panels": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List live Synthetic panels in position order. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PanelRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Create a Synthetic panel. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["CreatePanelRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PanelRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/panels/{panel_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Replace a panel's definition at an observed version. */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          panel_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["UpdatePanelRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PanelRead"];
+          };
+        };
+      };
+    };
+    post?: never;
+    /** Delete a Synthetic panel. */
+    delete: {
+      parameters: {
+        query: {
+          version: number;
+        };
+        header?: never;
+        path: {
+          panel_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PanelRead"];
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/panels/{panel_id}/results": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Run a panel's saved query, recomputed against the corpus right now. */
+    get: {
+      parameters: {
+        query?: {
+          limit?: number;
+        };
+        header?: never;
+        path: {
+          panel_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PanelResultsRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/push/status": {
     parameters: {
       query?: never;
@@ -1949,6 +2115,45 @@ export interface components {
       title: string | null;
     };
     /**
+     * CreatePanelRequest
+     * @description Body for creating a Synthetic panel.
+     */
+    CreatePanelRequest: {
+      /**
+       * Columns
+       * @default []
+       */
+      columns: string[];
+      /** Facets */
+      facets: {
+        [key: string]: string;
+      };
+      /** Name */
+      name: string;
+      /**
+       * Position
+       * @default 0
+       */
+      position: number;
+      /**
+       * Query
+       * @default null
+       */
+      query: string | null;
+      /** @default table */
+      render_kind: components["schemas"]["PanelRenderKind"];
+      /**
+       * Vega Lite Spec
+       * @default null
+       */
+      vega_lite_spec: string | null;
+      /**
+       * Window Days
+       * @default null
+       */
+      window_days: number | null;
+    };
+    /**
      * CreateTriggerRequest
      * @description Body for creating a Scheduled trigger.
      */
@@ -2208,6 +2413,58 @@ export interface components {
       source_label: string | null;
       /** Trigger Id */
       trigger_id: string | null;
+    };
+    /**
+     * PanelRead
+     * @description HTTP representation of a Synthetic panel.
+     */
+    PanelRead: {
+      /** Columns */
+      columns: string[];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Facets */
+      facets: {
+        [key: string]: string;
+      };
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Name */
+      name: string;
+      /** Position */
+      position: number;
+      /** Query */
+      query: string | null;
+      render_kind: components["schemas"]["PanelRenderKind"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Vega Lite Spec */
+      vega_lite_spec: string | null;
+      /** Version */
+      version: number;
+      /** Window Days */
+      window_days: number | null;
+    };
+    /** @enum {string} */
+    PanelRenderKind: "table" | "vega-lite";
+    /**
+     * PanelResultsRead
+     * @description One panel execution: the capped rows plus the uncapped match count.
+     */
+    PanelResultsRead: {
+      /** Memories */
+      memories: components["schemas"]["MemoryRead"][];
+      /** Total */
+      total: number;
     };
     /**
      * PostArtifactEventRequest
@@ -2532,6 +2789,47 @@ export interface components {
     UnsubscribeRequest: {
       /** Endpoint */
       endpoint: string;
+    };
+    /**
+     * UpdatePanelRequest
+     * @description Body for replacing a panel's definition at an observed version.
+     */
+    UpdatePanelRequest: {
+      /**
+       * Columns
+       * @default []
+       */
+      columns: string[];
+      /** Facets */
+      facets: {
+        [key: string]: string;
+      };
+      /** Name */
+      name: string;
+      /**
+       * Position
+       * @default 0
+       */
+      position: number;
+      /**
+       * Query
+       * @default null
+       */
+      query: string | null;
+      /** @default table */
+      render_kind: components["schemas"]["PanelRenderKind"];
+      /**
+       * Vega Lite Spec
+       * @default null
+       */
+      vega_lite_spec: string | null;
+      /** Version */
+      version: number;
+      /**
+       * Window Days
+       * @default null
+       */
+      window_days: number | null;
     };
     /**
      * UpdateTriggerRequest

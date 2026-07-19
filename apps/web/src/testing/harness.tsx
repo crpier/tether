@@ -20,11 +20,15 @@ import type {
   MemoryState,
   Message,
   ModelList,
+  CreatePanel,
   Notification,
+  Panel,
+  PanelResults,
   PushStatus,
   RecallAnswerInput,
   TetherApi,
   Trigger,
+  UpdatePanel,
   UpdateTrigger,
   YouTubeSyncStatus,
 } from "../api";
@@ -168,6 +172,24 @@ export function memory(overrides: Partial<Memory>): Memory {
   };
 }
 
+export function panel(overrides: Partial<Panel>): Panel {
+  return {
+    columns: [],
+    created_at: "2026-01-01T00:00:00Z",
+    facets: { domain: "finance" },
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    name: "finance",
+    position: 0,
+    query: null,
+    render_kind: "table",
+    updated_at: "2026-01-01T00:00:00Z",
+    vega_lite_spec: null,
+    version: 1,
+    window_days: null,
+    ...overrides,
+  };
+}
+
 export function artifact(overrides: Partial<Artifact>): Artifact {
   return {
     created_at: "2026-01-01T00:00:00Z",
@@ -283,6 +305,14 @@ export class FakeApi implements TetherApi {
   proposeRejections: ApiError[] = [];
   correctIndices: Record<string, number> = {};
   storedArtifacts: Artifact[] = [];
+  storedPanels: Panel[] = [];
+  // Per-panel execution results the fake "server" returns; a panel with no
+  // entry executes to an empty result, like an empty corpus.
+  storedPanelResults: Record<string, PanelResults> = {};
+  createPanelCalls: CreatePanel[] = [];
+  updatePanelCalls: { body: UpdatePanel; panelId: string }[] = [];
+  deletePanelCalls: { panelId: string; version: number }[] = [];
+  deletePanelRejections: ApiError[] = [];
   getArtifactCalls: string[] = [];
   getArtifactRejections: ApiError[] = [];
   postArtifactEventCalls: { artifactId: string; payload: unknown }[] = [];
@@ -294,6 +324,8 @@ export class FakeApi implements TetherApi {
     duePrompts?: DuePrompt[];
     memories?: Memory[];
     messages?: Message[];
+    panelResults?: Record<string, PanelResults>;
+    panels?: Panel[];
     triggers?: Trigger[];
   }) {
     this.authenticated = options.authenticated;
@@ -302,6 +334,8 @@ export class FakeApi implements TetherApi {
     this.storedDuePrompts = options.duePrompts ?? [];
     this.storedBucketItems = options.bucketItems ?? [];
     this.storedMemories = options.memories ?? [];
+    this.storedPanels = options.panels ?? [];
+    this.storedPanelResults = options.panelResults ?? {};
   }
 
   getSession() {
@@ -829,6 +863,70 @@ export class FakeApi implements TetherApi {
         .padStart(2, "0")}`,
       payload,
     });
+  }
+
+  listPanels(): Promise<Panel[]> {
+    return Promise.resolve([...this.storedPanels]);
+  }
+
+  createPanel(body: CreatePanel): Promise<Panel> {
+    this.createPanelCalls.push(body);
+    const created = panel({
+      columns: body.columns,
+      facets: body.facets,
+      name: body.name,
+      position: body.position,
+      query: body.query,
+      render_kind: body.render_kind,
+      vega_lite_spec: body.vega_lite_spec,
+      window_days: body.window_days,
+    });
+    this.storedPanels = [...this.storedPanels, created];
+    return Promise.resolve(created);
+  }
+
+  updatePanel(panelId: string, body: UpdatePanel): Promise<Panel> {
+    this.updatePanelCalls.push({ body, panelId });
+    const existing = this.storedPanels.find(
+      (candidate) => candidate.id === panelId,
+    );
+    if (existing === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    const updated: Panel = {
+      ...existing,
+      name: body.name,
+      version: existing.version + 1,
+    };
+    this.storedPanels = this.storedPanels.map((candidate) =>
+      candidate.id === panelId ? updated : candidate,
+    );
+    return Promise.resolve(updated);
+  }
+
+  deletePanel(panelId: string, version: number): Promise<Panel> {
+    this.deletePanelCalls.push({ panelId, version });
+    const forced = this.deletePanelRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const existing = this.storedPanels.find(
+      (candidate) => candidate.id === panelId,
+    );
+    if (existing === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    this.storedPanels = this.storedPanels.filter(
+      (candidate) => candidate.id !== panelId,
+    );
+    return Promise.resolve(existing);
+  }
+
+  getPanelResults(panelId: string): Promise<PanelResults> {
+    if (panelId in this.storedPanelResults) {
+      return Promise.resolve(this.storedPanelResults[panelId]);
+    }
+    return Promise.resolve({ memories: [], total: 0 });
   }
 
   private placeholderPrompt(promptId: string): DuePrompt["prompt"] {

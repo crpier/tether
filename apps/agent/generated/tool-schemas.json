@@ -1023,6 +1023,218 @@
         "title": "ListArtifactEventsParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/create_panel",
+      "name": "create_panel",
+      "params_model": "CreatePanelParams",
+      "schema": {
+        "$defs": {
+          "PanelRenderKind": {
+            "enum": ["table", "vega-lite"],
+            "type": "string"
+          }
+        },
+        "description": "Params for saving a Synthetic panel.\n\nA panel must be scoped by `facets` and/or a text `query`; a `vega-lite`\nrender kind must carry its `vega_lite_spec` template. A malformed spec is\nrejected as a well-formed `invalid_input` envelope, never a corrupt row.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "facets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "object"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Days"
+          },
+          "columns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "render_kind": {
+            "$ref": "#/$defs/PanelRenderKind",
+            "default": "table"
+          },
+          "vega_lite_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vega Lite Spec"
+          },
+          "position": {
+            "default": 0,
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": ["name", "facets"],
+        "title": "CreatePanelParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_panels",
+      "name": "list_panels",
+      "params_model": "ListPanelsParams",
+      "schema": {
+        "description": "Params for listing live panels, in position order.",
+        "properties": {},
+        "title": "ListPanelsParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/update_panel",
+      "name": "update_panel",
+      "params_model": "UpdatePanelParams",
+      "schema": {
+        "$defs": {
+          "PanelRenderKind": {
+            "enum": ["table", "vega-lite"],
+            "type": "string"
+          }
+        },
+        "description": "Params for replacing a panel's definition at an observed version.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "facets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "object"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Days"
+          },
+          "columns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "render_kind": {
+            "$ref": "#/$defs/PanelRenderKind",
+            "default": "table"
+          },
+          "vega_lite_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vega Lite Spec"
+          },
+          "position": {
+            "default": 0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "panel_id": {
+            "format": "uuid7",
+            "title": "Panel Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["name", "facets", "panel_id", "version"],
+        "title": "UpdatePanelParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/delete_panel",
+      "name": "delete_panel",
+      "params_model": "DeletePanelParams",
+      "schema": {
+        "description": "Params for deleting a panel at an observed version.",
+        "properties": {
+          "panel_id": {
+            "format": "uuid7",
+            "title": "Panel Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["panel_id", "version"],
+        "title": "DeletePanelParams",
+        "type": "object"
+      }
     }
   ]
 }

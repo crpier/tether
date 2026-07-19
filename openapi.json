@@ -494,6 +494,82 @@
         "title": "ConversationRead",
         "type": "object"
       },
+      "CreatePanelRequest": {
+        "description": "Body for creating a Synthetic panel.",
+        "properties": {
+          "columns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "facets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "default": 0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "render_kind": {
+            "$ref": "#/components/schemas/PanelRenderKind",
+            "default": "table"
+          },
+          "vega_lite_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vega Lite Spec"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Days"
+          }
+        },
+        "required": [
+          "name",
+          "facets"
+        ],
+        "title": "CreatePanelRequest",
+        "type": "object"
+      },
       "CreateTriggerRequest": {
         "description": "Body for creating a Scheduled trigger.",
         "properties": {
@@ -1054,6 +1130,134 @@
           "created_at"
         ],
         "title": "NotificationRead",
+        "type": "object"
+      },
+      "PanelRead": {
+        "description": "HTTP representation of a Synthetic panel.",
+        "properties": {
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "facets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "render_kind": {
+            "$ref": "#/components/schemas/PanelRenderKind"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vega_lite_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vega Lite Spec"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Days"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "facets",
+          "query",
+          "window_days",
+          "columns",
+          "render_kind",
+          "vega_lite_spec",
+          "position",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PanelRead",
+        "type": "object"
+      },
+      "PanelRenderKind": {
+        "enum": [
+          "table",
+          "vega-lite"
+        ],
+        "type": "string"
+      },
+      "PanelResultsRead": {
+        "description": "One panel execution: the capped rows plus the uncapped match count.",
+        "properties": {
+          "memories": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryRead"
+            },
+            "title": "Memories",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "memories",
+          "total"
+        ],
+        "title": "PanelResultsRead",
         "type": "object"
       },
       "PostArtifactEventRequest": {
@@ -1636,6 +1840,88 @@
           "endpoint"
         ],
         "title": "UnsubscribeRequest",
+        "type": "object"
+      },
+      "UpdatePanelRequest": {
+        "description": "Body for replacing a panel's definition at an observed version.",
+        "properties": {
+          "columns": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "facets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Facets",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "default": 0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "render_kind": {
+            "$ref": "#/components/schemas/PanelRenderKind",
+            "default": "table"
+          },
+          "vega_lite_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vega Lite Spec"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Days"
+          }
+        },
+        "required": [
+          "name",
+          "facets",
+          "version"
+        ],
+        "title": "UpdatePanelRequest",
         "type": "object"
       },
       "UpdateTriggerRequest": {
@@ -2737,6 +3023,161 @@
           }
         },
         "summary": "Dismiss one notification."
+      }
+    },
+    "/api/panels": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PanelRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List live Synthetic panels in position order."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePanelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Create a Synthetic panel."
+      }
+    },
+    "/api/panels/{panel_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "panel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a Synthetic panel."
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "panel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePanelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Replace a panel's definition at an observed version."
+      }
+    },
+    "/api/panels/{panel_id}/results": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "panel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "exclusiveMinimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelResultsRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Run a panel's saved query, recomputed against the corpus right now."
       }
     },
     "/api/push/status": {

@@ -54,6 +54,10 @@ export type Memory = components["schemas"]["MemoryRead"];
 export type MemoryState = components["schemas"]["MemoryState"];
 export type Artifact = components["schemas"]["ArtifactRead"];
 export type ArtifactEvent = components["schemas"]["ArtifactEventRead"];
+export type Panel = components["schemas"]["PanelRead"];
+export type PanelResults = components["schemas"]["PanelResultsRead"];
+export type CreatePanel = components["schemas"]["CreatePanelRequest"];
+export type UpdatePanel = components["schemas"]["UpdatePanelRequest"];
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -120,6 +124,13 @@ export interface TetherApi {
     artifactId: string,
     payload: Record<string, unknown>,
   ): Promise<ArtifactEvent>;
+  listPanels(): Promise<Panel[]>;
+  createPanel(body: CreatePanel): Promise<Panel>;
+  updatePanel(panelId: string, body: UpdatePanel): Promise<Panel>;
+  deletePanel(panelId: string, version: number): Promise<Panel>;
+  // A panel execution is a Search, recomputed on every call (ADR 0006) — the
+  // caller never caches results beyond the query layer's own invalidation.
+  getPanelResults(panelId: string, limit?: number): Promise<PanelResults>;
 }
 
 // Carries the HTTP status so callers can react to specific failures (e.g. a 409
@@ -405,6 +416,39 @@ export function createRestApi(
         {
           body: { payload },
           params: { path: { artifact_id: artifactId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async listPanels() {
+      const { data, response } = await client.GET("/api/panels");
+      return requireData(data, response);
+    },
+    async createPanel(body) {
+      const { data, response } = await client.POST("/api/panels", { body });
+      return requireData(data, response);
+    },
+    async updatePanel(panelId, body) {
+      const { data, response } = await client.PUT("/api/panels/{panel_id}", {
+        body,
+        params: { path: { panel_id: panelId } },
+      });
+      return requireData(data, response);
+    },
+    async deletePanel(panelId, version) {
+      const { data, response } = await client.DELETE("/api/panels/{panel_id}", {
+        params: { path: { panel_id: panelId }, query: { version } },
+      });
+      return requireData(data, response);
+    },
+    async getPanelResults(panelId, limit) {
+      const { data, response } = await client.GET(
+        "/api/panels/{panel_id}/results",
+        {
+          params: {
+            path: { panel_id: panelId },
+            query: limit === undefined ? {} : { limit },
+          },
         },
       );
       return requireData(data, response);
