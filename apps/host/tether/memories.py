@@ -60,7 +60,7 @@ class MemoryProvenance(TypedDict):
     both, so it still serializes to exactly `{"kind": "manual"}`.
     """
 
-    kind: Literal["manual", "import", "youtube", "web", "readwise", "voice"]
+    kind: Literal["manual", "import", "youtube", "web", "readwise", "voice", "koreader"]
     confidence: NotRequired[Literal["low", "medium", "high"]]
     batch: NotRequired[str]
 

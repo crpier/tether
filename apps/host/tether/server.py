@@ -49,6 +49,9 @@ from tether.conversation_history_tools import (
 from tether.conversations import ConversationService, create_conversation_schema
 from tether.embeddings import Embedder, FastEmbedder
 from tether.events import EventHub
+from tether.kosync import KosyncService, create_kosync_schema
+from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
+from tether.kosync_tools import internal_kosync_tool_routes
 from tether.logging import ContextLoggerMiddleware, Logger, configure_logging
 from tether.memories import (
     KnowledgeBaseService,
@@ -63,7 +66,10 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
 from tether.push import PushService, create_push_schema
 from tether.readwise import (
+    HttpReaderTransport,
     HttpReadwiseTransport,
+    ReaderClient,
+    ReaderSyncService,
     ReadwiseClient,
     ReadwiseSyncService,
     create_readwise_schema,
@@ -152,6 +158,9 @@ class AppConfig:
     default_model_provider: str | None = None
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     kb_root: str | Path = Path(".tether")
+    kosync_enabled: bool = False
+    kosync_username: str = ""
+    kosync_userkey: str = ""
     logging_level: str = "INFO"
     log_file: str | Path | None = None
     model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
@@ -180,6 +189,8 @@ class AppConfig:
     readwise_api_key: str = ""
     readwise_sync_enabled: bool = False
     readwise_sync_interval_seconds: float = 60 * 60
+    readwise_reader_sync_enabled: bool = False
+    readwise_reader_sync_interval_seconds: float = 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -218,6 +229,19 @@ class HostSettings(BaseSettings):
     database_path: Path = Path(".tether/tether.sqlite3")
     host: str = "127.0.0.1"
     kb_root: Path = Path(".tether")
+    kosync_enabled: bool = False
+    """Whether the host serves the KOReader kosync protocol under `/kosync`. Off
+    by default and a no-op unless `kosync_username` and `kosync_userkey` are both
+    set, so a default install leaves the whole prefix unmounted (404). Devices
+    must set KOReader's document-matching method to *filename* (hash =
+    `md5(basename)`); the binary default cannot be mapped back to a title."""
+    kosync_username: str = ""
+    """The single pre-provisioned kosync username a device authenticates as
+    (`x-auth-user`). Empty keeps the gate off."""
+    kosync_userkey: str = ""
+    """The `md5(password)` string the device sends as `x-auth-key`, compared
+    verbatim. KOReader hashes the password itself; Tether never sees the
+    plaintext. Empty keeps the gate off."""
     logging_level: str = "INFO"
     log_file: Path | None = None
     """Optional path to also write logs to, as one JSON object per line, on top
@@ -355,6 +379,14 @@ class HostSettings(BaseSettings):
     stt_model: str = "whisper-1"
     """Transcription model requested with each upload (e.g. `whisper-1`,
     `whisper-large-v3`), passed through verbatim to the configured endpoint."""
+    readwise_reader_sync_enabled: bool = False
+    """Whether the background Readwise Reader v3 progress rider runs. Off by
+    default and a no-op unless `readwise_api_key` is also set, so polling reading
+    progress into the ebook Telemetry tables is a deliberate, credentialed
+    choice."""
+    readwise_reader_sync_interval_seconds: float = 60 * 60
+    """Seconds between Reader v3 list passes. The list API is rate-limited (20
+    req/min) and reading progress changes slowly, so an hourly cadence is ample."""
     telemetry_environment: str = "development"
     telemetry_exporter: TelemetryExporter = TelemetryExporter.NONE
     telemetry_service_name: str = "tether-host"
@@ -385,6 +417,7 @@ async def _create_schemas(db: Database) -> None:
     await create_artifact_schema(db)
     await create_panel_schema(db)
     await create_readwise_schema(db)
+    await create_kosync_schema(db)
 
 
 def _build_youtube_client(
@@ -611,6 +644,46 @@ async def _wire_readwise(
     return [asyncio.create_task(_run_readwise_sync())]
 
 
+async def _wire_reader(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    memory_service: MemoryService,
+) -> list[asyncio.Task[None]]:
+    """Wire the Readwise Reader v3 progress rider + its worker onto state.
+
+    A no-op returning no tasks unless the rider is enabled and the shared
+    `readwise_api_key` is set — the default install never polls Reader. When
+    enabled, the worker runs an idempotent boot pass (off the startup critical
+    path) and then the periodic list-poll loop; the returned task joins the
+    lifespan's cancelled-on-shutdown background tasks.
+    """
+    if not config.readwise_reader_sync_enabled or not config.readwise_api_key:
+        return []
+    logger = cast("Logger", app.state.logger)
+    sync = ReaderSyncService(
+        database=database,
+        client=ReaderClient(transport=HttpReaderTransport(config.readwise_api_key)),
+        memory_service=memory_service,
+    )
+    app.state.reader_sync = sync
+
+    async def _run_reader_sync() -> None:
+        try:
+            _ = await sync.sync(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Readwise Reader boot sync failed")
+        await sync.sync_forever(
+            interval_seconds=config.readwise_reader_sync_interval_seconds,
+            logger=logger,
+        )
+
+    return [asyncio.create_task(_run_reader_sync())]
+
+
 def _ephemeral_pi_config(
     app: Starlette,
     *,
@@ -823,16 +896,23 @@ def _build_bucket_item_and_fusion_services(
 def _build_presentation_services(
     app: Starlette,
     *,
+    config: AppConfig,
     database: Database,
     event_hub: EventHub,
-    memory_service: MemoryService,
     tracer: Tracer,
 ) -> None:
-    """Wire the presentation-side services: Artifacts and Synthetic panels.
+    """Wire the presentation-side services plus the kosync gate's app-state.
 
-    Panels execute through the Memory search seam, so the service takes the
-    Memory service directly; both are pure app-state singletons with no
-    background tasks."""
+    Reads the Memory service back off app state (already wired by the lifespan)
+    rather than taking it as a parameter — panels execute through the Memory
+    search seam and the kosync gate captures finished books through it. The
+    `KosyncService` is wired here unconditionally so the owner-facing labeling
+    REST/tools work even with the device protocol disabled; its device
+    `x-auth-user`/`x-auth-key` credentials are only read by the `/kosync/*`
+    routes, which `create_app` mounts only when the gate is configured, so blank
+    credentials are harmless when disabled. All are pure app-state singletons
+    with no background tasks."""
+    memory_service = cast("MemoryService", app.state.memory_service)
     app.state.artifact_service = ArtifactService(
         database=database,
         event_publisher=event_hub,
@@ -843,6 +923,12 @@ def _build_presentation_services(
         memory_service=memory_service,
         event_publisher=event_hub,
         tracer=tracer,
+    )
+    app.state.kosync_service = KosyncService(
+        database=database, memory_service=memory_service
+    )
+    app.state.kosync_auth = KosyncAuth(
+        username=config.kosync_username, userkey=config.kosync_userkey
     )
 
 
@@ -1058,9 +1144,9 @@ def _lifespan(
             )
             _build_presentation_services(
                 app,
+                config=config,
                 database=db,
                 event_hub=event_hub,
-                memory_service=memory_service,
                 tracer=telemetry.tracer,
             )
             youtube_tasks = await _wire_youtube(
@@ -1136,6 +1222,9 @@ def _lifespan(
             background_tasks.extend(
                 youtube_tasks
                 + await _wire_readwise(
+                    app, config=config, database=db, memory_service=memory_service
+                )
+                + await _wire_reader(
                     app, config=config, database=db, memory_service=memory_service
                 )
             )
@@ -1240,6 +1329,17 @@ def create_app(
             *internal_recall_tool_routes(),
             *internal_conversation_history_tool_routes(),
             *internal_panel_tool_routes(),
+            *internal_kosync_tool_routes(),
+            # The device-facing kosync protocol is mounted only when configured
+            # (username + userkey set): a disabled install leaves `/kosync/*`
+            # unhandled, so it answers 404 rather than a live-but-empty gate.
+            *(
+                kosync_protocol_routes()
+                if config.kosync_enabled
+                and config.kosync_username
+                and config.kosync_userkey
+                else []
+            ),
             *websocket_routes,
             *docs,
             # The SPA catch-all mounts at "/", so it must come last — every API,
@@ -1309,12 +1409,19 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         database_path=settings.database_path,
         default_model=settings.default_model,
         kb_root=settings.kb_root,
+        kosync_enabled=settings.kosync_enabled,
+        kosync_username=settings.kosync_username,
+        kosync_userkey=settings.kosync_userkey,
         logging_level=settings.logging_level,
         log_file=settings.log_file,
         model_allowlist=settings.model_allowlist,
         readwise_api_key=settings.readwise_api_key,
         readwise_sync_enabled=settings.readwise_sync_enabled,
         readwise_sync_interval_seconds=settings.readwise_sync_interval_seconds,
+        readwise_reader_sync_enabled=settings.readwise_reader_sync_enabled,
+        readwise_reader_sync_interval_seconds=(
+            settings.readwise_reader_sync_interval_seconds
+        ),
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
         stt_enabled=settings.stt_enabled,

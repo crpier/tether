@@ -14,6 +14,7 @@ from tether.auth import auth_routes
 from tether.bucket_routes import bucket_item_routes
 from tether.capture_routes import capture_routes
 from tether.conversations import conversation_routes
+from tether.kosync_routes import ebook_routes
 from tether.model_selection import model_routes
 from tether.notifications import notification_routes
 from tether.openapi import build_openapi
@@ -51,6 +52,7 @@ def public_api_routes() -> list[Route]:
         *notification_routes,
         *artifact_routes,
         *panel_routes,
+        *ebook_routes,
     ]
 
 

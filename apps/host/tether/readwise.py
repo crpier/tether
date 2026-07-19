@@ -13,6 +13,13 @@ trusted at insert (never entering Review). The module is three seams:
   or a delete against the `readwise_highlight` mapping table, persisting the
   `updatedAfter` watermark only after a fully successful pass.
 
+Alongside the v2 highlight gate lives the **Reader v3 progress rider**
+(`ReaderTransport`/`ReaderClient`/`ReaderSyncService`): a scheduled poll of the
+Reader v3 list API that folds epub/pdf reading progress into the shared
+`ebook_document`/`ebook_progress_event` Telemetry tables (keyed `reader:<id>`)
+and mints one machine-synced "Finished reading" Memory per document. It reuses
+the same API token and a separate watermark row.
+
 >>> service = ReadwiseSyncService(
 ...     database=database, client=client, memory_service=memory_service
 ... )
@@ -33,6 +40,7 @@ from uuid import UUID
 
 import httpx2
 from snekql.sqlite import (
+    CurrentTimestamp,
     Database,
     Fetched,
     Integer,
@@ -46,6 +54,7 @@ from snekql.sqlite import (
 )
 
 from tether.db_retry import run_in_transaction
+from tether.kosync import EbookDocument, EbookProgressEvent
 from tether.logging import Logger
 from tether.memories import Memory, MemoryConflictError, MemoryProvenance, MemoryService
 
@@ -60,6 +69,23 @@ _WATERMARK_KEY = "highlights_export_watermark"
 """Sync-state key under which the last fully successful `updatedAfter` cursor is
 persisted. Absence means no successful pass has run — the next sync is a full
 backfill."""
+_LIST_PATH = "/api/v3/list/"
+"""The Reader v3 list endpoint the progress rider polls for epub/pdf documents."""
+_READER_LIMIT = 100
+"""Max page size the Reader v3 list endpoint accepts (`limit`)."""
+_READER_CATEGORIES = ("epub", "pdf")
+"""The Reader document categories the rider polls. The list endpoint takes a
+single `category` value per request, so the client polls once per category."""
+_READER_DEVICE = "readwise-reader"
+"""The device label stamped on every Reader-sourced `ebook_progress_event`."""
+_READER_FINISHED_THRESHOLD = 0.98
+"""Reading fraction at or beyond which a Reader document counts as finished."""
+_READER_ARCHIVE_LOCATION = "archive"
+"""The Reader `location` that marks a document archived (also counts as finished)."""
+_READER_WATERMARK_KEY = "reader_list_watermark"
+"""Sync-state key for the Reader rider's last fully successful `updatedAfter`
+cursor, kept separate from the v2 highlights watermark. Absence means the next
+pass is a full paginated pull."""
 
 
 class ReadwiseConfigurationError(Exception):
@@ -705,6 +731,467 @@ def _isoformat_or_empty(when: datetime | None) -> str:
     return when.isoformat() if when is not None else ""
 
 
+@dataclass(frozen=True, slots=True)
+class ReaderDocument:
+    """One Reader v3 document, parsed from a list-endpoint page.
+
+    `document_id` is Reader's stable string id — the rider keys the shared
+    `ebook_document`/`ebook_progress_event` tables under `reader:<document_id>`.
+    `reading_progress` is a `0.0`-`1.0` fraction and `location` is one of
+    `new`/`later`/`shortlist`/`archive`; both drive the append-dedupe and the
+    finished derivation. `read_at` is the receipt time stamped on the telemetry
+    event (`last_opened_at` preferred, `updated_at` as fallback).
+    """
+
+    document_id: str
+    title: str
+    author: str
+    category: str
+    reading_progress: float
+    location: str
+    read_at: datetime | None
+
+
+class ReaderTransport(Protocol):
+    """The isolated Reader v3 HTTP boundary the `ReaderClient` drives.
+
+    One call, `fetch_list`, pulls a single list page for one category (cursor-
+    paginated upstream). Faked in tests so pagination and the progress mapping
+    run offline.
+    """
+
+    async def fetch_list(
+        self,
+        *,
+        updated_after: datetime | None,
+        category: str,
+        page_cursor: str | None,
+    ) -> ReadwiseResponse:
+        """Fetch one Reader list page for a category (a slice of documents)."""
+        ...
+
+
+def _parse_reader_document(raw: Mapping[str, object]) -> ReaderDocument | None:
+    """Parse one Reader document, dropping any without a usable string id."""
+    document_id = raw.get("id")
+    if not isinstance(document_id, str) or not document_id:
+        return None
+    reading_progress = raw.get("reading_progress")
+    fraction = (
+        float(reading_progress) if isinstance(reading_progress, int | float) else 0.0
+    )
+    return ReaderDocument(
+        document_id=document_id,
+        title=_string_field(raw, "title"),
+        author=_string_field(raw, "author"),
+        category=_string_field(raw, "category"),
+        reading_progress=fraction,
+        location=_string_field(raw, "location"),
+        read_at=_parse_datetime(raw.get("last_opened_at"))
+        or _parse_datetime(raw.get("updated_at")),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderSyncReport:
+    """The tally of one Reader rider pass: how each document resolved."""
+
+    appended: int = 0
+    skipped: int = 0
+    finished: int = 0
+
+
+class ReaderClient:
+    """Cursor pagination over a `ReaderTransport`, once per polled category.
+
+    Walks every list page via `nextPageCursor` for each of the polled
+    categories, honoring a `429`'s `Retry-After` by sleeping and retrying the
+    same cursor, and parses each payload into `ReaderDocument`s. All HTTP lives
+    behind the injected transport, so tests drive it with a scripted fake.
+
+    >>> client = ReaderClient(transport=transport)
+    >>> documents = await client.fetch_documents(updated_after=None, logger=logger)
+    >>> documents[0].category
+    'epub'
+    """
+
+    def __init__(
+        self,
+        transport: ReaderTransport,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        max_retries: int = 5,
+    ) -> None:
+        self.transport: ReaderTransport = transport
+        self.sleep: Callable[[float], Awaitable[None]] = sleep
+        self.max_retries: int = max_retries
+
+    async def fetch_documents(
+        self, *, updated_after: datetime | None, logger: Logger
+    ) -> list[ReaderDocument]:
+        """Pull every epub/pdf document across all pages into a flat list.
+
+        First sync passes `updated_after=None` (a full backfill); an incremental
+        sync passes the persisted watermark. Each category is polled separately
+        because the list endpoint accepts a single `category` value per request.
+        """
+        documents: list[ReaderDocument] = []
+        for category in _READER_CATEGORIES:
+            page_cursor: str | None = None
+            while True:
+                response = await self._fetch_page(
+                    updated_after=updated_after,
+                    category=category,
+                    page_cursor=page_cursor,
+                    logger=logger,
+                )
+                results = response.payload.get("results")
+                if isinstance(results, list):
+                    documents.extend(
+                        document
+                        for entry in cast("list[object]", results)
+                        if isinstance(entry, Mapping)
+                        and (
+                            document := _parse_reader_document(
+                                cast("Mapping[str, object]", entry)
+                            )
+                        )
+                        is not None
+                    )
+                next_cursor = response.payload.get("nextPageCursor")
+                page_cursor = next_cursor if isinstance(next_cursor, str) else None
+                if not page_cursor:
+                    break
+        return documents
+
+    async def _fetch_page(
+        self,
+        *,
+        updated_after: datetime | None,
+        category: str,
+        page_cursor: str | None,
+        logger: Logger,
+    ) -> ReadwiseResponse:
+        """Fetch one list page, retrying a rate-limited response on `Retry-After`."""
+        for _ in range(self.max_retries):
+            response = await self.transport.fetch_list(
+                updated_after=updated_after,
+                category=category,
+                page_cursor=page_cursor,
+            )
+            if response.status_code != _RATE_LIMITED_STATUS:
+                return response
+            delay = (
+                response.retry_after.total_seconds()
+                if response.retry_after is not None
+                else 1.0
+            )
+            _info(logger, "Reader rate limited; backing off", delay_seconds=delay)
+            await self.sleep(delay)
+        message = "Reader list exhausted rate-limit retries"
+        raise ReadwiseAuthError(message)
+
+
+class ReaderSyncService:
+    """The Reader v3 progress rider over the shared ebook Telemetry tables.
+
+    A scheduled poll of the Reader v3 list API folds each epub/pdf document into
+    the same `ebook_document`/`ebook_progress_event` tables the kosync gate owns,
+    keyed `reader:<id>`. Each pass appends a progress event only when the
+    document's `reading_progress` or `location` changed since the last stored
+    event (no noise rows from unrelated metadata updates), and the first crossing
+    of archive-or-98% mints exactly one machine-synced "Finished reading" Memory
+    through `MemoryService.capture_tethered` — once per document, ever. The
+    `updatedAfter` watermark (sync start) is persisted only after a fully
+    successful pass, so a mid-pass failure re-pulls rather than skipping.
+    """
+
+    def __init__(
+        self,
+        database: Database,
+        client: ReaderClient,
+        memory_service: MemoryService,
+    ) -> None:
+        self.database: Database = database
+        self.client: ReaderClient = client
+        self.memory_service: MemoryService = memory_service
+
+    async def sync(self, *, logger: Logger) -> ReaderSyncReport:
+        """Run one idempotent pass; persist the watermark only if it completes.
+
+        The pass start time is captured before the pull so a progress change
+        landing mid-pass is caught by the next incremental sync rather than
+        skipped.
+        """
+        started_at = datetime.now(UTC)
+        watermark = await self._read_watermark()
+        _debug(
+            logger,
+            "Reader sync starting",
+            incremental=watermark is not None,
+            updated_after=watermark.isoformat() if watermark is not None else None,
+        )
+        documents = await self.client.fetch_documents(
+            updated_after=watermark, logger=logger
+        )
+        appended = skipped = finished = 0
+        for document in documents:
+            outcome = await self._apply_document(document, logger=logger)
+            if outcome == "appended":
+                appended += 1
+            elif outcome == "finished":
+                finished += 1
+            else:
+                skipped += 1
+        await self._store_watermark(started_at)
+        _info(
+            logger,
+            "Reader sync completed",
+            appended=appended,
+            skipped=skipped,
+            finished=finished,
+        )
+        return ReaderSyncReport(appended=appended, skipped=skipped, finished=finished)
+
+    async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
+        """Run sync passes on the given interval until cancelled.
+
+        Mirrors the other ingestion workers: a failed pass logs its traceback and
+        the loop survives, so a transient Reader outage does not take it down.
+        """
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                _ = await self.sync(logger=logger)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Reader sync pass failed")
+
+    async def _apply_document(self, document: ReaderDocument, *, logger: Logger) -> str:
+        """Fold one document into an append/skip, deriving a finished Memory once.
+
+        The document row is upserted first (title refreshed from the API), so the
+        finished-once guard reads its prior `finished_captured_at`. A finished
+        crossing captures even when the progress row itself was a duplicate.
+        """
+        key = f"reader:{document.document_id}"
+        stored = await self._upsert_document(key, document.title)
+        appended = await self._append_if_changed(key, document)
+        if self._is_finished(document) and stored.finished_captured_at is None:
+            await self._capture_finished(key, document, logger=logger)
+            await self._stamp_finished(key)
+            return "finished"
+        return "appended" if appended else "skipped"
+
+    @staticmethod
+    def _is_finished(document: ReaderDocument) -> bool:
+        """True when a document is archived or read past the finished threshold."""
+        return (
+            document.location == _READER_ARCHIVE_LOCATION
+            or document.reading_progress >= _READER_FINISHED_THRESHOLD
+        )
+
+    async def _upsert_document(self, key: str, title: str) -> EbookDocument[Fetched]:
+        """Insert the document on first sighting else refresh its title.
+
+        Returns the row as it stood *before* this pass, so the caller's
+        finished-once guard reads the prior `finished_captured_at`.
+        """
+
+        async def _upsert(tx: Transaction) -> EbookDocument[Fetched]:
+            existing = await tx.fetch_one_or_none(
+                select(EbookDocument).where(EbookDocument.document_hash.eq(key))
+            )
+            if existing is None:
+                return await tx.execute(
+                    insert(
+                        EbookDocument(document_hash=key, title=title or None)
+                    ).returning()
+                )
+            _ = await tx.execute(
+                update(EbookDocument)
+                .set(
+                    EbookDocument.title.to(title or None),
+                    EbookDocument.updated_at.to(CurrentTimestamp),
+                )
+                .where(EbookDocument.document_hash.eq(key))
+            )
+            return existing
+
+        return await run_in_transaction(self.database, _upsert)
+
+    async def _append_if_changed(self, key: str, document: ReaderDocument) -> bool:
+        """Append a progress event unless it repeats the latest stored one.
+
+        Reader emits document updates for many metadata reasons; only a changed
+        `reading_progress` or `location` is reading movement worth a telemetry
+        row, so an otherwise-identical latest event is left as the head.
+        """
+        latest = await self._latest_event(key)
+        if (
+            latest is not None
+            and latest.percentage == document.reading_progress
+            and latest.progress == document.location
+        ):
+            return False
+        await self._append_event(key, document)
+        return True
+
+    async def _latest_event(self, key: str) -> EbookProgressEvent[Fetched] | None:
+        """The newest stored progress event for a document key, if any."""
+        async with self.database.transaction() as tx:
+            return await tx.fetch_one_or_none(
+                select(EbookProgressEvent)
+                .where(EbookProgressEvent.document_hash.eq(key))
+                .order_by(EbookProgressEvent.id.desc())
+                .limit(1)
+            )
+
+    async def _append_event(self, key: str, document: ReaderDocument) -> None:
+        """Append one immutable progress event for a Reader document."""
+        read_at = document.read_at or datetime.now(UTC)
+
+        async def _insert(tx: Transaction) -> None:
+            _ = await tx.execute(
+                insert(
+                    EbookProgressEvent(
+                        document_hash=key,
+                        percentage=document.reading_progress,
+                        progress=document.location,
+                        device=_READER_DEVICE,
+                        device_id="",
+                        timestamp=int(read_at.timestamp()),
+                    )
+                )
+            )
+
+        await run_in_transaction(self.database, _insert)
+
+    async def _capture_finished(
+        self, key: str, document: ReaderDocument, *, logger: Logger
+    ) -> None:
+        """Mint the one machine-synced "finished reading" Memory for a document.
+
+        Content and the `title` facet name the book when the API gave a title; an
+        untitled document falls back to its key so the capture still happens. The
+        `author` facet is added only when present.
+        """
+        content = (
+            f"Finished reading {document.title}"
+            if document.title
+            else f"{key} (unlabeled ebook)"
+        )
+        facets = {"source": _READER_DEVICE, "category": "ebook"}
+        if document.title:
+            facets["title"] = document.title
+        if document.author:
+            facets["author"] = document.author
+        _ = await self.memory_service.capture_tethered(
+            content,
+            provenance=MemoryProvenance(kind="readwise"),
+            facets=facets,
+            logger=logger,
+        )
+
+    async def _stamp_finished(self, key: str) -> None:
+        """Record that the finished Memory for a document has been minted."""
+
+        async def _stamp(tx: Transaction) -> None:
+            _ = await tx.execute(
+                update(EbookDocument)
+                .set(EbookDocument.finished_captured_at.to(CurrentTimestamp))
+                .where(EbookDocument.document_hash.eq(key))
+            )
+
+        await run_in_transaction(self.database, _stamp)
+
+    async def _read_watermark(self) -> datetime | None:
+        """The last fully successful `updatedAfter` cursor, or None on first sync."""
+        async with self.database.transaction() as tx:
+            row = await tx.fetch_one_or_none(
+                select(ReadwiseSyncState).where(
+                    ReadwiseSyncState.key.eq(_READER_WATERMARK_KEY)
+                )
+            )
+        return _parse_datetime(row.value) if row is not None else None
+
+    async def _store_watermark(self, watermark: datetime) -> None:
+        """Persist the Reader watermark, upserting its single sync-state row."""
+
+        async def _set(tx: Transaction) -> None:
+            existing = await tx.fetch_one_or_none(
+                select(ReadwiseSyncState).where(
+                    ReadwiseSyncState.key.eq(_READER_WATERMARK_KEY)
+                )
+            )
+            if existing is None:
+                _ = await tx.execute(
+                    insert(
+                        ReadwiseSyncState(
+                            key=_READER_WATERMARK_KEY, value=watermark.isoformat()
+                        )
+                    )
+                )
+            else:
+                _ = await tx.execute(
+                    update(ReadwiseSyncState)
+                    .set(ReadwiseSyncState.value.to(watermark.isoformat()))
+                    .where(ReadwiseSyncState.key.eq(_READER_WATERMARK_KEY))
+                )
+
+        await run_in_transaction(self.database, _set)
+
+
+class HttpReaderTransport(ReaderTransport):
+    """The production `ReaderTransport`: a thin httpx client over the v3 list API.
+
+    Holds the same API key the v2 gate uses and performs one GET per list page,
+    normalizing it into a `ReadwiseResponse`. Pagination and progress semantics
+    live above it in `ReaderClient`/`ReaderSyncService`, keeping this boundary
+    dumb and faked-in-tests.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = _DEFAULT_BASE_URL,
+        timeout: timedelta | None = None,
+    ) -> None:
+        if not api_key:
+            message = "Readwise API key is required to build the Reader transport"
+            raise ReadwiseConfigurationError(message)
+        self._api_key: str = api_key
+        self._base_url: str = base_url
+        self._timeout: timedelta = timeout or timedelta(seconds=30)
+
+    async def fetch_list(
+        self,
+        *,
+        updated_after: datetime | None,
+        category: str,
+        page_cursor: str | None,
+    ) -> ReadwiseResponse:
+        params: dict[str, str] = {
+            "category": category,
+            "limit": str(_READER_LIMIT),
+        }
+        if updated_after is not None:
+            params["updatedAfter"] = updated_after.isoformat()
+        if page_cursor is not None:
+            params["pageCursor"] = page_cursor
+        async with httpx2.AsyncClient(
+            base_url=self._base_url, timeout=self._timeout.total_seconds()
+        ) as client:
+            response = await client.get(
+                _LIST_PATH,
+                params=params,
+                headers={"Authorization": f"Token {self._api_key}"},
+            )
+        return _from_httpx(response)
+
+
 class HttpReadwiseTransport(ReadwiseTransport):
     """The production `ReadwiseTransport`: a thin httpx client over the v2 API.
 
@@ -822,7 +1309,13 @@ async def create_readwise_schema(database: Database) -> None:
 
 
 __all__ = [
+    "HttpReaderTransport",
     "HttpReadwiseTransport",
+    "ReaderClient",
+    "ReaderDocument",
+    "ReaderSyncReport",
+    "ReaderSyncService",
+    "ReaderTransport",
     "ReadwiseAuthError",
     "ReadwiseBook",
     "ReadwiseClient",

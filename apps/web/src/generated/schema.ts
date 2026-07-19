@@ -685,6 +685,122 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/ebooks/label": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Attach a human title to a document hash. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["LabelEbookRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["EbookDocumentRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/ebooks/match-filename": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Label the document a filename hashes to, titled from the filename. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["MatchEbookFilenameRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["EbookDocumentRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/ebooks/unlabeled": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every ebook Tether has progress for that is still unlabeled. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["EbookDocumentRead"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memories": {
     parameters: {
       query?: never;
@@ -2263,6 +2379,24 @@ export interface components {
       bucket_item_ids: string[];
     };
     /**
+     * EbookDocumentRead
+     * @description HTTP/tool representation of a document Tether has seen progress for.
+     *
+     *     `finished` collapses the internal `finished_captured_at` stamp to the only
+     *     fact a surface needs — whether the one finished Memory has been minted.
+     *
+     *     >>> EbookDocumentRead(document_hash="abc", title=None, finished=False).finished
+     *     False
+     */
+    EbookDocumentRead: {
+      /** Document Hash */
+      document_hash: string;
+      /** Finished */
+      finished: boolean;
+      /** Title */
+      title: string | null;
+    };
+    /**
      * EditRequest
      * @description Body for editing a Memory's content at an observed `version`.
      *
@@ -2321,12 +2455,30 @@ export interface components {
     ItemType: "movie" | "place" | "book" | "travel";
     JsonValue: unknown;
     /**
+     * LabelEbookRequest
+     * @description Body for attaching a human title to a document hash.
+     */
+    LabelEbookRequest: {
+      /** Document Hash */
+      document_hash: string;
+      /** Title */
+      title: string;
+    };
+    /**
      * LoginRequest
      * @description Body for app login with the shared password.
      */
     LoginRequest: {
       /** Password */
       password: string;
+    };
+    /**
+     * MatchEbookFilenameRequest
+     * @description Body for labeling the document a filename hashes to.
+     */
+    MatchEbookFilenameRequest: {
+      /** Filename */
+      filename: string;
     };
     MemoryContent: string;
     /**

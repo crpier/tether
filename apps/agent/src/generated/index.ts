@@ -41,6 +41,9 @@ import { registerCreatePanelTool } from "./create_panel.js";
 import { registerListPanelsTool } from "./list_panels.js";
 import { registerUpdatePanelTool } from "./update_panel.js";
 import { registerDeletePanelTool } from "./delete_panel.js";
+import { registerLabelEbookTool } from "./label_ebook.js";
+import { registerMatchEbookFilenameTool } from "./match_ebook_filename.js";
+import { registerListUnlabeledEbooksTool } from "./list_unlabeled_ebooks.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCaptureTool(pi);
@@ -82,4 +85,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerListPanelsTool(pi);
   registerUpdatePanelTool(pi);
   registerDeletePanelTool(pi);
+  registerLabelEbookTool(pi);
+  registerMatchEbookFilenameTool(pi);
+  registerListUnlabeledEbooksTool(pi);
 }
