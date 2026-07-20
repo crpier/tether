@@ -36,7 +36,7 @@ from uuid import uuid4
 
 import structlog
 
-type RunKind = Literal["conversation", "scheduled", "recall"]
+type RunKind = Literal["conversation", "scheduled", "recall", "gmail"]
 """Which host entry point opened a run."""
 
 type Termination = Literal["completed", "error", "aborted", "timeout"]

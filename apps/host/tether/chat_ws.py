@@ -59,13 +59,16 @@ _ZONEINFO_MARKER = "zoneinfo/"
 type InboundType = Literal["prompt", "abort"]
 
 
-def _local_timezone_name(now: datetime) -> str:
+def local_timezone_name(now: datetime) -> str:
     """Best-effort IANA name for the host's local zone, falling back to offset.
 
     pi injects only the date into its system prompt, but daily/weekly triggers
     want an IANA zone, so surface one when the host can determine it — the `TZ`
     env var or the `/etc/localtime` symlink target — and degrade to the numeric
     UTC offset otherwise. `now` must be timezone-aware so the fallback resolves.
+
+    Public (not module-private) because `tether.gmail` reuses it as the default
+    local-timezone provider for its deadline-trigger fire time.
     """
     env_zone = os.environ.get("TZ")
     if env_zone:
@@ -392,7 +395,7 @@ async def _run_prompt(
             # the agent can resolve relative scheduling without asking for it.
             now = datetime.now().astimezone()
             pi_message = _prompt_with_time_context(
-                content, now=now, timezone_name=_local_timezone_name(now)
+                content, now=now, timezone_name=local_timezone_name(now)
             )
             prompt_response = await runtime.client.request("prompt", message=pi_message)
             if prompt_response.get("success") is not True:
