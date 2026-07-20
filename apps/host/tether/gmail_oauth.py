@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from typing import Any, cast
+from types import TracebackType
+from typing import Any, Self, cast
 
 import httpx2
 
@@ -39,9 +40,16 @@ class HttpGmailTransport(GmailTransport):
     `load_credentials` before it is used — mirroring how the YouTube adapter
     refreshes on every discovery-client call, just without that client.
 
-    >>> transport = HttpGmailTransport(config)
-    >>> response = await transport.list_messages(query="-in:spam", page_token=None)
-    >>> response.status_code
+    Holds a single `httpx2.AsyncClient` for the transport's own lifetime
+    (created eagerly at construction) rather than opening one per call — the
+    transport is a long-lived, boot-to-shutdown object, so a fresh client per
+    request only added connection-setup overhead with no isolation benefit.
+    Callers own its lifecycle: use it as an `async with` context manager, or
+    call `aclose` explicitly (mirrors `PiRuntime`'s `__aenter__`/`__aexit__`).
+
+    >>> async with HttpGmailTransport(config) as transport:
+    ...     response = await transport.list_messages(query="-in:spam", page_token=None)
+    ...     response.status_code
     200
     """
 
@@ -55,6 +63,24 @@ class HttpGmailTransport(GmailTransport):
         self._config: OAuthConfig = config
         self._base_url: str = base_url
         self._timeout: timedelta = timeout or timedelta(seconds=30)
+        self._client: httpx2.AsyncClient = httpx2.AsyncClient(
+            base_url=base_url, timeout=self._timeout.total_seconds()
+        )
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the held httpx client; safe to call once at shutdown."""
+        await self._client.aclose()
 
     async def list_messages(
         self, *, query: str, page_token: str | None
@@ -81,14 +107,11 @@ class HttpGmailTransport(GmailTransport):
         # the real `google.oauth2.credentials.Credentials` but not declared on
         # the reduced `GoogleCredentials` protocol `load_credentials` returns.
         token = cast("Any", credentials).token
-        async with httpx2.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout.total_seconds()
-        ) as client:
-            response = await client.get(
-                path,
-                params=params or {},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        response = await self._client.get(
+            path,
+            params=params or {},
+            headers={"Authorization": f"Bearer {token}"},
+        )
         return _from_httpx(response)
 
 

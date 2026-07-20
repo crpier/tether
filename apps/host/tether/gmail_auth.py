@@ -41,18 +41,19 @@ class GmailAuthSettings(BaseSettings):
 
 
 async def _recent_subjects(
-    transport: HttpGmailTransport, count: int, *, logger: Logger
+    config: OAuthConfig, count: int, *, logger: Logger
 ) -> list[str]:
     """List a handful of recent eligible subjects, as an end-to-end sanity check."""
-    client = GmailClient(transport=transport)
-    ids = await client.list_message_ids(
-        query="-in:spam -in:trash -in:sent", logger=logger
-    )
-    subjects: list[str] = []
-    for message_id in ids[:count]:
-        message = await client.get_message(message_id)
-        subjects.append(message.subject or "(no subject)")
-    return subjects
+    async with HttpGmailTransport(config) as transport:
+        client = GmailClient(transport=transport)
+        ids = await client.list_message_ids(
+            query="-in:spam -in:trash -in:sent", logger=logger
+        )
+        subjects: list[str] = []
+        for message_id in ids[:count]:
+            message = await client.get_message(message_id)
+            subjects.append(message.subject or "(no subject)")
+        return subjects
 
 
 def main() -> None:
@@ -71,7 +72,7 @@ def main() -> None:
         _ = run_auth_flow(config)
         subjects = asyncio.run(
             _recent_subjects(
-                HttpGmailTransport(config),
+                config,
                 _VERIFY_COUNT,
                 logger=structlog.stdlib.get_logger("gmail-auth"),
             )

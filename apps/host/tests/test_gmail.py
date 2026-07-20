@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,7 +25,7 @@ import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database, Fetched
+from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,
     assert_false,
@@ -39,6 +39,7 @@ from snektest import (
 
 from tether.gmail import (
     GmailClient,
+    GmailMessageRecord,
     GmailResponse,
     GmailSyncService,
     create_gmail_schema,
@@ -50,7 +51,12 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
-from tether.triggers import ScheduledTrigger, TriggerService, create_trigger_schema
+from tether.triggers import (
+    ScheduledTrigger,
+    TriggerService,
+    TriggerSpec,
+    create_trigger_schema,
+)
 
 
 def noop_tracer() -> Tracer:
@@ -108,6 +114,30 @@ class RaisingTriageRunner:
     async def run(self, prompt: str) -> str:
         message = "model unavailable"
         raise RuntimeError(message)
+
+
+class OnceRaisingTriggerService(TriggerService):
+    """A `TriggerService` whose `create` fails a fixed number of times, then works.
+
+    Exercises the record-first ordering in `GmailSyncService._apply_verdict`:
+    a failure between the Memory capture and the trigger being created must
+    never cause a retried pass to re-capture the Memory.
+    """
+
+    def __init__(
+        self, database: Database, tracer: Tracer, *, fail_times: int = 1
+    ) -> None:
+        super().__init__(database=database, tracer=tracer)
+        self._remaining_failures = fail_times
+
+    async def create(
+        self, spec: TriggerSpec, *, now: datetime, logger: Logger
+    ) -> ScheduledTrigger[Fetched]:
+        if self._remaining_failures > 0:
+            self._remaining_failures -= 1
+            message = "trigger backend unavailable"
+            raise RuntimeError(message)
+        return await super().create(spec, now=now, logger=logger)
 
 
 def _encode_body(text: str) -> str:
@@ -216,15 +246,25 @@ class GmailEnv:
         triage_runner: FakeTriageRunner | RaisingTriageRunner,
         *,
         triage_batch_size: int = 10,
+        trigger_service: TriggerService | None = None,
+        timezone_name_provider: Callable[[datetime], str] | None = None,
     ) -> GmailSyncService:
-        """Wire a sync service over a scripted transport and triage runner."""
+        """Wire a sync service over a scripted transport and triage runner.
+
+        `timezone_name_provider` defaults to a fixed `"UTC"` so trigger fire
+        times stay deterministic regardless of the host's real local zone;
+        tests exercising local-time behaviour pass an explicit override.
+        """
         return GmailSyncService(
             database=self.database,
             client=GmailClient(transport=transport),
             memory_service=self.memory_service,
-            trigger_service=self.trigger_service,
+            trigger_service=(
+                trigger_service if trigger_service is not None else self.trigger_service
+            ),
             triage_runner=triage_runner,
             triage_batch_size=triage_batch_size,
+            timezone_name_provider=timezone_name_provider or (lambda _now: "UTC"),
         )
 
     async def tethered_memories(self) -> list[Memory[Fetched]]:
@@ -234,6 +274,17 @@ class GmailEnv:
     async def triggers(self) -> list[ScheduledTrigger[Fetched]]:
         """The current live triggers, soonest-due first."""
         return await self.trigger_service.list_triggers(logger=self.logger)
+
+    async def message_record(
+        self, message_id: str
+    ) -> GmailMessageRecord[Fetched] | None:
+        """Read one message's idempotency row directly, for status assertions."""
+        async with self.database.transaction() as tx:
+            return await tx.fetch_one_or_none(
+                select(GmailMessageRecord).where(
+                    GmailMessageRecord.message_id.eq(message_id)
+                )
+            )
 
 
 @fixture
@@ -655,6 +706,221 @@ async def a_failed_pass_does_not_persist_the_watermark() -> None:
     assert_eq(report.ingested, 1)
 
 
+# --- Pending retry (finding 1) -------------------------------------------------
+
+
+@test()
+async def a_malformed_verdict_is_recorded_pending_and_watermark_advances() -> None:
+    """A malformed verdict stamps an explicit `pending` row; the watermark still advances.
+
+    Before this fix, a pending message had no row at all ("pending-by-absence")
+    and the next pass's query window (`after: watermark - 1 day`) could move
+    past it entirely, losing it forever. Now it gets an explicit `pending` row
+    that survives the watermark advancing.
+    """
+    env = await load_fixture(gmail_env())
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1", "m2"])],
+        messages={"m1": message_payload("m1"), "m2": message_payload("m2")},
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[
+            verdict_reply(
+                [
+                    interesting_verdict("m1"),
+                    {"message_id": "m2", "classification": "bogus", "why": "?"},
+                ]
+            )
+        ]
+    )
+
+    report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
+
+    assert_eq(report.pending, 1)
+    record = await env.message_record("m2")
+    assert_true(record is not None)
+    assert_eq(record.status if record is not None else None, "pending")
+
+    # A second pass proves the watermark was persisted despite the pending
+    # message: it queries incrementally (`after:`), not a full backfill.
+    second_transport = FakeGmailTransport(
+        message_pages=[message_list_page([])], messages={"m2": message_payload("m2")}
+    )
+    _ = await env.sync_service(
+        second_transport, FakeTriageRunner(replies=[verdict_reply([])])
+    ).sync(logger=env.logger)
+
+    assert_true("after:" in second_transport.list_calls[0][0])
+
+
+@test()
+async def a_pending_message_is_upgraded_via_the_retry_path_not_the_listing() -> None:
+    """A pending message re-triaged next pass is reachable only via the retry path."""
+    env = await load_fixture(gmail_env())
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1", "m2"])],
+        messages={"m1": message_payload("m1"), "m2": message_payload("m2")},
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[
+            verdict_reply(
+                [
+                    interesting_verdict("m1"),
+                    {"message_id": "m2", "classification": "bogus", "why": "?"},
+                ]
+            )
+        ]
+    )
+    first = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
+    assert_eq(first.pending, 1)
+
+    # Pass 2: m2 is NOT listed at all (simulating it falling outside the
+    # watermark window) — it is reachable only through the pending-retry path.
+    second_transport = FakeGmailTransport(
+        message_pages=[message_list_page([])], messages={"m2": message_payload("m2")}
+    )
+    second_triage_runner = FakeTriageRunner(
+        replies=[verdict_reply([interesting_verdict("m2", why="Now valid")])]
+    )
+
+    second = await env.sync_service(second_transport, second_triage_runner).sync(
+        logger=env.logger
+    )
+
+    assert_eq(second.ingested, 1)
+    assert_eq(second.pending, 0)
+    memories = await env.tethered_memories()
+    assert_true(any("Now valid" in memory.content for memory in memories))
+    record = await env.message_record("m2")
+    assert_true(record is not None)
+    assert_eq(record.status if record is not None else None, "ingested")
+
+
+@test()
+async def a_pending_retry_is_not_double_processed_if_also_relisted() -> None:
+    """A pending row that also reappears in the overlap window is triaged once."""
+    env = await load_fixture(gmail_env())
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m2"])],
+        messages={"m2": message_payload("m2")},
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[
+            verdict_reply([{"message_id": "m2", "classification": "bogus", "why": "?"}])
+        ]
+    )
+    first = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
+    assert_eq(first.pending, 1)
+
+    # Pass 2: m2 reappears in the normal listing's overlap window AND is still
+    # a pending row — the pending-retry path already covers it, so the
+    # listing loop must skip it rather than triaging it a second time.
+    second_transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m2"])],
+        messages={"m2": message_payload("m2")},
+    )
+    second_triage_runner = FakeTriageRunner(
+        replies=[verdict_reply([interesting_verdict("m2", why="Now valid")])]
+    )
+
+    second = await env.sync_service(second_transport, second_triage_runner).sync(
+        logger=env.logger
+    )
+
+    assert_eq(second.ingested, 1)
+    assert_eq(len(second_triage_runner.prompts), 1)
+    assert_eq(len(await env.tethered_memories()), 1)
+
+
+# --- Local-timezone deadline (finding 2) ----------------------------------------
+
+
+@test()
+async def a_deadline_trigger_fires_at_nine_am_local_not_utc() -> None:
+    """The deadline trigger's 09:00 slot is computed in the injected local zone."""
+    env = await load_fixture(gmail_env())
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1"])],
+        messages={"m1": message_payload("m1")},
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[
+            verdict_reply(
+                [
+                    interesting_verdict(
+                        "m1",
+                        deadline_at="2030-06-15T12:00:00+00:00",
+                        deadline_description="Invoice payment",
+                    )
+                ]
+            )
+        ]
+    )
+
+    _ = await env.sync_service(
+        transport,
+        triage_runner,
+        timezone_name_provider=lambda _now: "America/New_York",
+    ).sync(logger=env.logger)
+
+    triggers = await env.triggers()
+    assert_eq(len(triggers), 1)
+    # 2030-06-15T12:00Z is 08:00 EDT (UTC-4) the same local date; the
+    # morning-before local 09:00 (June 14, EDT) converts back to 13:00 UTC.
+    assert_eq(triggers[0].next_fire_at, datetime(2030, 6, 14, 13, 0, tzinfo=UTC))
+
+
+# --- Retry-safe ingest (finding 3) ----------------------------------------------
+
+
+@test()
+async def a_trigger_creation_failure_never_duplicates_the_memory() -> None:
+    """A failure between memory capture and trigger creation must not double-capture."""
+    env = await load_fixture(gmail_env())
+    failing_trigger_service = OnceRaisingTriggerService(
+        env.database, noop_tracer(), fail_times=1
+    )
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1"])],
+        messages={"m1": message_payload("m1")},
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[
+            verdict_reply(
+                [
+                    interesting_verdict(
+                        "m1",
+                        deadline_at="2030-06-15T12:00:00+00:00",
+                        deadline_description="Invoice payment",
+                    )
+                ]
+            )
+        ]
+    )
+    service = env.sync_service(
+        transport, triage_runner, trigger_service=failing_trigger_service
+    )
+
+    with assert_raises(RuntimeError):
+        _ = await service.sync(logger=env.logger)
+
+    assert_eq(len(await env.tethered_memories()), 1)
+
+    # Re-run the pass: the message is already recorded `ingested` with its
+    # Memory captured, so it is skipped entirely rather than re-triaged —
+    # exactly one Memory must exist for it, never a duplicate.
+    recovering_transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1"])],
+        messages={"m1": message_payload("m1")},
+    )
+    service.client = GmailClient(transport=recovering_transport)
+    service.triage_runner = FakeTriageRunner(replies=[])
+
+    _ = await service.sync(logger=env.logger)
+
+    assert_eq(len(await env.tethered_memories()), 1)
+
+
 # --- MIME body extraction ------------------------------------------------------
 
 
@@ -685,6 +951,52 @@ async def an_html_only_body_is_tag_stripped() -> None:
             "m1": message_payload(
                 "m1", html_body="<p>Hello <b>world</b></p>", body_text=""
             )
+        },
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[verdict_reply([interesting_verdict("m1")])]
+    )
+
+    _ = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
+
+    prompt = triage_runner.prompts[0]
+    assert_true("Hello world" in prompt)
+    assert_false("<p>" in prompt)
+    assert_false("<b>" in prompt)
+
+
+def _payload_with_empty_plain_and_html(
+    message_id: str, html_body: str
+) -> dict[str, object]:
+    """A raw payload with an empty text/plain part alongside a real text/html part."""
+    return {
+        "id": message_id,
+        "threadId": message_id,
+        "labelIds": [],
+        "internalDate": str(int(_DEFAULT_INTERNAL_DATE.timestamp() * 1000)),
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "sender@example.com"},
+                {"name": "Subject", "value": "Hello"},
+                {"name": "Date", "value": "Mon, 1 Jan 2026 00:00:00 +0000"},
+            ],
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {"mimeType": "text/plain", "body": {"data": _encode_body("")}},
+                {"mimeType": "text/html", "body": {"data": _encode_body(html_body)}},
+            ],
+        },
+    }
+
+
+@test()
+async def an_empty_plain_part_falls_back_to_the_html_body() -> None:
+    """An empty-string text/plain part must not shadow a present HTML body."""
+    env = await load_fixture(gmail_env())
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1"])],
+        messages={
+            "m1": _payload_with_empty_plain_and_html("m1", "<p>Hello <b>world</b></p>")
         },
     )
     triage_runner = FakeTriageRunner(

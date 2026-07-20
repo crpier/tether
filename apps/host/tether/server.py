@@ -1183,7 +1183,7 @@ async def _shutdown_background_tasks(
             await task
 
 
-def _lifespan(
+def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wired gate
     *,
     config: AppConfig,
     telemetry_settings: TelemetrySettings,
@@ -1381,6 +1381,7 @@ def _lifespan(
                 await _shutdown_background_tasks(background_tasks, logger=app_logger)
                 await scheduler.shutdown()
                 await runtime_registry.shutdown_all()
+                await _close_gmail_transport(config)
                 telemetry.shutdown()
 
     return lifespan
@@ -1541,6 +1542,15 @@ def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
         client_secret_path=settings.youtube_client_secret_path,
         no_browser=settings.youtube_oauth_no_browser,
     )
+
+
+async def _close_gmail_transport(config: AppConfig) -> None:
+    """Close the held Gmail HTTP client at shutdown, if the gate is wired.
+
+    A no-op when the gate is unconfigured, or (in tests) a fake transport that
+    holds no real client to close."""
+    if isinstance(config.gmail_transport, HttpGmailTransport):
+        await config.gmail_transport.aclose()
 
 
 def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport | None:

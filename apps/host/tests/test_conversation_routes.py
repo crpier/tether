@@ -15,7 +15,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from tether.chat_ws import _local_timezone_name, _prompt_with_time_context
+from tether.chat_ws import _prompt_with_time_context, local_timezone_name
 from tether.conversations import ConversationService, Message, MessageDraft
 from tether.model_selection import AgentModelConfig
 from tether.pi_runtime import (
@@ -619,7 +619,7 @@ def local_timezone_name_prefers_tz_env() -> None:
     previous = os.environ.get("TZ")
     os.environ["TZ"] = "Europe/Bucharest"
     try:
-        name = _local_timezone_name(datetime(2026, 7, 1, tzinfo=UTC))
+        name = local_timezone_name(datetime(2026, 7, 1, tzinfo=UTC))
     finally:
         if previous is None:
             del os.environ["TZ"]

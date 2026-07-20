@@ -20,6 +20,11 @@ Tether constructs. The module is three seams:
 The gate never mutates the inbox — no label changes, no archiving, no marking
 read — and reads only what it needs to triage and ingest.
 
+Batching several emails into one triage prompt is an accepted tradeoff: one
+email's content can, in principle, influence another email's verdict within
+the same batch (in-batch prompt injection), traded for the reduced model-call
+volume batching buys.
+
 >>> service = GmailSyncService(
 ...     database=database,
 ...     client=client,
@@ -39,10 +44,11 @@ import base64
 import binascii
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, tzinfo
 from typing import Literal, Protocol, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import UUID7, BaseModel, ValidationError
 from snekql.sqlite import (
@@ -58,6 +64,7 @@ from snekql.sqlite import (
     update,
 )
 
+from tether.chat_ws import local_timezone_name
 from tether.db_retry import run_in_transaction
 from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
@@ -104,16 +111,17 @@ _PAST_FIRE_CLAMP_MINUTES = 5
 """How far past `now` a deadline trigger's fire time is clamped when the
 morning-before slot has already passed."""
 
-_DEFAULT_BASE_URL = "https://gmail.googleapis.com"
-
 _HTTP_OK = 200
 """The Gmail API success status; anything else raises `GmailApiError`."""
 
-type GmailMessageStatus = Literal["prefiltered", "noise", "ingested"]
+type GmailMessageStatus = Literal["prefiltered", "noise", "ingested", "pending"]
 """An ingested/reviewed message's resting state in the idempotency table.
 
-A message id absent from the table is implicitly pending — the fourth,
-unstored state the spec calls "pending-by-absence"."""
+`pending` is stamped explicitly for a message whose verdict came back
+missing/malformed, so it survives the watermark advancing past it: every sync
+pass re-fetches and re-triages every `pending` row regardless of the
+watermark window, upgrading it to its final status on a valid verdict. A
+message id absent from the table entirely has simply never been listed yet."""
 
 
 class GmailApiError(Exception):
@@ -292,7 +300,7 @@ def _extract_body(payload: Mapping[str, object]) -> str:
     token spend stay bounded regardless of message size.
     """
     plain, html_body = _walk_body_parts(payload)
-    text = plain if plain is not None else _strip_html(html_body or "")
+    text = plain or _strip_html(html_body or "")
     return text[:_BODY_TRUNCATE_CHARS]
 
 
@@ -576,16 +584,38 @@ def _excerpt(body_text: str) -> str:
     return trimmed[:_EXCERPT_CHARS].rstrip() + "…"
 
 
-def _trigger_fire_at(deadline_at: datetime, *, now: datetime) -> datetime:
+def _resolve_zone(tz_name: str) -> tzinfo:
+    """Resolve an IANA zone name, degrading to UTC for an unresolvable one.
+
+    `tz_name` may be the numeric-offset fallback `local_timezone_name` returns
+    when no IANA name is determinable (e.g. `"+0200"`), which `ZoneInfo` cannot
+    parse — treated the same as an unknown zone, since a best-effort local fire
+    time is still better than crashing the sync pass over it.
+    """
+    try:
+        return ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError, ValueError:
+        return UTC
+
+
+def _trigger_fire_at(deadline_at: datetime, *, now: datetime, tz_name: str) -> datetime:
     """The morning-before fire time for a deadline trigger, clamped to near-now.
 
-    Fires at 09:00 UTC the day before the deadline; when that slot has already
-    passed (a near or same-day deadline), the fire time is clamped to shortly
-    after `now` instead, so the reminder still arrives rather than being
-    silently rejected as a past `fire_at`.
+    Fires at 09:00 **local** time (`tz_name`) the day before the deadline —
+    the deadline is converted into the local zone first so "the day before"
+    matches the local calendar date, then the local 09:00 slot is converted
+    back to UTC for storage. When that slot has already passed (a near or
+    same-day deadline), the fire time is clamped to shortly after `now`
+    instead, so the reminder still arrives rather than being silently
+    rejected as a past `fire_at`.
     """
-    day_before = (deadline_at - timedelta(days=1)).date()
-    fire_at = datetime.combine(day_before, time(_DEADLINE_FIRE_HOUR, 0), tzinfo=UTC)
+    zone = _resolve_zone(tz_name)
+    local_deadline = deadline_at.astimezone(zone)
+    day_before = (local_deadline - timedelta(days=1)).date()
+    local_fire_at = datetime.combine(
+        day_before, time(_DEADLINE_FIRE_HOUR, 0), tzinfo=zone
+    )
+    fire_at = local_fire_at.astimezone(UTC)
     if fire_at <= now:
         return now + timedelta(minutes=_PAST_FIRE_CLAMP_MINUTES)
     return fire_at
@@ -643,6 +673,7 @@ class GmailSyncService:
         triage_runner: GmailTriageRunner,
         *,
         triage_batch_size: int = DEFAULT_TRIAGE_BATCH_SIZE,
+        timezone_name_provider: Callable[[datetime], str] = local_timezone_name,
     ) -> None:
         self.database: Database = database
         self.client: GmailClient = client
@@ -650,6 +681,11 @@ class GmailSyncService:
         self.trigger_service: TriggerService = trigger_service
         self.triage_runner: GmailTriageRunner = triage_runner
         self.triage_batch_size: int = triage_batch_size
+        self.timezone_name_provider: Callable[[datetime], str] = timezone_name_provider
+        """Resolves the OS-local IANA zone a deadline trigger's 09:00 fire time is
+        computed in. Defaults to `local_timezone_name` (the same OS probe
+        `chat_ws` uses); tests inject a fixed callable for a deterministic zone
+        instead of depending on the host's real local timezone."""
 
     async def sync(self, *, logger: Logger) -> GmailSyncReport:
         """Run one idempotent pass; persist the watermark only if it completes."""
@@ -662,11 +698,21 @@ class GmailSyncService:
             watermark=watermark.isoformat() if watermark is not None else None,
         )
         tether_label_id = await self.client.resolve_label_id(_TETHER_LABEL_NAME)
+
+        # Every pass first re-fetches and re-triages every `pending` row,
+        # regardless of the watermark window — a malformed/missing verdict
+        # must never be lost to the watermark advancing past it. Any of these
+        # ids still present in the watermark-window listing below are simply
+        # skipped there (already recorded), so each is triaged at most once.
+        eligible: list[GmailMessage] = [
+            await self.client.get_message(record.message_id)
+            for record in await self._fetch_pending_records()
+        ]
+
         message_ids = await self.client.list_message_ids(
             query=_build_query(watermark), logger=logger
         )
         prefiltered = 0
-        eligible: list[GmailMessage] = []
         for message_id in message_ids:
             if await self._already_recorded(message_id):
                 continue
@@ -681,13 +727,22 @@ class GmailSyncService:
                 prefiltered += 1
                 continue
             eligible.append(message)
-        noise = ingested = 0
+        noise = ingested = pending = 0
         for batch in _chunk(eligible, self.triage_batch_size):
             eligible_ids = frozenset(message.message_id for message in batch)
             reply = await self.triage_runner.run(_build_triage_prompt(batch))
             verdicts = _parse_verdicts(reply, eligible_ids=eligible_ids)
             by_id = {message.message_id: message for message in batch}
-            for message_id, verdict in verdicts.items():
+            for message_id in eligible_ids:
+                verdict = verdicts.get(message_id)
+                if verdict is None:
+                    # Missing/malformed verdict: stamp an explicit `pending`
+                    # row (upserting over any prior one) so this message is
+                    # retried by the pending-retry path above on every future
+                    # pass, however far the watermark has since moved.
+                    await self._record_status(by_id[message_id], status="pending")
+                    pending += 1
+                    continue
                 tether_override = (
                     tether_label_id is not None
                     and tether_label_id in by_id[message_id].label_ids
@@ -703,7 +758,6 @@ class GmailSyncService:
                     noise += 1
                 else:
                     ingested += 1
-        pending = len(eligible) - noise - ingested
         await self._store_watermark(started_at)
         _info(
             logger,
@@ -753,17 +807,26 @@ class GmailSyncService:
             await self._record_status(message, status="noise")
             return "noise"
         memory = await self._capture_memory(message, verdict, logger=logger)
-        trigger_id: UUID7 | None = None
+        # Record the idempotency row immediately after capture — before the
+        # trigger is attempted — so a failure past this point (trigger
+        # creation raising, failing the whole pass) never re-captures a
+        # second Memory on retry: `_already_recorded` already sees this row
+        # and skips the message entirely next time. The tradeoff is that a
+        # deadline trigger that fails to create here does not get a second
+        # attempt; the Memory itself is never duplicated, which is the
+        # invariant that matters (mirrors the record-then-link ordering
+        # `readwise.py._create_highlight` uses for its own mapping row).
+        await self._record_status(message, status="ingested", memory_id=str(memory.id))
         if verdict.deadline is not None and verdict.deadline.at > now:
             trigger_id = await self._create_deadline_trigger(
                 message, verdict.deadline, now=now, logger=logger
             )
-        await self._record_status(
-            message,
-            status="ingested",
-            memory_id=str(memory.id),
-            trigger_id=str(trigger_id) if trigger_id is not None else None,
-        )
+            await self._record_status(
+                message,
+                status="ingested",
+                memory_id=str(memory.id),
+                trigger_id=str(trigger_id),
+            )
         return "ingested"
 
     async def _capture_memory(
@@ -797,12 +860,13 @@ class GmailSyncService:
         logger: Logger,
     ) -> UUID7:
         """Create the one-shot deadline trigger, firing the morning before."""
+        tz_name = self.timezone_name_provider(now)
         trigger = await self.trigger_service.create(
             TriggerSpec(
                 recurrence="once",
                 action_kind="message",
                 payload=_trigger_message(message, deadline),
-                fire_at=_trigger_fire_at(deadline.at, now=now),
+                fire_at=_trigger_fire_at(deadline.at, now=now, tz_name=tz_name),
             ),
             now=now,
             logger=logger,
@@ -810,7 +874,13 @@ class GmailSyncService:
         return trigger.id
 
     async def _already_recorded(self, message_id: str) -> bool:
-        """True when a message id already has an idempotency row (any status)."""
+        """True when a message id already has an idempotency row (any status).
+
+        A `pending` row counts as recorded here too: it is retried exactly
+        once per pass, via the dedicated pending-retry step at the top of
+        `sync` — never a second time by also falling through this
+        watermark-window listing loop.
+        """
         async with self.database.transaction() as tx:
             row = await tx.fetch_one_or_none(
                 select(GmailMessageRecord).where(
@@ -818,6 +888,15 @@ class GmailSyncService:
                 )
             )
         return row is not None
+
+    async def _fetch_pending_records(self) -> list[GmailMessageRecord[Fetched]]:
+        """Every message currently resting in `pending` status, any pass."""
+        async with self.database.transaction() as tx:
+            return await tx.fetch_all(
+                select(GmailMessageRecord).where(
+                    GmailMessageRecord.status.eq("pending")
+                )
+            )
 
     async def _record_status(
         self,
@@ -827,22 +906,44 @@ class GmailSyncService:
         memory_id: str | None = None,
         trigger_id: str | None = None,
     ) -> None:
-        """Insert the resting idempotency row for one processed message."""
+        """Upsert the idempotency row for one processed message.
 
-        async def _insert(tx: Transaction) -> None:
-            _ = await tx.execute(
-                insert(
-                    GmailMessageRecord(
-                        message_id=message.message_id,
-                        status=status,
-                        memory_id=memory_id,
-                        trigger_id=trigger_id,
-                        internal_date=message.internal_date.isoformat(),
-                    )
+        An insert for a message id with no prior row; an update otherwise —
+        a message can cycle `pending` -> `pending` (still unresolved) or
+        `pending` -> a final status, and an already-`ingested` row is updated
+        a second time once its trigger is created (see `_apply_verdict`).
+        """
+
+        async def _upsert(tx: Transaction) -> None:
+            existing = await tx.fetch_one_or_none(
+                select(GmailMessageRecord).where(
+                    GmailMessageRecord.message_id.eq(message.message_id)
                 )
             )
+            if existing is None:
+                _ = await tx.execute(
+                    insert(
+                        GmailMessageRecord(
+                            message_id=message.message_id,
+                            status=status,
+                            memory_id=memory_id,
+                            trigger_id=trigger_id,
+                            internal_date=message.internal_date.isoformat(),
+                        )
+                    )
+                )
+            else:
+                _ = await tx.execute(
+                    update(GmailMessageRecord)
+                    .set(
+                        GmailMessageRecord.status.to(status),
+                        GmailMessageRecord.memory_id.to(memory_id),
+                        GmailMessageRecord.trigger_id.to(trigger_id),
+                    )
+                    .where(GmailMessageRecord.message_id.eq(message.message_id))
+                )
 
-        await run_in_transaction(self.database, _insert)
+        await run_in_transaction(self.database, _upsert)
 
     async def _read_watermark(self) -> datetime | None:
         """The last fully successful pass's start time, or None on first sync."""
