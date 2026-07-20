@@ -50,6 +50,13 @@ from tether.conversations import ConversationService, create_conversation_schema
 from tether.ebook_stats import EbookStatsSyncService, create_ebook_stats_schema
 from tether.embeddings import Embedder, FastEmbedder
 from tether.events import EventHub
+from tether.gmail import (
+    GmailClient,
+    GmailSyncService,
+    GmailTransport,
+    create_gmail_schema,
+)
+from tether.gmail_oauth import GMAIL_READONLY_SCOPE, HttpGmailTransport
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
@@ -194,6 +201,10 @@ class AppConfig:
     readwise_sync_interval_seconds: float = 60 * 60
     readwise_reader_sync_enabled: bool = False
     readwise_reader_sync_interval_seconds: float = 60 * 60
+    gmail_transport: GmailTransport | None = None
+    gmail_sync_enabled: bool = False
+    gmail_sync_interval_seconds: float = 15 * 60
+    gmail_triage_batch_size: int = 10
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -390,6 +401,27 @@ class HostSettings(BaseSettings):
     readwise_reader_sync_interval_seconds: float = 60 * 60
     """Seconds between Reader v3 list passes. The list API is rate-limited (20
     req/min) and reading progress changes slowly, so an hourly cadence is ample."""
+    gmail_token_path: Path = Path(".tether/gmail-oauth-token.json")
+    """Cached Gmail OAuth token path. Absent (the default) keeps the ingestion
+    gate off, so a fresh checkout never touches mail. Minted by `just
+    gmail-auth`."""
+    gmail_client_secret_path: Path = Path(".tether/youtube-client-secret.json")
+    """OAuth client secret path. Defaults to the shared YouTube client secret —
+    the Gmail gate reuses the same already-completed Google Cloud Console
+    setup, so no new GCP project or client is needed."""
+    gmail_oauth_no_browser: bool = False
+    """Print the Gmail consent URL instead of opening a browser (headless box)."""
+    gmail_sync_enabled: bool = False
+    """Whether the background Gmail ingestion gate runs. Off by default and a
+    no-op unless a cached token also exists at `gmail_token_path`, so reading
+    mail is a deliberate, credentialed choice — never on for a fresh checkout."""
+    gmail_sync_interval_seconds: float = 15 * 60
+    """Seconds between Gmail sync passes. Steady-state volume is a handful of
+    eligible messages a day, so a 15-minute cadence is ample without being
+    chatty."""
+    gmail_triage_batch_size: int = 10
+    """How many messages are triaged per ephemeral agent prompt run. Bounds
+    both the prompt size and the blast radius of one malformed model reply."""
     ebook_statistics_db_path: str = ""
     """Host-visible path to a Syncthing-mirrored copy of KOReader's
     `statistics.sqlite`. Empty (the default) keeps the ingestion worker off, so
@@ -432,6 +464,7 @@ async def _create_schemas(db: Database) -> None:
     await create_readwise_schema(db)
     await create_kosync_schema(db)
     await create_ebook_stats_schema(db)
+    await create_gmail_schema(db)
 
 
 def _build_youtube_client(
@@ -696,6 +729,62 @@ async def _wire_reader(
         )
 
     return [asyncio.create_task(_run_reader_sync())]
+
+
+async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring dependency
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    memory_service: MemoryService,
+    trigger_service: TriggerService,
+    kb_root: Path,
+) -> list[asyncio.Task[None]]:
+    """Wire the Gmail ingestion gate + its background worker onto state.
+
+    A no-op returning no tasks unless the gate is enabled and a Gmail
+    transport is configured (a cached OAuth token exists) — the default
+    install never reads mail. When active, batches of eligible messages are
+    triaged through an ephemeral pi run (the same mechanism Recall and
+    scheduled prompts use); the worker runs an idempotent boot pass (off the
+    startup critical path) and then the periodic poll loop, and the returned
+    task joins the lifespan's cancelled-on-shutdown background tasks.
+    """
+    if not config.gmail_sync_enabled or config.gmail_transport is None:
+        return []
+    logger = cast("Logger", app.state.logger)
+    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
+    triage_runner = EphemeralPiPromptRunner(
+        _ephemeral_pi_config(
+            app,
+            config=config,
+            kb_root=kb_root,
+            run_kind="gmail",
+            model=model_catalog.default_config,
+        )
+    )
+    sync = GmailSyncService(
+        database=database,
+        client=GmailClient(transport=config.gmail_transport),
+        memory_service=memory_service,
+        trigger_service=trigger_service,
+        triage_runner=triage_runner,
+        triage_batch_size=config.gmail_triage_batch_size,
+    )
+    app.state.gmail_sync = sync
+
+    async def _run_gmail_sync() -> None:
+        try:
+            _ = await sync.sync(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Gmail boot sync failed")
+        await sync.sync_forever(
+            interval_seconds=config.gmail_sync_interval_seconds, logger=logger
+        )
+
+    return [asyncio.create_task(_run_gmail_sync())]
 
 
 async def _wire_ebook_stats(
@@ -1276,6 +1365,14 @@ def _lifespan(
                 + await _wire_reader(
                     app, config=config, database=db, memory_service=memory_service
                 )
+                + await _wire_gmail(
+                    app,
+                    config=config,
+                    database=db,
+                    memory_service=memory_service,
+                    trigger_service=trigger_service,
+                    kb_root=configured_kb_root,
+                )
                 + await _wire_ebook_stats(app, config=config, database=db)
             )
             try:
@@ -1446,6 +1543,27 @@ def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
     )
 
 
+def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport | None:
+    """Build the OAuth-backed Gmail transport once a token has been authorized.
+
+    With no cached token, returns `None` so the background gate never wires
+    (see `_wire_gmail`) and the Google client libraries stay unneeded for a
+    default install. Once the user has run `just gmail-auth`, the token
+    exists and this wires the real transport so ingestion activates
+    automatically on the next host start.
+    """
+    if not settings.gmail_token_path.exists():
+        return None
+    return HttpGmailTransport(
+        OAuthConfig(
+            token_path=settings.gmail_token_path,
+            client_secret_path=settings.gmail_client_secret_path,
+            scopes=(GMAIL_READONLY_SCOPE,),
+            no_browser=settings.gmail_oauth_no_browser,
+        )
+    )
+
+
 def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     """Build the `AppConfig` the app factory wires from environment settings.
 
@@ -1476,6 +1594,10 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         readwise_reader_sync_interval_seconds=(
             settings.readwise_reader_sync_interval_seconds
         ),
+        gmail_transport=build_configured_gmail_transport(settings),
+        gmail_sync_enabled=settings.gmail_sync_enabled,
+        gmail_sync_interval_seconds=settings.gmail_sync_interval_seconds,
+        gmail_triage_batch_size=settings.gmail_triage_batch_size,
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
         stt_enabled=settings.stt_enabled,

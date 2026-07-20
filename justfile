@@ -112,6 +112,13 @@ pi-auth:
 youtube-auth:
     uv run --group youtube python -m tether.youtube_auth
 
+# one-time Gmail OAuth bootstrap (caches a token, prints a few recent subjects)
+# reuses the YouTube OAuth client secret by default; set TETHER_GMAIL_CLIENT_SECRET_PATH
+# to override. Set TETHER_GMAIL_OAUTH_NO_BROWSER=1 to print the URL instead of opening one
+# --group youtube ensures the shared Google client libraries are installed first
+gmail-auth:
+    uv run --group youtube python -m tether.gmail_auth
+
 # one-shot import of an active-workbench backup (likes + transcripts) into Tether
 # never calls YouTube; idempotent; pass --dry-run to preview counts without writing
 # e.g. just youtube-import-backup ~/active-workbench/state.db

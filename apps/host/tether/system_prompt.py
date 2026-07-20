@@ -129,13 +129,14 @@ Keep the result concise and self-contained.
 def system_prompt_for(kind: RunKind) -> str:
     """Return the Tether system prompt injected into a run of `kind`.
 
-    Interactive conversations carry the full persona; scheduled and Recall
-    runs are unattended one-shots, so they get the shorter task variant.
+    Interactive conversations carry the full persona; scheduled, Recall, and
+    Gmail-triage runs are unattended one-shots, so they get the shorter task
+    variant.
     """
     match kind:
         case "conversation":
             return CONVERSATION_SYSTEM_PROMPT
-        case "scheduled" | "recall":
+        case "scheduled" | "recall" | "gmail":
             return TASK_SYSTEM_PROMPT
         case _:
             assert_never(kind)
