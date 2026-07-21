@@ -212,8 +212,12 @@ class AppConfig:
     search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
     stt_client: SttClient | None = None
-    stt_enabled: bool = False
-    stt_api_key: str = ""
+    stt_api_key: str = "unconfigured-test-stt-key"
+    """Placeholder only: production wiring always goes through `HostSettings`,
+    which fails fast at boot if unset (ADR 0018). This default exists purely so
+    tests that construct `AppConfig` directly and don't exercise voice/STT
+    routes don't need to supply a real key; tests that do exercise transcription
+    inject a fake `stt_client` instead."""
     stt_base_url: str = "https://api.openai.com/v1"
     stt_model: str = "whisper-1"
     study_item_generator: StudyItemGenerator | None = None
@@ -378,15 +382,10 @@ class HostSettings(BaseSettings):
     readwise_sync_interval_seconds: float = 60 * 60
     """Seconds between Readwise export passes. The Export API is generous (240
     req/min) but highlights change slowly, so an hourly cadence is ample."""
-    stt_enabled: bool = False
-    """Whether the speech-to-text capability is available for voice capture. Off
-    by default and a no-op unless `stt_api_key` is also set, so transcription is
-    a deliberate, credentialed choice. When disabled, `POST /api/capture/voice`
-    returns 503."""
-    stt_api_key: str = ""
-    """API key for the OpenAI-compatible transcription endpoint. Empty (the
-    default) keeps voice capture unavailable, so the default install never calls
-    a transcription API."""
+    stt_api_key: str = Field(default="", min_length=1)
+    """API key for the OpenAI-compatible transcription endpoint. Required (ADR
+    0018): STT is an always-on host dependency, so the host fails fast at boot
+    if this is missing/empty rather than degrading to a disabled voice UI."""
     stt_base_url: str = "https://api.openai.com/v1"
     """Root of the OpenAI-compatible transcription API. Point it at OpenAI, Groq,
     or any compatible endpoint — the only per-provider knob is this URL."""
@@ -1387,18 +1386,16 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
     return lifespan
 
 
-def _resolve_stt_client(config: AppConfig) -> SttClient | None:
-    """Build the voice-capture STT client from config, or `None` when disabled.
+def _resolve_stt_client(config: AppConfig) -> SttClient:
+    """Build the voice-capability STT client from config.
 
     An injected `stt_client` (tests, a custom wiring) wins outright. Otherwise a
-    client is built only when the capability is enabled and keyed — the
-    off-by-default, credentialed opt-in that keeps the default install from ever
-    calling a transcription API. `None` leaves `POST /api/capture/voice` a 503.
+    live client is built from `stt_api_key`/`stt_base_url`/`stt_model`. STT is a
+    required host dependency (ADR 0018) — `app.state.stt_client` is always set,
+    never `None`.
     """
     if config.stt_client is not None:
         return config.stt_client
-    if not (config.stt_enabled and config.stt_api_key):
-        return None
     return SttClient(
         transport=HttpSttTransport(config.stt_api_key, base_url=config.stt_base_url),
         model=config.stt_model,
@@ -1610,7 +1607,6 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         gmail_triage_batch_size=settings.gmail_triage_batch_size,
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
-        stt_enabled=settings.stt_enabled,
         stt_api_key=settings.stt_api_key,
         stt_base_url=settings.stt_base_url,
         stt_model=settings.stt_model,

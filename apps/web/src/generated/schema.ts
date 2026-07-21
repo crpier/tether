@@ -1626,6 +1626,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/stt/transcriptions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Transcribe an uploaded audio clip and return the transcript text only. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TranscriptionResponse"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/triggers": {
     parameters: {
       query?: never;
@@ -2891,6 +2927,17 @@ export interface components {
       paused_until: string;
       /** Source */
       source: string;
+    };
+    /**
+     * TranscriptionResponse
+     * @description The recognized transcript text for one uploaded audio clip.
+     *
+     *     >>> TranscriptionResponse(transcript="buy oat milk").transcript
+     *     'buy oat milk'
+     */
+    TranscriptionResponse: {
+      /** Transcript */
+      transcript: string;
     };
     /**
      * TriageReport

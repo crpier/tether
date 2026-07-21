@@ -63,6 +63,7 @@ async function startHost(
         TETHER_KB_ROOT: join(root, "kb"),
         TETHER_LOGGING_LEVEL: "ERROR",
         TETHER_SESSION_SECRET: SESSION_SECRET,
+        TETHER_STT_API_KEY: "test-stt-key",
       },
     },
   );

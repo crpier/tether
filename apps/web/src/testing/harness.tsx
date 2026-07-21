@@ -317,6 +317,11 @@ export class FakeApi implements TetherApi {
   getArtifactRejections: ApiError[] = [];
   postArtifactEventCalls: { artifactId: string; payload: unknown }[] = [];
   postArtifactEventRejections: ApiError[] = [];
+  transcribeAudioCalls: Blob[] = [];
+  // Forced per-call rejections, consumed FIFO before the scripted transcript.
+  transcribeAudioRejections: ApiError[] = [];
+  // The transcript the next `transcribeAudio` call resolves with.
+  nextTranscript = "";
 
   constructor(options: {
     authenticated: boolean;
@@ -927,6 +932,15 @@ export class FakeApi implements TetherApi {
       return Promise.resolve(this.storedPanelResults[panelId]);
     }
     return Promise.resolve({ memories: [], total: 0 });
+  }
+
+  transcribeAudio(blob: Blob): Promise<string> {
+    this.transcribeAudioCalls.push(blob);
+    const forced = this.transcribeAudioRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    return Promise.resolve(this.nextTranscript);
   }
 
   private placeholderPrompt(promptId: string): DuePrompt["prompt"] {

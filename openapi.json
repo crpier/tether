@@ -1696,6 +1696,20 @@
         "title": "TranscriptProviderPauseRead",
         "type": "object"
       },
+      "TranscriptionResponse": {
+        "description": "The recognized transcript text for one uploaded audio clip.\n\n>>> TranscriptionResponse(transcript=\"buy oat milk\").transcript\n'buy oat milk'",
+        "properties": {
+          "transcript": {
+            "title": "Transcript",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transcript"
+        ],
+        "title": "TranscriptionResponse",
+        "type": "object"
+      },
       "TriageReport": {
         "description": "The full Triage view of the active Bucket list at one point in time.",
         "properties": {
@@ -3679,6 +3693,23 @@
           }
         },
         "summary": "Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged."
+      }
+    },
+    "/api/stt/transcriptions": {
+      "post": {
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Transcribe an uploaded audio clip and return the transcript text only."
       }
     },
     "/api/triggers": {

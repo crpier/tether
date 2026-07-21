@@ -3,10 +3,11 @@
 These drive `POST /api/capture/voice` through the app's test client, wiring a
 real `SttClient` over a scripted `FakeSttTransport` so no live transcription
 call runs. They assert the endpoint contract: a successful transcription is
-captured as a loose, human-asserted voice Memory (transcript echoed back);
-an unconfigured STT capability returns 503; an oversize upload is rejected; a
-silent recording (empty transcript) is a 422; and a rate-limited upstream
-surfaces as a 503 carrying `Retry-After`.
+captured as a loose, human-asserted voice Memory (transcript echoed back); an
+oversize upload is rejected; a silent recording (empty transcript) is a 422;
+and a rate-limited upstream surfaces as a 503 carrying `Retry-After`. STT is an
+always-on host dependency (ADR 0018), so there is no unconfigured/503 path to
+test here.
 """
 
 from __future__ import annotations
@@ -46,8 +47,12 @@ def _stt_client(response: TranscriptionResponse) -> SttClient:
     return SttClient(transport=ScriptedSttTransport(response), model="whisper-1")
 
 
-def make_client(root: Path, *, stt_client: SttClient | None = None) -> TestClient:
-    """Create a voice-capable app, optionally with an injected STT client."""
+def make_client(root: Path, *, stt_client: SttClient) -> TestClient:
+    """Create a voice-capable app with an injected (scripted) STT client.
+
+    STT is an always-on host dependency (ADR 0018), so every test wires a
+    scripted `SttClient` rather than exercising a disabled/unconfigured path.
+    """
     return TestClient(
         create_app(
             config=AppConfig(
@@ -113,16 +118,6 @@ def voice_capture_lands_a_loose_human_asserted_voice_memory() -> None:
     assert_eq(memory["state"], "loose")
     assert_eq(memory["content"], "call the dentist")
     assert_eq(memory["facets"], {"source": "voice"})
-
-
-@test()
-def voice_capture_returns_503_when_stt_is_not_configured() -> None:
-    """With no STT capability wired, voice capture is unavailable."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        login(client)
-        response = post_voice(client, b"fake-audio-bytes")
-
-    assert_eq(response.status_code, 503)
 
 
 @test()

@@ -23,6 +23,7 @@ from tether.push import push_routes
 from tether.recall_routes import recall_routes
 from tether.routes import routes
 from tether.search_routes import search_routes
+from tether.stt_routes import stt_routes
 from tether.trigger_routes import trigger_routes
 from tether.youtube_routes import youtube_routes
 
@@ -53,6 +54,7 @@ def public_api_routes() -> list[Route]:
         *artifact_routes,
         *panel_routes,
         *ebook_routes,
+        *stt_routes,
     ]
 
 
