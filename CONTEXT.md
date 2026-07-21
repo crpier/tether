@@ -150,6 +150,14 @@ _Avoid_: source, source reference, citation, origin
 A deliberately dumb client (phone app, watch tile) whose only job is getting a capture off the human quickly — share-target, voice-to-text, a tap. All intelligence (parsing, tethering, scheduling) stays server-side.
 _Avoid_: mobile app, frontend, client app
 
+**Voice input**:
+Speech recorded in the web chat client and transcribed to text, entering the conversation as a chat turn — either filled into the composer for the human to review before sending, or sent immediately. Never becomes a Memory directly; it is just another way of producing a chat turn.
+_Avoid_: voice memo, dictation, voice command
+
+**Voice capture**:
+Recorded audio a Capture client uploads straight to the host, outside of chat. Today it lands directly as a Memory; this is slated to change so it instead becomes a chat turn, the same way Voice input does.
+_Avoid_: voice memo, audio capture, voice note
+
 ## Cooking
 
 A deferred vertical with its own entities. These terms will migrate to `src/cooking/CONTEXT.md` (and a `CONTEXT-MAP.md` will appear) when the vertical is actually built. It connects to the core at two points: the cooking profile is a view over relevant tethered Memories, and recipe import uses the Candidate pattern.
