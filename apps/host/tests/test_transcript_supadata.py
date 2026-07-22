@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import httpx2
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 
@@ -28,6 +29,7 @@ from tether.transcript_supadata import (
     SupadataResponse,
     SupadataSpendGuard,
     SupadataTranscriptProvider,
+    SupadataTransport,
     UnlimitedSupadataSpend,
     _retry_after_seconds,
     _submit_params,
@@ -75,13 +77,51 @@ class FakeSupadataTransport:
         return self._poll.pop(0) if len(self._poll) > 1 else self._poll[0]
 
 
+class RaisingSupadataTransport:
+    """A `SupadataTransport` whose `submit`/`poll` raise a raw `httpx2` error.
+
+    Stands in for a real network hiccup (read timeout, connection reset) so
+    tests can assert the provider classifies it as *transient* rather than
+    letting the transport-layer exception escape unclassified.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error: Exception = error
+
+    async def submit(self, video_id: str) -> SupadataResponse:
+        _ = video_id
+        raise self._error
+
+    async def poll(self, job_id: str) -> SupadataResponse:
+        _ = job_id
+        raise self._error
+
+
+class SubmitsThenRaisesOnPollTransport:
+    """A `SupadataTransport` that hands back a job id, then raises a raw
+    `httpx2` error on the follow-up poll — isolates the poll loop's own
+    transport-error handling from the submit call's."""
+
+    def __init__(self, job_response: SupadataResponse, error: Exception) -> None:
+        self._job_response: SupadataResponse = job_response
+        self._error: Exception = error
+
+    async def submit(self, video_id: str) -> SupadataResponse:
+        _ = video_id
+        return self._job_response
+
+    async def poll(self, job_id: str) -> SupadataResponse:
+        _ = job_id
+        raise self._error
+
+
 async def _no_sleep(seconds: float) -> None:
     """A `sleep` stand-in so the bounded poll loop resolves without real waiting."""
     _ = seconds
 
 
 def _provider(
-    transport: FakeSupadataTransport, *, max_poll_attempts: int = 5
+    transport: SupadataTransport, *, max_poll_attempts: int = 5
 ) -> SupadataTranscriptProvider:
     config = SupadataConfig(
         poll_interval=timedelta(seconds=0), max_poll_attempts=max_poll_attempts
@@ -202,6 +242,34 @@ async def quota_error_body_is_blocked() -> None:
 async def server_error_is_transient() -> None:
     """A 5xx with no rate-limit/unavailable signal maps to *transient* (retryable)."""
     transport = FakeSupadataTransport(submit=[SupadataResponse(500, {})])
+
+    with assert_raises(TranscriptTransientError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def a_read_timeout_on_submit_is_transient() -> None:
+    """A network-layer error (read timeout, connection reset) on the billed
+    submit call maps to *transient*, not a raw `httpx2` exception escaping the
+    provider — matching the documented contract ("transport error is
+    *transient*"). Regression for issue #240-adjacent: an unclassified
+    `httpx2.ReadTimeout` used to propagate straight out of `fetch()`, aborting
+    the whole worker pass instead of backing off just this video.
+    """
+    transport = RaisingSupadataTransport(httpx2.ReadTimeout("timed out"))
+
+    with assert_raises(TranscriptTransientError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def a_connection_error_while_polling_is_transient() -> None:
+    """A network-layer error mid-poll also maps to *transient*, not a raw
+    `httpx2` exception."""
+    transport = SubmitsThenRaisesOnPollTransport(
+        SupadataResponse(202, {"jobId": "job-1"}),
+        httpx2.ConnectError("connection reset"),
+    )
 
     with assert_raises(TranscriptTransientError):
         _ = await _provider(transport).fetch("v1")

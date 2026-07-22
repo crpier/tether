@@ -12,6 +12,8 @@ recency ordering.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
@@ -467,6 +469,100 @@ async def a_success_between_transients_resets_the_storm_counter() -> None:
     assert_false(report.transient_storm)
     assert_eq(report.fetched, 1)
     assert_eq(report.retried, 4)
+
+
+# --- sync_forever crash survival ---------------------------------------------
+
+
+class _RaisingProvider:
+    """A `TranscriptProvider` whose `fetch` always raises an unclassified error.
+
+    Stands in for any exception `fetch_and_store_transcript` doesn't map onto
+    one of the four typed outcomes (e.g. a raw network error a provider forgot
+    to classify) — it propagates straight out of `sync()`. `sync_forever` is
+    the last line of defense against that: this fake exercises it directly."""
+
+    source: str = "raising"
+
+    def __init__(self, error: Exception) -> None:
+        self._error: Exception = error
+        self.calls: int = 0
+
+    async def fetch(
+        self,
+        video_id: str,
+        *,
+        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
+    ) -> FetchedTranscript:
+        _ = (video_id, paused_sources, skip_sources)
+        self.calls += 1
+        raise self._error
+
+
+@test()
+async def sync_forever_survives_an_unclassified_exception_and_keeps_looping() -> None:
+    """A pass-level exception that isn't one of the four typed outcomes (e.g. an
+    unclassified network error escaping a provider) must not kill the loop task
+    — it is logged and the next pass runs on the normal interval.
+
+    Regression for a host crash: `TranscriptSyncService.sync_forever` looked
+    like it already caught `Exception` broadly, but nothing exercised that the
+    loop task actually survives *and keeps calling `sync` on schedule* rather
+    than, say, silently dying without technically raising out of the task.
+    """
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_youtube_schema(db)
+    clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    quota = DailyQuota(db, limit=1000)
+    client = YouTubeApiClient(InMemoryYouTubeApi(), quota, clock=clock)
+    provider = _RaisingProvider(RuntimeError("boom: unclassified failure"))
+    worker = TranscriptSyncService(
+        database=db, client=client, provider=provider, config=TranscriptSyncConfig()
+    )
+    await seed(db, "v1")
+
+    logger = test_logger()
+    task = asyncio.create_task(
+        worker.sync_forever(interval_seconds=0.01, logger=logger)
+    )
+    try:
+        # Several intervals' worth of real wall time: enough passes to prove
+        # the loop keeps calling `sync` (not just that the first failure
+        # didn't immediately crash the task).
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            if provider.calls >= 3:
+                break
+        assert_false(task.done())
+        assert_true(provider.calls >= 3)
+    finally:
+        _ = task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    # A real cancellation still propagates — the broad `except Exception` must
+    # not also swallow `CancelledError`.
+    assert_true(task.cancelled())
+
+
+@test()
+async def sync_forever_still_propagates_cancellation() -> None:
+    """`asyncio.CancelledError` must not be treated as just another exception to
+    log-and-continue: a genuine shutdown/reload cancellation has to actually
+    stop the loop, not be swallowed by the broad `except Exception`."""
+    provider = FakeTranscriptProvider({})
+    env = await load_fixture(make_env(provider))
+
+    task = asyncio.create_task(
+        env.worker.sync_forever(interval_seconds=10, logger=test_logger())
+    )
+    await asyncio.sleep(0)  # let it reach the first `asyncio.sleep`
+
+    _ = task.cancel()
+    with assert_raises(asyncio.CancelledError):
+        await task
+    assert_true(task.cancelled())
 
 
 # --- Daily budget -----------------------------------------------------------

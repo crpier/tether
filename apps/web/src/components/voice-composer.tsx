@@ -1,10 +1,13 @@
-// Chat composer voice controls (issue #19): two always-visible buttons ("say
-// & review" fills the composer, "say & send" sends immediately) driving the
-// `VoiceRecorder` toggle state machine. This component owns only the browser
-// wiring (getUserMedia/MediaRecorder) and the recording/uploading/failed UI —
-// the state machine itself lives in `voice-recorder.ts`, and what a
-// successful transcript *does* (fill the draft vs. send) is entirely the
-// caller's call via `onTranscript`.
+// Chat composer voice controls (issue #19): two always-visible icon buttons
+// ("record and review" fills the composer, "record and send" sends
+// immediately) driving the `VoiceRecorder` toggle state machine. Whichever
+// button starts a recording morphs in place into a "Stop" button — the other
+// one hides — so recording is stopped from the same spot it was started, no
+// separate stop control appears elsewhere. This component owns only the
+// browser wiring (getUserMedia/MediaRecorder) and the
+// recording/uploading/failed UI — the state machine itself lives in
+// `voice-recorder.ts`, and what a successful transcript *does* (fill the
+// draft vs. send) is entirely the caller's call via `onTranscript`.
 import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 
 import type {
@@ -101,32 +104,74 @@ export function VoiceComposerControls(props: {
     void recorder.start(mode);
   };
 
+  // Which mode (if any) is currently recording — drives which of the two
+  // buttons morphs into "Stop" in place, rather than popping up a separate
+  // stop control elsewhere.
+  const recordingMode = () => {
+    const current = state();
+    return current.kind === "recording" ? current.mode : null;
+  };
+
   return (
     <div aria-label="Voice input" class="flex flex-col gap-2" role="group">
-      <Show when={state().kind === "idle"}>
+      <Show when={state().kind === "idle" || state().kind === "recording"}>
         <div class="flex gap-2">
-          <Button
-            disabled={props.disabled}
-            onClick={() => {
-              start("review");
-            }}
-            size="sm"
-            type="button"
-            variant="outline"
+          <Show when={recordingMode() === null || recordingMode() === "review"}>
+            <Button
+              aria-label={
+                recordingMode() === "review"
+                  ? "Stop recording"
+                  : "Record and review"
+              }
+              disabled={props.disabled}
+              onClick={() => {
+                if (recordingMode() === "review") {
+                  recorder.stop();
+                } else {
+                  start("review");
+                }
+              }}
+              size="sm"
+              title={
+                recordingMode() === "review"
+                  ? "Stop recording"
+                  : "Record and review"
+              }
+              type="button"
+              variant="outline"
+            >
+              {recordingMode() === "review" ? "⏹" : "🎙 ✎"}
+            </Button>
+          </Show>
+          <Show
+            when={recordingMode() === null || recordingMode() === "auto-send"}
           >
-            🎙 Say &amp; review
-          </Button>
-          <Button
-            disabled={props.disabled}
-            onClick={() => {
-              start("auto-send");
-            }}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            🎙 Say &amp; send
-          </Button>
+            <Button
+              aria-label={
+                recordingMode() === "auto-send"
+                  ? "Stop recording"
+                  : "Record and send"
+              }
+              disabled={props.disabled}
+              onClick={() => {
+                if (recordingMode() === "auto-send") {
+                  recorder.stop();
+                } else {
+                  start("auto-send");
+                }
+              }}
+              size="sm"
+              title={
+                recordingMode() === "auto-send"
+                  ? "Stop recording"
+                  : "Record and send"
+              }
+              type="button"
+              variant="outline"
+            >
+              {recordingMode() === "auto-send" ? "⏹" : "🎙 ➤"}
+            </Button>
+          </Show>
         </div>
       </Show>
       <Show when={state()} keyed>
@@ -145,19 +190,9 @@ export function VoiceComposerControls(props: {
                 <span class="tabular-nums opacity-70">
                   {elapsedLabel(recording().startedAt, nowMs())}
                 </span>
-                <Button
-                  class="ml-auto"
-                  onClick={() => {
-                    recorder.stop();
-                  }}
-                  size="sm"
-                  type="button"
-                >
-                  Stop
-                </Button>
                 <button
                   aria-label="Cancel recording"
-                  class="text-muted-foreground opacity-70 hover:opacity-100"
+                  class="text-muted-foreground ml-auto opacity-70 hover:opacity-100"
                   onClick={() => {
                     recorder.cancel();
                   }}
