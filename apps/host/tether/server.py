@@ -30,6 +30,11 @@ from starlette.status import HTTP_404_NOT_FOUND
 from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
+from tether.action_registry import (
+    ActionContext,
+    all_action_specs,
+    build_action_registry,
+)
 from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.artifact_tools import internal_artifact_tool_routes
 from tether.artifacts import ArtifactService, create_artifact_schema
@@ -72,6 +77,8 @@ from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
+from tether.proposal_tools import internal_proposal_tool_routes
+from tether.proposals import ProposalService, create_proposal_schema
 from tether.push import PushService, create_push_schema
 from tether.readwise import (
     HttpReaderTransport,
@@ -465,6 +472,7 @@ async def _create_schemas(db: Database) -> None:
     await create_recall_schema(db)
     await create_search_meta_schema(db)
     await create_notification_schema(db)
+    await create_proposal_schema(db)
     await create_artifact_schema(db)
     await create_panel_schema(db)
     await create_todo_schema(db)
@@ -899,7 +907,7 @@ def _build_scheduler(
             model=model_catalog.default_config,
         )
     )
-    return Scheduler(
+    scheduler = Scheduler(
         service=trigger_service,
         dispatcher=TriggerDispatcher(
             notifier=EventNotifier(app.state.event_hub, notification_service),
@@ -910,6 +918,34 @@ def _build_scheduler(
         config=SchedulerConfig(
             tick_seconds=config.scheduler_tick_seconds,
             concurrency=config.scheduler_concurrency,
+        ),
+    )
+    app.state.scheduler = scheduler
+    return scheduler
+
+
+def _build_proposal_service(
+    app: Starlette,
+    *,
+    database: Database,
+    tracer: Tracer,
+    event_publisher: EventHub,
+) -> ProposalService:
+    """Wire the host proposal executor over agent-composed action sets.
+
+    Built after `_build_scheduler` so the notification_service it registered on
+    `app.state` is available to queue pending proposals. The action registry is
+    empty until a consumer (Gmail hygiene, Phase B) appends its `*_ACTION_SPECS`;
+    the action context's `gmail_client` is wired at the same time.
+    """
+    return ProposalService(
+        database=database,
+        tracer=tracer,
+        event_publisher=event_publisher,
+        action_registry=build_action_registry(all_action_specs()),
+        action_context=ActionContext(),
+        notification_service=cast(
+            "NotificationService", app.state.notification_service
         ),
     )
 
@@ -1384,7 +1420,9 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 trigger_service=trigger_service,
                 kb_root=configured_kb_root,
             )
-            app.state.scheduler = scheduler
+            app.state.proposal_service = _build_proposal_service(
+                app, database=db, tracer=telemetry.tracer, event_publisher=event_hub
+            )
             background_tasks = [
                 asyncio.create_task(runtime_registry.reap_idle_forever()),
                 asyncio.create_task(scheduler.run_forever()),
@@ -1525,6 +1563,7 @@ def create_app(
             *internal_conversation_history_tool_routes(),
             *internal_panel_tool_routes(),
             *internal_kosync_tool_routes(),
+            *internal_proposal_tool_routes(),
             # The device-facing kosync protocol is mounted only when configured
             # (username + userkey set): a disabled install leaves `/kosync/*`
             # unhandled, so it answers 404 rather than a live-but-empty gate.

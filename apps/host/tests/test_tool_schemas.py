@@ -11,6 +11,7 @@ from tether.conversation_history_tools import (
 )
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
+from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.todo_tools import internal_todo_tool_routes
 from tether.tool_schemas import build_tool_schema_document
@@ -77,6 +78,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "label_ebook",
             "match_ebook_filename",
             "list_unlabeled_ebooks",
+            "propose",
+            "list_proposals",
         },
     )
     capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
@@ -159,6 +162,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_artifact_tool_routes(),
             internal_panel_tool_routes(),
             internal_kosync_tool_routes(),
+            internal_proposal_tool_routes(),
         )
         for route in routes
     }

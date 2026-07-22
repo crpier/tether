@@ -1410,6 +1410,112 @@
         "title": "ListUnlabeledEbooksParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/propose",
+      "name": "propose",
+      "params_model": "ProposeParams",
+      "schema": {
+        "$defs": {
+          "ProposeActionParam": {
+            "description": "One typed action to compose into a proposal.\n\n`kind` names a registered action kind; `scope` is an optional consumer-\ndefined category string (unvalidated \u2014 a typo simply fails to match a\ngrant); `params` are the kind's params, validated against its model.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scope"
+              },
+              "params": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Params",
+                "type": "object"
+              }
+            },
+            "required": ["kind"],
+            "title": "ProposeActionParam",
+            "type": "object"
+          }
+        },
+        "description": "Params for composing a proposal \u2014 an explicit set of typed actions.\n\nThe proposal executes immediately only if every action is covered by an\nexisting autonomy grant; otherwise the whole set queues for human review.\nApproval, rejection, and granting are human-only and never tools.",
+        "properties": {
+          "consumer": {
+            "title": "Consumer",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/$defs/ProposeActionParam"
+            },
+            "title": "Actions",
+            "type": "array"
+          }
+        },
+        "required": ["consumer", "title", "summary", "actions"],
+        "title": "ProposeParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_proposals",
+      "name": "list_proposals",
+      "params_model": "ListProposalsParams",
+      "schema": {
+        "$defs": {
+          "ProposalState": {
+            "enum": [
+              "pending",
+              "approved",
+              "executing",
+              "executed",
+              "failed",
+              "rejected"
+            ],
+            "type": "string"
+          }
+        },
+        "description": "Params for listing proposals, newest first, capped at `limit`.",
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProposalState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "limit": {
+            "default": 50,
+            "exclusiveMinimum": 0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "ListProposalsParams",
+        "type": "object"
+      }
     }
   ]
 }

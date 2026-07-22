@@ -67,6 +67,8 @@ describe("generated tool extension", () => {
       "label_ebook",
       "match_ebook_filename",
       "list_unlabeled_ebooks",
+      "propose",
+      "list_proposals",
     ]);
   });
 });
