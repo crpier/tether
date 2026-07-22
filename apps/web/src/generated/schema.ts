@@ -1662,6 +1662,84 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/todos": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the active Todos split into ready and waiting. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TodoReadinessRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/todos/{todo_id}/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Transition a Todo to a new status at an observed version. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          todo_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["SetTodoStatusRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TodoRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/triggers": {
     parameters: {
       query?: never;
@@ -2805,6 +2883,18 @@ export interface components {
       /** Selected Model */
       selected_model: string;
     };
+    /**
+     * SetTodoStatusRequest
+     * @description Body for transitioning a Todo's status at an observed `version`.
+     *
+     *     >>> SetTodoStatusRequest(status="completed", version=1).status
+     *     'completed'
+     */
+    SetTodoStatusRequest: {
+      status: components["schemas"]["TodoStatus"];
+      /** Version */
+      version: number;
+    };
     /** @enum {string} */
     SourceType: "memory" | "bucket_item";
     /**
@@ -2915,6 +3005,56 @@ export interface components {
       /** Version */
       version: number;
     };
+    /**
+     * TodoRead
+     * @description HTTP representation of a Todo, carrying its computed waiting state.
+     *
+     *     `waiting` is derived (an unmet condition or an unfired trigger), never
+     *     stored; `deadline` is the linked trigger's next fire time when it is still
+     *     pending, else null.
+     */
+    TodoRead: {
+      /** Action */
+      action: string;
+      /** Condition */
+      condition: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Deadline */
+      deadline: string | null;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      status: components["schemas"]["TodoStatus"];
+      /** Trigger Id */
+      trigger_id: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Version */
+      version: number;
+      /** Waiting */
+      waiting: boolean;
+    };
+    /**
+     * TodoReadinessRead
+     * @description The active Todos split into ready and waiting for the panel and digest.
+     */
+    TodoReadinessRead: {
+      /** Ready */
+      ready: components["schemas"]["TodoRead"][];
+      /** Waiting */
+      waiting: components["schemas"]["TodoRead"][];
+    };
+    /** @enum {string} */
+    TodoStatus: "active" | "completed" | "abandoned";
     /**
      * TranscriptProviderPauseRead
      * @description HTTP representation of a transcript source paused by an IP block.

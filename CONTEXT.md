@@ -116,7 +116,11 @@ _Avoid_: scheduled prompt task, reminder, cron job, alert
 
 **Bucket item**:
 An intention to act on something later. It lives in an active state and then moves to a terminal state — completed or deleted — where it is retained permanently as history (so dedup can warn you when you try to re-add something you have already dealt with). It is never tethered. It is of exactly one item type, which determines its structure, and records why it was saved (its intent context). The test that distinguishes it from a Memory: a Bucket item can be *finished*.
-_Avoid_: backlog item, task, todo, bucket-list entry
+_Avoid_: backlog item, bucket-list entry
+
+**Todo**:
+One actionable thing to do — a single action, no steps ("bring the book next time I visit Ana", "dig out the grey shirt before the gala", "research the pension transfer"). Distinct from a Bucket item (which you *consume*) and a Project (multiple coordinated steps); a Todo is exactly *one action*. It is born active and reaches a terminal state — completed or abandoned. It may carry an optional *waiting condition*: a free-text condition and/or a linked Scheduled trigger (a deadline). Its *waiting* state is always **computed, never stored** — a Todo is waiting while it has an unmet text condition or an unfired linked trigger, and ready otherwise — so it can never get wedged in a stale waiting state. Ready Todos surface in the agent's standing digest; waiting ones are raised only when the conversation makes them relevant. The one-off actionable that had no home before the vertical existed.
+_Avoid_: task, reminder, bucket item, project, waiting-on flag
 
 **Item type**:
 What kind of thing a Bucket item is (movie, book, place, travel, …). Different item types carry different fields, which is why Bucket items aren't all one shape. Applies only to Bucket items; Memories have none. (The word "domain" is deliberately avoided here to prevent confusion with domain-driven-design vocabulary.)

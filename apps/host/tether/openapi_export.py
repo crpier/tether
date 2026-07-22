@@ -24,6 +24,7 @@ from tether.recall_routes import recall_routes
 from tether.routes import routes
 from tether.search_routes import search_routes
 from tether.stt_routes import stt_routes
+from tether.todo_routes import todo_routes
 from tether.trigger_routes import trigger_routes
 from tether.youtube_routes import youtube_routes
 
@@ -43,6 +44,7 @@ def public_api_routes() -> list[Route]:
         *routes,
         *capture_routes,
         *bucket_item_routes,
+        *todo_routes,
         *search_routes,
         *youtube_routes,
         *conversation_routes,

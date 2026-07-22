@@ -30,6 +30,7 @@ from snektest import (
     assert_eq,
     assert_false,
     assert_is_none,
+    assert_not_in,
     assert_raises,
     assert_true,
     fixture,
@@ -50,6 +51,13 @@ from tether.memories import (
     Memory,
     MemoryService,
     create_memory_schema,
+)
+from tether.notifications import create_notification_schema
+from tether.todos import (
+    Todo,
+    TodoMemory,
+    TodoService,
+    create_todo_schema,
 )
 from tether.triggers import (
     ScheduledTrigger,
@@ -238,6 +246,7 @@ class GmailEnv:
     database: Database
     memory_service: MemoryService
     trigger_service: TriggerService
+    todo_service: TodoService
     logger: Logger
 
     def sync_service(
@@ -262,10 +271,20 @@ class GmailEnv:
             trigger_service=(
                 trigger_service if trigger_service is not None else self.trigger_service
             ),
+            todo_service=self.todo_service,
             triage_runner=triage_runner,
             triage_batch_size=triage_batch_size,
             timezone_name_provider=timezone_name_provider or (lambda _now: "UTC"),
         )
+
+    async def todos(self) -> list[Todo[Fetched]]:
+        """The current active Todos, newest first, for gate assertions."""
+        return await self.todo_service.list_by_status("active", logger=self.logger)
+
+    async def todo_memory_links(self) -> list[TodoMemory[Fetched]]:
+        """Every Todo↔Memory link row, for provenance assertions."""
+        async with self.database.transaction() as tx:
+            return await tx.fetch_all(select(TodoMemory).all())
 
     async def tethered_memories(self) -> list[Memory[Fetched]]:
         """The current tethered corpus, for content/facet assertions."""
@@ -293,6 +312,8 @@ async def gmail_env() -> AsyncGenerator[GmailEnv]:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
     await create_trigger_schema(db)
+    await create_notification_schema(db)
+    await create_todo_schema(db)
     await create_gmail_schema(db)
     async with TemporaryDirectory() as kb_root:
         yield GmailEnv(
@@ -303,6 +324,7 @@ async def gmail_env() -> AsyncGenerator[GmailEnv]:
                 tracer=noop_tracer(),
             ),
             trigger_service=TriggerService(database=db, tracer=noop_tracer()),
+            todo_service=TodoService(database=db, tracer=noop_tracer()),
             logger=test_logger(),
         )
     await db.close()
@@ -415,8 +437,8 @@ async def a_noise_verdict_creates_no_memory() -> None:
 
 
 @test()
-async def an_actionable_verdict_facets_action_pending() -> None:
-    """An actionable, undated verdict facets the Memory `action: pending`."""
+async def an_actionable_verdict_creates_a_todo_linked_to_the_memory() -> None:
+    """An actionable verdict makes a Todo linked to the Memory, no action facet."""
     env = await load_fixture(gmail_env())
     transport = FakeGmailTransport(
         message_pages=[message_list_page(["m1"])],
@@ -429,7 +451,44 @@ async def an_actionable_verdict_facets_action_pending() -> None:
     _ = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
     memory = (await env.tethered_memories())[0]
-    assert_eq(memory.facets["action"], "pending")
+    assert_not_in("action", memory.facets)
+    todos = await env.todos()
+    assert_eq(len(todos), 1)
+    links = await env.todo_memory_links()
+    assert_eq(len(links), 1)
+    assert_eq(links[0].todo_id, str(todos[0].id))
+    assert_eq(links[0].memory_id, str(memory.id))
+    # An undated actionable verdict has no trigger to link.
+    assert_is_none(todos[0].trigger_id)
+
+
+@test()
+async def a_dated_actionable_verdict_links_the_deadline_trigger_to_the_todo() -> None:
+    """A dated actionable verdict links its Todo to the deadline trigger."""
+    env = await load_fixture(gmail_env())
+    transport = FakeGmailTransport(
+        message_pages=[message_list_page(["m1"])],
+        messages={"m1": message_payload("m1")},
+    )
+    triage_runner = FakeTriageRunner(
+        replies=[
+            verdict_reply(
+                [
+                    interesting_verdict(
+                        "m1", actionable=True, deadline_at="2099-01-01T09:00:00+00:00"
+                    )
+                ]
+            )
+        ]
+    )
+
+    _ = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
+
+    todos = await env.todos()
+    triggers = await env.triggers()
+    assert_eq(len(todos), 1)
+    assert_eq(len(triggers), 1)
+    assert_eq(todos[0].trigger_id, str(triggers[0].id))
 
 
 @test()

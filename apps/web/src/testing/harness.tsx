@@ -27,6 +27,9 @@ import type {
   PushStatus,
   RecallAnswerInput,
   TetherApi,
+  Todo,
+  TodoReadiness,
+  TodoStatus,
   Trigger,
   UpdatePanel,
   UpdateTrigger,
@@ -158,6 +161,22 @@ export function bucketItem(overrides: Partial<BucketItem>): BucketItem {
   };
 }
 
+export function todo(overrides: Partial<Todo>): Todo {
+  return {
+    action: "call the dentist",
+    condition: null,
+    created_at: "2026-01-01T00:00:00Z",
+    deadline: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    status: "active",
+    trigger_id: null,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    waiting: false,
+    ...overrides,
+  };
+}
+
 export function memory(overrides: Partial<Memory>): Memory {
   return {
     content: "I prefer aisle seats",
@@ -266,6 +285,18 @@ export class FakeApi implements TetherApi {
   // The dedup advisory the next add returns; dedup informs, never blocks.
   nextDedup: DedupAdvisory = { duplicates: [], severity: "none" };
   triageReport: BucketTriageReport = emptyTriageReport;
+  storedTodos: Todo[] = [];
+  listTodosCalls = 0;
+  setTodoStatusCalls: {
+    status: TodoStatus;
+    todoId: string;
+    version: number;
+  }[] = [];
+  // Per-todo version the fake "server" accepts on a status transition; a
+  // mismatch (e.g. the agent settled it) is a 409, like the host.
+  serverTodoVersions: Record<string, number> = {};
+  // Forced per-call rejections, consumed FIFO before any version check.
+  setTodoStatusRejections: ApiError[] = [];
   youTubeSyncStatus: YouTubeSyncStatus = {
     api_paused_until: null,
     last_synced_at: null,
@@ -331,6 +362,7 @@ export class FakeApi implements TetherApi {
     messages?: Message[];
     panelResults?: Record<string, PanelResults>;
     panels?: Panel[];
+    todos?: Todo[];
     triggers?: Trigger[];
   }) {
     this.authenticated = options.authenticated;
@@ -338,6 +370,7 @@ export class FakeApi implements TetherApi {
     this.storedTriggers = options.triggers ?? [];
     this.storedDuePrompts = options.duePrompts ?? [];
     this.storedBucketItems = options.bucketItems ?? [];
+    this.storedTodos = options.todos ?? [];
     this.storedMemories = options.memories ?? [];
     this.storedPanels = options.panels ?? [];
     this.storedPanelResults = options.panelResults ?? {};
@@ -655,6 +688,49 @@ export class FakeApi implements TetherApi {
 
   getBucketTriage(): Promise<BucketTriageReport> {
     return Promise.resolve(this.triageReport);
+  }
+
+  listTodos(): Promise<TodoReadiness> {
+    this.listTodosCalls += 1;
+    const active = this.storedTodos.filter((item) => item.status === "active");
+    return Promise.resolve({
+      ready: active.filter((item) => !item.waiting),
+      waiting: active.filter((item) => item.waiting),
+    });
+  }
+
+  setTodoStatus(
+    todoId: string,
+    status: TodoStatus,
+    version: number,
+  ): Promise<Todo> {
+    this.setTodoStatusCalls.push({ status, todoId, version });
+    const forced = this.setTodoStatusRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const serverVersion = this.serverTodoVersions[todoId];
+    if (
+      Object.hasOwn(this.serverTodoVersions, todoId) &&
+      serverVersion !== version
+    ) {
+      // The server bumped the version; reveal the fresh version to future list
+      // fetches, then reject exactly as the host does.
+      this.storedTodos = this.storedTodos.map((item) =>
+        item.id === todoId ? { ...item, version: serverVersion } : item,
+      );
+      return Promise.reject(new ApiError(409));
+    }
+    const existing = this.storedTodos.find((item) => item.id === todoId);
+    if (existing === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    const updated = { ...existing, status, version: version + 1 };
+    this.storedTodos = this.storedTodos.map((item) =>
+      item.id === todoId ? updated : item,
+    );
+    this.serverTodoVersions[todoId] = updated.version;
+    return Promise.resolve(updated);
   }
 
   listMemories(state: MemoryState): Promise<Memory[]> {

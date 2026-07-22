@@ -8,10 +8,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import secrets
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -113,6 +113,13 @@ from tether.telemetry import (
     TelemetryMiddleware,
     TelemetrySettings,
     configure_telemetry,
+)
+from tether.todo_digest import render_todo_digest
+from tether.todo_tools import internal_todo_tool_routes
+from tether.todos import (
+    TodoService,
+    create_todo_schema,
+    migrate_pending_action_facets,
 )
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
@@ -460,6 +467,7 @@ async def _create_schemas(db: Database) -> None:
     await create_notification_schema(db)
     await create_artifact_schema(db)
     await create_panel_schema(db)
+    await create_todo_schema(db)
     await create_readwise_schema(db)
     await create_kosync_schema(db)
     await create_ebook_stats_schema(db)
@@ -737,6 +745,7 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
     database: Database,
     memory_service: MemoryService,
     trigger_service: TriggerService,
+    todo_service: TodoService,
     kb_root: Path,
 ) -> list[asyncio.Task[None]]:
     """Wire the Gmail ingestion gate + its background worker onto state.
@@ -767,6 +776,7 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
         client=GmailClient(transport=config.gmail_transport),
         memory_service=memory_service,
         trigger_service=trigger_service,
+        todo_service=todo_service,
         triage_runner=triage_runner,
         triage_batch_size=config.gmail_triage_batch_size,
     )
@@ -1028,6 +1038,35 @@ def _build_bucket_item_and_fusion_services(
         bucket_item_service=bucket_item_service, memory_service=memory_service
     )
     return bucket_item_service, search_fusion_service
+
+
+async def _build_todo_service(  # noqa: PLR0913 - each param is an independent wiring dependency
+    app: Starlette,
+    *,
+    database: Database,
+    event_hub: EventHub,
+    memory_service: MemoryService,
+    tracer: Tracer,
+    logger: Logger,
+) -> tuple[TodoService, Callable[[], Awaitable[str]]]:
+    """Wire the Todo service, run its one-time backfill, and build its digest.
+
+    Returns the service (also stashed on app state) and the async provider of the
+    standing Todo digest block appended to conversation runs. The `action:
+    pending` facet backfill is idempotent, so running it every boot is safe."""
+    todo_service = TodoService(
+        database=database, event_publisher=event_hub, tracer=tracer
+    )
+    app.state.todo_service = todo_service
+    _ = await migrate_pending_action_facets(
+        database, todo_service, memory_service, logger=logger
+    )
+
+    async def _todo_digest() -> str:
+        readiness = await todo_service.readiness(now=datetime.now(UTC), logger=logger)
+        return render_todo_digest(readiness)
+
+    return todo_service, _todo_digest
 
 
 def _build_presentation_services(
@@ -1304,6 +1343,14 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 database=db,
                 model_catalog=model_catalog,
             )
+            todo_service, todo_digest_provider = await _build_todo_service(
+                app,
+                database=db,
+                event_hub=event_hub,
+                memory_service=memory_service,
+                tracer=telemetry.tracer,
+                logger=app_logger,
+            )
             runtime_registry = ConversationRuntimeRegistry(
                 RuntimeRegistryConfig(
                     model_catalog=model_catalog,
@@ -1316,6 +1363,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                     else configured_kb_root / "pi-sessions",
                     tool_base_url=config.tool_base_url,
                     tool_secret=app.state.tool_secret,
+                    todo_digest_provider=todo_digest_provider,
                 )
             )
             app.state.conversation_runtime_registry = runtime_registry
@@ -1370,6 +1418,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                     database=db,
                     memory_service=memory_service,
                     trigger_service=trigger_service,
+                    todo_service=todo_service,
                     kb_root=configured_kb_root,
                 )
                 + await _wire_ebook_stats(app, config=config, database=db)
@@ -1467,6 +1516,7 @@ def create_app(
             *trace_routes(),
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
+            *internal_todo_tool_routes(),
             *internal_artifact_tool_routes(),
             *internal_triage_tool_routes(),
             *internal_youtube_tool_routes(),

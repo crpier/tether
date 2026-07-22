@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
@@ -18,7 +18,7 @@ from tether.model_selection import (
     ModelNotAllowedError,
 )
 from tether.pi_runtime import PiRuntime, PiSpawner, PiSpawnRequest, spawn_pi_runtime
-from tether.system_prompt import system_prompt_for
+from tether.system_prompt import compose_conversation_prompt
 from tether.tools import SessionRegistry
 
 
@@ -34,6 +34,9 @@ class RuntimeRegistryConfig:
     tool_base_url: str
     tool_secret: str
     idle_seconds: float = 30 * 60
+    todo_digest_provider: Callable[[], Awaitable[str]] | None = None
+    """Async source of the standing Todo digest block, appended to the
+    conversation persona at spawn. `None` (most tests) yields the bare persona."""
 
 
 @dataclass(slots=True)
@@ -84,6 +87,25 @@ class ConversationRuntimeRegistry:
         if slot is not None:
             await slot.runtime.shutdown()
 
+    async def _conversation_system_prompt(self) -> str:
+        """The persona plus the current standing Todo digest, if a provider is wired.
+
+        A failing digest provider must never block a conversation from spawning,
+        so its failure degrades to the bare persona.
+        """
+        if self.config.todo_digest_provider is None:
+            return compose_conversation_prompt("")
+        try:
+            # Shield the digest's DB read so it always runs to completion and
+            # returns its pooled connection, even when the turn task is cancelled
+            # mid-spawn (a browser that closes the socket right after prompting).
+            # Without the shield a cancellation landing inside the read's
+            # transaction leaks the connection and wedges DB close at shutdown.
+            digest = await asyncio.shield(self.config.todo_digest_provider())
+        except Exception:
+            digest = ""
+        return compose_conversation_prompt(digest)
+
     async def runtime_for(self, conversation: Conversation[Fetched]) -> PiRuntime:
         """Return the live runtime for a conversation, spawning lazily."""
         conversation_key = str(conversation.id)
@@ -106,7 +128,7 @@ class ConversationRuntimeRegistry:
                 pi_binary=self.config.pi_binary,
                 session_dir=self.config.session_root / conversation_key,
                 session_id=str(conversation.pi_session_id),
-                system_prompt=system_prompt_for("conversation"),
+                system_prompt=await self._conversation_system_prompt(),
                 tool_base_url=self.config.tool_base_url,
                 tool_secret=self.config.tool_secret,
             ),

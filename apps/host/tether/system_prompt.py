@@ -126,6 +126,19 @@ Keep the result concise and self-contained.
 """Short prompt for unattended scheduled and Recall runs."""
 
 
+def compose_conversation_prompt(digest: str) -> str:
+    """Append a dynamic digest block to the constant conversation persona.
+
+    The persona stays a stable prefix (keeping provider prompt caches warm), and
+    the standing Todo digest — which changes rarely, only as todos are added or
+    settled — is appended after it. An empty digest yields the bare persona, so a
+    user with no todos carries no extra prompt weight.
+    """
+    if not digest.strip():
+        return CONVERSATION_SYSTEM_PROMPT
+    return f"{CONVERSATION_SYSTEM_PROMPT}\n\n{digest.strip()}\n"
+
+
 def system_prompt_for(kind: RunKind) -> str:
     """Return the Tether system prompt injected into a run of `kind`.
 

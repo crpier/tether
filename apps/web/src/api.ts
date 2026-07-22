@@ -50,6 +50,9 @@ export type AddBucketItem = components["schemas"]["AddBucketItemRequest"];
 export type BucketItemAdded = components["schemas"]["AddBucketItemResponse"];
 export type DedupAdvisory = components["schemas"]["DedupAdvisoryRead"];
 export type BucketTriageReport = components["schemas"]["TriageReport"];
+export type Todo = components["schemas"]["TodoRead"];
+export type TodoStatus = components["schemas"]["TodoStatus"];
+export type TodoReadiness = components["schemas"]["TodoReadinessRead"];
 export type Memory = components["schemas"]["MemoryRead"];
 export type MemoryState = components["schemas"]["MemoryState"];
 export type Artifact = components["schemas"]["ArtifactRead"];
@@ -103,6 +106,12 @@ export interface TetherApi {
   ): Promise<BucketItem>;
   deleteBucketItem(bucketItemId: string, version: number): Promise<BucketItem>;
   getBucketTriage(): Promise<BucketTriageReport>;
+  listTodos(): Promise<TodoReadiness>;
+  setTodoStatus(
+    todoId: string,
+    status: TodoStatus,
+    version: number,
+  ): Promise<Todo>;
   listMemories(state: MemoryState): Promise<Memory[]>;
   searchMemories(q: string): Promise<Memory[]>;
   captureMemory(content: string): Promise<Memory>;
@@ -361,6 +370,20 @@ export function createRestApi(
     },
     async getBucketTriage() {
       const { data, response } = await client.GET("/api/bucket-items/triage");
+      return requireData(data, response);
+    },
+    async listTodos() {
+      const { data, response } = await client.GET("/api/todos");
+      return requireData(data, response);
+    },
+    async setTodoStatus(todoId, status, version) {
+      const { data, response } = await client.POST(
+        "/api/todos/{todo_id}/status",
+        {
+          body: { status, version },
+          params: { path: { todo_id: todoId } },
+        },
+      );
       return requireData(data, response);
     },
     async listMemories(state) {

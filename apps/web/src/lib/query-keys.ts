@@ -25,6 +25,9 @@ export const queryKeys = {
   push: ["push"] as const,
   recall: ["recall"] as const,
   session: ["session"] as const,
+  // The "todos" prefix matches the host's InvalidateEvent key, so a todo CRUD
+  // from any surface (agent tool or REST) refetches the ready/waiting list.
+  todos: ["todos"] as const,
   triggers: ["triggers"] as const,
   youtube: ["youtube"] as const,
 };

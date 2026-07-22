@@ -49,6 +49,7 @@ import { NotificationsPanel } from "./panels/notifications";
 import { PushControl } from "./panels/push";
 import { RecallPanel } from "./panels/recall";
 import { SyntheticPanels } from "./panels/synthetic";
+import { TodosPanel } from "./panels/todos";
 import { TriggersPanel } from "./panels/triggers";
 import { YouTubeSyncPanel } from "./panels/youtube";
 import { Button } from "@/components/ui/button";
@@ -948,6 +949,7 @@ export function ChatView(props: {
           <SyntheticPanels api={props.api} />
           <MemoriesPanel api={props.api} />
           <BucketPanel api={props.api} />
+          <TodosPanel api={props.api} />
           <TriggersPanel api={props.api} />
           <PushControl api={props.api} />
         </aside>

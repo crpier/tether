@@ -68,6 +68,7 @@ from tether.chat_ws import local_timezone_name
 from tether.db_retry import run_in_transaction
 from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
+from tether.todos import TodoService
 from tether.triggers import TriggerService, TriggerSpec
 
 DEFAULT_TRIAGE_BATCH_SIZE = 10
@@ -670,6 +671,7 @@ class GmailSyncService:
         client: GmailClient,
         memory_service: MemoryService,
         trigger_service: TriggerService,
+        todo_service: TodoService,
         triage_runner: GmailTriageRunner,
         *,
         triage_batch_size: int = DEFAULT_TRIAGE_BATCH_SIZE,
@@ -679,6 +681,7 @@ class GmailSyncService:
         self.client: GmailClient = client
         self.memory_service: MemoryService = memory_service
         self.trigger_service: TriggerService = trigger_service
+        self.todo_service: TodoService = todo_service
         self.triage_runner: GmailTriageRunner = triage_runner
         self.triage_batch_size: int = triage_batch_size
         self.timezone_name_provider: Callable[[datetime], str] = timezone_name_provider
@@ -808,15 +811,16 @@ class GmailSyncService:
             return "noise"
         memory = await self._capture_memory(message, verdict, logger=logger)
         # Record the idempotency row immediately after capture — before the
-        # trigger is attempted — so a failure past this point (trigger
+        # trigger or Todo is attempted — so a failure past this point (trigger
         # creation raising, failing the whole pass) never re-captures a
         # second Memory on retry: `_already_recorded` already sees this row
         # and skips the message entirely next time. The tradeoff is that a
-        # deadline trigger that fails to create here does not get a second
-        # attempt; the Memory itself is never duplicated, which is the
+        # deadline trigger (or the Todo) that fails to create here does not get
+        # a second attempt; the Memory itself is never duplicated, which is the
         # invariant that matters (mirrors the record-then-link ordering
         # `readwise.py._create_highlight` uses for its own mapping row).
         await self._record_status(message, status="ingested", memory_id=str(memory.id))
+        trigger_id: UUID7 | None = None
         if verdict.deadline is not None and verdict.deadline.at > now:
             trigger_id = await self._create_deadline_trigger(
                 message, verdict.deadline, now=now, logger=logger
@@ -827,6 +831,17 @@ class GmailSyncService:
                 memory_id=str(memory.id),
                 trigger_id=str(trigger_id),
             )
+        # An actionable email becomes a Todo (the construct that replaces the
+        # old `action: pending` facet), linked back to the captured Memory and
+        # to the deadline trigger when one was created. Un-gated, at parity with
+        # the gate's shipped Memory/trigger writes.
+        if verdict.actionable:
+            todo = await self.todo_service.create(message.subject, logger=logger)
+            await self.todo_service.link_memory(todo.id, memory.id, logger=logger)
+            if trigger_id is not None:
+                _ = await self.todo_service.link_trigger(
+                    todo, str(trigger_id), logger=logger
+                )
         return "ingested"
 
     async def _capture_memory(
@@ -842,8 +857,6 @@ class GmailSyncService:
         }
         if verdict.deadline is not None:
             facets["deadline"] = verdict.deadline.at.isoformat()
-        if verdict.actionable:
-            facets["action"] = "pending"
         return await self.memory_service.capture_tethered(
             content,
             provenance=MemoryProvenance(kind="gmail"),
