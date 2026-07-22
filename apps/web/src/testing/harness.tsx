@@ -15,6 +15,10 @@ import type {
   DedupAdvisory,
   DuePrompt,
   EssayGradeProposal,
+  ApproveProposalInput,
+  CreateGrant,
+  Grant,
+  GrantSuggestion,
   ListMessagesOptions,
   Memory,
   MemoryState,
@@ -24,8 +28,13 @@ import type {
   Notification,
   Panel,
   PanelResults,
+  Proposal,
+  ProposalAction,
+  ProposalRejection,
+  ProposalState,
   PushStatus,
   RecallAnswerInput,
+  RejectProposalInput,
   TetherApi,
   Todo,
   TodoReadiness,
@@ -187,6 +196,66 @@ export function memory(overrides: Partial<Memory>): Memory {
     tethered_at: null,
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,
+    ...overrides,
+  };
+}
+
+export function proposalAction(
+  overrides: Partial<ProposalAction>,
+): ProposalAction {
+  return {
+    disposition: "approved",
+    executed_at: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    kind: "send_email",
+    outcome: null,
+    outcome_detail: null,
+    params: { subject: "hello" },
+    scope: null,
+    seq: 0,
+    ...overrides,
+  };
+}
+
+export function proposal(overrides: Partial<Proposal>): Proposal {
+  return {
+    actions: [proposalAction({})],
+    consumer: "gmail-purge",
+    created_at: "2026-01-01T00:00:00Z",
+    decided_at: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    producing_run_id: null,
+    rejection_reason: null,
+    state: "pending",
+    summary: "Purge old promotional emails",
+    title: "Purge 42 promotional emails",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    ...overrides,
+  };
+}
+
+export function grant(overrides: Partial<Grant>): Grant {
+  return {
+    granted_at: "2026-01-01T00:00:00Z",
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    kind: "send_email",
+    scope: null,
+    ...overrides,
+  };
+}
+
+export function grantSuggestion(
+  overrides: Partial<GrantSuggestion>,
+): GrantSuggestion {
+  return {
+    approved: 0,
+    edited: 0,
+    kind: "send_email",
+    last_rejection: null,
+    rejected: 0,
+    scope: null,
+    seen: 0,
     ...overrides,
   };
 }
@@ -353,15 +422,41 @@ export class FakeApi implements TetherApi {
   transcribeAudioRejections: ApiError[] = [];
   // The transcript the next `transcribeAudio` call resolves with.
   nextTranscript = "";
+  storedProposals: Proposal[];
+  storedGrants: Grant[];
+  storedGrantSuggestions: GrantSuggestion[];
+  listProposalsCalls: (ProposalState | undefined)[] = [];
+  getProposalCalls: string[] = [];
+  approveProposalCalls: ({ proposalId: string } & ApproveProposalInput)[] = [];
+  rejectProposalCalls: ({ proposalId: string } & RejectProposalInput)[] = [];
+  createGrantCalls: CreateGrant[] = [];
+  revokeGrantCalls: string[] = [];
+  // Per-proposal version the fake "server" accepts on approve/reject; a
+  // mismatch is a 409, like the host.
+  serverProposalVersions: Record<string, number> = {};
+  // Fields the fake server reveals alongside the bumped version when an
+  // approve/reject 409s — simulates a genuine concurrent change (e.g. the
+  // agent revised the proposal) rather than a mere version bump.
+  serverProposalEdits: Record<string, Partial<Proposal>> = {};
+  // The grant ids `rejectProposal` offers for revocation, keyed by proposal id.
+  proposalRevocableGrantIds: Record<string, string[]> = {};
+  // Forced per-call rejections, consumed FIFO before any version check.
+  approveProposalRejections: ApiError[] = [];
+  rejectProposalRejections: ApiError[] = [];
+  createGrantRejections: ApiError[] = [];
+  revokeGrantRejections: ApiError[] = [];
 
   constructor(options: {
     authenticated: boolean;
     bucketItems?: BucketItem[];
     duePrompts?: DuePrompt[];
+    grants?: Grant[];
+    grantSuggestions?: GrantSuggestion[];
     memories?: Memory[];
     messages?: Message[];
     panelResults?: Record<string, PanelResults>;
     panels?: Panel[];
+    proposals?: Proposal[];
     todos?: Todo[];
     triggers?: Trigger[];
   }) {
@@ -374,6 +469,9 @@ export class FakeApi implements TetherApi {
     this.storedMemories = options.memories ?? [];
     this.storedPanels = options.panels ?? [];
     this.storedPanelResults = options.panelResults ?? {};
+    this.storedProposals = options.proposals ?? [];
+    this.storedGrants = options.grants ?? [];
+    this.storedGrantSuggestions = options.grantSuggestions ?? [];
   }
 
   getSession() {
@@ -1017,6 +1115,166 @@ export class FakeApi implements TetherApi {
       return Promise.reject(forced);
     }
     return Promise.resolve(this.nextTranscript);
+  }
+
+  listProposals(state?: ProposalState): Promise<Proposal[]> {
+    this.listProposalsCalls.push(state);
+    return Promise.resolve(
+      state === undefined
+        ? this.storedProposals
+        : this.storedProposals.filter((item) => item.state === state),
+    );
+  }
+
+  getProposal(proposalId: string): Promise<Proposal> {
+    this.getProposalCalls.push(proposalId);
+    const found = this.storedProposals.find(
+      (candidate) => candidate.id === proposalId,
+    );
+    if (found === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    return Promise.resolve(found);
+  }
+
+  approveProposal(
+    proposalId: string,
+    input: ApproveProposalInput,
+  ): Promise<Proposal> {
+    this.approveProposalCalls.push({ proposalId, ...input });
+    const forced = this.approveProposalRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const serverVersion = this.serverProposalVersions[proposalId];
+    if (
+      Object.hasOwn(this.serverProposalVersions, proposalId) &&
+      serverVersion !== input.version
+    ) {
+      this.storedProposals = this.storedProposals.map((existing) =>
+        existing.id === proposalId
+          ? {
+              ...existing,
+              ...this.serverProposalEdits[proposalId],
+              version: serverVersion,
+            }
+          : existing,
+      );
+      return Promise.reject(new ApiError(409));
+    }
+    const current = this.storedProposals.find(
+      (existing) => existing.id === proposalId,
+    );
+    if (current === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    const decidedAt = "2026-01-02T00:00:00Z";
+    const updated: Proposal = {
+      ...current,
+      actions: current.actions.map((action) => ({
+        ...action,
+        disposition: input.deselectedActionIds.includes(action.id)
+          ? "deselected"
+          : "approved",
+      })),
+      decided_at: decidedAt,
+      state: "executed",
+      version: input.version + 1,
+    };
+    this.serverProposalVersions[proposalId] = updated.version;
+    this.storedProposals = this.storedProposals.map((existing) =>
+      existing.id === proposalId ? updated : existing,
+    );
+    return Promise.resolve(updated);
+  }
+
+  rejectProposal(
+    proposalId: string,
+    input: RejectProposalInput,
+  ): Promise<ProposalRejection> {
+    this.rejectProposalCalls.push({ proposalId, ...input });
+    const forced = this.rejectProposalRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const serverVersion = this.serverProposalVersions[proposalId];
+    if (
+      Object.hasOwn(this.serverProposalVersions, proposalId) &&
+      serverVersion !== input.version
+    ) {
+      this.storedProposals = this.storedProposals.map((existing) =>
+        existing.id === proposalId
+          ? {
+              ...existing,
+              ...this.serverProposalEdits[proposalId],
+              version: serverVersion,
+            }
+          : existing,
+      );
+      return Promise.reject(new ApiError(409));
+    }
+    const current = this.storedProposals.find(
+      (existing) => existing.id === proposalId,
+    );
+    if (current === undefined) {
+      return Promise.reject(new ApiError(404));
+    }
+    const updated: Proposal = {
+      ...current,
+      decided_at: "2026-01-02T00:00:00Z",
+      rejection_reason: input.reason ?? null,
+      state: "rejected",
+      version: input.version + 1,
+    };
+    this.serverProposalVersions[proposalId] = updated.version;
+    this.storedProposals = this.storedProposals.map((existing) =>
+      existing.id === proposalId ? updated : existing,
+    );
+    return Promise.resolve({
+      proposal: updated,
+      revocable_grant_ids: this.proposalRevocableGrantIds[proposalId] ?? [],
+    });
+  }
+
+  listGrants(): Promise<Grant[]> {
+    return Promise.resolve(this.storedGrants);
+  }
+
+  grantSuggestions(): Promise<GrantSuggestion[]> {
+    return Promise.resolve(this.storedGrantSuggestions);
+  }
+
+  createGrant(body: CreateGrant): Promise<Grant> {
+    this.createGrantCalls.push(body);
+    const forced = this.createGrantRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const created = grant({
+      id: `018f0000-0000-7000-8000-0000000005${this.createGrantCalls.length
+        .toString()
+        .padStart(2, "0")}`,
+      kind: body.kind,
+      scope: body.scope,
+    });
+    this.storedGrants = [created, ...this.storedGrants];
+    this.storedGrantSuggestions = this.storedGrantSuggestions.filter(
+      (suggestion) =>
+        !(suggestion.kind === body.kind && suggestion.scope === body.scope),
+    );
+    return Promise.resolve(created);
+  }
+
+  revokeGrant(grantId: string): Promise<void> {
+    this.revokeGrantCalls.push(grantId);
+    const forced = this.revokeGrantRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    this.storedGrants = this.storedGrants.filter(
+      (candidate) => candidate.id !== grantId,
+    );
+    return Promise.resolve();
   }
 
   private placeholderPrompt(promptId: string): DuePrompt["prompt"] {

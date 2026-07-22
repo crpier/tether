@@ -61,6 +61,27 @@ export type Panel = components["schemas"]["PanelRead"];
 export type PanelResults = components["schemas"]["PanelResultsRead"];
 export type CreatePanel = components["schemas"]["CreatePanelRequest"];
 export type UpdatePanel = components["schemas"]["UpdatePanelRequest"];
+export type Proposal = components["schemas"]["ProposalRead"];
+export type ProposalAction = components["schemas"]["ProposalActionRead"];
+export type ProposalState = components["schemas"]["ProposalState"];
+export type ActionDisposition = components["schemas"]["ActionDisposition"];
+export type ActionOutcome = components["schemas"]["ActionOutcome"];
+export type ProposalRejection = components["schemas"]["RejectionRead"];
+export type Grant = components["schemas"]["GrantRead"];
+export type GrantSuggestion = components["schemas"]["GrantSuggestionRead"];
+export type CreateGrant = components["schemas"]["CreateGrantRequest"];
+
+// The observed version plus which of the proposal's actions the human
+// unticked before approving — the rest execute as proposed.
+export interface ApproveProposalInput {
+  version: number;
+  deselectedActionIds: string[];
+}
+
+export interface RejectProposalInput {
+  version: number;
+  reason?: string;
+}
 
 export interface TetherApi {
   getSession(): Promise<Session>;
@@ -147,6 +168,20 @@ export interface TetherApi {
   // route takes a raw multipart body with no typed OpenAPI request schema
   // (see `tether/stt_routes.py`), so this issues a plain `fetch` instead.
   transcribeAudio(blob: Blob): Promise<string>;
+  listProposals(state?: ProposalState): Promise<Proposal[]>;
+  getProposal(proposalId: string): Promise<Proposal>;
+  approveProposal(
+    proposalId: string,
+    input: ApproveProposalInput,
+  ): Promise<Proposal>;
+  rejectProposal(
+    proposalId: string,
+    input: RejectProposalInput,
+  ): Promise<ProposalRejection>;
+  listGrants(): Promise<Grant[]>;
+  grantSuggestions(): Promise<GrantSuggestion[]>;
+  createGrant(body: CreateGrant): Promise<Grant>;
+  revokeGrant(grantId: string): Promise<void>;
 }
 
 // Carries the HTTP status so callers can react to specific failures (e.g. a 409
@@ -506,6 +541,71 @@ export function createRestApi(
         });
       }
       return data.transcript;
+    },
+    async listProposals(state) {
+      // The host parses `?state=` off a plain query dict rather than a typed
+      // FastAPI query parameter (`ListProposalsQuery` in
+      // `tether/proposal_routes.py`), so the generated OpenAPI schema has no
+      // typed query param on this path (`query?: never`). Issue a manual
+      // fetch instead of fighting the generated client's types, mirroring
+      // `transcribeAudio` above.
+      const qs =
+        state === undefined ? "" : `?state=${encodeURIComponent(state)}`;
+      const response = await fetch(`/api/proposals${qs}`, {
+        credentials: "include",
+      });
+      const data = response.ok
+        ? ((await response.json()) as Proposal[])
+        : undefined;
+      return requireData(data, response);
+    },
+    async getProposal(proposalId) {
+      const { data, response } = await client.GET(
+        "/api/proposals/{proposal_id}",
+        { params: { path: { proposal_id: proposalId } } },
+      );
+      return requireData(data, response);
+    },
+    async approveProposal(proposalId, input) {
+      const { data, response } = await client.POST(
+        "/api/proposals/{proposal_id}/approve",
+        {
+          body: {
+            deselected_action_ids: input.deselectedActionIds,
+            version: input.version,
+          },
+          params: { path: { proposal_id: proposalId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async rejectProposal(proposalId, input) {
+      const { data, response } = await client.POST(
+        "/api/proposals/{proposal_id}/reject",
+        {
+          body: { reason: input.reason ?? null, version: input.version },
+          params: { path: { proposal_id: proposalId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async listGrants() {
+      const { data, response } = await client.GET("/api/grants");
+      return requireData(data, response);
+    },
+    async grantSuggestions() {
+      const { data, response } = await client.GET("/api/grants/suggestions");
+      return requireData(data, response);
+    },
+    async createGrant(body) {
+      const { data, response } = await client.POST("/api/grants", { body });
+      return requireData(data, response);
+    },
+    async revokeGrant(grantId) {
+      const { response } = await client.DELETE("/api/grants/{grant_id}", {
+        params: { path: { grant_id: grantId } },
+      });
+      requireOk(response);
     },
   };
 }
