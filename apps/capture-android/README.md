@@ -1,17 +1,25 @@
 # Tether Capture (Android)
 
-A deliberately dumb Android client for capturing into a running Tether host. It
-does two things and nothing else:
+A deliberately dumb Android client for capturing into a running Tether host.
+Two Gradle modules ship from here:
 
-1. **Share-target** — share plain text or a URL from any app into "Tether
-   Capture"; it `POST`s the text to `<host>/api/memories` and toasts the result.
-2. **Hold-to-record voice note** — the single button on the main screen records
-   while held (m4a via `MediaRecorder`); on release it uploads the clip to
-   `<host>/api/capture/voice`, shows the returned transcript, and deletes the
-   local file.
+- **`app`** — the phone client. It does two things and nothing else:
+  1. **Share-target** — share plain text or a URL from any app into "Tether
+     Capture"; it `POST`s the text to `<host>/api/memories` and toasts the
+     result.
+  2. **Hold-to-record voice note** — the single button on the main screen
+     records while held (m4a via `MediaRecorder`); on release it uploads the
+     clip to `<host>/api/capture/voice`, shows the returned transcript, and
+     deletes the local file.
+- **`wear`** — a Wear OS companion: a tile (single tap) launches a
+  hold-to-record screen that mirrors `app`'s voice-note flow and uploads
+  directly to the same host, independent of the phone. See
+  [`wear/README.md`](./wear/README.md).
 
-Both endpoints authenticate with `Authorization: Bearer <token>`, where the
-token is the host's `TETHER_API_TOKEN` (phase 1, PR #226).
+Both request the same two endpoints, sharing request-building/parsing code via
+the plain-Kotlin **`core`** module. Both authenticate with
+`Authorization: Bearer <token>`, where the token is the host's
+`TETHER_API_TOKEN` (phase 1, PR #226).
 
 ## Prerequisites
 
@@ -35,32 +43,34 @@ token is the host's `TETHER_API_TOKEN` (phase 1, PR #226).
 From the repo root:
 
 ```sh
-just android-build          # gradle assembleDebug
+just android-build          # assembles app + wear, runs core's JVM tests
 ```
 
 or directly in this directory:
 
 ```sh
-gradle assembleDebug        # or ./gradlew assembleDebug if a wrapper is present
-gradle lintDebug            # lint
-gradle testDebugUnitTest    # JVM unit tests
+gradle :app:assembleDebug :wear:assembleDebug  # both APKs
+gradle :app:lintDebug :wear:lintDebug          # lint
+gradle :core:test                              # shared-module JVM unit tests
 ```
 
-The debug APK lands at:
+The debug APKs land at:
 
 ```
 app/build/outputs/apk/debug/app-debug.apk
+wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
 ## Install
 
 ```sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r wear/build/outputs/apk/debug/wear-debug.apk   # to a paired watch's ADB
 ```
 
 ## Configure
 
-Open the app, tap **Settings**, and enter:
+(`app`, the phone client.) Open the app, tap **Settings**, and enter:
 
 - **Host base URL** — e.g. `https://tether.example.com` or `http://10.0.0.5:8000`
   (no trailing `/api`; the client appends the paths itself).
@@ -78,3 +88,6 @@ Grant the microphone permission when first recording a voice note.
   queue. If the host is unreachable, the capture simply reports failure.
 - Not part of the repo's JS/Python validation gate; verified via
   `gradle assembleDebug` + lint + JVM unit tests only.
+
+See [`wear/README.md`](./wear/README.md) for the watch companion's own scope
+and setup.
