@@ -26,9 +26,10 @@ built once with the static handles and re-stamped with the per-run logger by
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import BaseModel
 
@@ -128,11 +129,18 @@ def build_action_registry(specs: Iterable[ActionSpec]) -> dict[str, ActionSpec]:
 def all_action_specs() -> tuple[ActionSpec, ...]:
     """Every registered action spec, in canonical consumer order.
 
-    Empty in Phase A: the first consumer (Gmail hygiene, #199) appends its
-    `*GMAIL_ACTION_SPECS` here in Phase B, the same way each `*_TOOL_SPECS`
-    tuple joins `all_tool_specs()`.
+    The first consumer is Gmail hygiene (#199); its `*GMAIL_ACTION_SPECS` join
+    here the same way each `*_TOOL_SPECS` tuple joins `all_tool_specs()`. The
+    import is function-local to break the cycle `gmail_actions` -> this module
+    (for `ActionSpec`) would otherwise create at import time.
 
-    >>> all_action_specs()
-    ()
+    >>> {spec.kind for spec in all_action_specs()} >= {"gmail.archive"}
+    True
     """
-    return ()
+    # Loaded lazily through importlib to break the action_registry <->
+    # gmail_actions import cycle: `gmail_actions` imports the `ActionSpec` types
+    # from this module, so a direct import here — even function-local — is a
+    # static cycle. The consumer is resolved on first call, after both modules
+    # are fully defined.
+    specs = importlib.import_module("tether.gmail_actions").GMAIL_ACTION_SPECS
+    return cast("tuple[ActionSpec, ...]", specs)

@@ -11,6 +11,7 @@ test is itself proof the wiring short-circuited before touching mail.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 
 from anyio import TemporaryDirectory
@@ -40,6 +41,20 @@ class FakeGmailTransport:
         raise AssertionError(message)
 
     async def list_labels(self) -> GmailResponse:
+        message = "the disabled gate must never call the Gmail transport"
+        raise AssertionError(message)
+
+    async def modify_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> GmailResponse:
+        message = "the disabled gate must never call the Gmail transport"
+        raise AssertionError(message)
+
+    async def trash_message(self, message_id: str) -> GmailResponse:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 

@@ -115,6 +115,28 @@ morning-before slot has already passed."""
 _HTTP_OK = 200
 """The Gmail API success status; anything else raises `GmailApiError`."""
 
+_HTTP_NOT_FOUND = 404
+"""A `messages.get` for a message that no longer exists — treated as gone (a
+soft skip) by the write methods, never an error, since a hygiene action on a
+message the user already deleted has simply already happened."""
+
+_HTTP_FORBIDDEN = 403
+"""An insufficient-scope write (the token predates the `gmail.modify` scope).
+Surfaced verbatim on the `GmailApiError` so a write executor can fail with a
+clear re-authorization hint rather than crashing."""
+
+_INBOX_LABEL = "INBOX"
+"""The system label whose removal is an archive."""
+
+_TRASH_LABEL = "TRASH"
+"""The system label a trashed message carries."""
+
+type GmailWriteOutcome = Literal["done", "already", "gone"]
+"""The result of an idempotent mailbox write: `done` (the change was applied),
+`already` (the message was already in the desired state), or `gone` (the
+message no longer exists). Both `already` and `gone` map to a `skipped` action
+outcome, so an idempotent re-run of an interrupted batch resolves cleanly."""
+
 type GmailMessageStatus = Literal["prefiltered", "noise", "ingested", "pending"]
 """An ingested/reviewed message's resting state in the idempotency table.
 
@@ -130,7 +152,16 @@ class GmailApiError(Exception):
 
     Propagates out of `sync`, so the pass fails without persisting its
     watermark and every message it touched (recorded or not) is retried on the
-    next tick — an API outage causes delay, never a wrong classification."""
+    next tick — an API outage causes delay, never a wrong classification.
+
+    Carries the offending `status_code` when one is known, so a write executor
+    can tell an insufficient-scope `403` (the token was never re-authorized for
+    `gmail.modify`) apart from a generic upstream failure and fail with a clear,
+    actionable message instead of crashing."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code: int | None = status_code
 
 
 class GmailTriageError(Exception):
@@ -143,6 +174,18 @@ class GmailResponse:
 
     status_code: int
     payload: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class GmailWriteResult:
+    """The terminal result of one idempotent mailbox write.
+
+    `outcome` is enough for a proposal-action executor to decide `succeeded`
+    (`done`) versus `skipped` (`already` / `gone`) without re-inspecting the
+    mailbox; `detail` carries a human-readable reason for the skip."""
+
+    outcome: GmailWriteOutcome
+    detail: str | None = None
 
 
 class GmailTransport(Protocol):
@@ -167,6 +210,25 @@ class GmailTransport(Protocol):
 
     async def list_labels(self) -> GmailResponse:
         """Fetch every label on the account, to resolve a name to its id."""
+        ...
+
+    async def modify_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> GmailResponse:
+        """Add and/or remove label ids on one message (`messages.modify`).
+
+        Itself idempotent upstream: removing an absent label or adding a present
+        one is a `200` no-op, which is why the write client's staleness checks
+        are a soft optimisation, not a correctness requirement."""
+        ...
+
+    async def trash_message(self, message_id: str) -> GmailResponse:
+        """Move one message to Trash (`messages.trash`); reversible, never a
+        permanent delete."""
         ...
 
 
@@ -427,11 +489,67 @@ class GmailClient:
                 return label_id if isinstance(label_id, str) else None
         return None
 
+    async def archive(self, message_id: str) -> GmailWriteResult:
+        """Archive a message by removing its `INBOX` label; idempotent.
+
+        Fetches the message first: a `404` means it is gone (soft skip), an
+        absent `INBOX` label means it is already archived (soft skip), and
+        otherwise the label is removed. `messages.modify` is itself idempotent,
+        so a concurrently-archived message still resolves cleanly."""
+        message = await self._get_or_none(message_id)
+        if message is None:
+            return GmailWriteResult("gone", "message no longer exists")
+        if _INBOX_LABEL not in message.label_ids:
+            return GmailWriteResult("already", "message already archived")
+        response = await self.transport.modify_labels(
+            message_id, add_label_ids=(), remove_label_ids=(_INBOX_LABEL,)
+        )
+        self._require_ok(response, context="modify_labels")
+        return GmailWriteResult("done")
+
+    async def label(self, message_id: str, label_id: str) -> GmailWriteResult:
+        """Add a label id to a message; idempotent.
+
+        A `404` is gone (soft skip); a label already present is a soft skip;
+        otherwise the label is added."""
+        message = await self._get_or_none(message_id)
+        if message is None:
+            return GmailWriteResult("gone", "message no longer exists")
+        if label_id in message.label_ids:
+            return GmailWriteResult("already", "message already carries the label")
+        response = await self.transport.modify_labels(
+            message_id, add_label_ids=(label_id,), remove_label_ids=()
+        )
+        self._require_ok(response, context="modify_labels")
+        return GmailWriteResult("done")
+
+    async def trash(self, message_id: str) -> GmailWriteResult:
+        """Move a message to Trash (never a permanent delete); idempotent.
+
+        A `404` is gone (soft skip); a message already in `TRASH` is a soft
+        skip; otherwise it is trashed."""
+        message = await self._get_or_none(message_id)
+        if message is None:
+            return GmailWriteResult("gone", "message no longer exists")
+        if _TRASH_LABEL in message.label_ids:
+            return GmailWriteResult("already", "message already trashed")
+        response = await self.transport.trash_message(message_id)
+        self._require_ok(response, context="trash_message")
+        return GmailWriteResult("done")
+
+    async def _get_or_none(self, message_id: str) -> GmailMessage | None:
+        """Fetch and parse one message, returning None on a `404` (gone)."""
+        response = await self.transport.get_message(message_id)
+        if response.status_code == _HTTP_NOT_FOUND:
+            return None
+        self._require_ok(response, context="get_message")
+        return _parse_message(response.payload)
+
     @staticmethod
     def _require_ok(response: GmailResponse, *, context: str) -> None:
         if response.status_code != _HTTP_OK:
             message = f"Gmail {context} returned {response.status_code}"
-            raise GmailApiError(message)
+            raise GmailApiError(message, status_code=response.status_code)
 
 
 def _build_query(watermark: datetime | None) -> str:
@@ -1036,5 +1154,7 @@ __all__ = [
     "GmailTriageError",
     "GmailTriageRunner",
     "GmailVerdict",
+    "GmailWriteOutcome",
+    "GmailWriteResult",
     "create_gmail_schema",
 ]

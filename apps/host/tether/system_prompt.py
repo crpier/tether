@@ -149,7 +149,7 @@ def system_prompt_for(kind: RunKind) -> str:
     match kind:
         case "conversation":
             return CONVERSATION_SYSTEM_PROMPT
-        case "scheduled" | "recall" | "gmail":
+        case "scheduled" | "recall" | "gmail" | "gmail_purge":
             return TASK_SYSTEM_PROMPT
         case _:
             assert_never(kind)

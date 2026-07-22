@@ -20,6 +20,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import structlog
 from anyio import TemporaryDirectory
@@ -39,6 +40,7 @@ from snektest import (
 )
 
 from tether.gmail import (
+    GmailApiError,
     GmailClient,
     GmailMessageRecord,
     GmailResponse,
@@ -80,9 +82,22 @@ def test_logger() -> Logger:
 # --- Fake transport + triage runner -----------------------------------------
 
 
+def _labels_of(payload: dict[str, object]) -> list[str]:
+    """Read a message payload's mutable label-id list (for the fake's writes)."""
+    raw = payload.get("labelIds")
+    return [label for label in cast("list[object]", raw) if isinstance(label, str)]
+
+
 @dataclass
 class FakeGmailTransport:
-    """A scripted `GmailTransport`: canned pages/messages/labels, records calls."""
+    """A scripted `GmailTransport`: canned pages/messages/labels, records calls.
+
+    The write methods (`modify_labels`, `trash_message`) record every call and
+    mutate the stored payload's `labelIds` so an idempotent re-run observes the
+    new state — a missing message id returns `404` (gone) on `get_message`, and
+    `write_status` can be set to a non-200 (e.g. `403`) to simulate an
+    insufficient-scope write.
+    """
 
     message_pages: list[dict[str, object]]
     messages: dict[str, dict[str, object]]
@@ -90,6 +105,11 @@ class FakeGmailTransport:
     list_calls: list[tuple[str, str | None]] = field(
         default_factory=list[tuple[str, str | None]]
     )
+    modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = field(
+        default_factory=list[tuple[str, tuple[str, ...], tuple[str, ...]]]
+    )
+    trash_calls: list[str] = field(default_factory=list[str])
+    write_status: int = 200
 
     async def list_messages(
         self, *, query: str, page_token: str | None
@@ -98,10 +118,46 @@ class FakeGmailTransport:
         return GmailResponse(status_code=200, payload=self.message_pages.pop(0))
 
     async def get_message(self, message_id: str) -> GmailResponse:
-        return GmailResponse(status_code=200, payload=self.messages[message_id])
+        payload = self.messages.get(message_id)
+        if payload is None:
+            return GmailResponse(status_code=404, payload={})
+        return GmailResponse(status_code=200, payload=payload)
 
     async def list_labels(self) -> GmailResponse:
         return GmailResponse(status_code=200, payload={"labels": self.labels})
+
+    async def modify_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> GmailResponse:
+        self.modify_calls.append(
+            (message_id, tuple(add_label_ids), tuple(remove_label_ids))
+        )
+        if self.write_status != 200:
+            return GmailResponse(status_code=self.write_status, payload={})
+        payload = self.messages.get(message_id)
+        if payload is not None:
+            labels = [
+                label for label in _labels_of(payload) if label not in remove_label_ids
+            ]
+            labels.extend(label for label in add_label_ids if label not in labels)
+            payload["labelIds"] = labels
+        return GmailResponse(status_code=200, payload={})
+
+    async def trash_message(self, message_id: str) -> GmailResponse:
+        self.trash_calls.append(message_id)
+        if self.write_status != 200:
+            return GmailResponse(status_code=self.write_status, payload={})
+        payload = self.messages.get(message_id)
+        if payload is not None:
+            labels = _labels_of(payload)
+            if "TRASH" not in labels:
+                labels.append("TRASH")
+            payload["labelIds"] = labels
+        return GmailResponse(status_code=200, payload={})
 
 
 @dataclass
@@ -1115,3 +1171,86 @@ async def eligible_messages_are_triaged_in_bounded_batches() -> None:
 
     assert_eq(report.ingested, 3)
     assert_eq(len(triage_runner.prompts), 3)
+
+
+# --- Write layer: archive / label / trash (idempotent, staleness-soft) --------
+
+
+@test()
+async def archive_removes_inbox_and_is_idempotent_on_rerun() -> None:
+    """`archive` removes INBOX (succeeded), a re-run is a soft skip."""
+    transport = FakeGmailTransport(
+        message_pages=[],
+        messages={"m1": message_payload("m1", label_ids=["INBOX", "CATEGORY_UPDATES"])},
+    )
+    client = GmailClient(transport=transport)
+
+    first = await client.archive("m1")
+    second = await client.archive("m1")
+
+    assert_eq(first.outcome, "done")
+    assert_eq(second.outcome, "already")
+    # One real modify; the second call short-circuits on the stale-soft check.
+    assert_eq(len(transport.modify_calls), 1)
+    assert_eq(transport.modify_calls[0], ("m1", (), ("INBOX",)))
+
+
+@test()
+async def archive_of_a_missing_message_is_gone() -> None:
+    """`archive` of a 404 message resolves gone (a soft skip), no write."""
+    transport = FakeGmailTransport(message_pages=[], messages={})
+    client = GmailClient(transport=transport)
+
+    result = await client.archive("nope")
+
+    assert_eq(result.outcome, "gone")
+    assert_eq(transport.modify_calls, [])
+
+
+@test()
+async def label_adds_a_label_and_is_idempotent() -> None:
+    """`label` adds a label id (succeeded), a re-run is a soft skip."""
+    transport = FakeGmailTransport(
+        message_pages=[], messages={"m1": message_payload("m1", label_ids=["INBOX"])}
+    )
+    client = GmailClient(transport=transport)
+
+    first = await client.label("m1", "Label_9")
+    second = await client.label("m1", "Label_9")
+
+    assert_eq(first.outcome, "done")
+    assert_eq(second.outcome, "already")
+    assert_eq(len(transport.modify_calls), 1)
+    assert_eq(transport.modify_calls[0], ("m1", ("Label_9",), ()))
+
+
+@test()
+async def trash_moves_to_trash_and_is_idempotent() -> None:
+    """`trash` moves a message to TRASH (succeeded), a re-run is a soft skip."""
+    transport = FakeGmailTransport(
+        message_pages=[], messages={"m1": message_payload("m1", label_ids=["INBOX"])}
+    )
+    client = GmailClient(transport=transport)
+
+    first = await client.trash("m1")
+    second = await client.trash("m1")
+
+    assert_eq(first.outcome, "done")
+    assert_eq(second.outcome, "already")
+    assert_eq(transport.trash_calls, ["m1"])
+
+
+@test()
+async def a_write_forbidden_by_scope_raises_a_403_gmail_api_error() -> None:
+    """A 403 write (token lacks gmail.modify) raises `GmailApiError` with status."""
+    transport = FakeGmailTransport(
+        message_pages=[],
+        messages={"m1": message_payload("m1", label_ids=["INBOX"])},
+        write_status=403,
+    )
+    client = GmailClient(transport=transport)
+
+    with assert_raises(GmailApiError) as caught:
+        _ = await client.archive("m1")
+
+    assert_eq(caught.exception.status_code, 403)

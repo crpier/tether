@@ -22,7 +22,11 @@ import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tether.gmail import GmailClient
-from tether.gmail_oauth import GMAIL_READONLY_SCOPE, HttpGmailTransport
+from tether.gmail_oauth import (
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    HttpGmailTransport,
+)
 from tether.logging import Logger
 from tether.youtube_oauth import OAuthConfig, YouTubeAuthError, run_auth_flow
 
@@ -62,7 +66,11 @@ def main() -> None:
     config = OAuthConfig(
         token_path=settings.gmail_token_path,
         client_secret_path=settings.gmail_client_secret_path,
-        scopes=(GMAIL_READONLY_SCOPE,),
+        # Both scopes are requested: `gmail.readonly` for the ingestion gate's
+        # listing/reads and `gmail.modify` for the backlog-purge write path
+        # (archive/label/trash). A token minted before `gmail.modify` was added
+        # must be re-authorized by re-running this bootstrap and re-consenting.
+        scopes=(GMAIL_READONLY_SCOPE, GMAIL_MODIFY_SCOPE),
         no_browser=settings.gmail_oauth_no_browser,
     )
     try:
