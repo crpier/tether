@@ -153,6 +153,7 @@ function TodoRow(props: {
     <li
       aria-label={`Todo: ${props.todo.action}`}
       class="bg-muted rounded-md border px-3 py-2 text-sm"
+      data-id={props.todo.id}
     >
       <div class="flex flex-wrap items-center gap-1">
         <span class="font-medium">{props.todo.action}</span>

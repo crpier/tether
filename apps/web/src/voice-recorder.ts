@@ -9,7 +9,7 @@
 //
 // Depends on abstractions rather than `navigator.mediaDevices`/`MediaRecorder`
 // directly so the state machine is unit-testable without a real browser
-// microphone (see `voice-recorder.test.ts`); `chat-view.tsx` wires the real
+// microphone (see `voice-recorder.test.ts`); `chat-page.tsx` wires the real
 // browser APIs as `VoiceRecorderDeps`.
 
 export type VoiceMode = "auto-send" | "review";

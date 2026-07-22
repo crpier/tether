@@ -10,6 +10,9 @@ importers:
       "@kobalte/core":
         specifier: ^0.13.11
         version: 0.13.11(solid-js@1.9.9)
+      "@solidjs/router":
+        specifier: ^0.16.2
+        version: 0.16.2(solid-js@1.9.9)
       "@tanstack/solid-query":
         specifier: ^5.101.1
         version: 5.101.1(solid-js@1.9.9)
@@ -46,7 +49,7 @@ importers:
         version: 1.61.1
       "@solidjs/testing-library":
         specifier: ^0.8.10
-        version: 0.8.10(solid-js@1.9.9)
+        version: 0.8.10(@solidjs/router@0.16.2(solid-js@1.9.9))(solid-js@1.9.9)
       "@tailwindcss/vite":
         specifier: ^4.3.1
         version: 4.3.1(vite@7.1.10(@types/node@26.0.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4))
@@ -1324,6 +1327,14 @@ packages:
       }
     peerDependencies:
       solid-js: ^1.6.12
+
+  "@solidjs/router@0.16.2":
+    resolution:
+      {
+        integrity: sha512-pncbV4SGUwGGlELlDWc3B4KDVB0Kt+7+7ct+GTN7D8CgetGSJMzl8RzyAFz+/TtSuFFzp9IzrjrACHUpGzxsKQ==,
+      }
+    peerDependencies:
+      solid-js: ^1.8.6
 
   "@solidjs/testing-library@0.8.10":
     resolution:
@@ -5109,10 +5120,16 @@ snapshots:
     dependencies:
       solid-js: 1.9.9
 
-  "@solidjs/testing-library@0.8.10(solid-js@1.9.9)":
+  "@solidjs/router@0.16.2(solid-js@1.9.9)":
+    dependencies:
+      solid-js: 1.9.9
+
+  "@solidjs/testing-library@0.8.10(@solidjs/router@0.16.2(solid-js@1.9.9))(solid-js@1.9.9)":
     dependencies:
       "@testing-library/dom": 10.4.0
       solid-js: 1.9.9
+    optionalDependencies:
+      "@solidjs/router": 0.16.2(solid-js@1.9.9)
 
   "@standard-schema/spec@1.0.0": {}
 

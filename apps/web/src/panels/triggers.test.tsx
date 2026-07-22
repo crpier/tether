@@ -8,7 +8,13 @@ import {
 import { afterEach, describe, expect, test } from "vitest";
 
 import { ApiError } from "../api";
-import { FakeApi, input, renderApp, trigger } from "../testing/harness";
+import {
+  FakeApi,
+  input,
+  navigateTo,
+  renderApp,
+  trigger,
+} from "../testing/harness";
 
 afterEach(cleanup);
 
@@ -19,6 +25,8 @@ describe("Triggers panel", () => {
       triggers: [trigger({ payload: "water the plants" })],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     expect(
       await screen.findByLabelText("Reminder: water the plants"),
@@ -28,6 +36,8 @@ describe("Triggers panel", () => {
   test("creating a one-off reminder posts the right body", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     fireEvent.input(input(await screen.findByLabelText("Reminder")), {
       target: { value: "stretch" },
@@ -54,6 +64,8 @@ describe("Triggers panel", () => {
   test("does not create a one-off reminder in the past", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     fireEvent.input(input(await screen.findByLabelText("Reminder")), {
       target: { value: "too late" },
@@ -75,6 +87,8 @@ describe("Triggers panel", () => {
   test("the reminder time input forbids past instants via min", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const field = input(await screen.findByLabelText("Date and time"));
     const min = field.getAttribute("min");
@@ -93,6 +107,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: renew passport");
     fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
@@ -116,6 +132,8 @@ describe("Triggers panel", () => {
     });
     api.serverTriggerVersions = { "trig-1": 2 };
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: renew passport");
     fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
@@ -149,6 +167,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: summarise inbox");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -183,6 +203,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: stretch");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -209,6 +231,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -256,6 +280,8 @@ describe("Triggers panel", () => {
     });
     api.serverTriggerVersions = { "trig-1": 2 };
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -296,6 +322,8 @@ describe("Triggers panel", () => {
     api.serverTriggerVersions = { "trig-1": 2 };
     api.serverTriggerEdits = { "trig-1": { payload: "water the cactus" } };
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -343,6 +371,8 @@ describe("Triggers panel", () => {
     });
     api.updateTriggerRejections = [new ApiError(409), new ApiError(422)];
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -370,6 +400,8 @@ describe("Triggers panel", () => {
     });
     api.deleteTriggerRejections = [new ApiError(409), new ApiError(500)];
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: renew passport");
     fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
@@ -403,6 +435,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     // Open the one-off first so its fire time lands in the form, then switch
     // to editing the weekly one. Flipping Repeat to "once" mid-edit must show
@@ -439,6 +473,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     // Mirror image of the previous test: open the weekly one first, then the
     // one-off. Flipping Repeat to "daily" mid-edit must show the defaults, not
@@ -473,6 +509,8 @@ describe("Triggers panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: stretch");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -491,6 +529,8 @@ describe("Triggers panel", () => {
   test("creating a reminder resets the whole form, like a saved edit", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     fireEvent.input(input(await screen.findByLabelText("Reminder")), {
       target: { value: "weekly review" },
@@ -516,6 +556,8 @@ describe("Triggers panel", () => {
       triggers: [trigger({ id: "trig-1", payload: "water the plants" })],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -538,8 +580,10 @@ describe("Triggers panel", () => {
   test("the reminder action help text distinguishes the two kinds", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
 
-    await screen.findByRole("heading", { name: "Tether chat" });
+    await screen.findByLabelText("Reminder");
     expect(
       screen.getByText(
         "Your text is delivered verbatim as a notification when it fires.",

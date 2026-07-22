@@ -3,9 +3,9 @@ import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 // Layout is CSS, so the meaningful guard is real geometry in a real browser —
-// jsdom can't compute it. These specs pin the behaviours issue #112 called out:
-// a header that doesn't clip Log out, and a chat that goes full-width in a
-// single stacked column on phones while keeping the two-column split on desktop.
+// jsdom can't compute it. The shell (#250) swaps a collapsible left sidebar
+// for a bottom tab bar at the `lg` breakpoint; both render the same five nav
+// destinations.
 
 async function boundingBox(
   locator: Locator,
@@ -21,7 +21,7 @@ async function boundingBox(
 const PHONE = { width: 390, height: 780 };
 const DESKTOP = { width: 1280, height: 860 };
 
-test("phone width: header keeps Log out reachable and chat is full-width", async ({
+test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   page,
   login,
 }) => {
@@ -31,23 +31,25 @@ test("phone width: header keeps Log out reachable and chat is full-width", async
   const transcript = page.locator('section[aria-label="Chat transcript"]');
   await transcript.waitFor({ state: "visible" });
 
-  // Log out must stay within the viewport rather than clip off the right edge.
-  const logout = await boundingBox(
-    page.getByRole("button", { name: "Log out" }),
-  );
-  expect(logout.x).toBeGreaterThanOrEqual(0);
-  expect(logout.x + logout.width).toBeLessThanOrEqual(PHONE.width + 1);
+  // The desktop sidebar is not shown at this width…
+  await expect(page.locator("aside")).toBeHidden();
+  // …while the bottom tab bar is, reachable within the viewport.
+  const bottomNav = page.getByRole("navigation", {
+    name: "Main navigation (compact)",
+  });
+  const tabsBox = await boundingBox(bottomNav);
+  expect(tabsBox.x).toBeGreaterThanOrEqual(0);
+  expect(tabsBox.x + tabsBox.width).toBeLessThanOrEqual(PHONE.width + 1);
+  await expect(
+    bottomNav.getByRole("link", { name: /^Proposals/ }),
+  ).toBeVisible();
 
-  // Chat is a full-width column, not the pre-fix sliver.
+  // Chat is a full-width column.
   const chat = await boundingBox(transcript);
   expect(chat.width).toBeGreaterThan(PHONE.width * 0.8);
-
-  // Single-column stack: the sidebar sits below the chat, not beside it.
-  const sidebar = await boundingBox(page.locator("aside"));
-  expect(sidebar.y).toBeGreaterThanOrEqual(chat.y + chat.height - 1);
 });
 
-test("desktop width: chat and sidebar sit side by side", async ({
+test("desktop width: left sidebar visible, bottom tabs hidden", async ({
   page,
   login,
 }) => {
@@ -57,10 +59,42 @@ test("desktop width: chat and sidebar sit side by side", async ({
   const transcript = page.locator('section[aria-label="Chat transcript"]');
   await transcript.waitFor({ state: "visible" });
 
-  const chat = await boundingBox(transcript);
-  const sidebar = await boundingBox(page.locator("aside"));
+  const sidebar = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(sidebar).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation (compact)" }),
+  ).toBeHidden();
 
-  // Two columns share a row and the sidebar is to the right of the transcript.
-  expect(chat.x + chat.width).toBeLessThanOrEqual(sidebar.x + 1);
-  expect(Math.abs(chat.y - sidebar.y)).toBeLessThan(8);
+  const chat = await boundingBox(transcript);
+  const sidebarBox = await boundingBox(sidebar);
+
+  // The sidebar sits to the left of chat, sharing a row.
+  expect(sidebarBox.x + sidebarBox.width).toBeLessThanOrEqual(chat.x + 1);
+  expect(Math.abs(chat.y - sidebarBox.y)).toBeLessThan(40);
+});
+
+test("the sidebar collapses to icons and expands back", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(DESKTOP);
+  await login();
+
+  const sidebar = page.getByRole("navigation", { name: "Main navigation" });
+  await sidebar.waitFor({ state: "visible" });
+  const expandedBox = await boundingBox(sidebar.locator(".."));
+
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  const collapsed = page.getByRole("button", { name: "Expand sidebar" });
+  await expect(collapsed).toBeVisible();
+  // The width change animates (`transition-[width] duration-150`); wait past
+  // it so the bounding box reflects the settled, collapsed width.
+  await expect
+    .poll(async () => (await boundingBox(sidebar.locator(".."))).width)
+    .toBeLessThan(expandedBox.width);
+
+  await collapsed.click();
+  await expect(
+    page.getByRole("button", { name: "Collapse sidebar" }),
+  ).toBeVisible();
 });

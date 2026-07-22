@@ -2,7 +2,13 @@ import { cleanup, screen, waitFor, within } from "@solidjs/testing-library";
 import { fireEvent } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, memory, panel, renderApp } from "../testing/harness";
+import {
+  FakeApi,
+  memory,
+  navigateTo,
+  panel,
+  renderApp,
+} from "../testing/harness";
 
 afterEach(cleanup);
 
@@ -10,8 +16,15 @@ describe("Synthetic panels", () => {
   test("renders nothing when no panels are saved", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
-    await screen.findByLabelText("Reminder");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Panels" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
     expect(screen.queryByLabelText(/^Panel:/)).not.toBeInTheDocument();
   });
 
@@ -35,6 +48,8 @@ describe("Synthetic panels", () => {
       panels: [finance],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: finance");
     expect(await within(card).findByText("rent is 900")).toBeInTheDocument();
@@ -48,6 +63,8 @@ describe("Synthetic panels", () => {
     const empty = panel({ name: "travel" });
     const api = new FakeApi({ authenticated: true, panels: [empty] });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: travel");
     expect(
@@ -68,6 +85,8 @@ describe("Synthetic panels", () => {
       panels: [broad],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: everything-finance");
     expect(await within(card).findByText("Showing 2 of 5")).toBeInTheDocument();
@@ -90,6 +109,8 @@ describe("Synthetic panels", () => {
       panels: [chart],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: spend");
     await waitFor(() => {
@@ -104,6 +125,8 @@ describe("Synthetic panels", () => {
     const doomed = panel({ name: "old-panel", version: 3 });
     const api = new FakeApi({ authenticated: true, panels: [doomed] });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: old-panel");
     fireEvent.click(

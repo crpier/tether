@@ -1,4 +1,4 @@
-import { render } from "@solidjs/testing-library";
+import { fireEvent, render, screen, within } from "@solidjs/testing-library";
 
 import { ApiError } from "../api";
 import type {
@@ -1345,7 +1345,36 @@ export function createBusHarness(): {
   };
 }
 
-export function renderApp(api: FakeApi, bus = createBusHarness()) {
+// The app is a routed 5-page shell (#250): tests running with vitest's
+// `isolate: false` share one jsdom `window.history` across every test file in
+// the worker, so a route left over from a previous test would otherwise leak
+// into the next render. Reset to the root path (pure chat, the home page)
+// before every render unless the caller wants to land somewhere else.
+// Both the desktop sidebar and the mobile bottom tabs render the same five
+// nav destinations (#250) — jsdom has no layout, so both are always present
+// regardless of "hidden lg:flex"/"lg:hidden". Tests navigate through the
+// desktop sidebar ("Main navigation"), which is unambiguous by accessible
+// name, rather than reaching for whichever nav happens to render first.
+export async function navigateTo(
+  label: "Chat" | "Proposals" | "Inbox" | "Browse" | "Settings",
+): Promise<void> {
+  const nav = await screen.findByRole("navigation", {
+    name: "Main navigation",
+  });
+  // `getByRole`'s `name` matcher has no `exact` option (a plain string is
+  // always exact-equality) — a regex is the only way to substring-match past
+  // a badge count appended to the accessible name (e.g. "Inbox" -> "Inbox3").
+  fireEvent.click(
+    within(nav).getByRole("link", { name: new RegExp(`^${label}`) }),
+  );
+}
+
+export function renderApp(
+  api: FakeApi,
+  bus = createBusHarness(),
+  options: { path?: string } = {},
+) {
+  window.history.pushState({}, "", options.path ?? "/");
   render(() => <App api={api} createChatBus={bus.createChatBus} />);
   return bus;
 }

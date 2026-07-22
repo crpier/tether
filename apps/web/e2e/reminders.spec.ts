@@ -37,11 +37,22 @@ async function createOneOffReminder(
   ).toBeVisible();
 }
 
+async function openReminders(page: Parameters<typeof createOneOffReminder>[0]) {
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: /^Browse/ })
+    .click();
+  await page.getByRole("heading", { name: "Browse" }).waitFor();
+  await page.getByRole("button", { name: "Reminders" }).click();
+  await page.locator('section[aria-label="Reminders"]').waitFor();
+}
+
 test("creates a one-off reminder and shows it in the list", async ({
   page,
   login,
 }) => {
   await login();
+  await openReminders(page);
 
   const reminders = page.locator('section[aria-label="Reminders"]');
   const label = `e2e reminder ${String(Date.now())}`;
@@ -50,6 +61,7 @@ test("creates a one-off reminder and shows it in the list", async ({
 
 test("edits a reminder and shows the updated row", async ({ page, login }) => {
   await login();
+  await openReminders(page);
 
   const reminders = page.locator('section[aria-label="Reminders"]');
   const label = `e2e edit ${String(Date.now())}`;

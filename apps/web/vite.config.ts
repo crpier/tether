@@ -43,7 +43,7 @@ export default defineConfig({
     // it instead of Node trying to load the raw source.
     server: {
       deps: {
-        inline: [/@kobalte\/core/],
+        inline: [/@kobalte\/core/, /@solidjs\/router/],
       },
     },
     // if you have few tests, try commenting this

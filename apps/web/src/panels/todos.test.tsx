@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { formatDate } from "../lib/format";
-import { FakeApi, renderApp, todo } from "../testing/harness";
+import { FakeApi, navigateTo, renderApp, todo } from "../testing/harness";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -22,6 +22,8 @@ describe("Todos panel", () => {
       todos: [todo({ action: "call the dentist" })],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: call the dentist");
     expect(row).toHaveTextContent("call the dentist");
@@ -41,6 +43,8 @@ describe("Todos panel", () => {
       ],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: bring the book");
     expect(row).toHaveTextContent("waiting");
@@ -54,6 +58,8 @@ describe("Todos panel", () => {
       todos: [todo({ action: "water plants", id: "todo-1", version: 3 })],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: water plants");
     fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
@@ -76,6 +82,8 @@ describe("Todos panel", () => {
       todos: [todo({ action: "old task", id: "todo-2", version: 1 })],
     });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: old task");
     fireEvent.click(within(row).getByRole("button", { name: "Abandon" }));
@@ -94,6 +102,8 @@ describe("Todos panel", () => {
     });
     api.serverTodoVersions = { "todo-1": 2 };
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: water plants");
     fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
@@ -110,6 +120,8 @@ describe("Todos panel", () => {
   test("an empty list reads as nothing to do", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     await screen.findByRole("heading", { name: "Todos" });
     expect(screen.getByText("Nothing to do right now")).toBeInTheDocument();
@@ -118,6 +130,8 @@ describe("Todos panel", () => {
   test("a todos invalidate frame refetches the list", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
 
     await screen.findByRole("heading", { name: "Todos" });
     await waitFor(() => {
