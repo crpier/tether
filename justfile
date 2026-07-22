@@ -14,7 +14,7 @@ default:
 
 # Python host (Starlette, auto-reload)
 host:
-    TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret TETHER_STT_API_KEY=dummy uv run python -m tether
+    TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret uv run python -m tether
 
 # SolidJS web (Vite dev server)
 web:
@@ -47,7 +47,6 @@ dev:
     # in step with new liked videos. Set TETHER_YOUTUBE_SYNC_ENABLED=false /
     # TETHER_TRANSCRIPT_SYNC_ENABLED=false to opt out for a pure web/HMR loop.
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
-        TETHER_STT_API_KEY=dummy \
         TETHER_LOGGING_LEVEL=DEBUG \
         TETHER_LOG_FILE=.tether/logs/host.log \
         uv run python -m tether &

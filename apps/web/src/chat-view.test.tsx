@@ -612,7 +612,9 @@ describe("Chat view", () => {
       const bus = renderApp(api);
 
       await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Say & review/ }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /Record and review/ }),
+      );
       await screen.findByText("Recording…");
 
       latestFakeRecorder().stop();
@@ -634,7 +636,7 @@ describe("Chat view", () => {
       const bus = renderApp(api);
 
       await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Say & send/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
       await screen.findByText("Recording…");
 
       latestFakeRecorder().stop();
@@ -658,7 +660,7 @@ describe("Chat view", () => {
       const bus = renderApp(api);
 
       await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Say & send/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
       await screen.findByText("Recording…");
 
       latestFakeRecorder().stop();
@@ -674,7 +676,7 @@ describe("Chat view", () => {
       // Discard drops the clip and returns to the idle two-button state.
       fireEvent.click(screen.getByRole("button", { name: "Discard" }));
       expect(
-        await screen.findByRole("button", { name: /Say & review/ }),
+        await screen.findByRole("button", { name: /Record and review/ }),
       ).toBeInTheDocument();
     });
 
@@ -686,7 +688,9 @@ describe("Chat view", () => {
       renderApp(api);
 
       await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Say & review/ }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /Record and review/ }),
+      );
       await screen.findByText("Recording…");
 
       latestFakeRecorder().stop();
@@ -709,13 +713,15 @@ describe("Chat view", () => {
       renderApp(api);
 
       await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Say & review/ }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /Record and review/ }),
+      );
       await screen.findByText("Recording…");
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel recording" }));
 
       expect(
-        await screen.findByRole("button", { name: /Say & review/ }),
+        await screen.findByRole("button", { name: /Record and review/ }),
       ).toBeInTheDocument();
       expect(api.transcribeAudioCalls).toEqual([]);
     });

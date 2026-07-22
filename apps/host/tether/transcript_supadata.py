@@ -502,7 +502,15 @@ class SupadataTranscriptProvider(TranscriptProvider):
             ) from error
         # Pace the billed submit to stay under the plan's per-request rate limit.
         await self._throttle()
-        response = await self._transport.submit(video_id)
+        try:
+            response = await self._transport.submit(video_id)
+        except httpx2.RequestError as error:
+            # A read timeout, connection reset, etc. — the network itself failed
+            # rather than Supadata answering with a rate limit or 5xx. Transient
+            # like any other transport hiccup (see class docstring): the worker
+            # backs this one video off and keeps going, instead of the raw
+            # `httpx2` exception aborting the whole pass uncaught.
+            raise TranscriptTransientError(video_id) from error
         # A rate limit or any client/server error is a failure to classify; a 2xx is
         # either a job handoff, a direct transcript, or a genuine "no transcript".
         if (
@@ -531,7 +539,11 @@ class SupadataTranscriptProvider(TranscriptProvider):
         """
         for _ in range(self._config.max_poll_attempts):
             await self._sleep(self._config.poll_interval.total_seconds())
-            response = await self._transport.poll(job_id)
+            try:
+                response = await self._transport.poll(job_id)
+            except httpx2.RequestError as error:
+                # Same transport-hiccup mapping as the submit call above.
+                raise TranscriptTransientError(video_id) from error
             if response.status_code >= _HTTP_CLIENT_ERROR_FLOOR:
                 # A failed poll maps the same way a failed submit does.
                 raise _classify_failure(video_id, response)
