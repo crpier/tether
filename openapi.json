@@ -1509,6 +1509,17 @@
       "ProposalActionRead": {
         "description": "HTTP representation of one action within a proposal.",
         "properties": {
+          "display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display"
+          },
           "disposition": {
             "$ref": "#/components/schemas/ActionDisposition"
           },
@@ -1581,6 +1592,7 @@
           "kind",
           "scope",
           "params",
+          "display",
           "disposition",
           "outcome",
           "outcome_detail",

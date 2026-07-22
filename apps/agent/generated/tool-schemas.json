@@ -1418,7 +1418,7 @@
       "schema": {
         "$defs": {
           "ProposeActionParam": {
-            "description": "One typed action to compose into a proposal.\n\n`kind` names a registered action kind; `scope` is an optional consumer-\ndefined category string (unvalidated \u2014 a typo simply fails to match a\ngrant); `params` are the kind's params, validated against its model.",
+            "description": "One typed action to compose into a proposal.\n\n`kind` names a registered action kind; `scope` is an optional consumer-\ndefined category string (unvalidated \u2014 a typo simply fails to match a\ngrant); `params` are the kind's params, validated against its model.\n`display` is an optional human-readable one-line summary shown in the\nProposals panel; when omitted the panel renders the kind and params.",
             "properties": {
               "kind": {
                 "title": "Kind",
@@ -1441,6 +1441,18 @@
                 "default": {},
                 "title": "Params",
                 "type": "object"
+              },
+              "display": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Display"
               }
             },
             "required": ["kind"],

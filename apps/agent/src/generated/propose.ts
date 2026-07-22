@@ -17,6 +17,7 @@ const proposeParameters = Type.Object({
       kind: Type.String(),
       scope: Type.Optional(Type.String()),
       params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      display: Type.Optional(Type.String()),
     }),
   ),
 });

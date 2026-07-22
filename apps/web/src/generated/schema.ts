@@ -3153,6 +3153,8 @@ export interface components {
      * @description HTTP representation of one action within a proposal.
      */
     ProposalActionRead: {
+      /** Display */
+      display: string | null;
       disposition: components["schemas"]["ActionDisposition"];
       /** Executed At */
       executed_at: string | null;

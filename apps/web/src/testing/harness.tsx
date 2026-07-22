@@ -205,6 +205,7 @@ export function proposalAction(
 ): ProposalAction {
   return {
     disposition: "approved",
+    display: null,
     executed_at: null,
     id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
     kind: "send_email",

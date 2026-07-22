@@ -257,6 +257,49 @@ async def a_chunk_of_actionable_verdicts_becomes_one_proposal() -> None:
 
 
 @test()
+async def actions_carry_a_human_readable_display_line() -> None:
+    """Each proposed action stores a display drawn from message metadata."""
+    env = await load_fixture(purge_env())
+    transport = PurgeTransport(
+        message_pages=[_list_page(["m1", "m2"])],
+        messages={
+            "m1": _message(
+                "m1",
+                from_header="Amazon.com <ship@amazon.com>",
+                subject="Your order has shipped",
+            ),
+            "m2": _message(
+                "m2",
+                from_header="receipts@store.example",
+                subject="Receipt #4821",
+            ),
+        },
+    )
+    runner = StubRunner(
+        replies=[
+            purge_reply(
+                [
+                    archive_verdict("m1", category="shopping"),
+                    label_verdict("m2", label_name="Receipts", category="receipts"),
+                ]
+            )
+        ]
+    )
+
+    _ = await env.sweep_service(transport, runner).sweep(logger=env.logger)
+
+    proposals = await env.proposal_service.list_proposals(logger=env.logger)
+    archive_display = proposals[0].actions[0].display
+    label_display = proposals[0].actions[1].display
+    assert archive_display is not None
+    assert label_display is not None
+    assert_true(
+        archive_display.startswith("Archive · Your order has shipped · Amazon.com")
+    )
+    assert_true(label_display.startswith('Label "Receipts" · Receipt #4821 · '))
+
+
+@test()
 async def the_sweep_chunks_the_backlog_into_separate_proposals() -> None:
     """A chunk size below the backlog size yields one proposal per chunk."""
     env = await load_fixture(purge_env())

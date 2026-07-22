@@ -38,6 +38,19 @@ function suggestionLabel(kind: string, scope: string | null): string {
     : `Suggestion: ${kind} (${scope})`;
 }
 
+// The primary, reviewer-facing line for one action: the consumer-supplied
+// human-readable `display` when present, else a best-effort kind (+scope)
+// summary for actions composed before display existed. Raw params stay behind
+// the "Details" disclosure either way — never the primary text.
+function actionPrimary(action: ProposalAction): string {
+  if (action.display !== null && action.display.length > 0) {
+    return action.display;
+  }
+  return action.scope !== null
+    ? `${action.kind} · ${action.scope}`
+    : action.kind;
+}
+
 function formatWhen(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
@@ -423,17 +436,25 @@ export function ProposalsPanel(props: { api: TetherApi }) {
                       />
                     </Show>
                     <span class="flex-1">
-                      <span class="font-medium">{action.kind}</span>
-                      <Show when={action.scope}>
-                        {(scope) => (
-                          <span class="text-muted-foreground">
-                            {` · ${scope()}`}
-                          </span>
-                        )}
+                      <span class="block font-medium">
+                        {actionPrimary(action)}
+                      </span>
+                      <Show when={action.display !== null}>
+                        <span class="text-muted-foreground block text-[11px]">
+                          <span class="font-medium">{action.kind}</span>
+                          <Show when={action.scope}>
+                            {(scope) => ` · ${scope()}`}
+                          </Show>
+                        </span>
                       </Show>
-                      <pre class="bg-background/40 mt-1 max-h-40 overflow-auto rounded px-2 py-1 font-mono text-[11px] whitespace-pre-wrap break-words">
-                        {JSON.stringify(action.params, null, 2)}
-                      </pre>
+                      <details class="mt-1">
+                        <summary class="text-muted-foreground cursor-pointer text-[11px] select-none">
+                          Details
+                        </summary>
+                        <pre class="bg-background/40 mt-1 max-h-40 overflow-auto rounded px-2 py-1 font-mono text-[11px] break-words whitespace-pre-wrap">
+                          {JSON.stringify(action.params, null, 2)}
+                        </pre>
+                      </details>
                       <Show when={item.state !== "pending"}>
                         <p class="text-muted-foreground mt-1">
                           {`${action.disposition}${action.outcome !== null ? ` · ${action.outcome}` : ""}`}

@@ -181,6 +181,42 @@ async def create_rejects_bad_params() -> None:
         )
 
 
+# --- display -----------------------------------------------------------------
+
+
+@test()
+async def a_supplied_display_is_stored_and_returned() -> None:
+    """A consumer-supplied display line round-trips through create and read."""
+    h = await load_fixture(harness())
+
+    creation = await h.service.create(
+        draft(
+            ActionDraft(
+                kind="test.ok",
+                scope=None,
+                params={},
+                display='Archive · "Hi there" · Amazon · Jul 12',
+            )
+        ),
+        now=NOW,
+        logger=LOGGER,
+    )
+
+    view = await h.service.get(creation.proposal.proposal.id)
+    assert_eq(view.actions[0].display, 'Archive · "Hi there" · Amazon · Jul 12')
+
+
+@test()
+async def an_absent_display_reads_back_as_none() -> None:
+    """An action composed without a display stores NULL (panel falls back)."""
+    h = await load_fixture(harness())
+
+    creation = await h.service.create(draft(action("test.ok")), now=NOW, logger=LOGGER)
+
+    view = await h.service.get(creation.proposal.proposal.id)
+    assert_eq(view.actions[0].display, None)
+
+
 # --- queue vs auto-execute -------------------------------------------------
 
 
