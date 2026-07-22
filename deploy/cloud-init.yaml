@@ -1,0 +1,97 @@
+#cloud-config
+# Hetzner CX43, Debian 13 (Falkenstein). Paste into Hetzner's "Cloud config"
+# field at server creation (docs/deployment.md#provision-the-box). Also doubles
+# as the disaster-recovery runbook for rebuilding the box from scratch: a fresh
+# CX43 + this file + a restic restore (docs/deployment.md#total-loss-recovery)
+# gets Tether back.
+#
+# Placeholders to fill in before pasting (search for CHANGEME):
+#   - CHANGEME_SSH_PUBLIC_KEY: your SSH public key (key-only auth; password
+#     login is disabled below).
+#   - CHANGEME_TAILSCALE_AUTHKEY: a one-shot Tailscale pre-auth key
+#     (https://login.tailscale.com/admin/settings/keys) — reusable=false,
+#     ephemeral=false so the node persists in the tailnet across reboots.
+
+users:
+  - name: tether
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - CHANGEME_SSH_PUBLIC_KEY
+
+# 2GB swapfile: the CX43 has 16GB RAM (ample for the host's fastembed floor),
+# but a swapfile is cheap insurance against a runaway process OOM-killing the
+# host instead of degrading.
+swap:
+  filename: /swapfile
+  size: 2147483648
+  maxsize: 2147483648
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - unattended-upgrades
+  - apt-listchanges
+  - restic
+
+write_files:
+  # Unattended-upgrades: security updates only, no auto-reboot (a headless
+  # single-tenant box — an unplanned reboot mid-session is worse than a delayed
+  # kernel update; apply the rest by hand during a deploy).
+  - path: /etc/apt/apt.conf.d/51tether-unattended-upgrades
+    content: |
+      Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename},label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  # SSH hardening: key-only auth, no root login. Applied via a drop-in so the
+  # distro default sshd_config is untouched.
+  - path: /etc/ssh/sshd_config.d/99-tether-hardening.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+
+runcmd:
+  # --- Docker (official repo, per docs.docker.com/engine/install/debian) ----
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >
+    echo "deb [arch=$(dpkg --print-architecture)
+    signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/debian
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |
+    tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+
+  # --- Tailscale ---------------------------------------------------------
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - tailscale up --authkey=CHANGEME_TAILSCALE_AUTHKEY --ssh
+  # HTTPS termination (tailscale serve) and MagicDNS/HTTPS-cert enablement are
+  # tailnet-admin-console + one-off-command steps, not idempotent cloud-init
+  # material — see docs/deployment.md#provision-the-box.
+
+  # --- SSH hardening: restart after the drop-in above lands ------------
+  - systemctl restart ssh
+
+  # --- App directory ------------------------------------------------------
+  - install -d -o tether -g tether -m 0755 /srv/tether
+  - install -d -o tether -g tether -m 0700 /srv/tether/pi-agent
+
+final_message: "Tether base box ready after $UPTIME seconds. Next: docs/deployment.md#first-deploy."
