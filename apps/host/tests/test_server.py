@@ -126,6 +126,7 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_RELOAD="true",
             TETHER_SECURE_COOKIES="true",
             TETHER_SESSION_SECRET="configured-session-secret",
+            TETHER_STT_API_KEY="configured-stt-key",
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
@@ -151,6 +152,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.port, 9001)
     assert_true(settings.reload)
     assert_eq(settings.session_secret, "configured-session-secret")
+    assert_eq(settings.stt_api_key, "configured-stt-key")
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
@@ -163,7 +165,9 @@ def host_settings_read_tether_environment_variables() -> None:
 def sync_enabled_defaults_to_true() -> None:
     """Ingestion syncs are on unless a `TETHER_*_SYNC_ENABLED` flag disables them."""
     settings = HostSettings(
-        app_password="test-app-password", session_secret="test-session-secret"
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
     )
     assert_true(settings.youtube_sync_enabled)
     assert_true(settings.transcript_sync_enabled)
@@ -189,6 +193,7 @@ def environment_app_factory_propagates_sync_flags() -> None:
         with configured_environment(
             TETHER_APP_PASSWORD="test-app-password",
             TETHER_SESSION_SECRET="test-session-secret",
+            TETHER_STT_API_KEY="test-stt-key",
             TETHER_TRANSCRIPT_SYNC_ENABLED="false",
             TETHER_YOUTUBE_SYNC_ENABLED="false",
         ):
@@ -291,6 +296,7 @@ with TestClient(create_app_from_environment()):
                 "TETHER_DATABASE_PATH": f"{directory}/host.sqlite3",
                 "TETHER_KB_ROOT": f"{directory}/kb",
                 "TETHER_SESSION_SECRET": "test-session-secret",
+                "TETHER_STT_API_KEY": "test-stt-key",
             },
             text=True,
         )
@@ -319,6 +325,7 @@ def serve_runs_uvicorn_against_the_environment_app_factory() -> None:
                     reload=True,
                     logging_level="DEBUG",
                     session_secret="test-session-secret",
+                    stt_api_key="test-stt-key",
                 )
             )
     finally:
@@ -414,6 +421,7 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
             TETHER_KB_ROOT=f"{directory}/kb",
             TETHER_LOGGING_LEVEL="DEBUG",
             TETHER_SESSION_SECRET="test-session-secret",
+            TETHER_STT_API_KEY="test-stt-key",
         ),
     ):
         with TestClient(create_app_from_environment()) as client:
@@ -439,7 +447,9 @@ def transcript_rate_limit_defaults_are_strict() -> None:
     per-pass budget, a few seconds of spacing, and a multi-hour initial cooldown
     that escalates to a full day rather than 6 hours."""
     settings = HostSettings(
-        app_password="test-app-password", session_secret="test-session-secret"
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
     )
     assert_eq(settings.transcript_library_max_requests_per_pass, 5)
     assert_eq(settings.transcript_library_min_request_interval_seconds, 5.0)
@@ -454,6 +464,7 @@ def app_config_from_settings_threads_the_block_pause_bounds() -> None:
     settings = HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
         transcript_block_pause_base_seconds=111,
         transcript_block_pause_cap_seconds=222,
     )

@@ -38,7 +38,9 @@ import type {
 } from "./chat-timeline";
 import { ArtifactOverlay } from "./components/artifact-viewer";
 import { MessageContent } from "./components/message-content";
+import { VoiceComposerControls } from "./components/voice-composer";
 import type { ArtifactPointer } from "./components/widgets/artifact-widget";
+import type { VoiceMode } from "./voice-recorder";
 import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
 import { formatToolResult } from "./lib/tool-result";
 import { BucketPanel } from "./panels/bucket";
@@ -725,8 +727,12 @@ export function ChatView(props: {
     });
   });
 
-  const sendPrompt = () => {
-    const content = draft().trim();
+  // `overrideContent` lets the voice auto-send path push a transcript through
+  // this exact same path (issue #19: "no separate/duplicate send path")
+  // instead of routing through the draft signal, which would race a user who
+  // started typing while the clip was uploading.
+  const sendPrompt = (overrideContent?: string) => {
+    const content = (overrideContent ?? draft()).trim();
     const id = conversationId();
     if (content.length === 0 || id === undefined) {
       return;
@@ -736,6 +742,19 @@ export function ChatView(props: {
     setInterrupted(false);
     setTurn(startTurn(content, Date.now()));
     bus()?.sendPrompt(id, content);
+  };
+
+  // A successful transcript either fills the composer for review/edit (the
+  // user still sends it themselves) or is sent immediately in auto-send mode
+  // — the button that started the recording decided which. Nothing reaches
+  // chat on a failed or empty transcript either way (enforced upstream in
+  // `VoiceRecorder`, which never calls this on failure).
+  const handleVoiceTranscript = (transcript: string, mode: VoiceMode) => {
+    if (mode === "review") {
+      setDraft(transcript);
+      return;
+    }
+    sendPrompt(transcript);
   };
 
   const clearConversation = () => {
@@ -898,6 +917,11 @@ export function ChatView(props: {
                 <TextFieldLabel>Message</TextFieldLabel>
                 <TextFieldTextArea onKeyDown={onMessageKeyDown} />
               </TextField>
+              <VoiceComposerControls
+                disabled={generating()}
+                onTranscript={handleVoiceTranscript}
+                transcribe={(blob) => props.api.transcribeAudio(blob)}
+              />
               <div class="flex justify-end gap-2">
                 <Button disabled={!canSend()} type="submit">
                   Send

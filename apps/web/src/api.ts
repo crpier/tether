@@ -131,6 +131,13 @@ export interface TetherApi {
   // A panel execution is a Search, recomputed on every call (ADR 0006) — the
   // caller never caches results beyond the query layer's own invalidation.
   getPanelResults(panelId: string, limit?: number): Promise<PanelResults>;
+  // Transcribe-only voice input (issue #19): uploads a recorded clip and
+  // returns the transcript text only — no Memory is created and no chat turn
+  // is injected server-side; the caller (the chat composer) decides what to
+  // do with the transcript. Not routed through the generated client: the host
+  // route takes a raw multipart body with no typed OpenAPI request schema
+  // (see `tether/stt_routes.py`), so this issues a plain `fetch` instead.
+  transcribeAudio(blob: Blob): Promise<string>;
 }
 
 // Carries the HTTP status so callers can react to specific failures (e.g. a 409
@@ -452,6 +459,30 @@ export function createRestApi(
         },
       );
       return requireData(data, response);
+    },
+    async transcribeAudio(blob) {
+      const body = new FormData();
+      body.append("file", blob, "recording.webm");
+      const response = await fetch("/api/stt/transcriptions", {
+        body,
+        credentials: "include",
+        method: "POST",
+      });
+      let data: { transcript?: string } | undefined;
+      try {
+        data = (await response.json()) as { transcript?: string };
+      } catch {
+        data = undefined;
+      }
+      if (!response.ok || data?.transcript === undefined) {
+        throw new ApiError(response.status, {
+          413: "That recording is too long to transcribe.",
+          422: "No speech was detected in that recording.",
+          502: "Transcription failed. Please try again.",
+          503: "Transcription is temporarily unavailable. Please try again shortly.",
+        });
+      }
+      return data.transcript;
     },
   };
 }

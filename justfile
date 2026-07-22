@@ -14,7 +14,7 @@ default:
 
 # Python host (Starlette, auto-reload)
 host:
-    TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret uv run python -m tether
+    TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret TETHER_STT_API_KEY=dummy uv run python -m tether
 
 # SolidJS web (Vite dev server)
 web:
@@ -47,6 +47,7 @@ dev:
     # in step with new liked videos. Set TETHER_YOUTUBE_SYNC_ENABLED=false /
     # TETHER_TRANSCRIPT_SYNC_ENABLED=false to opt out for a pure web/HMR loop.
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret \
+        TETHER_STT_API_KEY=dummy \
         TETHER_LOGGING_LEVEL=DEBUG \
         TETHER_LOG_FILE=.tether/logs/host.log \
         uv run python -m tether &
@@ -222,7 +223,7 @@ validate-env env_file=".env":
     values = dotenv_values(env_file)
     errors = []
 
-    for key in ["TETHER_APP_PASSWORD", "TETHER_SESSION_SECRET", "TETHER_DEFAULT_MODEL", "TETHER_MODEL_ALLOWLIST"]:
+    for key in ["TETHER_APP_PASSWORD", "TETHER_SESSION_SECRET", "TETHER_STT_API_KEY", "TETHER_DEFAULT_MODEL", "TETHER_MODEL_ALLOWLIST"]:
         value = values.get(key)
         if value is None or value == "" or value == "change-me":
             errors.append(f"{key} must be set in {env_file}")

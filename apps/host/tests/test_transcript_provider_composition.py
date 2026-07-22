@@ -39,6 +39,7 @@ def _supadata_settings(*, enabled: bool, api_key: str) -> HostSettings:
     return HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
         supadata_enabled=enabled,
         supadata_api_key=api_key,
     )
@@ -76,6 +77,7 @@ def _library_settings(
     return HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
         transcript_library_enabled=enabled,
         transcript_library_max_requests_per_pass=max_requests_per_pass,
         transcript_library_min_request_interval_seconds=min_interval,
@@ -169,6 +171,7 @@ def build_configured_transcript_provider_returns_none_with_no_token() -> None:
     settings = HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
         youtube_token_path=Path("/nonexistent/token.json"),
     )
 

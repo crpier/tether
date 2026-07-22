@@ -5,8 +5,9 @@ import {
   waitFor,
   within,
 } from "@solidjs/testing-library";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { ApiError } from "./api";
 import {
   FakeApi,
   conversation,
@@ -16,6 +17,49 @@ import {
 } from "./testing/harness";
 
 afterEach(cleanup);
+
+// A scripted stand-in for the browser `MediaRecorder`, driving the voice
+// composer's `VoiceComposerControls` (issue #19) without a real microphone.
+// `stop()` synchronously delivers a chunk and fires `onstop`, matching how a
+// real recorder flushes its final `dataavailable` before stopping.
+class FakeMediaRecorder {
+  static instances: FakeMediaRecorder[] = [];
+  ondataavailable: ((event: { data: Blob }) => void) | null = null;
+  onstop: (() => void) | null = null;
+
+  constructor() {
+    FakeMediaRecorder.instances.push(this);
+  }
+
+  start(): void {
+    // No-op: the fake doesn't actually capture audio.
+  }
+
+  stop(): void {
+    this.ondataavailable?.({ data: new Blob(["chunk"]) });
+    this.onstop?.();
+  }
+}
+
+function stubVoiceRecording(): void {
+  FakeMediaRecorder.instances = [];
+  vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+  const fakeStream = {
+    getTracks: () => [],
+  } as unknown as MediaStream;
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: () => Promise.resolve(fakeStream) },
+  });
+}
+
+function latestFakeRecorder(): FakeMediaRecorder {
+  const recorder = FakeMediaRecorder.instances.at(-1);
+  if (recorder === undefined) {
+    throw new Error("expected a recorder to have been created");
+  }
+  return recorder;
+}
 
 describe("Chat view", () => {
   test("rehydrates settled chat history", async () => {
@@ -554,5 +598,126 @@ describe("Chat view", () => {
         .slice(callsAfterClear)
         .every((call) => call?.beforeSeq === undefined),
     ).toBe(true);
+  });
+
+  describe("voice input (issue #19)", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    test("review mode fills the composer instead of sending", async () => {
+      stubVoiceRecording();
+      const api = new FakeApi({ authenticated: true });
+      api.nextTranscript = "buy oat milk";
+      const bus = renderApp(api);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(screen.getByRole("button", { name: /Say & review/ }));
+      await screen.findByText("Recording…");
+
+      latestFakeRecorder().stop();
+
+      const messageBox = textarea(
+        await screen.findByLabelText("Message", undefined, { timeout: 2000 }),
+      );
+      await waitFor(() => {
+        expect(messageBox.value).toBe("buy oat milk");
+      });
+      // The transcript only fills the draft — it is not sent on its own.
+      expect(bus.sent).toEqual([]);
+    });
+
+    test("auto-send mode sends the transcript through the normal send path", async () => {
+      stubVoiceRecording();
+      const api = new FakeApi({ authenticated: true });
+      api.nextTranscript = "call the dentist";
+      const bus = renderApp(api);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(screen.getByRole("button", { name: /Say & send/ }));
+      await screen.findByText("Recording…");
+
+      latestFakeRecorder().stop();
+
+      await waitFor(() => {
+        expect(bus.sent).toEqual([
+          {
+            content: "call the dentist",
+            conversationId: conversation.id,
+            type: "prompt",
+          },
+        ]);
+      });
+      expect(await screen.findByText("call the dentist")).toBeInTheDocument();
+    });
+
+    test("a failed transcription keeps the clip with retry/discard, entering nothing into chat", async () => {
+      stubVoiceRecording();
+      const api = new FakeApi({ authenticated: true });
+      api.transcribeAudioRejections = [new ApiError(502)];
+      const bus = renderApp(api);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(screen.getByRole("button", { name: /Say & send/ }));
+      await screen.findByText("Recording…");
+
+      latestFakeRecorder().stop();
+
+      expect(
+        await screen.findByText(
+          "The service is temporarily unavailable. Please try again.",
+        ),
+      ).toBeInTheDocument();
+      expect(bus.sent).toEqual([]);
+      expect(api.transcribeAudioCalls).toHaveLength(1);
+
+      // Discard drops the clip and returns to the idle two-button state.
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+      expect(
+        await screen.findByRole("button", { name: /Say & review/ }),
+      ).toBeInTheDocument();
+    });
+
+    test("retry re-uploads the retained clip and can then succeed", async () => {
+      stubVoiceRecording();
+      const api = new FakeApi({ authenticated: true });
+      api.transcribeAudioRejections = [new ApiError(502)];
+      api.nextTranscript = "buy oat milk";
+      renderApp(api);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(screen.getByRole("button", { name: /Say & review/ }));
+      await screen.findByText("Recording…");
+
+      latestFakeRecorder().stop();
+      await screen.findByText(
+        "The service is temporarily unavailable. Please try again.",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+      const messageBox = textarea(await screen.findByLabelText("Message"));
+      await waitFor(() => {
+        expect(messageBox.value).toBe("buy oat milk");
+      });
+      expect(api.transcribeAudioCalls).toHaveLength(2);
+    });
+
+    test("cancel mid-recording never uploads anything", async () => {
+      stubVoiceRecording();
+      const api = new FakeApi({ authenticated: true });
+      renderApp(api);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(screen.getByRole("button", { name: /Say & review/ }));
+      await screen.findByText("Recording…");
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel recording" }));
+
+      expect(
+        await screen.findByRole("button", { name: /Say & review/ }),
+      ).toBeInTheDocument();
+      expect(api.transcribeAudioCalls).toEqual([]);
+    });
   });
 });
