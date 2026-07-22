@@ -60,9 +60,19 @@ function formatDate(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : formatDateOnly(parsed);
 }
 
-export function MemoriesPanel(props: { api: TetherApi }) {
+export function MemoriesPanel(props: {
+  api: TetherApi;
+  // Restricts which sub-view is shown and hides the toggle entirely when set
+  // (#250): the Inbox page only ever wants the review queue, and the Browse
+  // page only ever wants the corpus, so callers pin the view rather than
+  // relying on the user finding the right tab.
+  initialView?: MemoriesView;
+}) {
   const queryClient = useQueryClient();
-  const [view, setView] = createSignal<MemoriesView>("review");
+  const [view, setView] = createSignal<MemoriesView>(
+    props.initialView ?? "review",
+  );
+  const fixedView = props.initialView !== undefined;
   const [captureContent, setCaptureContent] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [debouncedSearch, setDebouncedSearch] = createSignal("");
@@ -429,23 +439,25 @@ export function MemoriesPanel(props: { api: TetherApi }) {
     <section aria-label="Memories" class={panelClass}>
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Memories</h2>
-        <div class="flex gap-1" role="group" aria-label="Memories view">
-          <For each={["review", "corpus"] as const}>
-            {(candidate) => (
-              <Button
-                aria-pressed={view() === candidate}
-                onClick={() => {
-                  setView(candidate);
-                }}
-                size="sm"
-                type="button"
-                variant={view() === candidate ? "secondary" : "ghost"}
-              >
-                {candidate === "review" ? "Review" : "Corpus"}
-              </Button>
-            )}
-          </For>
-        </div>
+        <Show when={!fixedView}>
+          <div class="flex gap-1" role="group" aria-label="Memories view">
+            <For each={["review", "corpus"] as const}>
+              {(candidate) => (
+                <Button
+                  aria-pressed={view() === candidate}
+                  onClick={() => {
+                    setView(candidate);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant={view() === candidate ? "secondary" : "ghost"}
+                >
+                  {candidate === "review" ? "Review" : "Corpus"}
+                </Button>
+              )}
+            </For>
+          </div>
+        </Show>
       </div>
       <Switch>
         <Match when={view() === "review"}>

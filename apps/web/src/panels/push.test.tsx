@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, renderApp } from "../testing/harness";
+import { FakeApi, navigateTo, renderApp } from "../testing/harness";
 
 afterEach(cleanup);
 
@@ -9,6 +9,7 @@ describe("Push panel", () => {
   test("enabling push subscribes the browser", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+    await navigateTo("Settings");
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Enable notifications" }),

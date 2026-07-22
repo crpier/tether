@@ -7,14 +7,14 @@ import {
 } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ApiError } from "./api";
+import { ApiError } from "../api";
 import {
   FakeApi,
   conversation,
   message,
   renderApp,
   textarea,
-} from "./testing/harness";
+} from "../testing/harness";
 
 afterEach(cleanup);
 

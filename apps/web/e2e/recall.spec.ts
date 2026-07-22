@@ -1,15 +1,21 @@
 import { expect, test } from "./fixtures";
 
-test("renders the recall panel", async ({ page, login }) => {
+test("recall due prompts render inside the Inbox", async ({
+  page,
+  login,
+}) => {
   await login();
 
-  const recall = page.locator('section[aria-label="Recall"]');
-  await expect(recall).toBeVisible();
-  await expect(recall.getByRole("heading", { name: "Recall" })).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: /^Inbox/ })
+    .click();
+  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
 
-  // Against the harness's fresh database no study items are due, so the panel
-  // must render its empty state cleanly. (When seeded data exists, due prompts
-  // render instead; either way the panel must not error — the console guard
-  // enforces that.)
-  await expect(recall.getByText("No recall prompts due")).toBeVisible();
+  // Against the harness's fresh database no study items are due, so the page
+  // must render cleanly without a "Recall due" group (the console guard
+  // enforces that it does not error). When seeded data exists, a "Recall
+  // due" group renders instead as one more Inbox kind — either way, the
+  // capture form (memory review's entry point) is always present.
+  await expect(page.locator('input[name="capture"]')).toBeVisible();
 });

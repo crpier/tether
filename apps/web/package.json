@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@kobalte/core": "^0.13.11",
+    "@solidjs/router": "^0.16.2",
     "@tanstack/solid-query": "^5.101.1",
     "cva": "1.0.0-beta.4",
     "dompurify": "^3.4.11",

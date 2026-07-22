@@ -283,7 +283,7 @@ export function deriveRows(
       // Route settled tool rows through the same "tool" kind a live turn uses,
       // so history keeps the expandable arguments/result disclosure instead
       // of collapsing to a bare "used X" line once persisted (see
-      // `MessageRow`'s "tool" branch in chat-view.tsx).
+      // `MessageRow`'s "tool" branch in chat-page.tsx).
       return {
         kind: "tool",
         id: message.id,

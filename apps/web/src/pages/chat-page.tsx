@@ -13,14 +13,10 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
-import type { Conversation, Message, TetherApi } from "./api";
-import type {
-  ChatBus,
-  ChatFrame,
-  ConnectionStatus,
-  CreateChatBus,
-} from "./chat-bus";
-import { isPinned, restoredScrollTop } from "./chat-scroll";
+import { useAppContext } from "../app-context";
+import type { Conversation, Message, TetherApi } from "../api";
+import type { ChatFrame } from "../chat-bus";
+import { isPinned, restoredScrollTop } from "../chat-scroll";
 import {
   deriveRows,
   emptyTurn,
@@ -28,31 +24,21 @@ import {
   reduceFrame,
   stabilizeRows,
   startTurn,
-} from "./chat-timeline";
-import { willStartFreshSession } from "./session-freshness";
+} from "../chat-timeline";
+import { willStartFreshSession } from "../session-freshness";
 import type {
   ChatRole,
   LiveTurn,
   StoredMessage,
   TimelineRow,
-} from "./chat-timeline";
-import { ArtifactOverlay } from "./components/artifact-viewer";
-import { MessageContent } from "./components/message-content";
-import { VoiceComposerControls } from "./components/voice-composer";
-import type { ArtifactPointer } from "./components/widgets/artifact-widget";
-import type { VoiceMode } from "./voice-recorder";
-import { invalidateNamedKey, queryKeys } from "./lib/query-keys";
-import { formatToolResult } from "./lib/tool-result";
-import { BucketPanel } from "./panels/bucket";
-import { MemoriesPanel } from "./panels/memories";
-import { NotificationsPanel } from "./panels/notifications";
-import { ProposalsPanel } from "./panels/proposals";
-import { PushControl } from "./panels/push";
-import { RecallPanel } from "./panels/recall";
-import { SyntheticPanels } from "./panels/synthetic";
-import { TodosPanel } from "./panels/todos";
-import { TriggersPanel } from "./panels/triggers";
-import { YouTubeSyncPanel } from "./panels/youtube";
+} from "../chat-timeline";
+import { ArtifactOverlay } from "../components/artifact-viewer";
+import { MessageContent } from "../components/message-content";
+import { VoiceComposerControls } from "../components/voice-composer";
+import type { ArtifactPointer } from "../components/widgets/artifact-widget";
+import type { VoiceMode } from "../voice-recorder";
+import { queryKeys } from "../lib/query-keys";
+import { formatToolResult } from "../lib/tool-result";
 import { Button } from "@/components/ui/button";
 import {
   TextField,
@@ -355,17 +341,7 @@ function MessageRows(props: {
   onOpenArtifact: (artifact: ArtifactPointer) => void;
 }) {
   let viewport: HTMLElement | undefined;
-  // Pinned ⇔ the viewport is within PINNED_THRESHOLD_PX of the bottom. This
-  // is the *only* thing that decides whether content changes move the
-  // viewport, and it is only ever recomputed from a real `scroll` event —
-  // never flipped directly by our own follow-scroll. That's safe because a
-  // follow-scroll always lands exactly at the bottom, so recomputing from
-  // geometry after it fires still reports pinned.
   const [pinned, setPinned] = createSignal(true);
-  // Set right before an older-page fetch so the next render (which prepends
-  // rows above the fold) restores the viewport to the same visual position
-  // instead of jumping. Needed because `overflow-anchor` is off below — the
-  // pinned-follow rule owns scroll position, so nothing else may adjust it.
   let pendingRestore: { scrollHeight: number; scrollTop: number } | null = null;
 
   const updatePinned = () => {
@@ -387,13 +363,6 @@ function MessageRows(props: {
     }
   };
 
-  // The explicit pinned-follow rule: on *any* content change (new message,
-  // streamed token, tool call start/end, a row settling, history hydrating),
-  // a pinned viewport snaps to the bottom instantly (no smooth behavior); a
-  // non-pinned viewport is left completely untouched so content can append
-  // below without moving the viewport under the user. A pending scroll
-  // restore from an older-page prepend takes priority over both, since those
-  // rows changed for a reason unrelated to the live turn.
   createEffect(() => {
     void props.rows;
     void props.working;
@@ -413,11 +382,6 @@ function MessageRows(props: {
   });
 
   return (
-    // On phones the page scrolls (no fixed-height parent), so the transcript
-    // needs an explicit floor or `flex-1` collapses to its content and the chat
-    // reads as a sliver again. 55svh keeps it the dominant element above the
-    // stacked sidebar while leaving the composer in view. At `lg` the shell is a
-    // fixed-height grid, so we drop the floor and let flex fill the column.
     <div class="relative flex min-h-[55svh] flex-1 flex-col lg:min-h-0">
       <section
         ref={(element) => {
@@ -449,11 +413,6 @@ function MessageRows(props: {
         <Show when={props.working && props.startedAt !== null}>
           <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
         </Show>
-        {/* Attach the marker to the assistant side, directly under the partial
-            reply it belongs to, rather than floating it centre-stage. It is
-            session-scoped (client state): the truncated text itself is what pi
-            persisted, and durably flagging a message as interrupted would need a
-            transcript schema change out of scope for this polish. */}
         <Show when={props.stopped}>
           <p
             aria-label="Generation stopped"
@@ -486,18 +445,13 @@ function MessageRows(props: {
   );
 }
 
-export function ChatView(props: {
-  api: TetherApi;
-  createChatBus: CreateChatBus;
-}) {
+export function ChatPage() {
+  const { api, bus, chatFrame, connection } = useAppContext();
   const queryClient = useQueryClient();
-  const [bus, setBus] = createSignal<ChatBus | undefined>();
   const [draft, setDraft] = createSignal("");
   const [error, setError] = createSignal<string | undefined>();
-  const [connection, setConnection] = createSignal<ConnectionStatus>("open");
   const [turn, setTurn] = createSignal<LiveTurn>(emptyTurn());
   const [messagesRefresh, setMessagesRefresh] = createSignal(0);
-  const [notificationsRefresh, setNotificationsRefresh] = createSignal(0);
   // Survives the live turn being retired by settled history, so the "stopped"
   // marker stays on the (now persisted) partial reply instead of flashing away.
   const [interrupted, setInterrupted] = createSignal(false);
@@ -512,15 +466,12 @@ export function ChatView(props: {
   const canSend = createMemo(() => !generating() && draft().trim().length > 0);
 
   const conversationsQuery = createQuery(() => ({
-    queryFn: () => props.api.listConversations(),
+    queryFn: () => api.listConversations(),
     queryKey: queryKeys.conversations,
   }));
   const conversation = createMemo(() => conversationsQuery.data?.[0]);
   const conversationId = createMemo(() => conversation()?.id);
 
-  // Ticks the "will this land on a fresh pi session" indicator forward without
-  // a refetch — a plain `Date.now()` read at render time would never update
-  // while the user just sits looking at the composer.
   const [nowTick, setNowTick] = createSignal(Date.now());
   onMount(() => {
     const interval = setInterval(() => {
@@ -542,12 +493,6 @@ export function ChatView(props: {
     );
   });
 
-  // Settled history is paginated: `messagesQuery` only ever fetches the latest
-  // page (bounded by `MESSAGES_PAGE_SIZE`); `accumulated` is the union-by-seq
-  // of that page plus every older page fetched via `loadOlderMessages`.
-  // Messages are append-only and immutable once settled, so merging by seq is
-  // safe and stays gap-free as long as older pages are always fetched
-  // contiguously backwards from the oldest seq seen so far.
   const [accumulated, setAccumulated] = createSignal<Map<number, Message>>(
     new Map(),
   );
@@ -560,7 +505,7 @@ export function ChatView(props: {
       const id = conversationId();
       return id === undefined
         ? []
-        : props.api.listMessages(id, { limit: MESSAGES_PAGE_SIZE });
+        : api.listMessages(id, { limit: MESSAGES_PAGE_SIZE });
     },
     queryKey: [
       ...queryKeys.messages(conversationId() ?? "pending"),
@@ -568,10 +513,6 @@ export function ChatView(props: {
     ] as const,
   }));
 
-  // Reset the accumulated pagination state whenever the conversation itself
-  // changes (there is no in-app conversation switcher today, but this keeps
-  // the state honest if one is ever added rather than leaking a former
-  // conversation's rows/cursor into a new one).
   createEffect((previousId: string | undefined) => {
     const id = conversationId();
     if (id !== previousId) {
@@ -581,10 +522,6 @@ export function ChatView(props: {
     return id;
   }, undefined);
 
-  // Merge each latest-page fetch into the accumulated store. `hasMoreHistory`
-  // reflects whether *this* page came back full — a fresh signal from the tail
-  // end of history, distinct from whatever `loadOlderMessages` last learned
-  // about the (unrelated) older boundary.
   createEffect(() => {
     const page = messagesQuery.data;
     if (page === undefined) {
@@ -612,19 +549,12 @@ export function ChatView(props: {
         toolResult: message.tool_result,
       })),
   );
-  // Reconciled against the previous frame's output so rows whose rendered
-  // content hasn't changed keep the same object reference — see
-  // `stabilizeRows` for why that matters (it's what stops the whole
-  // transcript remounting on every streamed token).
   const rows = createMemo<TimelineRow[]>(
     (previous) => stabilizeRows(previous, deriveRows(storedMessages(), turn())),
     [],
   );
   const working = createMemo(() => isAwaitingFirstToken(turn()));
 
-  // Clear the live turn once settled history catches up. Tracks only the stored
-  // messages so a refetch after `agent_end` retires the streamed rows without
-  // an effect loop, while a mid-stream invalidation (generating) is ignored.
   createEffect(() => {
     const stored = messagesQuery.data;
     if (stored === undefined) {
@@ -637,9 +567,6 @@ export function ChatView(props: {
     });
   });
 
-  // Fetch the next-older page when the user scrolls near the top. Returns
-  // whether a fetch actually started, so the caller (the scroll handler) only
-  // arms its scroll-position restore when rows are really about to prepend.
   const loadOlderMessages = (): boolean => {
     const id = conversationId();
     if (id === undefined || loadingOlder() || !hasMoreHistory()) {
@@ -653,7 +580,7 @@ export function ChatView(props: {
     setLoadingOlder(true);
     void (async () => {
       try {
-        const page = await props.api.listMessages(id, {
+        const page = await api.listMessages(id, {
           limit: MESSAGES_PAGE_SIZE,
           beforeSeq: oldestSeq,
         });
@@ -680,19 +607,17 @@ export function ChatView(props: {
 
   const handleFrame = (frame: ChatFrame) => {
     if (frame.type === "invalidate") {
-      for (const key of frame.keys) {
-        invalidateNamedKey(queryClient, key);
-      }
+      // The global handler (app.tsx) already refetches every named key; a
+      // "messages" invalidate additionally needs this page's own refresh
+      // token bumped, changing the query key so settled history is
+      // guaranteed a fresh fetch rather than relying on an already-active
+      // query picking up a bare `refetchQueries`.
       if (frame.keys.includes("messages")) {
         setMessagesRefresh((refresh) => refresh + 1);
       }
       return;
     }
-    if (frame.type === "notify") {
-      // The fired notification is already persisted host-side; refetch the
-      // authoritative list rather than trusting the ephemeral frame, so the
-      // panel is consistent with what a reload would show.
-      setNotificationsRefresh((refresh) => refresh + 1);
+    if (frame.type !== "chat") {
       return;
     }
     const currentConversationId = conversationId();
@@ -710,29 +635,20 @@ export function ChatView(props: {
     if (frame.event === "error") {
       setError(frame.detail ?? "Chat error");
     }
-    // Settle from authoritative storage only when the turn finishes; per-event
-    // refetching caused the flicker the seam now avoids.
     if (frame.event === "agent_end" || frame.event === "error") {
       rehydrate();
     }
   };
 
-  onMount(() => {
-    const chatBus = props.createChatBus({
-      onDisconnect: rehydrate,
-      onFrame: handleFrame,
-      onStatus: setConnection,
-    });
-    setBus(chatBus);
-    onCleanup(() => {
-      chatBus.close();
-    });
+  // The bus disconnect callback lives above the router (app.tsx); this page
+  // only reacts to the frames the bus hands it while mounted.
+  createEffect(() => {
+    const frame = chatFrame();
+    if (frame !== undefined) {
+      handleFrame(frame);
+    }
   });
 
-  // `overrideContent` lets the voice auto-send path push a transcript through
-  // this exact same path (issue #19: "no separate/duplicate send path")
-  // instead of routing through the draft signal, which would race a user who
-  // started typing while the clip was uploading.
   const sendPrompt = (overrideContent?: string) => {
     const content = (overrideContent ?? draft()).trim();
     const id = conversationId();
@@ -746,11 +662,6 @@ export function ChatView(props: {
     bus()?.sendPrompt(id, content);
   };
 
-  // A successful transcript either fills the composer for review/edit (the
-  // user still sends it themselves) or is sent immediately in auto-send mode
-  // — the button that started the recording decided which. Nothing reaches
-  // chat on a failed or empty transcript either way (enforced upstream in
-  // `VoiceRecorder`, which never calls this on failure).
   const handleVoiceTranscript = (transcript: string, mode: VoiceMode) => {
     if (mode === "review") {
       setDraft(transcript);
@@ -768,17 +679,12 @@ export function ChatView(props: {
       setClearing(true);
       setError(undefined);
       try {
-        // Stop any in-flight turn first so its stream cannot resurrect the
-        // transcript we are about to drop.
         if (generating()) {
           bus()?.abort(id);
         }
-        await props.api.clearConversation(id);
+        await api.clearConversation(id);
         setInterrupted(false);
         setTurn(emptyTurn());
-        // The conversation id is unchanged by a clear, so the id-keyed reset
-        // effect above never fires here — drop the accumulated pagination
-        // state explicitly instead of union-merging an empty page into it.
         setAccumulated(new Map());
         setHasMoreHistory(false);
         rehydrate();
@@ -799,13 +705,6 @@ export function ChatView(props: {
     }
   };
 
-  const logout = () => {
-    void (async () => {
-      await props.api.logout();
-      await queryClient.invalidateQueries({ queryKey: queryKeys.session });
-    })();
-  };
-
   const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
     event.preventDefault();
     sendPrompt();
@@ -824,10 +723,7 @@ export function ChatView(props: {
   };
 
   return (
-    <main
-      aria-labelledby="chat-title"
-      class="flex min-h-screen flex-col lg:h-screen"
-    >
+    <main aria-labelledby="chat-title" class="flex min-h-full flex-1 flex-col">
       <header class="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5">
         <h1
           id="chat-title"
@@ -837,10 +733,7 @@ export function ChatView(props: {
         </h1>
         <Show when={conversation()}>
           {(currentConversation) => (
-            <ModelSelector
-              api={props.api}
-              conversation={currentConversation()}
-            />
+            <ModelSelector api={api} conversation={currentConversation()} />
           )}
         </Show>
         <Button
@@ -852,112 +745,92 @@ export function ChatView(props: {
         >
           New chat
         </Button>
-        <Button onClick={logout} size="sm" type="button" variant="outline">
-          Log out
-        </Button>
       </header>
-      <div class="mx-auto grid w-full max-w-6xl flex-1 grid-cols-1 gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:overflow-hidden">
-        <div class="flex min-h-0 flex-col gap-3">
-          <Show when={connection() !== "open"}>
-            <p
-              class="bg-muted text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
-              role="status"
+      <div class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-3 p-4 sm:p-5 lg:overflow-hidden">
+        <Show when={connection() !== "open"}>
+          <p
+            class="bg-muted text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+            role="status"
+          >
+            <span
+              aria-hidden="true"
+              class="bg-amber-500 inline-block size-2 animate-pulse rounded-full"
+            />
+            {connection() === "connecting"
+              ? "Reconnecting to Tether…"
+              : "Disconnected — retrying…"}
+          </p>
+        </Show>
+        <Show when={error()}>
+          {(message) => (
+            <div
+              class="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
+              role="alert"
             >
-              <span
-                aria-hidden="true"
-                class="bg-amber-500 inline-block size-2 animate-pulse rounded-full"
-              />
-              {connection() === "connecting"
-                ? "Reconnecting to Tether…"
-                : "Disconnected — retrying…"}
+              <p class="line-clamp-3 flex-1" title={message()}>
+                {message()}
+              </p>
+              <button
+                aria-label="Dismiss error"
+                class="shrink-0 opacity-70 hover:opacity-100"
+                onClick={() => {
+                  setError(undefined);
+                }}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+        </Show>
+        <Show
+          fallback={<p class="text-muted-foreground">Loading chat…</p>}
+          when={!conversationsQuery.isLoading && conversation() !== undefined}
+        >
+          <MessageRows
+            onNearTop={loadOlderMessages}
+            onOpenArtifact={setOpenArtifact}
+            rows={rows()}
+            startedAt={turn().startedAt}
+            stopped={turn().stopped || interrupted()}
+            working={working()}
+          />
+          <Show when={startsFreshSession() && !generating()}>
+            <p
+              class="text-muted-foreground text-xs"
+              title="The assistant's working context resets after a few minutes idle; chat history stays."
+            >
+              Next message starts a fresh session
             </p>
           </Show>
-          <Show when={error()}>
-            {(message) => (
-              <div
-                class="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
-                role="alert"
-              >
-                <p class="line-clamp-3 flex-1" title={message()}>
-                  {message()}
-                </p>
-                <button
-                  aria-label="Dismiss error"
-                  class="shrink-0 opacity-70 hover:opacity-100"
-                  onClick={() => {
-                    setError(undefined);
-                  }}
-                  type="button"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-          </Show>
-          <Show
-            fallback={<p class="text-muted-foreground">Loading chat…</p>}
-            when={!conversationsQuery.isLoading && conversation() !== undefined}
-          >
-            <MessageRows
-              onNearTop={loadOlderMessages}
-              onOpenArtifact={setOpenArtifact}
-              rows={rows()}
-              startedAt={turn().startedAt}
-              stopped={turn().stopped || interrupted()}
-              working={working()}
+          <form class="space-y-2" onSubmit={onSubmit}>
+            <TextField onChange={setDraft} value={draft()}>
+              <TextFieldLabel>Message</TextFieldLabel>
+              <TextFieldTextArea onKeyDown={onMessageKeyDown} />
+            </TextField>
+            <VoiceComposerControls
+              disabled={generating()}
+              onTranscript={handleVoiceTranscript}
+              transcribe={(blob) => api.transcribeAudio(blob)}
             />
-            <Show when={startsFreshSession() && !generating()}>
-              <p
-                class="text-muted-foreground text-xs"
-                title="The assistant's working context resets after a few minutes idle; chat history stays."
+            <div class="flex justify-end gap-2">
+              <Button disabled={!canSend()} type="submit">
+                Send
+              </Button>
+              <Button
+                disabled={!generating()}
+                onClick={abort}
+                type="button"
+                variant="outline"
               >
-                Next message starts a fresh session
-              </p>
-            </Show>
-            <form class="space-y-2" onSubmit={onSubmit}>
-              <TextField onChange={setDraft} value={draft()}>
-                <TextFieldLabel>Message</TextFieldLabel>
-                <TextFieldTextArea onKeyDown={onMessageKeyDown} />
-              </TextField>
-              <VoiceComposerControls
-                disabled={generating()}
-                onTranscript={handleVoiceTranscript}
-                transcribe={(blob) => props.api.transcribeAudio(blob)}
-              />
-              <div class="flex justify-end gap-2">
-                <Button disabled={!canSend()} type="submit">
-                  Send
-                </Button>
-                <Button
-                  disabled={!generating()}
-                  onClick={abort}
-                  type="button"
-                  variant="outline"
-                >
-                  Stop
-                </Button>
-              </div>
-            </form>
-          </Show>
-        </div>
-        <aside class="flex min-h-0 flex-col gap-4 overflow-y-auto">
-          <NotificationsPanel
-            api={props.api}
-            refreshToken={notificationsRefresh()}
-          />
-          <YouTubeSyncPanel api={props.api} />
-          <RecallPanel api={props.api} />
-          <SyntheticPanels api={props.api} />
-          <ProposalsPanel api={props.api} />
-          <MemoriesPanel api={props.api} />
-          <BucketPanel api={props.api} />
-          <TodosPanel api={props.api} />
-          <TriggersPanel api={props.api} />
-          <PushControl api={props.api} />
-        </aside>
+                Stop
+              </Button>
+            </div>
+          </form>
+        </Show>
       </div>
       <ArtifactOverlay
-        api={props.api}
+        api={api}
         artifact={openArtifact()}
         onClose={() => {
           setOpenArtifact(null);

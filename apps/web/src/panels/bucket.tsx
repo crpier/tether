@@ -103,9 +103,24 @@ function duplicateLine(duplicate: BucketItem): string {
   return `${duplicate.title} · ${duplicate.state}${when}`;
 }
 
-export function BucketPanel(props: { api: TetherApi }) {
+const ALL_BUCKET_VIEWS: BucketView[] = ["active", "history", "triage"];
+
+export function BucketPanel(props: {
+  api: TetherApi;
+  // Hides sub-views from the toggle and its initial selection (#250): the
+  // Inbox page only ever wants Triage (the review-queue obligation), and
+  // Browse only wants Active/History (look-things-up, not adjudication).
+  hiddenViews?: BucketView[];
+}) {
   const queryClient = useQueryClient();
-  const [view, setView] = createSignal<BucketView>("active");
+  const availableViews = createMemo(() =>
+    ALL_BUCKET_VIEWS.filter(
+      (candidate) => !(props.hiddenViews ?? []).includes(candidate),
+    ),
+  );
+  const [view, setView] = createSignal<BucketView>(
+    availableViews()[0] ?? "active",
+  );
   const [itemType, setItemType] = createSignal<BucketItemType>("movie");
   const [primaryValue, setPrimaryValue] = createSignal("");
   const [optionalValue, setOptionalValue] = createSignal("");
@@ -324,27 +339,29 @@ export function BucketPanel(props: { api: TetherApi }) {
     <section aria-label="Bucket" class={panelClass}>
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Bucket</h2>
-        <div class="flex gap-1" role="group" aria-label="Bucket view">
-          <For each={["active", "history", "triage"] as const}>
-            {(candidate) => (
-              <Button
-                aria-pressed={view() === candidate}
-                onClick={() => {
-                  setView(candidate);
-                }}
-                size="sm"
-                type="button"
-                variant={view() === candidate ? "secondary" : "ghost"}
-              >
-                {candidate === "active"
-                  ? "Active"
-                  : candidate === "history"
-                    ? "History"
-                    : "Triage"}
-              </Button>
-            )}
-          </For>
-        </div>
+        <Show when={availableViews().length > 1}>
+          <div class="flex gap-1" role="group" aria-label="Bucket view">
+            <For each={availableViews()}>
+              {(candidate) => (
+                <Button
+                  aria-pressed={view() === candidate}
+                  onClick={() => {
+                    setView(candidate);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant={view() === candidate ? "secondary" : "ghost"}
+                >
+                  {candidate === "active"
+                    ? "Active"
+                    : candidate === "history"
+                      ? "History"
+                      : "Triage"}
+                </Button>
+              )}
+            </For>
+          </div>
+        </Show>
       </div>
       <Switch>
         <Match when={view() === "active"}>

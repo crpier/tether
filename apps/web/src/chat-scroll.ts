@@ -1,5 +1,5 @@
 // Pure scroll-position math for the chat transcript viewport. Kept separate
-// from the DOM wiring in chat-view.tsx so the "am I pinned to the bottom"
+// from the DOM wiring in chat-page.tsx so the "am I pinned to the bottom"
 // decision — the crux of the anti-jitter rule — is unit-testable without a
 // browser.
 //

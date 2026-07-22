@@ -1,7 +1,7 @@
 import { cleanup, screen } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, renderApp } from "../testing/harness";
+import { FakeApi, navigateTo, renderApp } from "../testing/harness";
 
 afterEach(() => {
   cleanup();
@@ -16,6 +16,7 @@ describe("YouTube sync panel", () => {
       usage: {},
     };
     renderApp(api);
+    await navigateTo("Settings");
 
     const section = await screen.findByLabelText("YouTube sync");
     await screen.findByText("Daily quota");
@@ -33,6 +34,7 @@ describe("YouTube sync panel", () => {
       },
     };
     renderApp(api);
+    await navigateTo("Settings");
 
     const section = await screen.findByLabelText("YouTube sync");
     // The daily quota and the Supadata monthly usage are distinct numbers —
@@ -51,6 +53,7 @@ describe("YouTube sync panel", () => {
       usage: { widget: { limit: 5, period: "", remaining: 3, used: 2 } },
     };
     renderApp(api);
+    await navigateTo("Settings");
 
     const section = await screen.findByLabelText("YouTube sync");
     await screen.findByText("Daily quota");
