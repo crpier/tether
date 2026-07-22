@@ -572,6 +572,129 @@
       }
     },
     {
+      "endpoint": "/internal/tools/create_todo",
+      "name": "create_todo",
+      "params_model": "CreateTodoParams",
+      "schema": {
+        "description": "Params for capturing a one-off actionable task.\n\n`condition` is an optional free-text waiting condition (\"next time I visit\nAna\") for an event-triggered task that resists a fixed date; omit it for a\ntask that is ready now. Attach a deadline trigger afterward with\n`link_todo_trigger`.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Condition"
+          }
+        },
+        "required": ["action"],
+        "title": "CreateTodoParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/set_todo_status",
+      "name": "set_todo_status",
+      "params_model": "SetTodoStatusParams",
+      "schema": {
+        "$defs": {
+          "TodoStatus": {
+            "enum": ["active", "completed", "abandoned"],
+            "type": "string"
+          }
+        },
+        "description": "Params for transitioning a Todo's status at an observed version.",
+        "properties": {
+          "todo_id": {
+            "format": "uuid7",
+            "title": "Todo Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/$defs/TodoStatus"
+          }
+        },
+        "required": ["todo_id", "version", "status"],
+        "title": "SetTodoStatusParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/link_todo_trigger",
+      "name": "link_todo_trigger",
+      "params_model": "LinkTodoTriggerParams",
+      "schema": {
+        "description": "Params for attaching a scheduled trigger (a deadline) to a Todo.",
+        "properties": {
+          "todo_id": {
+            "format": "uuid7",
+            "title": "Todo Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "trigger_id": {
+            "format": "uuid7",
+            "title": "Trigger Id",
+            "type": "string"
+          }
+        },
+        "required": ["todo_id", "version", "trigger_id"],
+        "title": "LinkTodoTriggerParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/link_todo_memory",
+      "name": "link_todo_memory",
+      "params_model": "LinkTodoMemoryParams",
+      "schema": {
+        "description": "Params for linking a Memory's context to a Todo.",
+        "properties": {
+          "todo_id": {
+            "format": "uuid7",
+            "title": "Todo Id",
+            "type": "string"
+          },
+          "memory_id": {
+            "format": "uuid7",
+            "title": "Memory Id",
+            "type": "string"
+          }
+        },
+        "required": ["todo_id", "memory_id"],
+        "title": "LinkTodoMemoryParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_todos",
+      "name": "list_todos",
+      "params_model": "ListTodosParams",
+      "schema": {
+        "description": "Params for listing the active Todos, split into ready and waiting.\n\nRead-only; takes no inputs beyond the session identity the gate requires.",
+        "properties": {},
+        "title": "ListTodosParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/triage_report",
       "name": "triage_report",
       "params_model": "TriageReportParams",

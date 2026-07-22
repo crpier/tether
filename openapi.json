@@ -1501,6 +1501,25 @@
         "title": "SetConversationModelRequest",
         "type": "object"
       },
+      "SetTodoStatusRequest": {
+        "description": "Body for transitioning a Todo's status at an observed `version`.\n\n>>> SetTodoStatusRequest(status=\"completed\", version=1).status\n'completed'",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TodoStatus"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "SetTodoStatusRequest",
+        "type": "object"
+      },
       "SourceType": {
         "enum": [
           "memory",
@@ -1675,6 +1694,123 @@
         ],
         "title": "TetherRequest",
         "type": "object"
+      },
+      "TodoRead": {
+        "description": "HTTP representation of a Todo, carrying its computed waiting state.\n\n`waiting` is derived (an unmet condition or an unfired trigger), never\nstored; `deadline` is the linked trigger's next fire time when it is still\npending, else null.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TodoStatus"
+          },
+          "trigger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "waiting": {
+            "title": "Waiting",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "status",
+          "condition",
+          "trigger_id",
+          "waiting",
+          "deadline",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TodoRead",
+        "type": "object"
+      },
+      "TodoReadinessRead": {
+        "description": "The active Todos split into ready and waiting for the panel and digest.",
+        "properties": {
+          "ready": {
+            "items": {
+              "$ref": "#/components/schemas/TodoRead"
+            },
+            "title": "Ready",
+            "type": "array"
+          },
+          "waiting": {
+            "items": {
+              "$ref": "#/components/schemas/TodoRead"
+            },
+            "title": "Waiting",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "waiting"
+        ],
+        "title": "TodoReadinessRead",
+        "type": "object"
+      },
+      "TodoStatus": {
+        "enum": [
+          "active",
+          "completed",
+          "abandoned"
+        ],
+        "type": "string"
       },
       "TranscriptProviderPauseRead": {
         "description": "HTTP representation of a transcript source paused by an IP block.",
@@ -3710,6 +3846,60 @@
           }
         },
         "summary": "Transcribe an uploaded audio clip and return the transcript text only."
+      }
+    },
+    "/api/todos": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoReadinessRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List the active Todos split into ready and waiting."
+      }
+    },
+    "/api/todos/{todo_id}/status": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "todo_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTodoStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Transition a Todo to a new status at an observed version."
       }
     },
     "/api/triggers": {

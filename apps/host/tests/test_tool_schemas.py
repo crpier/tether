@@ -12,6 +12,7 @@ from tether.conversation_history_tools import (
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
+from tether.todo_tools import internal_todo_tool_routes
 from tether.tool_schemas import build_tool_schema_document
 from tether.tools import internal_tool_routes
 from tether.triage_tools import internal_triage_tool_routes
@@ -47,6 +48,11 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "delete_bucket_item",
             "search_bucket_items",
             "set_bucket_item_intent",
+            "create_todo",
+            "set_todo_status",
+            "link_todo_trigger",
+            "link_todo_memory",
+            "list_todos",
             "triage_report",
             "browse_youtube",
             "search_youtube",
@@ -144,6 +150,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
         for routes in (
             internal_tool_routes(),
             internal_bucket_tool_routes(),
+            internal_todo_tool_routes(),
             internal_triage_tool_routes(),
             internal_youtube_tool_routes(),
             internal_trigger_tool_routes(),

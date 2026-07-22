@@ -22,6 +22,7 @@ from starlette.applications import Starlette
 from tether.gmail import GmailResponse, create_gmail_schema
 from tether.memories import KnowledgeBaseService, MemoryService, create_memory_schema
 from tether.server import AppConfig, _wire_gmail
+from tether.todos import TodoService, create_todo_schema
 from tether.triggers import TriggerService, create_trigger_schema
 
 
@@ -48,6 +49,7 @@ async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
     await create_trigger_schema(db)
+    await create_todo_schema(db)
     await create_gmail_schema(db)
     app = Starlette()
     tracer = trace.NoOpTracerProvider().get_tracer("test.gmail_boot")
@@ -58,12 +60,14 @@ async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
                 database=db, kb_service=kb_service, tracer=tracer
             )
             trigger_service = TriggerService(database=db, tracer=tracer)
+            todo_service = TodoService(database=db, tracer=tracer)
             return await _wire_gmail(
                 app,
                 config=config,
                 database=db,
                 memory_service=memory_service,
                 trigger_service=trigger_service,
+                todo_service=todo_service,
                 kb_root=Path(kb_root),
             )
     finally:
