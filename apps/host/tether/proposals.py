@@ -59,7 +59,6 @@ from snekql.sqlite import (
     select,
     update,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.action_registry import (
     ActionContext,
@@ -141,6 +140,11 @@ class ProposalAction[S = Pending](Model[S, "ProposalAction[Fetched]"]):
     scope: ProposalAction.Col[str | None] = Text(default=None, nullable=True)
     params_json: ProposalAction.Col[str] = Text()
     """The action's params as JSON; re-validated against the kind at execute."""
+    display: ProposalAction.Col[str | None] = Text(default=None, nullable=True)
+    """A human-readable one-line summary of this action, supplied by the consumer
+    at propose time (e.g. `Archive · "Your order has shipped" · Amazon · Jul 12`).
+    NULL for actions composed before this column existed, or by a consumer that
+    supplies none; the panel falls back to a kind+params rendering."""
     disposition: ProposalAction.Col[ActionDisposition] = Text()
     """`approved` (kept) or `deselected` (unticked before approval)."""
     outcome: ProposalAction.Col[ActionOutcome | None] = Text(
@@ -170,11 +174,18 @@ class AutonomyGrant[S = Pending](Model[S, "AutonomyGrant[Fetched]"]):
 
 @dataclass(frozen=True, slots=True)
 class ActionDraft:
-    """One action to compose into a proposal: a kind, a scope, and raw params."""
+    """One action to compose into a proposal: a kind, a scope, and raw params.
+
+    `display` is an optional consumer-supplied human-readable one-line summary,
+    kept separate from `params` (the typed executor contract, ADR 0014) so
+    rendering text never leaks into what the executor validates. When absent the
+    panel falls back to rendering the kind and params.
+    """
 
     kind: str
     scope: str | None
     params: dict[str, object]
+    display: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +371,7 @@ class ProposalService:
                             kind=action.kind,
                             scope=action.scope,
                             params_json=json.dumps(action.params),
+                            display=action.display,
                             disposition="approved",
                         )
                     )
@@ -840,19 +852,67 @@ def _max_datetime(left: datetime | None, right: datetime | None) -> datetime | N
     return max(left, right)
 
 
+def _proposal_migrations() -> dict[str, str]:
+    """The ordered Proposal migration chain, one statement per migration.
+
+    The `030_` bodies are the original scaffold (issue #199), frozen verbatim so
+    the model classes can keep evolving without rewriting an already-applied
+    migration; later shape changes are explicit `ALTER TABLE` steps. Freezing is
+    what lets a fresh database and an already-migrated one converge on the same
+    schema — a live-scaffold create would fold new columns into `030_`, which an
+    existing database has already skipped, so the additive column would never
+    land there.
+    """
+    migrations: dict[str, str] = {
+        "030_create_proposal": (
+            'CREATE TABLE "proposal" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "consumer" TEXT, "title" TEXT, '
+            '"summary" TEXT, "producing_run_id" TEXT, "state" TEXT, '
+            '"rejection_reason" TEXT, "version" INTEGER, '
+            "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"decided_at" TEXT) STRICT'
+        ),
+        "030_create_index_ix_proposal_state_created_at": (
+            'CREATE INDEX "ix_proposal_state_created_at" '
+            'ON "proposal" ("state", "created_at")'
+        ),
+        "030_create_proposal_action": (
+            'CREATE TABLE "proposal_action" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "proposal_id" TEXT, "seq" INTEGER, '
+            '"kind" TEXT, "scope" TEXT, "params_json" TEXT, "disposition" TEXT, '
+            '"outcome" TEXT, "outcome_detail" TEXT, "executed_at" TEXT) STRICT'
+        ),
+        "030_create_index_ix_proposal_action_proposal_id_seq": (
+            'CREATE INDEX "ix_proposal_action_proposal_id_seq" '
+            'ON "proposal_action" ("proposal_id", "seq")'
+        ),
+        "030_create_autonomy_grant": (
+            'CREATE TABLE "autonomy_grant" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "kind" TEXT, "scope" TEXT, '
+            "\"granted_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"revoked_at" TEXT) STRICT'
+        ),
+    }
+    # A human-readable per-action display line (issue #199): proposal actions
+    # rendered as raw JSON with opaque ids are unreviewable, so the consumer now
+    # supplies a display string at propose time. Additive and nullable — rows
+    # composed before this column read back NULL and fall back to kind+params.
+    migrations["031_proposal_action_display"] = (
+        'ALTER TABLE "proposal_action" ADD COLUMN "display" TEXT'
+    )
+    return migrations
+
+
 async def create_proposal_schema(database: Database) -> None:
     """Create the proposal tables and their indexes on an initialized database.
 
-    Applied as its own ordered migrations after the earlier schemas; each
-    scaffolded statement becomes one ordered migration.
+    Applied as its own ordered migrations after the earlier schemas: the `030_`
+    scaffold bodies are frozen, extended by explicit `031_` column additions. A
+    snekql migration body runs exactly one statement, so each table, index, and
+    column addition is its own ordered migration.
 
     >>> database = await Database.initialize(backend=Config(database=":memory:"))
     >>> await create_proposal_schema(database)
     """
-    migrations = {
-        f"030_{label}": sql
-        for label, sql in scaffold_sqlite_statements(
-            [Proposal, ProposalAction, AutonomyGrant]
-        )
-    }
-    await database.migrate(migrations)
+    await database.migrate(_proposal_migrations())

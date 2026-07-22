@@ -27,11 +27,14 @@ class ProposeActionParam(BaseModel):
     `kind` names a registered action kind; `scope` is an optional consumer-
     defined category string (unvalidated — a typo simply fails to match a
     grant); `params` are the kind's params, validated against its model.
+    `display` is an optional human-readable one-line summary shown in the
+    Proposals panel; when omitted the panel renders the kind and params.
     """
 
     kind: str
     scope: str | None = None
     params: dict[str, object] = {}
+    display: str | None = None
 
 
 class ProposeParams(BaseModel):
@@ -62,7 +65,12 @@ async def _propose(request: Request, params: ProposeParams) -> CapabilityOutcome
         title=params.title,
         summary=params.summary,
         actions=[
-            ActionDraft(kind=action.kind, scope=action.scope, params=action.params)
+            ActionDraft(
+                kind=action.kind,
+                scope=action.scope,
+                params=action.params,
+                display=action.display,
+            )
             for action in params.actions
         ],
     )

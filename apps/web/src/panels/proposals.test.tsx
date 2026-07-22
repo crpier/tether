@@ -71,6 +71,70 @@ describe("Proposals panel", () => {
     expect(row).toHaveTextContent("a@example.com");
   });
 
+  test("an action's display line is shown and its raw params are collapsed behind details", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      proposals: [
+        proposal({
+          actions: [
+            proposalAction({
+              display: 'Archive · "Your order has shipped" · Amazon · Jul 12',
+              kind: "gmail.archive",
+              params: { message_id: "19759365d5434140" },
+              scope: "sender-category:receipts",
+            }),
+          ],
+          title: "Inbox hygiene",
+        }),
+      ],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Proposal: Inbox hygiene");
+    fireEvent.click(within(row).getByRole("button", { expanded: false }));
+
+    expect(row).toHaveTextContent(
+      'Archive · "Your order has shipped" · Amazon · Jul 12',
+    );
+    // The opaque id is not in the primary text; it lives behind the collapsed
+    // details disclosure (closed by default).
+    const details = within(row).getByText("Details").closest("details");
+    expect(details).not.toBeNull();
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent("19759365d5434140");
+  });
+
+  test("an action without a display falls back to kind and scope, not raw JSON", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      proposals: [
+        proposal({
+          actions: [
+            proposalAction({
+              display: null,
+              kind: "gmail.label",
+              params: {
+                label_name: "Receipts",
+                message_id: "19759365d5434140",
+              },
+              scope: "sender-category:receipts",
+            }),
+          ],
+          title: "Legacy proposal",
+        }),
+      ],
+    });
+    renderApp(api);
+
+    const row = await screen.findByLabelText("Proposal: Legacy proposal");
+    fireEvent.click(within(row).getByRole("button", { expanded: false }));
+
+    expect(row).toHaveTextContent("gmail.label · sender-category:receipts");
+    // Raw params still reachable, but only behind the details disclosure.
+    const details = within(row).getByText("Details").closest("details");
+    expect(details).not.toHaveAttribute("open");
+  });
+
   test("deselecting an action and approving sends its id in deselected_action_ids", async () => {
     const keep = proposalAction({ id: "action-keep", kind: "send_email" });
     const drop = proposalAction({ id: "action-drop", kind: "archive" });

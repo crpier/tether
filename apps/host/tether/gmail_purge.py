@@ -34,6 +34,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.utils import parseaddr
 from typing import Literal, cast
 
 from pydantic import BaseModel, ValidationError
@@ -237,6 +238,56 @@ def _build_purge_prompt(batch: Sequence[GmailMessage]) -> str:
     )
 
 
+_MAX_SUBJECT_LEN = 60
+"""Subjects longer than this are truncated (with an ellipsis) in the display
+line, so a proposal action stays a scannable one-liner in the panel."""
+
+
+def _sender_display(from_header: str) -> str:
+    """The sender's display name, falling back to the bare address.
+
+    A `From` header is usually `Name <addr@host>`; `parseaddr` splits it. When
+    there is no display name the address stands in; when the header is empty
+    (some backlog mail) a neutral placeholder keeps the line well-formed."""
+    name, address = parseaddr(from_header)
+    return name.strip() or address.strip() or "Unknown sender"
+
+
+def _short_subject(subject: str) -> str:
+    """A trimmed, length-bounded subject for the display line."""
+    trimmed = subject.strip()
+    if not trimmed:
+        return "(no subject)"
+    if len(trimmed) <= _MAX_SUBJECT_LEN:
+        return trimmed
+    return f"{trimmed[: _MAX_SUBJECT_LEN - 1].rstrip()}…"
+
+
+def _short_date(message: GmailMessage) -> str:
+    """A compact `Mon D` date drawn from the message's received time."""
+    received = message.internal_date
+    return f"{received:%b} {received.day}"
+
+
+def _display_line(message: GmailMessage, verdict: GmailPurgeVerdict) -> str:
+    """A human-readable one-line summary of a hygiene action for the panel.
+
+    Shape: `<verb> · <subject> · <sender> · <date>`, with the applied label name
+    folded into the verb for a `label` action (`Label "Receipts"`). This is the
+    reviewer-facing text kept out of the executor's typed params (ADR 0014)."""
+    if verdict.action == "label" and verdict.label_name is not None:
+        verb = f'Label "{verdict.label_name}"'
+    else:
+        verb = verdict.action.capitalize()
+    parts = [
+        verb,
+        _short_subject(message.subject),
+        _sender_display(message.from_header),
+        _short_date(message),
+    ]
+    return " · ".join(parts)
+
+
 def _action_draft(
     message: GmailMessage, verdict: GmailPurgeVerdict
 ) -> ActionDraft | None:
@@ -244,15 +295,24 @@ def _action_draft(
 
     The scope is `sender-category:<category>`, the grantable trust unit an
     autonomy grant is keyed on; params carry the message id (and label name for
-    a `label` action)."""
+    a `label` action). A human-readable `display` line is populated from the
+    message metadata the sweep already holds, so the panel need not decode opaque
+    ids."""
     scope = f"sender-category:{verdict.sender_category}"
+    display = _display_line(message, verdict)
     if verdict.action == "archive":
         return ActionDraft(
-            kind="gmail.archive", scope=scope, params={"message_id": message.message_id}
+            kind="gmail.archive",
+            scope=scope,
+            params={"message_id": message.message_id},
+            display=display,
         )
     if verdict.action == "delete":
         return ActionDraft(
-            kind="gmail.delete", scope=scope, params={"message_id": message.message_id}
+            kind="gmail.delete",
+            scope=scope,
+            params={"message_id": message.message_id},
+            display=display,
         )
     if verdict.action == "label" and verdict.label_name is not None:
         return ActionDraft(
@@ -262,6 +322,7 @@ def _action_draft(
                 "message_id": message.message_id,
                 "label_name": verdict.label_name,
             },
+            display=display,
         )
     return None
 

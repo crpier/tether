@@ -62,6 +62,7 @@ class ProposalActionRead(BaseModel):
     kind: str
     scope: str | None
     params: dict[str, object]
+    display: str | None
     disposition: ActionDisposition
     outcome: ActionOutcome | None
     outcome_detail: str | None
@@ -76,6 +77,7 @@ class ProposalActionRead(BaseModel):
             kind=action.kind,
             scope=action.scope,
             params=cast("dict[str, object]", json.loads(action.params_json)),
+            display=action.display,
             disposition=action.disposition,
             outcome=action.outcome,
             outcome_detail=action.outcome_detail,
