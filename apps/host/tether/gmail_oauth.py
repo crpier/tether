@@ -15,6 +15,7 @@ expired), so a refreshed token is always used and persisted back to disk.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import timedelta
 from types import TracebackType
 from typing import Any, Self, cast
@@ -26,6 +27,13 @@ from tether.youtube_oauth import OAuthConfig, load_credentials
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 """Read-only access to a user's Gmail messages and labels."""
+
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+"""Read/write access to labels and message state (archive, label, trash) — the
+scope the backlog-purge write path needs. It does not subsume message reads for
+listing purposes cleanly, so the auth config requests it alongside
+`GMAIL_READONLY_SCOPE`; a token minted before this scope was added fails a write
+with a `403` until the user re-runs `just gmail-auth` (see `docs/development.md`)."""
 
 _DEFAULT_BASE_URL = "https://gmail.googleapis.com"
 _USER_ID = "me"
@@ -99,6 +107,27 @@ class HttpGmailTransport(GmailTransport):
     async def list_labels(self) -> GmailResponse:
         return await self._get(f"/gmail/v1/users/{_USER_ID}/labels")
 
+    async def modify_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> GmailResponse:
+        return await self._post(
+            f"/gmail/v1/users/{_USER_ID}/messages/{message_id}/modify",
+            json_body={
+                "addLabelIds": list(add_label_ids),
+                "removeLabelIds": list(remove_label_ids),
+            },
+        )
+
+    async def trash_message(self, message_id: str) -> GmailResponse:
+        return await self._post(
+            f"/gmail/v1/users/{_USER_ID}/messages/{message_id}/trash",
+            json_body={},
+        )
+
     async def _get(
         self, path: str, *, params: dict[str, str] | None = None
     ) -> GmailResponse:
@@ -114,6 +143,18 @@ class HttpGmailTransport(GmailTransport):
         )
         return _from_httpx(response)
 
+    async def _post(self, path: str, *, json_body: dict[str, object]) -> GmailResponse:
+        credentials = await asyncio.to_thread(load_credentials, self._config)
+        # See `_get`: `.token` is present on the real Credentials object but not
+        # declared on the reduced `GoogleCredentials` protocol.
+        token = cast("Any", credentials).token
+        response = await self._client.post(
+            path,
+            json=json_body,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        return _from_httpx(response)
+
 
 def _from_httpx(response: Any) -> GmailResponse:
     """Normalize an httpx response into a `GmailResponse` (decode JSON best-effort)."""
@@ -125,4 +166,4 @@ def _from_httpx(response: Any) -> GmailResponse:
     return GmailResponse(status_code=int(response.status_code), payload=payload)
 
 
-__all__ = ["GMAIL_READONLY_SCOPE", "HttpGmailTransport"]
+__all__ = ["GMAIL_MODIFY_SCOPE", "GMAIL_READONLY_SCOPE", "HttpGmailTransport"]

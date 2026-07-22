@@ -1,6 +1,21 @@
 {
   "components": {
     "schemas": {
+      "ActionDisposition": {
+        "enum": [
+          "approved",
+          "deselected"
+        ],
+        "type": "string"
+      },
+      "ActionOutcome": {
+        "enum": [
+          "succeeded",
+          "failed",
+          "skipped"
+        ],
+        "type": "string"
+      },
       "AddBucketItemRequest": {
         "description": "Body for Adding a Bucket item under one item type.\n\n>>> AddBucketItemRequest(\n...     item_type=\"movie\", data={\"title\": \"Dune\"}, intent_context=\"recommended\"\n... ).item_type\n'movie'",
         "properties": {
@@ -175,6 +190,30 @@
           "response_ms"
         ],
         "title": "AnswerPromptRequest",
+        "type": "object"
+      },
+      "ApproveProposalRequest": {
+        "description": "Body for approving a proposal at an observed version.\n\n`deselected_action_ids` unticks individual actions before approval; the\nrest are approved and executed by the host.",
+        "properties": {
+          "deselected_action_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid7",
+              "type": "string"
+            },
+            "title": "Deselected Action Ids",
+            "type": "array"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "ApproveProposalRequest",
         "type": "object"
       },
       "ArtifactEventRead": {
@@ -492,6 +531,32 @@
           "title"
         ],
         "title": "ConversationRead",
+        "type": "object"
+      },
+      "CreateGrantRequest": {
+        "description": "Body for granting autonomy over a `(kind, scope)` category.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "CreateGrantRequest",
         "type": "object"
       },
       "CreatePanelRequest": {
@@ -856,6 +921,103 @@
           "source"
         ],
         "title": "FusedSearchResultRead",
+        "type": "object"
+      },
+      "GrantRead": {
+        "description": "HTTP representation of a live autonomy grant.",
+        "properties": {
+          "granted_at": {
+            "format": "date-time",
+            "title": "Granted At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "scope",
+          "granted_at"
+        ],
+        "title": "GrantRead",
+        "type": "object"
+      },
+      "GrantSuggestionRead": {
+        "description": "HTTP representation of a read-time calibration suggestion.",
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "edited": {
+            "title": "Edited",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_rejection": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Rejection"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "seen": {
+            "title": "Seen",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "scope",
+          "seen",
+          "approved",
+          "rejected",
+          "edited",
+          "last_rejection"
+        ],
+        "title": "GrantSuggestionRead",
         "type": "object"
       },
       "IngestState": {
@@ -1344,6 +1506,197 @@
         "title": "PostArtifactEventRequest",
         "type": "object"
       },
+      "ProposalActionRead": {
+        "description": "HTTP representation of one action within a proposal.",
+        "properties": {
+          "disposition": {
+            "$ref": "#/components/schemas/ActionDisposition"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Detail"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "kind",
+          "scope",
+          "params",
+          "disposition",
+          "outcome",
+          "outcome_detail",
+          "executed_at"
+        ],
+        "title": "ProposalActionRead",
+        "type": "object"
+      },
+      "ProposalRead": {
+        "description": "HTTP representation of a proposal bundled with its actions.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalActionRead"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "consumer": {
+            "title": "Consumer",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "producing_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Producing Run Id"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProposalState"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "consumer",
+          "title",
+          "summary",
+          "producing_run_id",
+          "state",
+          "rejection_reason",
+          "version",
+          "created_at",
+          "updated_at",
+          "decided_at",
+          "actions"
+        ],
+        "title": "ProposalRead",
+        "type": "object"
+      },
+      "ProposalState": {
+        "enum": [
+          "pending",
+          "approved",
+          "executing",
+          "executed",
+          "failed",
+          "rejected"
+        ],
+        "type": "string"
+      },
       "ProposeEssayGradeRequest": {
         "description": "Body for requesting a model-proposed essay grade to confirm.\n\n>>> ProposeEssayGradeRequest(answer_text=\"An essay.\").answer_text\n'An essay.'",
         "properties": {
@@ -1471,6 +1824,55 @@
           "due_at"
         ],
         "title": "RecallPromptRead",
+        "type": "object"
+      },
+      "RejectProposalRequest": {
+        "description": "Body for rejecting a proposal at an observed version.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "RejectProposalRequest",
+        "type": "object"
+      },
+      "RejectionRead": {
+        "description": "A rejected proposal plus the grants a human may now want to revoke.",
+        "properties": {
+          "proposal": {
+            "$ref": "#/components/schemas/ProposalRead"
+          },
+          "revocable_grant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Revocable Grant Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "proposal",
+          "revocable_grant_ids"
+        ],
+        "title": "RejectionRead",
         "type": "object"
       },
       "SessionResponse": {
@@ -3080,6 +3482,91 @@
         "summary": "List every ebook Tether has progress for that is still unlabeled."
       }
     },
+    "/api/grants": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List live (unrevoked) grants, newest first."
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Grant autonomy for a `(kind, scope)` category."
+      }
+    },
+    "/api/grants/suggestions": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantSuggestionRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Read-time grant suggestions for ungranted categories with history."
+      }
+    },
+    "/api/grants/{grant_id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          }
+        },
+        "summary": "Revoke a grant convergently; an absent/already-revoked id is a no-op."
+      }
+    },
     "/api/memories": {
       "get": {
         "parameters": [
@@ -3504,6 +3991,127 @@
           }
         },
         "summary": "Run a panel's saved query, recomputed against the corpus right now."
+      }
+    },
+    "/api/proposals": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProposalRead"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List proposals newest first, optionally filtered by state."
+      }
+    },
+    "/api/proposals/{proposal_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Fetch one proposal bundled with its actions."
+      }
+    },
+    "/api/proposals/{proposal_id}/approve": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Approve a pending proposal, then execute its approved actions."
+      }
+    },
+    "/api/proposals/{proposal_id}/reject": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RejectionRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Reject a pending proposal (terminal), returning any revocable grants."
       }
     },
     "/api/push/status": {

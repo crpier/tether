@@ -30,6 +30,11 @@ from starlette.status import HTTP_404_NOT_FOUND
 from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
+from tether.action_registry import (
+    ActionContext,
+    all_action_specs,
+    build_action_registry,
+)
 from tether.agent_trace import AgentTraceRecorder, RunKind
 from tether.artifact_tools import internal_artifact_tool_routes
 from tether.artifacts import ArtifactService, create_artifact_schema
@@ -56,7 +61,12 @@ from tether.gmail import (
     GmailTransport,
     create_gmail_schema,
 )
-from tether.gmail_oauth import GMAIL_READONLY_SCOPE, HttpGmailTransport
+from tether.gmail_oauth import (
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    HttpGmailTransport,
+)
+from tether.gmail_purge import GmailPurgeSweepService
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
@@ -72,6 +82,8 @@ from tether.openapi import openapi_routes
 from tether.openapi_export import public_api_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
+from tether.proposal_tools import internal_proposal_tool_routes
+from tether.proposals import ProposalService, create_proposal_schema
 from tether.push import PushService, create_push_schema
 from tether.readwise import (
     HttpReaderTransport,
@@ -212,6 +224,9 @@ class AppConfig:
     gmail_sync_enabled: bool = False
     gmail_sync_interval_seconds: float = 15 * 60
     gmail_triage_batch_size: int = 10
+    gmail_purge_enabled: bool = False
+    gmail_purge_interval_seconds: float = 60 * 60
+    gmail_purge_chunk_size: int = 10
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
@@ -428,6 +443,18 @@ class HostSettings(BaseSettings):
     gmail_triage_batch_size: int = 10
     """How many messages are triaged per ephemeral agent prompt run. Bounds
     both the prompt size and the blast radius of one malformed model reply."""
+    gmail_purge_enabled: bool = False
+    """Whether the background Gmail backlog-purge sweep runs. Off by default and
+    a no-op unless a Gmail transport is also configured. Opt-in on top of the
+    read-only ingestion gate because the sweep proposes consequential mailbox
+    writes (archive/label/trash); those still require human approval or a
+    standing autonomy grant before any write happens."""
+    gmail_purge_interval_seconds: float = 60 * 60
+    """Seconds between backlog-purge sweeps. Backlog changes slowly, so an
+    hourly cadence is ample."""
+    gmail_purge_chunk_size: int = 10
+    """How many backlog messages one sweep chunk triages and one proposal
+    bundles. Bounds both the prompt size and how large a single proposal gets."""
     ebook_statistics_db_path: str = ""
     """Host-visible path to a Syncthing-mirrored copy of KOReader's
     `statistics.sqlite`. Empty (the default) keeps the ingestion worker off, so
@@ -465,6 +492,7 @@ async def _create_schemas(db: Database) -> None:
     await create_recall_schema(db)
     await create_search_meta_schema(db)
     await create_notification_schema(db)
+    await create_proposal_schema(db)
     await create_artifact_schema(db)
     await create_panel_schema(db)
     await create_todo_schema(db)
@@ -796,6 +824,61 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
     return [asyncio.create_task(_run_gmail_sync())]
 
 
+async def _wire_gmail_purge(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    proposal_service: ProposalService,
+    kb_root: Path,
+) -> list[asyncio.Task[None]]:
+    """Wire the Gmail backlog-purge sweep + its background worker onto state.
+
+    A no-op returning no tasks unless the sweep is explicitly enabled
+    (`TETHER_GMAIL_PURGE_ENABLED`) *and* a Gmail transport is configured — the
+    sweep proposes consequential mailbox writes, so it is opt-in on top of the
+    read-only ingestion gate. When active, each chunk of backlog is triaged
+    through an ephemeral pi run (the `gmail_purge` run kind) and folded into one
+    Proposal; the worker runs an idempotent boot pass (off the startup critical
+    path) then the periodic loop, and the returned task joins the lifespan's
+    cancelled-on-shutdown background tasks.
+    """
+    if not config.gmail_purge_enabled or config.gmail_transport is None:
+        return []
+    logger = cast("Logger", app.state.logger)
+    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
+    triage_runner = EphemeralPiPromptRunner(
+        _ephemeral_pi_config(
+            app,
+            config=config,
+            kb_root=kb_root,
+            run_kind="gmail_purge",
+            model=model_catalog.default_config,
+        )
+    )
+    sweep = GmailPurgeSweepService(
+        database=database,
+        client=GmailClient(transport=config.gmail_transport),
+        proposal_service=proposal_service,
+        triage_runner=triage_runner,
+        chunk_size=config.gmail_purge_chunk_size,
+    )
+    app.state.gmail_purge_sweep = sweep
+
+    async def _run_gmail_purge() -> None:
+        try:
+            _ = await sweep.sweep(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Gmail purge boot sweep failed")
+        await sweep.sync_forever(
+            interval_seconds=config.gmail_purge_interval_seconds, logger=logger
+        )
+
+    return [asyncio.create_task(_run_gmail_purge())]
+
+
 async def _wire_ebook_stats(
     app: Starlette, *, config: AppConfig, database: Database
 ) -> list[asyncio.Task[None]]:
@@ -899,7 +982,7 @@ def _build_scheduler(
             model=model_catalog.default_config,
         )
     )
-    return Scheduler(
+    scheduler = Scheduler(
         service=trigger_service,
         dispatcher=TriggerDispatcher(
             notifier=EventNotifier(app.state.event_hub, notification_service),
@@ -910,6 +993,42 @@ def _build_scheduler(
         config=SchedulerConfig(
             tick_seconds=config.scheduler_tick_seconds,
             concurrency=config.scheduler_concurrency,
+        ),
+    )
+    app.state.scheduler = scheduler
+    return scheduler
+
+
+def _build_proposal_service(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    tracer: Tracer,
+    event_publisher: EventHub,
+) -> ProposalService:
+    """Wire the host proposal executor over agent-composed action sets.
+
+    Built after `_build_scheduler` so the notification_service it registered on
+    `app.state` is available to queue pending proposals. The action registry
+    carries the Gmail hygiene consumer (`*GMAIL_ACTION_SPECS`); the action
+    context's `gmail_client` is the real client when a Gmail transport is
+    configured, else `None` — in which case the `gmail.*` executors fail soft
+    ("gmail client unavailable") rather than crashing.
+    """
+    gmail_client = (
+        GmailClient(transport=config.gmail_transport)
+        if config.gmail_transport is not None
+        else None
+    )
+    return ProposalService(
+        database=database,
+        tracer=tracer,
+        event_publisher=event_publisher,
+        action_registry=build_action_registry(all_action_specs()),
+        action_context=ActionContext(gmail_client=gmail_client),
+        notification_service=cast(
+            "NotificationService", app.state.notification_service
         ),
     )
 
@@ -1384,7 +1503,13 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 trigger_service=trigger_service,
                 kb_root=configured_kb_root,
             )
-            app.state.scheduler = scheduler
+            app.state.proposal_service = _build_proposal_service(
+                app,
+                config=config,
+                database=db,
+                tracer=telemetry.tracer,
+                event_publisher=event_hub,
+            )
             background_tasks = [
                 asyncio.create_task(runtime_registry.reap_idle_forever()),
                 asyncio.create_task(scheduler.run_forever()),
@@ -1419,6 +1544,13 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                     memory_service=memory_service,
                     trigger_service=trigger_service,
                     todo_service=todo_service,
+                    kb_root=configured_kb_root,
+                )
+                + await _wire_gmail_purge(
+                    app,
+                    config=config,
+                    database=db,
+                    proposal_service=app.state.proposal_service,
                     kb_root=configured_kb_root,
                 )
                 + await _wire_ebook_stats(app, config=config, database=db)
@@ -1525,6 +1657,7 @@ def create_app(
             *internal_conversation_history_tool_routes(),
             *internal_panel_tool_routes(),
             *internal_kosync_tool_routes(),
+            *internal_proposal_tool_routes(),
             # The device-facing kosync protocol is mounted only when configured
             # (username + userkey set): a disabled install leaves `/kosync/*`
             # unhandled, so it answers 404 rather than a live-but-empty gate.
@@ -1615,7 +1748,7 @@ def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport |
         OAuthConfig(
             token_path=settings.gmail_token_path,
             client_secret_path=settings.gmail_client_secret_path,
-            scopes=(GMAIL_READONLY_SCOPE,),
+            scopes=(GMAIL_READONLY_SCOPE, GMAIL_MODIFY_SCOPE),
             no_browser=settings.gmail_oauth_no_browser,
         )
     )
@@ -1655,6 +1788,9 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         gmail_sync_enabled=settings.gmail_sync_enabled,
         gmail_sync_interval_seconds=settings.gmail_sync_interval_seconds,
         gmail_triage_batch_size=settings.gmail_triage_batch_size,
+        gmail_purge_enabled=settings.gmail_purge_enabled,
+        gmail_purge_interval_seconds=settings.gmail_purge_interval_seconds,
+        gmail_purge_chunk_size=settings.gmail_purge_chunk_size,
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
         stt_api_key=settings.stt_api_key,

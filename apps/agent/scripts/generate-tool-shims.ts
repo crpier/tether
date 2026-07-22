@@ -95,6 +95,17 @@ function renderRequiredExpression(schema: JsonSchema): string {
     // `Type.Record` is the shape, not `Type.Object`.
     return "Type.Record(Type.String(), Type.String())";
   }
+  if (schema.type === "object" && schema.additionalProperties === true) {
+    // A Pydantic `dict[str, object]` field (e.g. a proposal action's opaque
+    // `params`, typed against the action kind's model on the host): an
+    // arbitrary string-to-JSON map, so the value type is left `Type.Unknown`.
+    return "Type.Record(Type.String(), Type.Unknown())";
+  }
+  if (schema.type === "object" && schema.properties !== undefined) {
+    // A nested Pydantic model (e.g. a proposal's `actions` items): render its
+    // own fields as a nested `Type.Object`, each optional unless required.
+    return renderObject(schema);
+  }
   if (schema.type === "array" && schema.items !== undefined) {
     // A Pydantic `list[T]` field (e.g. the fused Search `sources` filter):
     // `resolvePropertySchema` has already inlined `items`'s `$ref` (a string
@@ -111,6 +122,15 @@ export function renderTypeBoxProperty(
 ): string {
   const expression = renderRequiredExpression(schema);
   return `${identifierForProperty(name)}: ${required ? expression : `Type.Optional(${expression})`}`;
+}
+
+function renderObject(schema: JsonSchema): string {
+  const properties = schema.properties ?? {};
+  const required = new Set(schema.required ?? []);
+  const rendered = Object.entries(properties).map(([name, property]) =>
+    renderTypeBoxProperty(name, property, required.has(name)),
+  );
+  return `Type.Object({\n${rendered.map((line) => `  ${line},`).join("\n")}\n})`;
 }
 
 function resolvePropertySchema(
@@ -130,6 +150,19 @@ function resolvePropertySchema(
     // `$ref` under `items`; resolve it the same way an `anyOf` branch is.
     return { ...schema, items: resolvePropertySchema(root, schema.items) };
   }
+  if (schema.type === "object" && schema.properties !== undefined) {
+    // A nested model's own fields may themselves be `$ref`s (e.g. enums);
+    // resolve each so the nested render sees inlined definitions.
+    return {
+      ...schema,
+      properties: Object.fromEntries(
+        Object.entries(schema.properties).map(([name, property]) => [
+          name,
+          resolvePropertySchema(root, property),
+        ]),
+      ),
+    };
+  }
   if (schema.$ref === undefined) {
     return schema;
   }
@@ -142,7 +175,9 @@ function resolvePropertySchema(
   if (resolved === undefined) {
     throw new Error(`unresolved $ref: ${schema.$ref}`);
   }
-  return resolved;
+  // Resolve the target too, so a `$ref` to an object (a nested model) has its
+  // own `$ref` fields inlined before rendering.
+  return resolvePropertySchema(root, resolved);
 }
 
 function renderParameters(tool: ToolSchema): string {
@@ -174,6 +209,12 @@ function schemaUsesEnum(schema: JsonSchema): boolean {
     return true;
   }
   if (schema.items !== undefined && schemaUsesEnum(schema.items)) {
+    return true;
+  }
+  if (
+    schema.properties !== undefined &&
+    Object.values(schema.properties).some(schemaUsesEnum)
+  ) {
     return true;
   }
   return schema.anyOf?.some(schemaUsesEnum) ?? false;

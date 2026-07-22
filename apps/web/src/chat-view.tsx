@@ -46,6 +46,7 @@ import { formatToolResult } from "./lib/tool-result";
 import { BucketPanel } from "./panels/bucket";
 import { MemoriesPanel } from "./panels/memories";
 import { NotificationsPanel } from "./panels/notifications";
+import { ProposalsPanel } from "./panels/proposals";
 import { PushControl } from "./panels/push";
 import { RecallPanel } from "./panels/recall";
 import { SyntheticPanels } from "./panels/synthetic";
@@ -947,6 +948,7 @@ export function ChatView(props: {
           <YouTubeSyncPanel api={props.api} />
           <RecallPanel api={props.api} />
           <SyntheticPanels api={props.api} />
+          <ProposalsPanel api={props.api} />
           <MemoriesPanel api={props.api} />
           <BucketPanel api={props.api} />
           <TodosPanel api={props.api} />
