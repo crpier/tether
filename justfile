@@ -294,6 +294,43 @@ deploy-local: app-start
 deploy-local-down:
     docker compose down
 
+# --- VM deploy (docs/deployment.md) -----------------------------------------
+# GHCR image name; override if you fork/rename. Push needs a prior
+# `docker login ghcr.io` (a GitHub PAT with `write:packages`, or `gh auth
+# token | docker login ghcr.io -u <user> --password-stdin`).
+export TETHER_IMAGE := env_var_or_default("TETHER_IMAGE", "ghcr.io/crpier/tether")
+
+# build the prod image, tag with the current git sha + `latest`, push both to GHCR
+deploy-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sha=$(git rev-parse --short HEAD)
+    docker build -t "${TETHER_IMAGE}:${sha}" -t "${TETHER_IMAGE}:latest" .
+    docker push "${TETHER_IMAGE}:${sha}"
+    docker push "${TETHER_IMAGE}:latest"
+    echo "pushed ${TETHER_IMAGE}:${sha} and :latest"
+
+# build + push, then ssh to the VM and pull + restart. Needs
+# TETHER_DEPLOY_HOST=user@host (TETHER_DEPLOY_DIR defaults to /srv/tether).
+deploy: deploy-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    host="${TETHER_DEPLOY_HOST:?set TETHER_DEPLOY_HOST=user@vm}"
+    dir="${TETHER_DEPLOY_DIR:-/srv/tether}"
+    ssh "$host" "cd '$dir' && docker compose pull && docker compose up -d"
+    echo "deployed $(git rev-parse --short HEAD) to $host:$dir"
+
+# roll the VM back to a previously pushed image tag (a short git sha); pins
+# TETHER_IMAGE_TAG in the VM's .env so it survives future `docker compose pull`
+# until you deploy forward again (which removes the pin).
+deploy-rollback sha:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    host="${TETHER_DEPLOY_HOST:?set TETHER_DEPLOY_HOST=user@vm}"
+    dir="${TETHER_DEPLOY_DIR:-/srv/tether}"
+    ssh "$host" "cd '$dir' && sed -i '/^TETHER_IMAGE_TAG=/d' .env && echo 'TETHER_IMAGE_TAG={{ sha }}' >> .env && docker compose pull && docker compose up -d"
+    echo "rolled back $host:$dir to {{ sha }}"
+
 # follow host container logs readable; `just logs <run_id>` filters one chat turn
 logs run_id="":
     #!/usr/bin/env bash

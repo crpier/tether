@@ -1,0 +1,13 @@
+[Unit]
+Description=Tether nightly backup (restic -> Backblaze B2)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/srv/tether/restic.env
+Environment=TETHER_APP_DIR=/srv/tether
+ExecStart=/srv/tether/deploy/backup.sh
+# No PATH/HOME overrides needed: restic and docker are installed system-wide
+# and the script only writes to a self-managed mktemp -d workdir.

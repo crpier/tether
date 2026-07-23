@@ -4,7 +4,7 @@ This is the **fast local iteration loop**. Use it for day-to-day work.
 
 > Do **not** iterate by running `docker compose up --build`. That rebuilds the
 > production image (full SPA build + agent install + `uv sync`) on every change —
-> it's for verifying a deploy, not for developing. See [deploy.md](./deploy.md)
+> it's for verifying a deploy, not for developing. See [deployment.md](./deployment.md)
 > for when you actually want the image.
 
 ## The loop
@@ -41,7 +41,7 @@ touch an existing `.env`. It also creates `~/.local/share/tether/pi-agent`
 (or `/login opencode-go`) and exit. Chat and scheduled-prompt triggers need
 this — without it, `just validate-env` warns and turns will fail at runtime.
 
-YouTube ingestion is optional; see [deploy.md](./deploy.md#youtube-ingestion)
+YouTube ingestion is optional; see [deployment.md](./deployment.md#youtube-ingestion)
 and `.env.example`. Locally, `just youtube-auth` runs the browser OAuth flow and
 caches the token under `.tether/`.
 

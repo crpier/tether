@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Tether backup nightly
+
+[Timer]
+# 03:17 local time — off the hour to dodge other boxes' cron-hour thundering
+# herd against B2; RandomizedDelaySec spreads it further and Persistent=true
+# catches up a run the VM missed while off/rebooting.
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
