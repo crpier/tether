@@ -1,9 +1,9 @@
 #cloud-config
-# Hetzner CX43, Debian 13 (Falkenstein). Paste into Hetzner's "Cloud config"
-# field at server creation (docs/deployment.md#provision-the-box). Also doubles
-# as the disaster-recovery runbook for rebuilding the box from scratch: a fresh
-# CX43 + this file + a restic restore (docs/deployment.md#total-loss-recovery)
-# gets Tether back.
+# Hetzner x86 VM, Debian 13 (Falkenstein). CX43 is preferred for headroom;
+# CPX22 is the field-tested fallback when cost-optimized capacity is unavailable.
+# Paste into Hetzner's "Cloud config" field at server creation
+# (docs/deployment.md#provision-the-box). A fresh VM + this file + a restic
+# restore (docs/deployment.md#total-loss-recovery) gets Tether back.
 #
 # Placeholders to fill in before pasting (search for CHANGEME):
 #   - CHANGEME_SSH_PUBLIC_KEY: your SSH public key (key-only auth; password
@@ -20,9 +20,9 @@ users:
     ssh_authorized_keys:
       - CHANGEME_SSH_PUBLIC_KEY
 
-# 2GB swapfile: the CX43 has 16GB RAM (ample for the host's fastembed floor),
-# but a swapfile is cheap insurance against a runaway process OOM-killing the
-# host instead of degrading.
+# 2GB swapfile: ample insurance on CX43 and important burst capacity on the
+# field-tested 4GB CPX22 fallback. Monitor sustained swap use and resize rather
+# than treating swap as a substitute for RAM.
 swap:
   filename: /swapfile
   size: 2147483648

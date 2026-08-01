@@ -16,8 +16,10 @@ data/
 # Tether runtime files
 .tether
 
-# Deploy secrets (compose reads this; `.env.example` is the committed template).
+# Deploy secrets (the committed templates live under deploy/).
 .env
+/restic.env
+/pi-agent/
 
 # Playwright MCP scratch output
 .playwright-mcp/

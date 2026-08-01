@@ -55,7 +55,8 @@ sqlite3.connect('/data/tether.sqlite3').execute(\"VACUUM INTO '${container_snaps
 compose cp "host:${container_snapshot}" "${workdir}/tether.sqlite3"
 compose exec -T host rm -f "${container_snapshot}"
 
-# 2. kb_root: the derived markdown KB, copied whole.
+# 2. kb_root, copied whole. It currently co-locates derived indexes and pi
+# sessions with Markdown, so those files are included too (docs/deployment.md).
 compose cp "host:/data/kb" "${workdir}/kb"
 
 # 3. .env: the app secrets, so a total-loss recovery doesn't depend on
