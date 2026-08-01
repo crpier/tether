@@ -425,9 +425,20 @@ describe("Chat view", () => {
     });
   });
 
-  test("selecting a model persists it for the conversation", async () => {
+  test("keeps model selection beside the composer", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
+
+    const selector = await screen.findByRole("group", { name: "Model" });
+
+    expect(selector.closest("form")).not.toBeNull();
+  });
+
+  test("selecting a model persists it without moving the transcript", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+    const transcript = await screen.findByLabelText("Chat transcript");
+    transcript.scrollTop = 123;
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Claude Sonnet" }),
@@ -436,6 +447,7 @@ describe("Chat view", () => {
     await waitFor(() => {
       expect(api.selectedModel).toBe("anthropic:claude-sonnet-4");
     });
+    expect(transcript.scrollTop).toBe(123);
   });
 
   test("only fetches the latest page of history by default", async () => {
