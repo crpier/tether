@@ -508,6 +508,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/bucket-items/{bucket_item_id}/purchase-decision": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Record the human's current decision on a purchase item. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          bucket_item_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["PurchaseDecisionRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["BucketItemRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/capture/voice": {
     parameters: {
       query?: never;
@@ -2965,7 +3007,7 @@ export interface components {
     IngestState: "active" | "ignored";
     IntentContext: string;
     /** @enum {string} */
-    ItemType: "movie" | "place" | "book" | "travel";
+    ItemType: "movie" | "place" | "book" | "travel" | "purchase";
     JsonValue: unknown;
     /**
      * LabelEbookRequest
@@ -3264,6 +3306,29 @@ export interface components {
     ProposeEssayGradeRequest: {
       /** Answer Text */
       answer_text: string;
+    };
+    /** @enum {string} */
+    PurchaseDecision: "buy" | "wait" | "need-more-info";
+    /**
+     * PurchaseDecisionRequest
+     * @description Body for recording a purchase decision at an observed version.
+     */
+    PurchaseDecisionRequest: {
+      decision: components["schemas"]["PurchaseDecision"];
+      /** Version */
+      version: number;
+    };
+    /**
+     * PurchaseTriage
+     * @description Purchase-flavoured advisories derived from active purchase items.
+     */
+    PurchaseTriage: {
+      /** Buy Now */
+      buy_now: string[];
+      /** Missing Price Context */
+      missing_price_context: string[];
+      /** Stale Watches */
+      stale_watches: string[];
     };
     /**
      * PushConfigRead
@@ -3587,6 +3652,7 @@ export interface components {
       active: components["schemas"]["BucketItemRead"][];
       /** Duplicates */
       duplicates: components["schemas"]["DuplicateCluster"][];
+      purchase: components["schemas"]["PurchaseTriage"];
       /** Stale */
       stale: components["schemas"]["StaleItem"][];
       /** Under Specified */

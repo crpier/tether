@@ -48,7 +48,10 @@ function useBadgeCounts() {
     const triageCount = triage
       ? triage.under_specified.length +
         triage.duplicates.length +
-        triage.stale.length
+        triage.stale.length +
+        triage.purchase.buy_now.length +
+        triage.purchase.missing_price_context.length +
+        triage.purchase.stale_watches.length
       : 0;
     return (
       (looseMemoriesQuery.data?.length ?? 0) +

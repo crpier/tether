@@ -49,6 +49,7 @@ from tether.bucket_items import (
     EmptyIntentContextError,
     InvalidItemDataError,
     ItemType,
+    PurchaseDecision,
     create_bucket_item_schema,
     derive_state,
 )
@@ -90,6 +91,14 @@ class LoggedBucketItemService:
     ) -> BucketItem[Fetched]:
         """Set intent context through the wrapped service with logging context."""
         return await self.service.set_intent(item, intent_context, logger=self.logger)
+
+    async def set_purchase_decision(
+        self, item: BucketItem[Fetched], decision: PurchaseDecision
+    ) -> BucketItem[Fetched]:
+        """Record a purchase decision through the wrapped service."""
+        return await self.service.set_purchase_decision(
+            item, decision, logger=self.logger
+        )
 
     async def search(
         self,
@@ -277,6 +286,35 @@ async def add_stores_a_travel_payload() -> None:
 
 
 @test()
+async def add_stores_a_purchase_payload() -> None:
+    """A purchase records price, store, and the factors behind the decision."""
+    service = await load_fixture(bucket_item_service())
+
+    item = await add_item(
+        service,
+        "purchase",
+        {
+            "name": "Aeropress",
+            "price": "$39.95",
+            "store": "Coffee Hit",
+            "decision_factors": ["portable", "easy cleanup"],
+        },
+    )
+
+    assert_eq(item.item_type, "purchase")
+    assert_eq(
+        item.data,
+        {
+            "name": "Aeropress",
+            "price": "$39.95",
+            "store": "Coffee Hit",
+            "decision_factors": ["portable", "easy cleanup"],
+            "decision": None,
+        },
+    )
+
+
+@test()
 async def add_rejects_an_invalid_book_payload() -> None:
     """A book payload missing its required title is a domain error."""
     service = await load_fixture(bucket_item_service())
@@ -360,6 +398,33 @@ async def add_starts_at_version_one() -> None:
     item = await add_item(service)
 
     assert_eq(item.version, 1)
+
+
+# --- Purchase decisions ---
+
+
+@test()
+async def set_purchase_decision_records_the_humans_choice() -> None:
+    """A purchase can record the current buy/wait/need-more-info decision."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, "purchase", {"name": "Aeropress"})
+
+    updated = await service.set_purchase_decision(item, "wait")
+
+    assert_eq(updated.data["decision"], "wait")
+    assert_eq(updated.version, item.version + 1)
+
+
+@test()
+async def set_purchase_decision_can_change_as_context_changes() -> None:
+    """A later decision replaces the prior one using optimistic concurrency."""
+    service = await load_fixture(bucket_item_service())
+    item = await add_item(service, "purchase", {"name": "Aeropress"})
+    waiting = await service.set_purchase_decision(item, "wait")
+
+    buying = await service.set_purchase_decision(waiting, "buy")
+
+    assert_eq(buying.data["decision"], "buy")
 
 
 # --- Intent context: preserved by terminate, editable via set_intent ---

@@ -63,6 +63,11 @@ const ITEM_TYPE_FIELDS: Record<
     optional: { key: "location", label: "Location" },
     primary: { key: "name", label: "Name" },
   },
+  purchase: {
+    label: "Purchase",
+    optional: { key: "price", label: "Price" },
+    primary: { key: "name", label: "Name" },
+  },
   travel: {
     label: "Travel",
     optional: { key: "season", label: "Season" },

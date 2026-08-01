@@ -37,6 +37,7 @@ from tether.bucket_items import (
     BucketItemState,
     ItemType,
     JsonValue,
+    PurchaseDecision,
 )
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.logging import get_request_logger
@@ -70,6 +71,13 @@ class CompleteRequest(BaseModel):
     1
     """
 
+    version: PositiveInt
+
+
+class PurchaseDecisionRequest(BaseModel):
+    """Body for recording a purchase decision at an observed version."""
+
+    decision: PurchaseDecision
     version: PositiveInt
 
 
@@ -159,6 +167,21 @@ async def complete_bucket_item(request: Request, body: CompleteRequest) -> Respo
     return rest_response(outcome)
 
 
+@endpoint(request_body=PurchaseDecisionRequest, response=BucketItemRead)
+@_translate_domain_errors
+async def set_purchase_decision(
+    request: Request, body: PurchaseDecisionRequest
+) -> Response:
+    """Record the human's current decision on a purchase item."""
+    outcome = await bucket_capabilities.set_purchase_decision(
+        request,
+        _path_bucket_item_id(request),
+        body.version,
+        body.decision,
+    )
+    return rest_response(outcome)
+
+
 @endpoint(query=DeleteQuery, response=BucketItemRead)
 @_translate_domain_errors
 async def delete_bucket_item(request: Request, query: DeleteQuery) -> Response:
@@ -184,6 +207,11 @@ bucket_item_routes: list[Route] = [
     EndpointRoute(
         "/api/bucket-items/{bucket_item_id}/complete",
         complete_bucket_item,
+        methods=["POST"],
+    ),
+    EndpointRoute(
+        "/api/bucket-items/{bucket_item_id}/purchase-decision",
+        set_purchase_decision,
         methods=["POST"],
     ),
 ]
