@@ -34,6 +34,8 @@ _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_TIMEOUT = timedelta(seconds=60)
 """Per-request HTTP timeout: transcription of a short voice note is slower than
 a JSON call but bounded, so a minute is ample without hanging a stuck request."""
+_STT_VOCABULARY_PROMPT = "snektest"
+"""Custom vocabulary seeded into the transcription prompt."""
 
 
 class SttConfigurationError(Exception):
@@ -98,9 +100,9 @@ class SttTransport(Protocol):
     """
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str
+        self, *, audio: AudioUpload, model: str, prompt: str
     ) -> TranscriptionResponse:
-        """Post one audio upload for transcription with the given model."""
+        """Post one audio upload for transcription with model and prompt."""
         ...
 
 
@@ -124,7 +126,9 @@ class SttClient:
 
     async def transcribe(self, audio: AudioUpload) -> str:
         """Transcribe one audio upload to text, raising `SttError` on failure."""
-        response = await self.transport.transcribe(audio=audio, model=self.model)
+        response = await self.transport.transcribe(
+            audio=audio, model=self.model, prompt=_STT_VOCABULARY_PROMPT
+        )
         if response.status_code == _RATE_LIMITED_STATUS:
             rate_limited_message = "transcription rate limited"
             raise SttError(
@@ -162,9 +166,9 @@ class HttpSttTransport(SttTransport):
         self._timeout: timedelta = timeout or _DEFAULT_TIMEOUT
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str
+        self, *, audio: AudioUpload, model: str, prompt: str
     ) -> TranscriptionResponse:
-        """Post the audio as multipart `file` + `model` with bearer auth."""
+        """Post the audio as multipart `file` + `model` + `prompt`."""
         async with httpx2.AsyncClient(
             base_url=self._base_url, timeout=self._timeout.total_seconds()
         ) as client:
@@ -172,7 +176,7 @@ class HttpSttTransport(SttTransport):
                 _TRANSCRIPTIONS_PATH,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 files={"file": (audio.filename, audio.content, audio.content_type)},
-                data={"model": model},
+                data={"model": model, "prompt": prompt},
             )
         return _from_httpx(response)
 
