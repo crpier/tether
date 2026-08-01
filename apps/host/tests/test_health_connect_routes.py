@@ -22,7 +22,7 @@ SYNC_STATE_PATH = "/api/telemetry/health-connect/sync-state"
 BASELINE_PATH = f"{SYNC_STATE_PATH}/baselines"
 BATCH_PATH = "/api/telemetry/health-connect/batches"
 BASELINE_COMPLETE_PATH = f"{BASELINE_PATH}/complete"
-FIXTURE_ROOT = Path(__file__).parent / "fixtures/health_connect/v1"
+FIXTURE_ROOT = Path(__file__).parent / "fixtures/health_connect/v2"
 AUTHORIZATION = {"Authorization": f"Bearer {API_TOKEN}"}
 
 
@@ -32,7 +32,7 @@ def complete_representative_baseline(client: TestClient) -> None:
         BASELINE_COMPLETE_PATH,
         headers=AUTHORIZATION,
         json={
-            "contract_version": 1,
+            "contract_version": 2,
             "installation_id": "pixel-installation",
             "record_types": ["heart_rate", "sleep", "steps", "exercise"],
             "request_id": "baseline-complete-1",
@@ -42,22 +42,18 @@ def complete_representative_baseline(client: TestClient) -> None:
                 "exercise": {
                     "start_time": 0,
                     "end_time": 2000000000000,
-                    "seen_record_ids": ["exercise-1"],
                 },
                 "heart_rate": {
                     "start_time": 0,
                     "end_time": 2000000000000,
-                    "seen_record_ids": ["heart-1"],
                 },
                 "sleep": {
                     "start_time": 0,
                     "end_time": 2000000000000,
-                    "seen_record_ids": ["sleep-1"],
                 },
                 "steps": {
                     "start_time": 0,
                     "end_time": 2000000000000,
-                    "seen_record_ids": ["steps-1"],
                 },
             },
         },
@@ -97,7 +93,7 @@ def operational_logs_exclude_health_values_notes_and_complete_tokens() -> None:
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -144,7 +140,7 @@ def representative_page_advances_its_cursor_atomically() -> None:
             BASELINE_PATH,
             headers=AUTHORIZATION,
             json={
-                "contract_version": 1,
+                "contract_version": 2,
                 "installation_id": "pixel-installation",
                 "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                 "request_id": "baseline-request-1",
@@ -178,7 +174,7 @@ def representative_fixture_round_trips_through_typed_current_views() -> None:
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -262,7 +258,7 @@ def a_tombstone_removes_a_record_from_current_without_deleting_history() -> None
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -310,7 +306,7 @@ def changed_record_appends_a_new_current_version() -> None:
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -352,7 +348,7 @@ def unchanged_record_on_a_new_page_appends_nothing() -> None:
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -386,7 +382,7 @@ def lost_response_replay_does_not_append_duplicate_versions() -> None:
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -420,7 +416,7 @@ def malformed_page_leaves_telemetry_and_cursor_unchanged() -> None:
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -475,7 +471,7 @@ def concurrent_change_pages_allow_only_one_cursor_advance() -> None:
             BASELINE_PATH,
             headers=AUTHORIZATION,
             json={
-                "contract_version": 1,
+                "contract_version": 2,
                 "installation_id": "pixel-installation",
                 "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                 "request_id": "baseline-request-1",
@@ -512,7 +508,7 @@ def stale_change_page_conflicts_without_advancing_the_cursor() -> None:
             BASELINE_PATH,
             headers=AUTHORIZATION,
             json={
-                "contract_version": 1,
+                "contract_version": 2,
                 "installation_id": "pixel-installation",
                 "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                 "request_id": "baseline-request-1",
@@ -552,7 +548,7 @@ def baseline_reconciliation_preserves_records_outside_authoritative_bounds() -> 
                 BASELINE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                     "request_id": "baseline-request-1",
@@ -560,36 +556,35 @@ def baseline_reconciliation_preserves_records_outside_authoritative_bounds() -> 
                 },
             )
             _ = client.post(BATCH_PATH, headers=AUTHORIZATION, json=batch)
+            complete_representative_baseline(client)
+            _ = client.post(
+                BASELINE_PATH,
+                headers=AUTHORIZATION,
+                json={
+                    "contract_version": 2,
+                    "installation_id": "pixel-installation",
+                    "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                    "request_id": "baseline-request-2",
+                    "starting_token": "opaque-second-token",
+                },
+            )
             completion = client.post(
                 BASELINE_COMPLETE_PATH,
                 headers=AUTHORIZATION,
                 json={
-                    "contract_version": 1,
+                    "contract_version": 2,
                     "installation_id": "pixel-installation",
                     "record_types": ["heart_rate", "sleep", "steps", "exercise"],
-                    "request_id": "baseline-complete-1",
-                    "expected_token": "opaque-starting-token",
-                    "baseline_generation": 1,
+                    "request_id": "baseline-complete-2",
+                    "expected_token": "opaque-second-token",
+                    "baseline_generation": 2,
                     "ranges": {
-                        "exercise": {
-                            "start_time": 0,
-                            "end_time": 2000000000000,
-                            "seen_record_ids": ["exercise-1"],
-                        },
-                        "heart_rate": {
-                            "start_time": 0,
-                            "end_time": 2000000000000,
-                            "seen_record_ids": ["heart-1"],
-                        },
-                        "sleep": {
-                            "start_time": 0,
-                            "end_time": 2000000000000,
-                            "seen_record_ids": ["sleep-1"],
-                        },
+                        "exercise": {"start_time": 0, "end_time": 0},
+                        "heart_rate": {"start_time": 0, "end_time": 0},
+                        "sleep": {"start_time": 0, "end_time": 0},
                         "steps": {
                             "start_time": 1600000000000,
                             "end_time": 1800000000000,
-                            "seen_record_ids": [],
                         },
                     },
                 },
@@ -608,13 +603,83 @@ def baseline_reconciliation_preserves_records_outside_authoritative_bounds() -> 
 
 
 @test()
+def baseline_reconciliation_chunks_large_missing_sets_and_cleans_seen_rows() -> None:
+    """Completion bounds memory and removes its temporary generation index."""
+    batch = json.loads((FIXTURE_ROOT / "representative-batch.json").read_text())
+    step = batch["records"]["steps"][0]
+    batch["records"] = {
+        "exercise": [],
+        "heart_rate": [],
+        "sleep": [],
+        "steps": [
+            {**step, "metadata": {**step["metadata"], "id": f"steps-{index}"}}
+            for index in range(501)
+        ],
+    }
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        with health_connect_client(root) as client:
+            _ = client.post(
+                BASELINE_PATH,
+                headers=AUTHORIZATION,
+                json={
+                    "contract_version": 2,
+                    "installation_id": "pixel-installation",
+                    "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                    "request_id": "baseline-request-1",
+                    "starting_token": "opaque-starting-token",
+                },
+            )
+            uploaded = client.post(BATCH_PATH, headers=AUTHORIZATION, json=batch)
+            complete_representative_baseline(client)
+            _ = client.post(
+                BASELINE_PATH,
+                headers=AUTHORIZATION,
+                json={
+                    "contract_version": 2,
+                    "installation_id": "pixel-installation",
+                    "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                    "request_id": "baseline-request-2",
+                    "starting_token": "opaque-second-token",
+                },
+            )
+            completed = client.post(
+                BASELINE_COMPLETE_PATH,
+                headers=AUTHORIZATION,
+                json={
+                    "contract_version": 2,
+                    "installation_id": "pixel-installation",
+                    "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                    "request_id": "baseline-complete-2",
+                    "expected_token": "opaque-second-token",
+                    "baseline_generation": 2,
+                    "ranges": {
+                        "exercise": {"start_time": 0, "end_time": 0},
+                        "heart_rate": {"start_time": 0, "end_time": 0},
+                        "sleep": {"start_time": 0, "end_time": 0},
+                        "steps": {"start_time": 0, "end_time": 2000000000000},
+                    },
+                },
+            )
+        with closing(sqlite3.connect(root / "telemetry.sqlite3")) as database:
+            seen_count = database.execute(
+                "SELECT COUNT(*) FROM hc_baseline_seen"
+            ).fetchone()[0]
+
+    assert_eq(uploaded.status_code, 200)
+    assert_eq(completed.status_code, 200)
+    assert_eq(completed.json()["deleted"]["steps"], 501)
+    assert_eq(seen_count, 0)
+
+
+@test()
 def starting_a_baseline_persists_its_generation_and_starting_token() -> None:
     """A fresh upstream changes token becomes durable before baseline reads."""
     with TemporaryDirectory() as directory:
         root = Path(directory)
         with health_connect_client(root) as client:
             baseline_request = {
-                "contract_version": 1,
+                "contract_version": 2,
                 "installation_id": "pixel-installation",
                 "record_types": ["heart_rate", "sleep", "steps", "exercise"],
                 "request_id": "baseline-request-1",

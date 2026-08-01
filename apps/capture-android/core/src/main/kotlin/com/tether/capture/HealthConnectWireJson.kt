@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object HealthConnectWireJson {
-    private const val CONTRACT_VERSION = 1
+    private const val CONTRACT_VERSION = 2
 
     fun startBaselineRequest(request: StartBaselineRequest): JSONObject = JSONObject()
         .put("contract_version", CONTRACT_VERSION)
@@ -40,8 +40,7 @@ object HealthConnectWireJson {
                 type.wireName,
                 JSONObject()
                     .put("start_time", range.startTimeEpochMillis)
-                    .put("end_time", range.endTimeEpochMillis)
-                    .put("seen_record_ids", JSONArray(range.seenRecordIds.sorted())),
+                    .put("end_time", range.endTimeEpochMillis),
             )
         }
         return json

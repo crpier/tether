@@ -63,17 +63,28 @@ class AndroidHealthConnectSourceTest {
             clock = { Instant.ofEpochMilli(2_000) },
         )
 
-        val baseline = source.readBaseline(setOf(HealthConnectRecordType.STEPS))
+        val consumedIds = mutableListOf<String>()
+        val bounds = source.scanBaseline(setOf(HealthConnectRecordType.STEPS)) { records ->
+            consumedIds += records.map { it.metadata.id }
+            gateway.events += "consume(${records.joinToString(",") { it.metadata.id }})"
+        }
 
-        assertEquals(listOf("read(StepsRecord,null)", "read(StepsRecord,page-2)"), gateway.events)
-        assertEquals(listOf("steps-1", "steps-2"), baseline.records.map { it.metadata.id })
+        assertEquals(
+            listOf(
+                "read(StepsRecord,null)",
+                "consume(steps-1)",
+                "read(StepsRecord,page-2)",
+                "consume(steps-2)",
+            ),
+            gateway.events,
+        )
+        assertEquals(listOf("steps-1", "steps-2"), consumedIds)
         assertEquals(
             HealthConnectScanBounds(
                 startTimeEpochMillis = 0,
                 endTimeEpochMillis = 2_000,
-                seenRecordIds = setOf("steps-1", "steps-2"),
             ),
-            baseline.scannedBounds[HealthConnectRecordType.STEPS],
+            bounds[HealthConnectRecordType.STEPS],
         )
     }
 
