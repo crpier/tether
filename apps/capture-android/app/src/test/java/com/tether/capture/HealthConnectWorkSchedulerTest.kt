@@ -27,7 +27,7 @@ class HealthConnectWorkSchedulerTest {
                     interval = null,
                     requiresNetwork = true,
                     requiresCharging = false,
-                    replaceExisting = false,
+                    replaceExisting = true,
                 ),
             ),
             gateway.enqueued,
