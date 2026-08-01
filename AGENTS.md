@@ -8,6 +8,16 @@
 - When creating or editing a PR body with `gh`, write the markdown to a temporary file and use `--body-file`; do not pass multiline markdown through `--body`. Verify the rendered body with `gh pr view` afterward.
 - When doing feature/bug-fixing/refactoring or any code-related work, use TDD.
 
+## Production deployment
+
+- Canonical runbook: [`docs/deployment.md`](./docs/deployment.md).
+- Live tailnet target: `tether@tether`; deploy merged, validated `main` with
+  `TETHER_DEPLOY_HOST=tether@tether just deploy`.
+- `just deploy` updates only the image. Pull the VM checkout first when
+  `compose.yaml` or `deploy/` changes.
+- A rollback pins `TETHER_IMAGE_TAG` on the VM; remove the pin before deploying
+  forward. Verify HTTPS login/chat after every release.
+
 ## Debugging: logs and session data
 
 - When a bug is reported against a running `just dev`, read what the app actually

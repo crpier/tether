@@ -65,11 +65,37 @@ This repo builds the image **locally** (x86 → x86, same arch as the VM), pushe
 it to GHCR, then `ssh`es to the VM and pulls it — wrapped in `just deploy`. There
 is no CI; `main` staying green (the validation gate) is what stands in for it.
 
+### Live production and routine releases
+
+The live VM's tailnet host alias is `tether`; SSH as `tether@tether`. After a PR
+is merged, deploy a clean, validated `main` from the laptop:
+
+```sh
+git switch main
+git pull --ff-only
+# Run the validation gate from AGENTS.md before publishing.
+TETHER_DEPLOY_HOST=tether@tether just deploy
+```
+
+`just deploy` updates the image only. If the release changes `compose.yaml` or
+anything under `deploy/`, first update the VM checkout:
+
+```sh
+ssh tether@tether 'cd /srv/tether && git pull --ff-only'
+```
+
+A rollback leaves `TETHER_IMAGE_TAG` pinned in the VM's `.env`. Remove that line
+before a forward release; ordinary `just deploy` does not remove it. GHCR login
+and package-public bootstrap are covered under [First deploy](#3-first-deploy).
+
 ### 1. Provision the box (HITL)
 
-- Rent a Hetzner **CX43** (8 shared vCPU / 16 GB / 160 GB, ~€19.6/mo incl. VAT,
-  Falkenstein), Debian 13. Paste `deploy/cloud-init.yaml` into Hetzner's "Cloud
-  config" field at creation, after filling in its two placeholders:
+- Prefer a Hetzner **CX43** (8 shared vCPU / 16 GB / 160 GB) for generous
+  headroom. If cost-optimized capacity is unavailable, **CPX22** (2 vCPU / 4 GB /
+  80 GB, x86) is the field-tested minimum for the current single-user workload;
+  monitor memory/swap and resize if needed. Use Falkenstein and Debian 13. Paste
+  `deploy/cloud-init.yaml` into Hetzner's "Cloud config" field at creation,
+  after filling in its two placeholders:
   - `CHANGEME_SSH_PUBLIC_KEY` — your SSH public key (password auth is disabled;
     key-only from first boot).
   - `CHANGEME_TAILSCALE_AUTHKEY` — a one-shot Tailscale pre-auth key
@@ -78,10 +104,14 @@ is no CI; `main` staying green (the validation gate) is what stands in for it.
   cloud-init installs Docker (official repo) + the compose plugin, Tailscale,
   a 2 GB swapfile, unattended-upgrades (security-only, no auto-reboot), and
   creates `/srv/tether` (owned by the `tether` user) + `/srv/tether/pi-agent`.
-  It's sized generously for future side projects; Tether is the only tenant
-  today. The file doubles as the disaster-recovery runbook — see
-  [Total-loss recovery](#total-loss-recovery).
-- In the [tailnet admin console](https://login.tailscale.com/admin/dns), enable
+  The file doubles as the disaster-recovery runbook — see
+  [Total-loss recovery](#total-loss-recovery). Attach a Hetzner firewall with
+  inbound TCP 22 restricted to the provisioning laptop's current `/32`; leave
+  outbound unrestricted. Once tailnet SSH survives a reboot, remove that rule
+  so the firewall has no public inbound rules.
+- In the Tailscale Machines page, name the node `tether`; this becomes the
+  stable SSH/MagicDNS alias. In the
+  [tailnet admin console](https://login.tailscale.com/admin/dns), enable
   **MagicDNS** and **HTTPS Certificates**.
 - SSH in as `tether@<box-ip>` (or the tailnet name once Tailscale is up) and
   terminate HTTPS at the machine's `*.ts.net` name, proxying to the host:
@@ -90,17 +120,26 @@ is no CI; `main` staying green (the validation gate) is what stands in for it.
   ```
   This gives a real, browser-trusted cert with no domain to own and no certbot.
   `serve` (not `funnel`) keeps the app tailnet-private — only your own tailnet
-  devices reach it.
+  devices reach it. Revoke the one-shot auth key and delete any local rendered
+  cloud-init copy after provisioning succeeds.
 
 ### 2. Assemble secrets on the box
 
 1Password is the source of truth for every secret below — write them there
 first, then copy onto the VM (never the other way around).
 
+Cloud-init pre-creates `/srv/tether/pi-agent`, so `git clone ... .` would reject
+the nonempty destination. Initialize the checkout around that directory:
+
 ```sh
 ssh tether@<box>
 cd /srv/tether
-git clone <this-repo-url> .          # or `git pull` on redeploy — see below
+git init -b main
+git remote add origin https://github.com/crpier/tether.git
+git fetch origin main
+git checkout -B main origin/main
+git branch --set-upstream-to=origin/main main
+
 cp deploy/.env.example .env
 cp deploy/restic.env.example restic.env
 chmod 600 .env restic.env
@@ -111,18 +150,19 @@ Fill in `.env` (see the template's comments for detail on each var):
 `TETHER_APP_PASSWORD`, `TETHER_SESSION_SECRET`, `TETHER_STT_API_KEY`,
 `TETHER_DEFAULT_MODEL` / `TETHER_MODEL_ALLOWLIST`. Leave
 `TETHER_SECURE_COOKIES=true` (the template's default — the VM is only ever
-reached over Tailscale HTTPS). Then authorize the agent's model provider:
+reached over Tailscale HTTPS).
+
+The VM has no native Node/pnpm install. Authorize the provider locally with pi,
+then copy its credential and lock down permissions:
 
 ```sh
-mkdir -p /srv/tether/pi-agent && chmod 700 /srv/tether/pi-agent
-PI_CODING_AGENT_DIR=/srv/tether/pi-agent /srv/tether/apps/agent/node_modules/.bin/pi
-# /login openai-codex   (or /login opencode-go), then exit
+scp ~/.pi/agent/auth.json tether@<box>:/srv/tether/pi-agent/auth.json
+ssh tether@<box> 'chmod 700 /srv/tether/pi-agent && chmod 600 /srv/tether/pi-agent/auth.json'
 ```
 
-(That needs `apps/agent` installed on the VM once — `pnpm -C apps/agent install
---prod`, or just run `just pi-auth`-equivalent from a laptop over `ssh -L` and
-scp the resulting `auth.json` in. Either way it only has to happen once; the
-container's silent refresh keeps it current afterward.)
+The container silently refreshes it afterward. `pi-agent/auth.json` is durable
+across deploys but is not currently in the backup set; provider reauthorization
+or a separately secured copy is the recovery path.
 
 Fill in `restic.env` — see [Backups](#backups) below.
 
@@ -131,13 +171,16 @@ Fill in `restic.env` — see [Backups](#backups) below.
 From your laptop (not the VM):
 
 ```sh
-docker login ghcr.io -u <github-user>   # or: gh auth token | docker login ghcr.io -u <user> --password-stdin
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io -u <github-user> --password-stdin
 TETHER_DEPLOY_HOST=tether@<box> just deploy
 ```
 
 `just deploy` builds the image, tags it `:<git-sha>` and `:latest`, pushes both
 to `ghcr.io/crpier/tether`, then `ssh`es in and runs `docker compose pull &&
-docker compose up -d`.
+docker compose up -d`. A newly created GHCR package defaults private: after the
+first successful push, change the `tether` package visibility to public before
+the VM's anonymous pull. Images contain code, not runtime secrets.
 
 - `restart: unless-stopped` plus Docker-enabled-at-boot (cloud-init) keeps the
   host running across reboots and crashes.
@@ -149,11 +192,10 @@ If this is a fresh box (not yet holding real data), see
 
 ## Update flow
 
-```sh
-TETHER_DEPLOY_HOST=tether@<box> just deploy
-```
-Rebuilds, re-pushes `:<git-sha>` + `:latest`, and re-runs `pull && up -d` on the
-VM. The `data`/`model-cache` volumes are untouched.
+Use [Live production and routine releases](#live-production-and-routine-releases).
+The deploy rebuilds and pushes `:<git-sha>` + `:latest`, then runs `pull && up
+-d` on the VM. The `data`/`model-cache` volumes are untouched. Verify HTTPS
+login/chat after every release.
 
 ## Rollback
 
@@ -164,7 +206,8 @@ Pins `TETHER_IMAGE_TAG=<sha>` in the VM's `.env` (that tag must already exist on
 GHCR — `just deploy` always leaves the prior sha there) and re-runs `pull && up
 -d`. The `data` volume is untouched, so the source of truth survives. To resume
 tracking `latest`, remove the `TETHER_IMAGE_TAG` line from the VM's `.env` and
-redeploy.
+redeploy. Do this explicitly: ordinary `just deploy` currently does not clear
+the rollback pin.
 
 ## Migrating from local
 
@@ -174,20 +217,60 @@ Gmail sync workers and scheduled triggers both write, and two writers racing
 against the same upstream state (or double-firing a trigger) is a correctness
 bug, not just wasted API quota. Stop `just dev` for good once the VM is live.
 
+Local `kb_root` is `.tether/`, not `.tether/kb`; its top-level UUID-named
+Markdown files are the KB. Do not copy the whole directory: it also contains
+the live DB, OAuth files, logs, sessions, and disposable indexes.
+
+On the laptop, with local dev stopped:
+
 ```sh
-# 1. Snapshot the local SQLite DB (VACUUM INTO defragments + gives a consistent copy)
-sqlite3 .tether/tether.sqlite3 "VACUUM INTO '/tmp/tether-migrate.sqlite3'"
+rm -rf /tmp/tether-kb-migrate
+rm -f /tmp/tether-migrate.sqlite3
+sqlite3 .tether/tether.sqlite3 \
+  "VACUUM INTO '/tmp/tether-migrate.sqlite3'"
+mkdir -m 700 /tmp/tether-kb-migrate
+sqlite3 .tether/tether.sqlite3 \
+  "select id from memory where tethered_at is not null and deleted_at is null" |
+while read -r id; do
+  cp ".tether/${id}.md" /tmp/tether-kb-migrate/
+done
+sqlite3 /tmp/tether-migrate.sqlite3 "pragma integrity_check;"  # expect: ok
 
-# 2. Ship the DB snapshot + kb_root to the VM
-scp /tmp/tether-migrate.sqlite3 tether@<box>:/tmp/tether.sqlite3
-scp -r .tether/kb tether@<box>:/tmp/kb
-
-# 3. On the VM, load them into the running container's data volume
-ssh tether@<box>
-docker compose cp /tmp/tether.sqlite3 host:/data/tether.sqlite3
-docker compose cp /tmp/kb host:/data/kb
-docker compose restart host
+scp /tmp/tether-migrate.sqlite3 tether@<box>:/tmp/
+scp -r /tmp/tether-kb-migrate tether@<box>:/tmp/
 ```
+
+Stop the app and use a helper container to validate and atomically swap the
+volume contents. Keeping the old files until browser verification makes the
+cutover reversible:
+
+```sh
+ssh tether@<box>
+cd /srv/tether
+docker compose stop host
+docker compose run --rm --no-deps \
+  --entrypoint sh \
+  -v /tmp/tether-migrate.sqlite3:/import/tether.sqlite3:ro \
+  -v /tmp/tether-kb-migrate:/import/kb:ro \
+  host -c '
+    set -eu
+    cp /import/tether.sqlite3 /data/tether.sqlite3.migrate
+    python3 -c "import sqlite3; assert sqlite3.connect(\"/data/tether.sqlite3.migrate\").execute(\"pragma integrity_check\").fetchone() == (\"ok\",)"
+    rm -rf /data/kb.migrate
+    mkdir /data/kb.migrate
+    cp -a /import/kb/. /data/kb.migrate/
+    rm -f /data/tether.sqlite3.pre-migration
+    mv /data/tether.sqlite3 /data/tether.sqlite3.pre-migration
+    mv /data/tether.sqlite3.migrate /data/tether.sqlite3
+    rm -rf /data/kb.pre-migration
+    mv /data/kb /data/kb.pre-migration
+    mv /data/kb.migrate /data/kb
+  '
+docker compose start host
+```
+
+After counts and browser-visible data match, remove the `*.pre-migration`
+volume files and local/remote `/tmp` staging files.
 
 Then follow [YouTube ingestion](#youtube-ingestion) below to move the OAuth
 token over, and demote local dev: keep using `just dev` for iteration, but
@@ -249,10 +332,22 @@ assistant, which can `list_unlabeled_ebooks`) to attach titles to hashes.
 
 Nightly `restic` → Backblaze B2, client-side encrypted, run by a systemd timer
 **on the VM host, outside compose** (so it's independent of the app container's
-lifecycle). Snapshotted: a `sqlite3 VACUUM INTO` DB copy, `kb_root`, and `.env`.
-Retention: `--keep-daily 7 --keep-weekly 4 --prune`. Every run pings
+lifecycle). The script uses Python's SQLite driver inside the container to make
+a consistent `VACUUM INTO` snapshot, then backs up that DB, all of `/data/kb`,
+and `.env`. Retention: `--keep-daily 7 --keep-weekly 4 --prune`. Every run pings
 healthchecks.io — success, and `/fail` on any error via a shell trap — so a
 run that fails *or silently stops happening* (VM down, timer disabled) alerts.
+
+Current coverage is intentionally explicit:
+
+- Included: SQLite source of truth, `/data/kb`, and production `.env`.
+- `/data/kb` currently contains Markdown plus derived Lance indexes and pi
+  sessions. Backing those derived files is safe but made the first restore about
+  544 MiB; recovery does not depend on the index copy.
+- Excluded: `/srv/tether/pi-agent`, `/data/youtube`, future
+  `telemetry.sqlite3`, and other OAuth/ingestion state outside `/data/kb`.
+  Reauthorize those providers or protect them separately until coverage grows.
+- `restic.env` is restored from 1Password, not from the restic repository.
 
 ### One-time setup (on the VM)
 
@@ -289,33 +384,70 @@ journalctl -u tether-backup.service -e       # check the run
 
 ### Restore drill (do this before you need it)
 
+Because `backup.sh` passes its absolute temporary work directory to restic, a
+restore retains a random `tmp/tmp.*` prefix. Locate the DB rather than assuming
+a flat target path. Debian has Python 3 but the cloud-init package set does not
+install the `sqlite3` CLI:
+
 ```sh
 set -a; source /srv/tether/restic.env; set +a
-restic snapshots                              # find the snapshot id
+restic snapshots
+rm -rf /tmp/tether-restore
 restic restore latest --target /tmp/tether-restore
-sqlite3 /tmp/tether-restore/tether.sqlite3 "pragma integrity_check;"   # expect: ok
-ls /tmp/tether-restore/kb                     # kb_root markdown present
+db=$(find /tmp/tether-restore -type f -name tether.sqlite3 -print -quit)
+test -n "$db"
+python3 - "$db" <<'PY'
+import sqlite3
+import sys
+
+result = sqlite3.connect(sys.argv[1]).execute("pragma integrity_check").fetchone()
+print(result[0])
+assert result == ("ok",)
+PY
+root=$(dirname "$db")
+test -f "$root/env"
+find "$root/kb" -maxdepth 1 -type f -name '*.md' -print
 ```
-Also verify the dead-man's-switch: disable the timer, wait past the
-healthchecks.io check's grace period, and confirm the alert fires. Re-enable
-the timer afterward.
+
+Also verify the dead-man's-switch: temporarily shorten the healthchecks.io
+period/grace, reset it with a success ping, disable the timer, and confirm a
+missed-ping alert. Restore the 1-day period/2-hour grace, send a success ping,
+and re-enable the timer. If restic reports a stale lock after an interrupted
+drill, first verify no restic process is active, then run `restic unlock`.
 
 ### Total-loss recovery
 
 If the VM is gone entirely: 1Password (secrets) + this repo (cloud-init +
 compose + Dockerfile) + the B2 bucket (data) is everything needed to rebuild.
 
-1. Rent a fresh Hetzner CX43, paste `deploy/cloud-init.yaml` (filled in) —
+1. Rent a fresh x86 CX43 or CPX22, paste `deploy/cloud-init.yaml` (filled in) —
    see [Provision the box](#1-provision-the-box-hitl).
 2. Assemble `.env` and `restic.env` from 1Password — see
    [Assemble secrets on the box](#2-assemble-secrets-on-the-box) and the
    restore-drill commands above.
-3. `restic restore latest --target /srv/tether/restore`, then load the restored
-   SQLite + `kb` + `.env` into place the same way as
-   [Migrating from local](#migrating-from-local) (steps 2–3), and restore
-   `restic.env` itself from 1Password.
-4. `just deploy` (or `docker compose up -d --build` directly on the box) to
-   bring the app up, then re-enable `tether-backup.timer`.
+3. Restore latest to a scratch directory and locate its random restored root as
+   shown in the drill. Copy that root's `tether.sqlite3`, `kb`, and `env` into
+   the named volume/checkout using the stopped helper-container pattern in
+   [Migrating from local](#migrating-from-local). Restore `restic.env` from
+   1Password.
+4. Reauthorize/copy pi provider credentials and any enabled ingestion OAuth
+   state; those are outside the current backup set.
+5. Deploy from the laptop to bring the app up, verify data, then enable
+   `tether-backup.timer`.
+
+## Resource monitoring
+
+The single container includes Python, Node/pi, and FastEmbed, so its cgroup is
+the whole app runtime:
+
+```sh
+ssh tether@tether 'docker stats --no-stream tether-host-1; free -h'
+ssh tether@tether 'sudo journalctl -k --grep="out of memory\|oom-kill"'
+```
+
+On CPX22, resize if Tether sustains roughly 3 GiB, swap use keeps growing, or
+OOM events appear. Short CPU spikes around 100% are one vCPU and are expected
+while rebuilding derived indexes.
 
 ## Logs
 
