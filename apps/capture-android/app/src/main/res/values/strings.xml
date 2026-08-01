@@ -18,4 +18,23 @@
     <string name="transcript_prefix">Captured: %1$s</string>
     <string name="recording_too_short">Recording too short</string>
     <string name="mic_permission_denied">Microphone permission is required to record</string>
+    <string name="health_connect_rationale_title">Health Connect sync</string>
+    <string name="health_connect_rationale_body">Tether reads heart rate, sleep, steps, and exercise from Health Connect after you grant access. The phone only syncs raw records to your Tether host; it does not analyze health data.</string>
+    <string name="close">Close</string>
+    <string name="health_connect_section_title">Health Connect</string>
+    <string name="health_connect_available">Available</string>
+    <string name="health_connect_unavailable">Unavailable on this device</string>
+    <string name="health_connect_update_required">Install or update Health Connect</string>
+    <string name="health_connect_permissions_granted">Record access granted</string>
+    <string name="health_connect_permissions_missing">Record access required</string>
+    <string name="health_connect_optional_missing">Background/history access missing; sync is limited</string>
+    <string name="health_connect_idle">Not syncing</string>
+    <string name="health_connect_running">Sync running</string>
+    <string name="health_connect_never_synced">Last success: never</string>
+    <string name="health_connect_last_success">Last success: %1$s</string>
+    <string name="health_connect_last_failure">Last failure: %1$s</string>
+    <string name="health_connect_no_failure">Last failure: none</string>
+    <string name="health_connect_grant">Enable / grant</string>
+    <string name="health_connect_sync_now">Sync now</string>
+    <string name="health_connect_sync_queued">Health sync queued</string>
 </resources>
