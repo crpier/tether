@@ -673,6 +673,7 @@ export default function inspectTools(pi) {
             "triage_report",
             "update_artifact",
             "update_panel",
+            "web_search",
         ],
     )
     assert_not_in("bash", active_tools)

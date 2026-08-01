@@ -34,6 +34,7 @@ import { registerSearchYoutubeTool } from "./search_youtube.js";
 import { registerFetchYoutubeTranscriptTool } from "./fetch_youtube_transcript.js";
 import { registerIgnoreYoutubeVideoTool } from "./ignore_youtube_video.js";
 import { registerRetryYoutubeVideoTool } from "./retry_youtube_video.js";
+import { registerWebSearchTool } from "./web_search.js";
 import { registerCreateTriggerTool } from "./create_trigger.js";
 import { registerListTriggersTool } from "./list_triggers.js";
 import { registerDeleteTriggerTool } from "./delete_trigger.js";
@@ -88,6 +89,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerFetchYoutubeTranscriptTool(pi);
   registerIgnoreYoutubeVideoTool(pi);
   registerRetryYoutubeVideoTool(pi);
+  registerWebSearchTool(pi);
   registerCreateTriggerTool(pi);
   registerListTriggersTool(pi);
   registerDeleteTriggerTool(pi);

@@ -951,6 +951,43 @@
       }
     },
     {
+      "endpoint": "/internal/tools/web_search",
+      "name": "web_search",
+      "params_model": "WebSearchParams",
+      "schema": {
+        "$defs": {
+          "SearchDepth": {
+            "description": "Tavily search depth and its corresponding provider credit cost.",
+            "enum": ["basic", "advanced"],
+            "title": "SearchDepth",
+            "type": "string"
+          }
+        },
+        "description": "Search the current public web and return snippets plus extracted content.",
+        "properties": {
+          "query": {
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 5,
+            "maximum": 20,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "search_depth": {
+            "$ref": "#/$defs/SearchDepth",
+            "default": "basic"
+          }
+        },
+        "required": ["query"],
+        "title": "WebSearchParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/create_trigger",
       "name": "create_trigger",
       "params_model": "CreateTriggerParams",

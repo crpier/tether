@@ -17,6 +17,7 @@ from tether.kosync_tools import KOSYNC_TOOL_SPECS
 from tether.panel_tools import PANEL_TOOL_SPECS
 from tether.proposal_tools import PROPOSAL_TOOL_SPECS
 from tether.recall_tools import RECALL_TOOL_SPECS
+from tether.search_tools import SEARCH_TOOL_SPECS
 from tether.todo_tools import TODO_TOOL_SPECS
 from tether.tools import MEMORY_TOOL_SPECS, ToolSpec
 from tether.triage_tools import TRIAGE_TOOL_SPECS
@@ -36,6 +37,7 @@ def all_tool_specs() -> tuple[ToolSpec, ...]:
         *TODO_TOOL_SPECS,
         *TRIAGE_TOOL_SPECS,
         *YOUTUBE_TOOL_SPECS,
+        *SEARCH_TOOL_SPECS,
         *TRIGGER_TOOL_SPECS,
         *RECALL_TOOL_SPECS,
         *CONVERSATION_HISTORY_TOOL_SPECS,
