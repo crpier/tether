@@ -1592,6 +1592,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/push/config": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Expose the VAPID public key the browser needs to subscribe. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["PushConfigRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/push/status": {
     parameters: {
       query?: never;
@@ -3228,6 +3264,14 @@ export interface components {
     ProposeEssayGradeRequest: {
       /** Answer Text */
       answer_text: string;
+    };
+    /**
+     * PushConfigRead
+     * @description HTTP representation of browser push configuration.
+     */
+    PushConfigRead: {
+      /** Vapid Public Key */
+      vapid_public_key: string;
     };
     /**
      * PushStatusRead

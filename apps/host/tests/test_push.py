@@ -16,13 +16,39 @@ from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from starlette.testclient import TestClient
 
-from tether.push import PushService, create_push_schema
+from tether.push import (
+    PushService,
+    StoredPushSender,
+    WebPushGoneError,
+    create_push_schema,
+)
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
 ENDPOINT = "https://push.example/abc"
+
+
+class RecordingPushTransport:
+    """Fake Web Push transport recording attempted sends."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str, str, str]] = []
+        self.gone_endpoints: set[str] = set()
+
+    async def send(
+        self,
+        *,
+        endpoint: str,
+        p256dh: str,
+        auth: str,
+        body: str,
+    ) -> None:
+        """Record or report a gone subscription."""
+        if endpoint in self.gone_endpoints:
+            raise WebPushGoneError(endpoint)
+        self.sent.append((endpoint, p256dh, auth, body))
 
 
 def _due_soon() -> str:
@@ -94,7 +120,51 @@ async def resubscribe_after_unsubscribe_revives_the_row() -> None:
     assert_eq(status.count, 1)
 
 
-def make_client(root: Path, *, tick_seconds: float = 30.0) -> TestClient:
+@test()
+async def fake_browser_stub_subscriptions_are_not_sent() -> None:
+    """Legacy placeholder subscriptions are ignored by real Web Push delivery."""
+    service = await load_fixture(push_service())
+    transport = RecordingPushTransport()
+    _ = await service.subscribe("urn:tether:browser:fake", p256dh="k", auth="a")
+
+    await StoredPushSender(push_service=service, transport=transport).send("hello")
+
+    assert_eq(transport.sent, [])
+
+
+@test()
+async def stored_sender_delivers_to_live_subscriptions() -> None:
+    """The push sender sends a notification body to each live subscription."""
+    service = await load_fixture(push_service())
+    transport = RecordingPushTransport()
+    _ = await service.subscribe(ENDPOINT, p256dh="k", auth="a")
+
+    await StoredPushSender(push_service=service, transport=transport).send("hello")
+
+    assert_eq(transport.sent, [(ENDPOINT, "k", "a", "hello")])
+
+
+@test()
+async def stored_sender_prunes_gone_subscriptions() -> None:
+    """A gone browser subscription is removed when the push service rejects it."""
+    service = await load_fixture(push_service())
+    transport = RecordingPushTransport()
+    transport.gone_endpoints.add(ENDPOINT)
+    _ = await service.subscribe(ENDPOINT, p256dh="k", auth="a")
+
+    await StoredPushSender(push_service=service, transport=transport).send("hello")
+    status = await service.status(ENDPOINT)
+
+    assert_eq(status.subscribed, False)
+    assert_eq(status.count, 0)
+
+
+def make_client(
+    root: Path,
+    *,
+    tick_seconds: float = 30.0,
+    vapid_public_key: str = "",
+) -> TestClient:
     """Create a test app with isolated persistent DB and `.tether` root."""
     return TestClient(
         create_app(
@@ -104,6 +174,7 @@ def make_client(root: Path, *, tick_seconds: float = 30.0) -> TestClient:
                 kb_root=root / ".tether",
                 session_secret=SESSION_SECRET,
                 scheduler_tick_seconds=tick_seconds,
+                vapid_public_key=vapid_public_key,
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
@@ -114,6 +185,21 @@ def login(client: TestClient) -> None:
     """Authenticate the test browser."""
     response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
     assert_eq(response.status_code, 204)
+
+
+@test()
+def push_config_exposes_the_vapid_public_key() -> None:
+    """The browser can discover the VAPID public key before subscribing."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(Path(directory), vapid_public_key="public-key") as client,
+    ):
+        login(client)
+
+        response = client.get("/api/push/config")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), {"vapid_public_key": "public-key"})
 
 
 @test()

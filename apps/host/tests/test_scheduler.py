@@ -34,6 +34,7 @@ from tether.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from tether.scheduler import (
     EphemeralPiConfig,
     EphemeralPiPromptRunner,
+    PushDeliveryNotifier,
     Scheduler,
     SchedulerConfig,
     TriggerDispatcher,
@@ -117,6 +118,17 @@ class ConcurrencyProbeNotifier:
         await asyncio.sleep(0.01)
         self.current -= 1
         self.delivered += 1
+
+
+class RecordingPushSender:
+    """Records Web Push messages sent for fired triggers."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, body: str) -> None:
+        """Record one outgoing push body."""
+        self.sent.append(body)
 
 
 class StubRunner:
@@ -250,6 +262,26 @@ async def tick_runs_an_agent_prompt_and_delivers_the_result() -> None:
 
     assert_eq(runner.prompts, ["summarise my day"])
     assert_eq(notifier.delivered, [(str(trigger.id), "you have 3 meetings")])
+
+
+@test()
+async def push_delivery_notifier_keeps_existing_delivery_and_sends_web_push() -> None:
+    """Closed-tab delivery is added without removing the existing notifier path."""
+    service = await load_fixture(scheduler_service())
+    trigger = await add_due_message(service, "call the dentist")
+    browser_notifier = RecordingNotifier()
+    push_sender = RecordingPushSender()
+    scheduler = build_scheduler(
+        service,
+        notifier=PushDeliveryNotifier(browser_notifier, push_sender),
+        clock=ManualClock(BASE),
+    )
+
+    _ = await scheduler.tick()
+    await scheduler.drain()
+
+    assert_eq(browser_notifier.delivered, [(str(trigger.id), "call the dentist")])
+    assert_eq(push_sender.sent, ["call the dentist"])
 
 
 @test()

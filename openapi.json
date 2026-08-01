@@ -1723,6 +1723,20 @@
         "title": "ProposeEssayGradeRequest",
         "type": "object"
       },
+      "PushConfigRead": {
+        "description": "HTTP representation of browser push configuration.",
+        "properties": {
+          "vapid_public_key": {
+            "title": "Vapid Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vapid_public_key"
+        ],
+        "title": "PushConfigRead",
+        "type": "object"
+      },
       "PushStatusRead": {
         "description": "HTTP representation of the browser's push-subscription status.",
         "properties": {
@@ -4124,6 +4138,23 @@
           }
         },
         "summary": "Reject a pending proposal (terminal), returning any revocable grants."
+      }
+    },
+    "/api/push/config": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushConfigRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Expose the VAPID public key the browser needs to subscribe."
       }
     },
     "/api/push/status": {

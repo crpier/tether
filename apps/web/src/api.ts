@@ -10,6 +10,7 @@ export type Session = components["schemas"]["SessionResponse"];
 export type Trigger = components["schemas"]["TriggerRead"];
 export type CreateTrigger = components["schemas"]["CreateTriggerRequest"];
 export type UpdateTrigger = components["schemas"]["UpdateTriggerRequest"];
+export type PushConfig = components["schemas"]["PushConfigRead"];
 export type PushStatus = components["schemas"]["PushStatusRead"];
 export type TriggerRecurrence = components["schemas"]["TriggerRecurrence"];
 export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
@@ -102,6 +103,7 @@ export interface TetherApi {
   createTrigger(body: CreateTrigger): Promise<Trigger>;
   updateTrigger(triggerId: string, body: UpdateTrigger): Promise<Trigger>;
   deleteTrigger(triggerId: string, version: number): Promise<void>;
+  getPushConfig(): Promise<PushConfig>;
   getPushStatus(endpoint: string): Promise<PushStatus>;
   subscribePush(endpoint: string, p256dh: string, auth: string): Promise<void>;
   unsubscribePush(endpoint: string): Promise<PushStatus>;
@@ -295,6 +297,10 @@ export function createRestApi(
         params: { path: { trigger_id: triggerId }, query: { version } },
       });
       requireOk(response);
+    },
+    async getPushConfig() {
+      const { data, response } = await client.GET("/api/push/config");
+      return requireData(data, response);
     },
     async getPushStatus(endpoint) {
       const { data, response } = await client.GET("/api/push/status", {
