@@ -249,7 +249,7 @@ class HealthConnectSyncCoordinator(
             StartBaselineRequest(
                 installationId = installationId,
                 recordTypes = recordTypes,
-                requestId = requestIds.stable("baseline-start:$installationId:$startingToken"),
+                requestId = stableRequestId("baseline-start:$installationId:$startingToken"),
                 startingToken = startingToken,
             ),
         )
@@ -267,7 +267,7 @@ class HealthConnectSyncCoordinator(
                         HealthConnectBatchRequest(
                             installationId = installationId,
                             recordTypes = recordTypes,
-                            requestId = requestIds.stable(
+                            requestId = stableRequestId(
                                 "baseline-page:$installationId:$startingToken:${records.recordIdentityKey()}",
                             ),
                             mode = HealthConnectBatchMode.Baseline,
@@ -289,7 +289,7 @@ class HealthConnectSyncCoordinator(
             CompleteBaselineRequest(
                 installationId = installationId,
                 recordTypes = recordTypes,
-                requestId = requestIds.stable(
+                requestId = stableRequestId(
                     "baseline-complete:$installationId:${baselineCursor.generation}:$startingToken:${scannedBounds.identityKey()}",
                 ),
                 generation = baselineCursor.generation,
@@ -320,7 +320,7 @@ class HealthConnectSyncCoordinator(
             HealthConnectBatchRequest(
                 installationId = installationId,
                 recordTypes = recordTypes,
-                requestId = requestIds.stable(
+                requestId = stableRequestId(
                     "changes:$installationId:$expectedToken:${changes.nextToken}:${changes.records.recordIdentityKey()}:${changes.deletions.deletionIdentityKey()}",
                 ),
                 mode = HealthConnectBatchMode.Changes,
@@ -358,6 +358,9 @@ class HealthConnectSyncCoordinator(
             is BatchUploadResult.Conflict -> HealthConnectSyncResult.Failed(result.reason)
         }
     }
+
+    private fun stableRequestId(key: String): String =
+        requestIds.stable("health-connect-v2:$key")
 
     private fun List<HealthConnectRecord>.recordIdentityKey(): String = joinToString(",") { record ->
         "${record.recordType.wireName}:${record.metadata.id}:${record.metadata.lastModifiedTimeEpochMillis}"

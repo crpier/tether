@@ -2,6 +2,7 @@ package com.tether.capture
 
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HealthConnectSyncCoordinatorTest {
@@ -23,15 +24,17 @@ class HealthConnectSyncCoordinatorTest {
             changes = HealthConnectChanges(emptyList(), emptyList(), "next"),
         )
         val host = FakeHealthConnectHost(events, HostSyncState.Initial, 0)
+        val requestIds = CapturingRequestIds()
         val coordinator = HealthConnectSyncCoordinator(
             "installation",
             setOf(HealthConnectRecordType.STEPS),
             health,
             host,
-            SequentialRequestIds("request"),
+            requestIds,
         )
 
         assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
+        assertTrue(requestIds.stableKeys.all { it.startsWith("health-connect-v2:") })
         assertEquals(
             listOf(
                 "host.uploadBaseline(request-2,token,token,records=500)",
@@ -149,6 +152,17 @@ class HealthConnectSyncCoordinatorTest {
             ),
             events,
         )
+    }
+}
+
+private class CapturingRequestIds : RequestIds {
+    val stableKeys = mutableListOf<String>()
+
+    override fun next(): String = "request-${stableKeys.size + 1}"
+
+    override fun stable(key: String): String {
+        stableKeys += key
+        return "request-${stableKeys.size}"
     }
 }
 
