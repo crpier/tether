@@ -2801,13 +2801,16 @@ export interface components {
     };
     /**
      * AuthoritativeScanRange
-     * @description Exact time range and IDs returned authoritatively by Health Connect.
+     * @description Exact time range scanned authoritatively by Health Connect.
      */
     AuthoritativeScanRange: {
       /** End Time */
       end_time: number;
-      /** Seen Record Ids */
-      seen_record_ids: string[];
+      /**
+       * Seen Record Ids
+       * @default null
+       */
+      seen_record_ids: string[] | null;
       /** Start Time */
       start_time: number;
     };
@@ -2901,9 +2904,9 @@ export interface components {
       baseline_generation: number;
       /**
        * Contract Version
-       * @constant
+       * @enum {integer}
        */
-      contract_version: 1;
+      contract_version: 1 | 2;
       /** Expected Token */
       expected_token: string;
       /** Installation Id */
@@ -3326,9 +3329,9 @@ export interface components {
     HealthConnectBatchRequest: {
       /**
        * Contract Version
-       * @constant
+       * @enum {integer}
        */
-      contract_version: 1;
+      contract_version: 1 | 2;
       /** Deletions */
       deletions: components["schemas"]["HealthConnectDeletion"][];
       /** Expected Token */
@@ -3950,9 +3953,9 @@ export interface components {
     StartHealthConnectBaselineRequest: {
       /**
        * Contract Version
-       * @constant
+       * @enum {integer}
        */
-      contract_version: 1;
+      contract_version: 1 | 2;
       /** Installation Id */
       installation_id: string;
       /** Record Types */

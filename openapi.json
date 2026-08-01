@@ -322,19 +322,27 @@
       },
       "AuthoritativeScanRange": {
         "additionalProperties": false,
-        "description": "Exact time range and IDs returned authoritatively by Health Connect.",
+        "description": "Exact time range scanned authoritatively by Health Connect.",
         "properties": {
           "end_time": {
             "title": "End Time",
             "type": "integer"
           },
           "seen_record_ids": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100000,
-            "title": "Seen Record Ids",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seen Record Ids"
           },
           "start_time": {
             "title": "Start Time",
@@ -343,8 +351,7 @@
         },
         "required": [
           "start_time",
-          "end_time",
-          "seen_record_ids"
+          "end_time"
         ],
         "title": "AuthoritativeScanRange",
         "type": "object"
@@ -488,7 +495,10 @@
             "type": "integer"
           },
           "contract_version": {
-            "const": 1,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Contract Version",
             "type": "integer"
           },
@@ -1514,7 +1524,10 @@
         "additionalProperties": false,
         "properties": {
           "contract_version": {
-            "const": 1,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Contract Version",
             "type": "integer"
           },
@@ -3021,7 +3034,10 @@
         "additionalProperties": false,
         "properties": {
           "contract_version": {
-            "const": 1,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Contract Version",
             "type": "integer"
           },

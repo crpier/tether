@@ -34,8 +34,9 @@ class HealthConnectSyncCoordinatorTest {
         assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
         assertEquals(
             listOf(
-                "host.uploadBaseline(request-2,token,token,records=1000)",
-                "host.uploadBaseline(request-3,token,token,records=1)",
+                "host.uploadBaseline(request-2,token,token,records=500)",
+                "host.uploadBaseline(request-3,token,token,records=500)",
+                "host.uploadBaseline(request-4,token,token,records=1)",
             ),
             events.filter { it.startsWith("host.uploadBaseline") },
         )
@@ -140,9 +141,9 @@ class HealthConnectSyncCoordinatorTest {
                 "host.getSyncState",
                 "health.getChangesToken",
                 "host.startBaseline(token-before-read)",
-                "health.readBaseline(HEART_RATE,STEPS)",
+                "health.scanBaseline(HEART_RATE,STEPS)",
                 "host.uploadBaseline(request-2,token-before-read,token-before-read,records=1)",
-                "host.completeBaseline(token-before-read,seen=1)",
+                "host.completeBaseline(token-before-read)",
                 "health.readChanges(token-before-read)",
                 "host.uploadChanges(request-4,token-before-read,token-after-change,records=1)",
             ),
@@ -162,18 +163,18 @@ private class FakeHealthConnectSource(
         return startingToken
     }
 
-    override suspend fun readBaseline(recordTypes: Set<HealthConnectRecordType>): HealthConnectBaselinePage {
-        events += "health.readBaseline(${recordTypes.joinToString(",")})"
-        return HealthConnectBaselinePage(
-            records = baselineRecords,
-            scannedBounds = recordTypes.associateWith {
-                HealthConnectScanBounds(
-                    startTimeEpochMillis = 1_699_990_000_000,
-                    endTimeEpochMillis = 1_700_010_000_000,
-                    seenRecordIds = baselineRecords.filter { record -> record.recordType == it }.map { record -> record.metadata.id }.toSet(),
-                )
-            },
-        )
+    override suspend fun scanBaseline(
+        recordTypes: Set<HealthConnectRecordType>,
+        consumePage: suspend (List<HealthConnectRecord>) -> Unit,
+    ): Map<HealthConnectRecordType, HealthConnectScanBounds> {
+        events += "health.scanBaseline(${recordTypes.joinToString(",")})"
+        baselineRecords.chunked(500).forEach { consumePage(it) }
+        return recordTypes.associateWith {
+            HealthConnectScanBounds(
+                startTimeEpochMillis = 1_699_990_000_000,
+                endTimeEpochMillis = 1_700_010_000_000,
+            )
+        }
     }
 
     override suspend fun readChanges(token: String): HealthConnectChanges {
@@ -236,8 +237,7 @@ private class FakeHealthConnectHost(
     }
 
     override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor {
-        val seen = request.scannedBounds.values.sumOf { it.seenRecordIds.size }
-        events += "host.completeBaseline(${request.expectedToken},seen=$seen)"
+        events += "host.completeBaseline(${request.expectedToken})"
         return HostSyncCursor(state = HostSyncState.Changes, generation = request.generation, token = request.expectedToken)
     }
 }

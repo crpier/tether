@@ -148,8 +148,11 @@ $EDITOR .env restic.env
 ```
 
 Fill in `.env` (see the template's comments for detail on each var):
-`TETHER_APP_PASSWORD`, `TETHER_SESSION_SECRET`, `TETHER_STT_API_KEY`,
-`TETHER_DEFAULT_MODEL` / `TETHER_MODEL_ALLOWLIST`. Leave
+`TETHER_APP_PASSWORD`, `TETHER_SESSION_SECRET`, `TETHER_API_TOKEN`,
+`TETHER_STT_API_KEY`, `TETHER_DEFAULT_MODEL` / `TETHER_MODEL_ALLOWLIST`.
+Generate `TETHER_API_TOKEN` independently and enter the same value in the
+phone/watch capture settings; it is the static bearer credential for those
+non-browser clients. Leave
 `TETHER_SECURE_COOKIES=true` (the template's default — the VM is only ever
 reached over Tailscale HTTPS).
 

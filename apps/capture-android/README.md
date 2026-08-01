@@ -96,7 +96,7 @@ The section also shows running state, last success, and a sanitized last failure
 raw values, notes, and opaque cursor tokens are never displayed or logged.
 
 The host must include the Health Connect API from
-[`docs/health-connect-wire-v1.md`](../../docs/health-connect-wire-v1.md).
+[`docs/health-connect-wire-v2.md`](../../docs/health-connect-wire-v2.md).
 
 ### Manual worker validation
 

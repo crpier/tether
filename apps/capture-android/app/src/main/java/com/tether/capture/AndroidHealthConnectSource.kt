@@ -90,29 +90,30 @@ class AndroidHealthConnectSource(
     override suspend fun getChangesToken(recordTypes: Set<HealthConnectRecordType>): String =
         gateway.getChangesToken(recordTypes.toAndroidRecordClasses())
 
-    override suspend fun readBaseline(recordTypes: Set<HealthConnectRecordType>): HealthConnectBaselinePage {
+    override suspend fun scanBaseline(
+        recordTypes: Set<HealthConnectRecordType>,
+        consumePage: suspend (List<HealthConnectRecord>) -> Unit,
+    ): Map<HealthConnectRecordType, HealthConnectScanBounds> {
         val end = clock()
         val start = baselineStart(end)
-        val records = mutableListOf<HealthConnectRecord>()
         val bounds = mutableMapOf<HealthConnectRecordType, HealthConnectScanBounds>()
         for (recordType in recordTypes) {
-            val seen = mutableSetOf<String>()
             var pageToken: String? = null
             do {
                 val page = gateway.readRecords(recordType.toAndroidRecordClass(), start, end, pageToken)
                 val mapped = page.records.mapNotNull { it.toWireRecordOrNull() }
-                records += mapped
                 recordTypeIndex.remember(mapped.map { it.recordType to it.metadata.id })
-                seen += mapped.map { it.metadata.id }
+                if (mapped.isNotEmpty()) {
+                    consumePage(mapped)
+                }
                 pageToken = page.nextPageToken
             } while (pageToken != null)
             bounds[recordType] = HealthConnectScanBounds(
                 startTimeEpochMillis = start.toEpochMilli(),
                 endTimeEpochMillis = end.toEpochMilli(),
-                seenRecordIds = seen,
             )
         }
-        return HealthConnectBaselinePage(records = records, scannedBounds = bounds)
+        return bounds
     }
 
     override suspend fun readChanges(token: String): HealthConnectChanges {

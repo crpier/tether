@@ -105,9 +105,9 @@ class HealthConnectWireJsonTest {
 
     private fun fixtureText(): String {
         val candidates = listOf(
-            File("../../host/tests/fixtures/health_connect/v1/representative-batch.json"),
-            File("../host/tests/fixtures/health_connect/v1/representative-batch.json"),
-            File("apps/host/tests/fixtures/health_connect/v1/representative-batch.json"),
+            File("../../host/tests/fixtures/health_connect/v2/representative-batch.json"),
+            File("../host/tests/fixtures/health_connect/v2/representative-batch.json"),
+            File("apps/host/tests/fixtures/health_connect/v2/representative-batch.json"),
         )
         return candidates.first { it.exists() }.readText()
     }

@@ -122,13 +122,8 @@ data class HealthConnectDeletion(
 data class HealthConnectScanBounds(
     val startTimeEpochMillis: Long,
     val endTimeEpochMillis: Long,
-    val seenRecordIds: Set<String>,
 )
 
-data class HealthConnectBaselinePage(
-    val records: List<HealthConnectRecord>,
-    val scannedBounds: Map<HealthConnectRecordType, HealthConnectScanBounds>,
-)
 
 data class HealthConnectChanges(
     val records: List<HealthConnectRecord>,
@@ -142,7 +137,10 @@ class HealthConnectChangesTokenExpiredException : RuntimeException("Health Conne
 interface HealthConnectSource {
     suspend fun getChangesToken(recordTypes: Set<HealthConnectRecordType>): String
 
-    suspend fun readBaseline(recordTypes: Set<HealthConnectRecordType>): HealthConnectBaselinePage
+    suspend fun scanBaseline(
+        recordTypes: Set<HealthConnectRecordType>,
+        consumePage: suspend (List<HealthConnectRecord>) -> Unit,
+    ): Map<HealthConnectRecordType, HealthConnectScanBounds>
 
     suspend fun readChanges(token: String): HealthConnectChanges
 }
@@ -223,6 +221,8 @@ sealed class HealthConnectSyncResult {
     data class Failed(val reason: String) : HealthConnectSyncResult()
 }
 
+private class BaselineUploadRejectedException : RuntimeException()
+
 class HealthConnectSyncCoordinator(
     private val installationId: String,
     private val recordTypes: Set<HealthConnectRecordType>,
@@ -260,36 +260,41 @@ class HealthConnectSyncCoordinator(
         baselineCursor: HostSyncCursor,
         startingToken: String,
     ): HealthConnectSyncResult {
-        val baseline = health.readBaseline(recordTypes)
-        for (records in baseline.records.chunked(MAX_PARENT_RECORDS_PER_BATCH)) {
-            val baselineResult = host.uploadBatch(
-                HealthConnectBatchRequest(
-                    installationId = installationId,
-                    recordTypes = recordTypes,
-                    requestId = requestIds.stable(
-                        "baseline-page:$installationId:$startingToken:${records.recordIdentityKey()}",
-                    ),
-                    mode = HealthConnectBatchMode.Baseline,
-                    expectedToken = startingToken,
-                    nextToken = startingToken,
-                    records = records,
-                    deletions = emptyList(),
-                ),
-            )
-            if (baselineResult != BatchUploadResult.Accepted) {
-                return HealthConnectSyncResult.Failed("baseline cursor changed")
+        val scannedBounds = try {
+            health.scanBaseline(recordTypes) { page ->
+                for (records in page.chunked(MAX_PARENT_RECORDS_PER_BATCH)) {
+                    val baselineResult = host.uploadBatch(
+                        HealthConnectBatchRequest(
+                            installationId = installationId,
+                            recordTypes = recordTypes,
+                            requestId = requestIds.stable(
+                                "baseline-page:$installationId:$startingToken:${records.recordIdentityKey()}",
+                            ),
+                            mode = HealthConnectBatchMode.Baseline,
+                            expectedToken = startingToken,
+                            nextToken = startingToken,
+                            records = records,
+                            deletions = emptyList(),
+                        ),
+                    )
+                    if (baselineResult != BatchUploadResult.Accepted) {
+                        throw BaselineUploadRejectedException()
+                    }
+                }
             }
+        } catch (_: BaselineUploadRejectedException) {
+            return HealthConnectSyncResult.Failed("baseline cursor changed")
         }
         host.completeBaseline(
             CompleteBaselineRequest(
                 installationId = installationId,
                 recordTypes = recordTypes,
                 requestId = requestIds.stable(
-                    "baseline-complete:$installationId:${baselineCursor.generation}:$startingToken:${baseline.scannedBounds.identityKey()}",
+                    "baseline-complete:$installationId:${baselineCursor.generation}:$startingToken:${scannedBounds.identityKey()}",
                 ),
                 generation = baselineCursor.generation,
                 expectedToken = startingToken,
-                scannedBounds = baseline.scannedBounds,
+                scannedBounds = scannedBounds,
             ),
         )
         val changes = health.readChanges(startingToken)
@@ -364,7 +369,7 @@ class HealthConnectSyncCoordinator(
 
     private fun Map<HealthConnectRecordType, HealthConnectScanBounds>.identityKey(): String =
         entries.sortedBy { it.key.wireName }.joinToString(";") { (type, bounds) ->
-            "${type.wireName}:${bounds.startTimeEpochMillis}:${bounds.endTimeEpochMillis}:${bounds.seenRecordIds.sorted().joinToString(",")}"
+            "${type.wireName}:${bounds.startTimeEpochMillis}:${bounds.endTimeEpochMillis}"
         }
 
     companion object {
