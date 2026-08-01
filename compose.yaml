@@ -20,6 +20,7 @@ services:
       # Source of truth + derived KB live on the durable `data` volume, separate
       # from the image so a redeploy never touches them.
       TETHER_DATABASE_PATH: /data/tether.sqlite3
+      TETHER_TELEMETRY_DATABASE_PATH: /data/telemetry.sqlite3
       TETHER_KB_ROOT: /data/kb
       FASTEMBED_CACHE_PATH: /cache/fastembed
       # YouTube OAuth state lives on the durable `data` volume (not the image):
