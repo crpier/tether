@@ -45,12 +45,16 @@ def chunk_transcript(
         return []
     chunks: list[str] = []
     current: list[str] = []
+    current_chars = 0
     for word in words:
         addition = len(word) + (1 if current else 0)
-        if current and _measured(current) + addition > max_chars:
+        if current and current_chars + addition > max_chars:
             chunks.append(" ".join(current))
             current = _overlap_tail(current, overlap_chars)
+            current_chars = _measured(current)
+            addition = len(word) + (1 if current else 0)
         current.append(word)
+        current_chars += addition
     if current:
         chunks.append(" ".join(current))
     return chunks
@@ -58,9 +62,12 @@ def chunk_transcript(
 
 def _overlap_tail(words: list[str], overlap_chars: int) -> list[str]:
     """The trailing run of `words` that fits within `overlap_chars`."""
-    tail: list[str] = []
+    reversed_tail: list[str] = []
+    tail_chars = 0
     for word in reversed(words):
-        if _measured([word, *tail]) > overlap_chars:
+        addition = len(word) + (1 if reversed_tail else 0)
+        if tail_chars + addition > overlap_chars:
             break
-        tail.insert(0, word)
-    return tail
+        reversed_tail.append(word)
+        tail_chars += addition
+    return list(reversed(reversed_tail))

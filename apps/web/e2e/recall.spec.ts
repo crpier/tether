@@ -1,9 +1,6 @@
 import { expect, test } from "./fixtures";
 
-test("recall due prompts render inside the Inbox", async ({
-  page,
-  login,
-}) => {
+test("recall due prompts render inside the Inbox", async ({ page, login }) => {
   await login();
 
   await page

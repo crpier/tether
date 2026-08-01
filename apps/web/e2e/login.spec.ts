@@ -19,6 +19,8 @@ test("logs in and lands on pure chat, with the nav present", async ({
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav).toBeVisible();
   for (const label of ["Chat", "Proposals", "Inbox", "Browse", "Settings"]) {
-    await expect(nav.getByRole("link", { name: new RegExp(`^${label}`) })).toBeVisible();
+    await expect(
+      nav.getByRole("link", { name: new RegExp(`^${label}`) }),
+    ).toBeVisible();
   }
 });

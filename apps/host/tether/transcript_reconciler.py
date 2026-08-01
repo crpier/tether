@@ -43,8 +43,10 @@ if TYPE_CHECKING:
     from tether.embeddings import Embedder
     from tether.logging import Logger
 
-# Embed in bounded batches so a large corpus never builds one giant request.
-_DEFAULT_EMBED_BATCH = 256
+# Transformer inference memory grows steeply with batch size because every
+# document is padded to the longest sequence. Keep cold corpus rebuilds within
+# the memory budget of small self-hosted machines.
+_DEFAULT_EMBED_BATCH = 8
 
 
 class TranscriptIndexPort(Protocol):

@@ -61,6 +61,7 @@ class CountingEmbedder:
 
     def __init__(self, inner: Embedder) -> None:
         self._inner: Embedder = inner
+        self.batch_sizes: list[int] = []
         self.documents_embedded: int = 0
 
     @property
@@ -72,6 +73,7 @@ class CountingEmbedder:
         return self._inner.vector_dim
 
     async def embed_documents(self, texts: Sequence[str]) -> list[Vector]:
+        self.batch_sizes.append(len(texts))
         self.documents_embedded += len(texts)
         return await self._inner.embed_documents(texts)
 
@@ -143,6 +145,22 @@ async def fresh_index_embeds_and_indexes_every_chunk() -> None:
     assert_eq(report.embedded, len(h.index.docs))
     assert_eq(h.embedder.documents_embedded, len(h.index.docs))
     assert_eq({doc.video_id for doc in h.index.docs.values()}, {"vid1"})
+
+
+@test()
+async def cold_reconciliation_bounds_each_embedding_batch() -> None:
+    """A large cold index never becomes one unbounded inference request."""
+    h = await load_fixture(harness())
+    await _add_video(
+        h.database,
+        "vid1",
+        transcript=" ".join(f"word-{index}" for index in range(2_000)),
+    )
+
+    report = await h.reconciler.reconcile(logger=_logger())
+
+    assert_eq(sum(h.embedder.batch_sizes), report.embedded)
+    assert_true(max(h.embedder.batch_sizes) <= 8)
 
 
 @test()
