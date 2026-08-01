@@ -8,7 +8,9 @@ overlap, and coverage without a model or LanceDB.
 
 from __future__ import annotations
 
-from snektest import assert_eq, assert_true, test
+import time
+
+from snektest import assert_eq, assert_lt, assert_true, test
 
 from tether.transcript_chunks import chunk_transcript
 
@@ -60,6 +62,19 @@ def a_single_oversized_token_becomes_its_own_chunk() -> None:
     giant = "x" * 50
     chunks = chunk_transcript(f"{giant} tail", max_chars=20, overlap_chars=5)
     assert_eq(chunks[0], giant)
+
+
+@test()
+def large_transcript_chunks_within_cpu_budget() -> None:
+    """Corpus-sized inputs do not repeatedly rescan the current window."""
+    text = "word " * 1_000_000
+
+    started_at = time.monotonic()
+    chunks = chunk_transcript(text)
+    elapsed_seconds = time.monotonic() - started_at
+
+    assert_true(len(chunks) > 1)
+    assert_lt(elapsed_seconds, 2.0)
 
 
 @test()
