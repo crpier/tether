@@ -104,7 +104,7 @@ function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
   return (
     <div
       aria-label="Model"
-      class="flex flex-wrap items-center gap-1.5"
+      class="flex items-center gap-1.5 overflow-x-auto pb-1"
       role="group"
     >
       <span class="text-muted-foreground text-xs">Model</span>
@@ -112,6 +112,7 @@ function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
         {(model) => (
           <Button
             aria-pressed={selectedModel() === model.id}
+            class="shrink-0"
             disabled={modelsQuery.isLoading}
             onClick={() => {
               persistModel(model.id);
@@ -731,11 +732,6 @@ export function ChatPage() {
         >
           Tether chat
         </h1>
-        <Show when={conversation()}>
-          {(currentConversation) => (
-            <ModelSelector api={api} conversation={currentConversation()} />
-          )}
-        </Show>
         <Button
           disabled={clearing() || conversation() === undefined}
           onClick={clearConversation}
@@ -804,6 +800,11 @@ export function ChatPage() {
             </p>
           </Show>
           <form class="space-y-2" onSubmit={onSubmit}>
+            <Show when={conversation()}>
+              {(currentConversation) => (
+                <ModelSelector api={api} conversation={currentConversation()} />
+              )}
+            </Show>
             <TextField onChange={setDraft} value={draft()}>
               <TextFieldLabel>Message</TextFieldLabel>
               <TextFieldTextArea onKeyDown={onMessageKeyDown} />

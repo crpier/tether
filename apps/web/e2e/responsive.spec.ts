@@ -44,9 +44,15 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
     bottomNav.getByRole("link", { name: /^Proposals/ }),
   ).toBeVisible();
 
-  // Chat is a full-width column.
+  // Chat is a full-width column. Model controls sit after the transcript, by
+  // the composer, rather than above a long mobile conversation.
   const chat = await boundingBox(transcript);
   expect(chat.width).toBeGreaterThan(PHONE.width * 0.8);
+  const modelSelector = await boundingBox(
+    page.getByRole("group", { name: "Model" }),
+  );
+  expect(modelSelector.y).toBeGreaterThan(chat.y);
+  expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
 
 test("desktop width: left sidebar visible, bottom tabs hidden", async ({
