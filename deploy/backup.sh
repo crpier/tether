@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly backup: sqlite3 VACUUM INTO snapshot + kb_root + .env -> restic -> B2.
+# Nightly backup: safe snapshots of both SQLite sources + kb_root + .env -> restic -> B2.
 # Run by the `tether-backup` systemd timer (docs/deployment.md#backups); safe to
 # run by hand too: `sudo -E deploy/backup.sh` (needs restic.env sourced/exported
 # and docker compose access).
@@ -8,7 +8,7 @@
 # deploy/restic.env.example): RESTIC_REPOSITORY, RESTIC_PASSWORD, B2_ACCOUNT_ID,
 # B2_ACCOUNT_KEY, HEALTHCHECKS_PING_URL. Optional: TETHER_APP_DIR (default
 # /srv/tether).
-set -euo pipefail
+set -Eeuo pipefail
 
 app_dir="${TETHER_APP_DIR:-/srv/tether}"
 ping_url="${HEALTHCHECKS_PING_URL:?HEALTHCHECKS_PING_URL must be set}"
@@ -24,9 +24,20 @@ done
 export RESTIC_REPOSITORY RESTIC_PASSWORD B2_ACCOUNT_ID B2_ACCOUNT_KEY
 
 workdir="$(mktemp -d)"
-container_snapshot="/data/backup-snapshot.sqlite3"
+snapshot_suffix="${workdir##*/}"
+tether_container_snapshot="/data/.tether-backup-${snapshot_suffix}-tether.sqlite3"
+telemetry_container_snapshot="/data/.tether-backup-${snapshot_suffix}-telemetry.sqlite3"
+
+compose() {
+    docker compose --project-directory "${app_dir}" -f "${compose_file}" --env-file "${env_file}" "$@"
+}
 
 cleanup() {
+    trap - ERR
+    set +e
+    compose exec -T host rm -f \
+        "${tether_container_snapshot}" \
+        "${telemetry_container_snapshot}" >/dev/null 2>&1
     rm -rf "${workdir}"
 }
 trap cleanup EXIT
@@ -40,20 +51,30 @@ on_error() {
 }
 trap on_error ERR
 
-compose() {
-    docker compose --project-directory "${app_dir}" -f "${compose_file}" --env-file "${env_file}" "$@"
+snapshot_database() {
+    local source_path=$1
+    local container_snapshot=$2
+    local output_name=$3
+
+    # mode=rw prevents a missing source from being silently created as an empty DB.
+    compose exec -T host python3 - "${source_path}" "${container_snapshot}" <<'PY'
+import sqlite3
+import sys
+from contextlib import closing
+
+source_path, snapshot_path = sys.argv[1:]
+with closing(sqlite3.connect(f"file:{source_path}?mode=rw", uri=True)) as connection:
+    connection.execute("VACUUM INTO ?", (snapshot_path,))
+PY
+    compose cp "host:${container_snapshot}" "${workdir}/${output_name}"
 }
 
 curl --fail --silent --show-error --max-time 10 "${ping_url}/start" >/dev/null
 
-# 1. SQLite: VACUUM INTO a fresh snapshot inside the container (defragmented,
-# consistent even against a live writer), then copy it out and delete it.
-compose exec -T host python3 -c "
-import sqlite3
-sqlite3.connect('/data/tether.sqlite3').execute(\"VACUUM INTO '${container_snapshot}'\")
-"
-compose cp "host:${container_snapshot}" "${workdir}/tether.sqlite3"
-compose exec -T host rm -f "${container_snapshot}"
+# 1. SQLite: independently VACUUM INTO both source-of-truth databases inside
+# the live container, then copy the consistent snapshots into one backup set.
+snapshot_database "/data/tether.sqlite3" "${tether_container_snapshot}" "tether.sqlite3"
+snapshot_database "/data/telemetry.sqlite3" "${telemetry_container_snapshot}" "telemetry.sqlite3"
 
 # 2. kb_root, copied whole. It currently co-locates derived indexes and pi
 # sessions with Markdown, so those files are included too (docs/deployment.md).
@@ -65,6 +86,13 @@ cp "${env_file}" "${workdir}/env"
 
 restic backup "${workdir}" --tag tether --host tether-vm
 restic forget --keep-daily 7 --keep-weekly 4 --prune
+
+# Success means the backup completed and no temporary snapshots remain. The EXIT
+# trap repeats this best-effort if any earlier command fails.
+compose exec -T host rm -f \
+    "${tether_container_snapshot}" \
+    "${telemetry_container_snapshot}"
+rm -rf "${workdir}"
 
 curl --fail --silent --show-error --max-time 10 "${ping_url}" >/dev/null
 

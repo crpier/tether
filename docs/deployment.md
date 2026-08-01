@@ -53,8 +53,9 @@ TETHER_HOST_PORT=8001 docker compose up -d --build
 State lives on two named docker volumes, so `docker compose up` / redeploys never
 touch your data:
 
-- `data` → `/data`: the SQLite source of truth (`tether.sqlite3`) and the derived
-  markdown KB (`/data/kb`).
+- `data` → `/data`: the independent SQLite sources of truth (`tether.sqlite3`
+  and `telemetry.sqlite3`) and the derived markdown KB (`/data/kb`). Compose
+  sets `TETHER_TELEMETRY_DATABASE_PATH=/data/telemetry.sqlite3` explicitly.
 - `model-cache` → `/cache`: the fastembed ONNX model download.
 
 `docker compose down` keeps the volumes; `down -v` deletes them.
@@ -333,19 +334,23 @@ assistant, which can `list_unlabeled_ebooks`) to attach titles to hashes.
 Nightly `restic` → Backblaze B2, client-side encrypted, run by a systemd timer
 **on the VM host, outside compose** (so it's independent of the app container's
 lifecycle). The script uses Python's SQLite driver inside the container to make
-a consistent `VACUUM INTO` snapshot, then backs up that DB, all of `/data/kb`,
-and `.env`. Retention: `--keep-daily 7 --keep-weekly 4 --prune`. Every run pings
+independent, consistent `VACUUM INTO` snapshots of `/data/tether.sqlite3` and
+`/data/telemetry.sqlite3`, then backs up both snapshots, all of `/data/kb`, and
+`.env` in one restic run. Failure to snapshot or copy either database fails the
+whole run; a partial source-of-truth backup is never reported as successful.
+Retention: `--keep-daily 7 --keep-weekly 4 --prune`. Every run pings
 healthchecks.io — success, and `/fail` on any error via a shell trap — so a
 run that fails *or silently stops happening* (VM down, timer disabled) alerts.
 
 Current coverage is intentionally explicit:
 
-- Included: SQLite source of truth, `/data/kb`, and production `.env`.
+- Included: both SQLite sources of truth (`tether.sqlite3` and
+  `telemetry.sqlite3`), `/data/kb`, and production `.env`.
 - `/data/kb` currently contains Markdown plus derived Lance indexes and pi
   sessions. Backing those derived files is safe but made the first restore about
   544 MiB; recovery does not depend on the index copy.
-- Excluded: `/srv/tether/pi-agent`, `/data/youtube`, future
-  `telemetry.sqlite3`, and other OAuth/ingestion state outside `/data/kb`.
+- Excluded: `/srv/tether/pi-agent`, `/data/youtube`, and other OAuth/ingestion
+  state outside `/data/kb`.
   Reauthorize those providers or protect them separately until coverage grows.
 - `restic.env` is restored from 1Password, not from the restic repository.
 
@@ -394,19 +399,46 @@ set -a; source /srv/tether/restic.env; set +a
 restic snapshots
 rm -rf /tmp/tether-restore
 restic restore latest --target /tmp/tether-restore
-db=$(find /tmp/tether-restore -type f -name tether.sqlite3 -print -quit)
-test -n "$db"
-python3 - "$db" <<'PY'
+tether_db=$(find /tmp/tether-restore -type f -name tether.sqlite3 -print -quit)
+telemetry_db=$(find /tmp/tether-restore -type f -name telemetry.sqlite3 -print -quit)
+test -n "$tether_db" && test -n "$telemetry_db"
+for db in "$tether_db" "$telemetry_db"; do
+  python3 - "$db" <<'PY'
 import sqlite3
 import sys
 
 result = sqlite3.connect(sys.argv[1]).execute("pragma integrity_check").fetchone()
-print(result[0])
+print(f"{sys.argv[1]}: {result[0]}")
 assert result == ("ok",)
 PY
-root=$(dirname "$db")
+done
+root=$(dirname "$tether_db")
+test "$(dirname "$telemetry_db")" = "$root"
 test -f "$root/env"
 find "$root/kb" -maxdepth 1 -type f -name '*.md' -print
+```
+
+For a scratch restore into the live volume, stop the host, stage and recheck
+both files, then swap both sources of truth together. Keep the old copies until
+HTTPS login/chat and Health Connect current-row counts are verified:
+
+```sh
+cd /srv/tether
+docker compose stop host
+docker compose run --rm --no-deps --entrypoint sh \
+  -v "$root:/restore:ro" host -c '
+    set -eu
+    for name in tether telemetry; do
+      cp "/restore/${name}.sqlite3" "/data/${name}.sqlite3.restore"
+      python3 -c "import sqlite3; assert sqlite3.connect(\"/data/${name}.sqlite3.restore\").execute(\"pragma integrity_check\").fetchone() == (\"ok\",)"
+      rm -f "/data/${name}.sqlite3.pre-restore"
+      mv "/data/${name}.sqlite3" "/data/${name}.sqlite3.pre-restore"
+      mv "/data/${name}.sqlite3.restore" "/data/${name}.sqlite3"
+    done
+  '
+docker compose start host
+# Verify HTTPS login/chat and Health Connect current-row counts before deleting
+# /data/*.pre-restore through a helper container.
 ```
 
 Also verify the dead-man's-switch: temporarily shorten the healthchecks.io
@@ -425,9 +457,10 @@ compose + Dockerfile) + the B2 bucket (data) is everything needed to rebuild.
 2. Assemble `.env` and `restic.env` from 1Password — see
    [Assemble secrets on the box](#2-assemble-secrets-on-the-box) and the
    restore-drill commands above.
-3. Restore latest to a scratch directory and locate its random restored root as
-   shown in the drill. Copy that root's `tether.sqlite3`, `kb`, and `env` into
-   the named volume/checkout using the stopped helper-container pattern in
+3. Restore latest to a scratch directory, locate both databases despite the
+   random restored root, and integrity-check each as shown in the drill. Copy
+   that root's `tether.sqlite3`, `telemetry.sqlite3`, `kb`, and `env` into the
+   named volume/checkout using the stopped helper-container pattern in
    [Migrating from local](#migrating-from-local). Restore `restic.env` from
    1Password.
 4. Reauthorize/copy pi provider credentials and any enabled ingestion OAuth
