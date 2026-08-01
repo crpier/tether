@@ -84,7 +84,13 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.proposals import ProposalService, create_proposal_schema
-from tether.push import PushService, create_push_schema
+from tether.push import (
+    PushService,
+    StoredPushSender,
+    VapidConfig,
+    VapidWebPushTransport,
+    create_push_schema,
+)
 from tether.readwise import (
     HttpReaderTransport,
     HttpReadwiseTransport,
@@ -110,10 +116,12 @@ from tether.scheduler import (
     EphemeralPiConfig,
     EphemeralPiPromptRunner,
     EventNotifier,
+    PushDeliveryNotifier,
     Scheduler,
     SchedulerConfig,
     SystemClock,
     TriggerDispatcher,
+    TriggerNotifier,
 )
 from tether.search_fusion import SearchFusionService
 from tether.search_index import SearchIndex
@@ -233,6 +241,9 @@ class AppConfig:
     scheduler_tick_seconds: float = 30.0
     search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = ""
     stt_client: SttClient | None = None
     stt_api_key: str = "unconfigured-test-stt-key"
     """Placeholder only: production wiring always goes through `HostSettings`,
@@ -293,6 +304,9 @@ class HostSettings(BaseSettings):
     port: int = 8000
     reload: bool = False
     secure_cookies: bool = False
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = ""
     web_dist: Path | None = None
     youtube_token_path: Path = Path(".tether/youtube-oauth-token.json")
     youtube_client_secret_path: Path = Path(".tether/youtube-client-secret.json")
@@ -982,10 +996,25 @@ def _build_scheduler(
             model=model_catalog.default_config,
         )
     )
+    notifier: TriggerNotifier = EventNotifier(app.state.event_hub, notification_service)
+    if config.vapid_public_key and config.vapid_private_key and config.vapid_subject:
+        notifier = PushDeliveryNotifier(
+            notifier,
+            StoredPushSender(
+                push_service=cast("PushService", app.state.push_service),
+                transport=VapidWebPushTransport(
+                    VapidConfig(
+                        private_key=config.vapid_private_key,
+                        public_key=config.vapid_public_key,
+                        subject=config.vapid_subject,
+                    )
+                ),
+            ),
+        )
     scheduler = Scheduler(
         service=trigger_service,
         dispatcher=TriggerDispatcher(
-            notifier=EventNotifier(app.state.event_hub, notification_service),
+            notifier=notifier,
             agent_runner=prompt_runner,
         ),
         clock=SystemClock(),
@@ -1683,6 +1712,7 @@ def create_app(
     )
     app.state.app_password = config.app_password
     app.state.secure_cookies = config.secure_cookies
+    app.state.vapid_public_key = config.vapid_public_key
     app.state.session_registry = SessionRegistry()
     app.state.trace_recorder = AgentTraceRecorder()
     app.state.session_secret = config.session_secret
@@ -1793,6 +1823,9 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         gmail_purge_chunk_size=settings.gmail_purge_chunk_size,
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
+        vapid_private_key=settings.vapid_private_key,
+        vapid_public_key=settings.vapid_public_key,
+        vapid_subject=settings.vapid_subject,
         stt_api_key=settings.stt_api_key,
         stt_base_url=settings.stt_base_url,
         stt_model=settings.stt_model,

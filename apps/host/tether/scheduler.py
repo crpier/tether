@@ -91,6 +91,14 @@ class NotificationRecorder(Protocol):
         ...
 
 
+class PushSender(Protocol):
+    """Sends a notification through Web Push subscriptions."""
+
+    async def send(self, body: str) -> None:
+        """Send one push notification body."""
+        ...
+
+
 class EventNotifier:
     """Delivers fired triggers as `NotifyEvent`s over the in-process event hub.
 
@@ -134,6 +142,24 @@ class EventNotifier:
         await self.event_publisher.publish(
             NotifyEvent(body=message, trigger_id=str(trigger.id))
         )
+
+
+class PushDeliveryNotifier:
+    """Adds closed-tab Web Push delivery to an existing trigger notifier."""
+
+    def __init__(self, primary: TriggerNotifier, push_sender: PushSender) -> None:
+        self.primary: TriggerNotifier = primary
+        self.push_sender: PushSender = push_sender
+
+    async def deliver(
+        self,
+        *,
+        trigger: ScheduledTrigger[Fetched],
+        message: str,
+    ) -> None:
+        """Deliver through the existing path, then Web Push subscriptions."""
+        await self.primary.deliver(trigger=trigger, message=message)
+        await self.push_sender.send(message)
 
 
 class AgentPromptRunner(Protocol):

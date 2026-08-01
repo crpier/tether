@@ -132,6 +132,9 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
             TETHER_TOOL_SECRET="configured-tool-secret",
             TETHER_TRANSCRIPT_SYNC_ENABLED="false",
+            TETHER_VAPID_PRIVATE_KEY="private-key",
+            TETHER_VAPID_PUBLIC_KEY="public-key",
+            TETHER_VAPID_SUBJECT="mailto:test@example.com",
             TETHER_WEB_DIST=f"{directory}/dist",
             TETHER_YOUTUBE_SYNC_ENABLED="false",
         ),
@@ -157,6 +160,9 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
     assert_eq(settings.tool_secret, "configured-tool-secret")
+    assert_eq(settings.vapid_private_key, "private-key")
+    assert_eq(settings.vapid_public_key, "public-key")
+    assert_eq(settings.vapid_subject, "mailto:test@example.com")
     assert_false(settings.youtube_sync_enabled)
     assert_false(settings.transcript_sync_enabled)
 

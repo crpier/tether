@@ -20,8 +20,11 @@ always converge on "not subscribed".
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Protocol
 from uuid import uuid7
 
 from pydantic import UUID7, BaseModel
@@ -76,6 +79,38 @@ class PushStatus:
 
     subscribed: bool
     count: int
+
+
+class WebPushGoneError(Exception):
+    """The browser push service no longer knows this subscription."""
+
+    def __init__(self, endpoint: str) -> None:
+        super().__init__("web push subscription is gone")
+        self.endpoint: str = endpoint
+
+
+@dataclass(frozen=True, slots=True)
+class VapidConfig:
+    """Secrets and public key used to authenticate browser push messages."""
+
+    private_key: str
+    public_key: str
+    subject: str
+
+
+class WebPushTransport(Protocol):
+    """Sends one browser push message through a concrete provider."""
+
+    async def send(
+        self,
+        *,
+        endpoint: str,
+        p256dh: str,
+        auth: str,
+        body: str,
+    ) -> None:
+        """Send one Web Push payload."""
+        ...
 
 
 class PushService:
@@ -160,11 +195,90 @@ class PushService:
         return PushStatus(subscribed=subscribed, count=count)
 
     async def active_subscriptions(self) -> list[PushSubscription[Fetched]]:
-        """Return every live subscription (for a future push transport)."""
+        """Return every live subscription for Web Push delivery."""
         async with self.database.transaction() as tx:
             return await tx.fetch_all(
                 select(PushSubscription).where(PushSubscription.deleted_at.is_null())
             )
+
+
+class VapidWebPushTransport:
+    """Sends browser push messages through `pywebpush` in a worker thread."""
+
+    def __init__(self, config: VapidConfig) -> None:
+        self.config: VapidConfig = config
+
+    async def send(
+        self,
+        *,
+        endpoint: str,
+        p256dh: str,
+        auth: str,
+        body: str,
+    ) -> None:
+        """Send one VAPID-authenticated Web Push payload."""
+        await asyncio.to_thread(
+            self._send_blocking,
+            endpoint=endpoint,
+            p256dh=p256dh,
+            auth=auth,
+            body=body,
+        )
+
+    def _send_blocking(
+        self,
+        *,
+        endpoint: str,
+        p256dh: str,
+        auth: str,
+        body: str,
+    ) -> None:
+        """Bridge the synchronous `pywebpush` API behind the async port."""
+        webpush_module: Any = importlib.import_module("pywebpush")
+        try:
+            _ = webpush_module.webpush(
+                subscription_info={
+                    "endpoint": endpoint,
+                    "keys": {"p256dh": p256dh, "auth": auth},
+                },
+                data=body,
+                vapid_private_key=self.config.private_key,
+                vapid_claims={"sub": self.config.subject},
+            )
+        except Exception as error:
+            response: Any = getattr(error, "response", None)
+            if getattr(response, "status_code", None) in {404, 410}:
+                raise WebPushGoneError(endpoint) from error
+            raise
+
+
+class StoredPushSender:
+    """Sends one notification to every currently live subscription.
+
+    Gone subscriptions are pruned convergently so failed browsers do not poison
+    later deliveries.
+    """
+
+    def __init__(
+        self, *, push_service: PushService, transport: WebPushTransport
+    ) -> None:
+        self.push_service: PushService = push_service
+        self.transport: WebPushTransport = transport
+
+    async def send(self, body: str) -> None:
+        """Send `body` to all live subscriptions, pruning gone endpoints."""
+        for subscription in await self.push_service.active_subscriptions():
+            if not subscription.endpoint.startswith(("https://", "http://")):
+                continue
+            try:
+                await self.transport.send(
+                    endpoint=subscription.endpoint,
+                    p256dh=subscription.p256dh,
+                    auth=subscription.auth,
+                    body=body,
+                )
+            except WebPushGoneError:
+                await self.push_service.unsubscribe(subscription.endpoint)
 
 
 async def create_push_schema(database: Database) -> None:
@@ -229,6 +343,22 @@ class PushStatusRead(BaseModel):
         return cls(subscribed=status.subscribed, count=status.count)
 
 
+class PushConfigRead(BaseModel):
+    """HTTP representation of browser push configuration."""
+
+    vapid_public_key: str
+
+
+@endpoint(response=PushConfigRead)
+async def push_config(request: Request) -> Response:
+    """Expose the VAPID public key the browser needs to subscribe."""
+    return JSONResponse(
+        PushConfigRead(vapid_public_key=request.app.state.vapid_public_key).model_dump(
+            mode="json"
+        )
+    )
+
+
 @endpoint(request_body=SubscribeRequest, response=PushSubscriptionRead, status=201)
 async def subscribe_push(request: Request, body: SubscribeRequest) -> Response:
     """Register (or refresh) this browser's push subscription."""
@@ -257,6 +387,7 @@ async def push_status(request: Request, query: StatusQuery) -> Response:
 
 
 push_routes: list[Route] = [
+    EndpointRoute("/api/push/config", push_config, methods=["GET"]),
     EndpointRoute("/api/push/subscriptions", subscribe_push, methods=["POST"]),
     EndpointRoute("/api/push/subscriptions", unsubscribe_push, methods=["DELETE"]),
     EndpointRoute("/api/push/status", push_status, methods=["GET"]),

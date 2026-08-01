@@ -629,6 +629,12 @@ export class FakeApi implements TetherApi {
     return Promise.resolve();
   }
 
+  getPushConfig() {
+    return Promise.resolve({
+      vapid_public_key: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    });
+  }
+
   getPushStatus(): Promise<PushStatus> {
     return Promise.resolve({
       count: this.pushSubscribed ? 1 : 0,
