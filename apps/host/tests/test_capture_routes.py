@@ -36,7 +36,7 @@ class ScriptedSttTransport:
         self.response: TranscriptionResponse = response
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str
+        self, *, audio: AudioUpload, model: str, prompt: str
     ) -> TranscriptionResponse:
         """Return the scripted response regardless of the upload."""
         return self.response

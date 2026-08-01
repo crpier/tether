@@ -31,6 +31,7 @@ class TranscribeCall:
 
     audio: AudioUpload
     model: str
+    prompt: str
 
 
 @dataclass
@@ -46,10 +47,10 @@ class FakeSttTransport:
     calls: list[TranscribeCall] = field(default_factory=list[TranscribeCall])
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str
+        self, *, audio: AudioUpload, model: str, prompt: str
     ) -> TranscriptionResponse:
         """Record the call and return the scripted response."""
-        self.calls.append(TranscribeCall(audio=audio, model=model))
+        self.calls.append(TranscribeCall(audio=audio, model=model, prompt=prompt))
         return self.response
 
 
@@ -82,6 +83,17 @@ async def client_passes_the_configured_model_to_the_transport() -> None:
     _ = await client.transcribe(_audio())
 
     assert_eq(transport.calls[0].model, "whisper-large-v3")
+
+
+@test()
+async def client_seeds_transcription_with_voice_vocabulary() -> None:
+    """Every transcription carries the custom vocabulary as an STT prompt."""
+    transport = FakeSttTransport(TranscriptionResponse(status_code=200, text="hi"))
+    client = SttClient(transport=transport, model="whisper-1")
+
+    _ = await client.transcribe(_audio())
+
+    assert_eq(transport.calls[0].prompt, "snektest")
 
 
 @test()
