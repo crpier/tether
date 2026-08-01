@@ -303,6 +303,12 @@ async def _stream_runtime(
                     streamed_text=streamed_text,
                     streamed_reasoning=streamed_reasoning,
                 )
+            case MessageSettled(error=str() as error):
+                await _send_error(
+                    websocket,
+                    conversation_id=conversation_id,
+                    detail=error,
+                )
             case MessageSettled():
                 await _settle_message_end(
                     websocket,

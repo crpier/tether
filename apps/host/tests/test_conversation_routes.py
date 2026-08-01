@@ -768,6 +768,43 @@ def websocket_prompt_failure_reports_pi_detail() -> None:
 
 
 @test()
+def websocket_reports_settled_provider_error_to_browser() -> None:
+    """A provider failure ending an empty assistant turn becomes a chat error."""
+    fake_runtime = FakeRuntime(
+        [
+            ModelTurnStarted(),
+            MessageSettled(
+                reasoning="",
+                text="",
+                error="Provided authentication token is expired.",
+            ),
+            AgentEnded(),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello",
+                }
+            )
+            _ = websocket.receive_json()
+            _ = websocket.receive_json()
+            frame = websocket.receive_json()
+
+    assert_eq(frame["event"], "error")
+    assert_eq(frame["detail"], "Provided authentication token is expired.")
+
+
+@test()
 def websocket_persists_assistant_message_from_streamed_deltas() -> None:
     """The host assembles streamed text when pi's final event has no content."""
     fake_runtime = FakeRuntime(
