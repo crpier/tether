@@ -17,7 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snektest import assert_eq, assert_in, assert_not_in, test
+from snektest import assert_eq, test
 from starlette.testclient import TestClient
 
 from tether.server import AppConfig, create_app
@@ -81,6 +81,20 @@ def post_voice(client: TestClient, audio: bytes) -> Any:
     )
 
 
+def loose_memory_count(client: TestClient) -> int:
+    """The number of loose memories currently captured."""
+    response = client.get("/api/memories", params={"state": "loose"})
+    assert_eq(response.status_code, 200)
+    return len(response.json())
+
+
+def default_conversation_id(client: TestClient) -> str:
+    """Return the lazily created default conversation id."""
+    response = client.get("/api/conversations")
+    assert_eq(response.status_code, 200)
+    return str(response.json()[0]["id"])
+
+
 @test()
 def voice_capture_transcribes_and_returns_the_transcript() -> None:
     """A recognized note is echoed back as the response transcript."""
@@ -101,8 +115,8 @@ def voice_capture_transcribes_and_returns_the_transcript() -> None:
 
 
 @test()
-def voice_capture_lands_a_loose_human_asserted_voice_memory() -> None:
-    """The captured Memory is loose and facet-tagged as a voice source."""
+def voice_capture_adds_a_user_chat_turn_without_creating_memory() -> None:
+    """A voice capture enters chat and does not create a direct Memory row."""
     with (
         TemporaryDirectory() as directory,
         make_client(
@@ -113,11 +127,18 @@ def voice_capture_lands_a_loose_human_asserted_voice_memory() -> None:
         ) as client,
     ):
         login(client)
-        memory = post_voice(client, b"fake-audio-bytes").json()["memory"]
+        conversation_id = default_conversation_id(client)
+        before = loose_memory_count(client)
+        response = post_voice(client, b"fake-audio-bytes")
+        after = loose_memory_count(client)
+        messages = client.get(f"/api/conversations/{conversation_id}/messages")
 
-    assert_eq(memory["state"], "loose")
-    assert_eq(memory["content"], "call the dentist")
-    assert_eq(memory["facets"], {"source": "voice"})
+    assert_eq(response.status_code, 201)
+    assert_eq(before, 0)
+    assert_eq(after, 0)
+    assert_eq(messages.status_code, 200)
+    assert_eq(messages.json()[0]["role"], "user")
+    assert_eq(messages.json()[0]["content"], "call the dentist")
 
 
 @test()
@@ -186,20 +207,3 @@ def voice_capture_requires_authentication() -> None:
         response = post_voice(client, b"fake-audio-bytes")
 
     assert_eq(response.status_code, 401)
-
-
-@test()
-def voice_capture_response_carries_no_facet_leak() -> None:
-    """The voice facet set is exactly the source tag, nothing else."""
-    with (
-        TemporaryDirectory() as directory,
-        make_client(
-            Path(directory),
-            stt_client=_stt_client(TranscriptionResponse(status_code=200, text="hi")),
-        ) as client,
-    ):
-        login(client)
-        facets = post_voice(client, b"fake-audio-bytes").json()["memory"]["facets"]
-
-    assert_in("source", facets)
-    assert_not_in("title", facets)

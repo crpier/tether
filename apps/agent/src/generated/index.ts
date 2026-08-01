@@ -8,6 +8,7 @@ import { registerSearchTool } from "./search.js";
 import { registerReviewDigestTool } from "./review_digest.js";
 import { registerTetherTool } from "./tether.js";
 import { registerEditTool } from "./edit.js";
+import { registerAppendTool } from "./append.js";
 import { registerRejectTool } from "./reject.js";
 import { registerFacetOverviewTool } from "./facet_overview.js";
 import { registerRenameFacetKeyTool } from "./rename_facet_key.js";
@@ -59,6 +60,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerReviewDigestTool(pi);
   registerTetherTool(pi);
   registerEditTool(pi);
+  registerAppendTool(pi);
   registerRejectTool(pi);
   registerFacetOverviewTool(pi);
   registerRenameFacetKeyTool(pi);

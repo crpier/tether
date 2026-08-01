@@ -13,7 +13,7 @@ Searches only tethered, non-deleted Memories.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
 from uuid import uuid7
 
@@ -141,6 +141,17 @@ def _normalise_content(content: str) -> str:
         msg = "Memory content must not be blank"
         raise EmptyMemoryContentError(msg)
     return normalised_content
+
+
+def _agent_routed_append_block(content: str, appended_at: datetime) -> str:
+    """Format a content-preserving append block for agent-routed placement.
+
+    The user's words stay verbatim inside the block; the heading carries the
+    timestamp and provenance marker a human needs to spot a bad route later.
+    """
+    return (
+        f"\n\n---\n\n### agent-routed append — {appended_at.isoformat()}\n\n{content}"
+    )
 
 
 class Memory[S = Pending](Model[S, "Memory[Fetched]"]):
@@ -759,6 +770,87 @@ class MemoryService:
             InvalidateEvent(keys=["memories", "review-queue"])
         )
         return fresh_memory
+
+    async def append_content(
+        self,
+        memory: Memory[Fetched],
+        content: str,
+        *,
+        logger: Logger,
+    ) -> Memory[Fetched]:
+        """Append agent-routed verbatim content to a live Memory.
+
+        Placement is content-preserving: the existing Memory text remains intact
+        and the new human-authored words are added as a timestamped block marked
+        as agent-routed. A tethered Memory refreshes its projection and index;
+        a loose Memory remains loose and stays out of both.
+        """
+        normalised_content = _normalise_content(content)
+        appended_at = datetime.now(UTC)
+        _debug(
+            logger,
+            "Appending Memory content",
+            memory_id=str(memory.id),
+            observed_version=memory.version,
+            content_length=len(normalised_content),
+        )
+
+        async def _append_content(tx: Transaction) -> Memory[Fetched]:
+            current_memory = await self._fetch_active(tx, memory.id)
+            if current_memory.version != memory.version:
+                _debug(
+                    logger,
+                    "Memory append conflict",
+                    memory_id=str(memory.id),
+                    reason="stale_version",
+                    observed_version=memory.version,
+                    current_version=current_memory.version,
+                )
+                msg = f"Tried to append memory {memory.id} with version {memory.version} but had version {current_memory.version}"
+                raise MemoryConflictError(msg)
+            _ = await tx.execute(
+                update(Memory)
+                .set(
+                    Memory.content.to(
+                        current_memory.content
+                        + _agent_routed_append_block(normalised_content, appended_at)
+                    )
+                )
+                .set(Memory.updated_at.to(appended_at))
+                .set(Memory.version.to(memory.version + 1))
+                .where(Memory.id.eq(memory.id))
+                .where(Memory.deleted_at.is_null())
+                .where(Memory.version.eq(memory.version))
+            )
+            return await self._fetch_active(tx, memory.id)
+
+        fresh_memory = await run_in_transaction(self.database, _append_content)
+        if fresh_memory.tethered_at is not None:
+            await self._try_set_projection(fresh_memory, logger=logger)
+            await self._try_index(fresh_memory, logger=logger)
+        _info(
+            logger,
+            "Memory content appended",
+            memory_id=str(fresh_memory.id),
+            previous_version=memory.version,
+            version=fresh_memory.version,
+            tethered=fresh_memory.tethered_at is not None,
+        )
+        await self.event_publisher.publish(
+            InvalidateEvent(keys=["memories", "review-queue"])
+        )
+        return fresh_memory
+
+    async def fetch_active(
+        self,
+        memory_id: UUID7,
+        *,
+        logger: Logger,
+    ) -> Memory[Fetched]:
+        """Fetch a live Memory by id for capability-level policy checks."""
+        _debug(logger, "Fetching active Memory", memory_id=str(memory_id))
+        async with self.database.transaction() as tx:
+            return await self._fetch_active(tx, memory_id)
 
     async def delete(
         self,

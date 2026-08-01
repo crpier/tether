@@ -2633,10 +2633,10 @@
         "type": "object"
       },
       "VoiceCaptureResponse": {
-        "description": "A transcribed voice note and the loose Memory it captured.\n\n>>> VoiceCaptureResponse(\n...     memory=MemoryRead(\n...         content=\"buy oat milk\",\n...         created_at=datetime(2026, 1, 1),\n...         facets={\"source\": \"voice\"},\n...         id=\"018f0000-0000-7000-8000-000000000000\",\n...         state=\"loose\",\n...         tethered_at=None,\n...         updated_at=datetime(2026, 1, 1),\n...         version=1,\n...     ),\n...     transcript=\"buy oat milk\",\n... ).transcript\n'buy oat milk'",
+        "description": "A transcribed voice note and the user chat message it appended.",
         "properties": {
-          "memory": {
-            "$ref": "#/components/schemas/MemoryRead"
+          "message": {
+            "$ref": "#/components/schemas/MessageRead"
           },
           "transcript": {
             "title": "Transcript",
@@ -2644,7 +2644,7 @@
           }
         },
         "required": [
-          "memory",
+          "message",
           "transcript"
         ],
         "title": "VoiceCaptureResponse",
@@ -3269,7 +3269,7 @@
             "description": "OK"
           }
         },
-        "summary": "Transcribe an uploaded audio note and capture it as a loose Memory."
+        "summary": "Transcribe an uploaded audio note and append it as a user chat turn."
       }
     },
     "/api/conversations": {

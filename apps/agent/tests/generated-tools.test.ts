@@ -26,6 +26,7 @@ describe("generated tool extension", () => {
       "review_digest",
       "tether",
       "edit",
+      "append",
       "reject",
       "facet_overview",
       "rename_facet_key",

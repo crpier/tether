@@ -517,7 +517,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Transcribe an uploaded audio note and capture it as a loose Memory. */
+    /** Transcribe an uploaded audio note and append it as a user chat turn. */
     post: {
       parameters: {
         query?: never;
@@ -3695,25 +3695,10 @@ export interface components {
     };
     /**
      * VoiceCaptureResponse
-     * @description A transcribed voice note and the loose Memory it captured.
-     *
-     *     >>> VoiceCaptureResponse(
-     *     ...     memory=MemoryRead(
-     *     ...         content="buy oat milk",
-     *     ...         created_at=datetime(2026, 1, 1),
-     *     ...         facets={"source": "voice"},
-     *     ...         id="018f0000-0000-7000-8000-000000000000",
-     *     ...         state="loose",
-     *     ...         tethered_at=None,
-     *     ...         updated_at=datetime(2026, 1, 1),
-     *     ...         version=1,
-     *     ...     ),
-     *     ...     transcript="buy oat milk",
-     *     ... ).transcript
-     *     'buy oat milk'
+     * @description A transcribed voice note and the user chat message it appended.
      */
     VoiceCaptureResponse: {
-      memory: components["schemas"]["MemoryRead"];
+      message: components["schemas"]["MessageRead"];
       /** Transcript */
       transcript: string;
     };

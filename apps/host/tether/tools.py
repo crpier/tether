@@ -51,13 +51,16 @@ from tether.logging import get_request_logger
 from tether.memories import MemoryProvenance, MemoryState
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent
 from tether.memory_capabilities import (
+    agent_edit as agent_edit_memory,
+)
+from tether.memory_capabilities import (
+    append as append_memory,
+)
+from tether.memory_capabilities import (
     browse as browse_memories,
 )
 from tether.memory_capabilities import (
     capture as capture_memory,
-)
-from tether.memory_capabilities import (
-    edit as edit_memory,
 )
 from tether.memory_capabilities import (
     facet_overview as facet_overview_memories,
@@ -153,16 +156,24 @@ class TetherParams(BaseModel):
 
 
 class EditParams(BaseModel):
-    """Params for editing a Memory's content at an observed version.
+    """Params for editing a loose Memory's content at an observed version.
 
-    `facets`, when supplied, replaces the stored Commons facet set verbatim
-    (an empty object clears it); omitted, facets stay unchanged.
+    The agent must not overwrite tethered Memory content in place. Use `append`
+    for routed human-authored additions to trusted Memories.
     """
 
     memory_id: UUID7
     content: MemoryContent
     version: PositiveInt
     facets: dict[str, str] | None = None
+
+
+class AppendParams(BaseModel):
+    """Params for appending agent-routed verbatim content to a Memory."""
+
+    memory_id: UUID7
+    content: MemoryContent
+    version: PositiveInt
 
 
 class RejectParams(BaseModel):
@@ -486,7 +497,8 @@ MEMORY_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("search", SearchParams, bind_params(search_fused), SEARCH_ERRORS),
     ToolSpec("review_digest", ReviewDigestParams, bind_params(_review_digest)),
     ToolSpec("tether", TetherParams, bind_params(tether_memory), MEMORY_ERRORS),
-    ToolSpec("edit", EditParams, bind_params(edit_memory), MEMORY_ERRORS),
+    ToolSpec("edit", EditParams, bind_params(agent_edit_memory), MEMORY_ERRORS),
+    ToolSpec("append", AppendParams, bind_params(append_memory), MEMORY_ERRORS),
     ToolSpec("reject", RejectParams, bind_params(reject_memory), MEMORY_ERRORS),
     ToolSpec(
         "facet_overview",

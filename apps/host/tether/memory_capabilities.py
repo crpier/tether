@@ -202,6 +202,46 @@ async def edit(
     return _single(memory)
 
 
+async def agent_edit(
+    request: Request,
+    memory_id: UUID,
+    content: str,
+    version: PositiveInt,
+    facets: dict[str, str] | None = None,
+) -> CapabilityOutcome:
+    """Edit a loose Memory; tethered Memories require append, not overwrite."""
+    observed_memory = _memory_reference(memory_id, version)
+    current_memory = await request.app.state.memory_service.fetch_active(
+        observed_memory.id,
+        logger=get_request_logger(request),
+    )
+    if current_memory.tethered_at is not None:
+        msg = "agent cannot overwrite tethered Memory content; append instead"
+        raise MemoryConflictError(msg)
+    memory = await request.app.state.memory_service.edit_content(
+        observed_memory,
+        content,
+        facets=facets,
+        logger=get_request_logger(request),
+    )
+    return _single(memory)
+
+
+async def append(
+    request: Request,
+    memory_id: UUID,
+    content: str,
+    version: PositiveInt,
+) -> CapabilityOutcome:
+    """Append a marked, verbatim block to a Memory."""
+    memory = await request.app.state.memory_service.append_content(
+        _memory_reference(memory_id, version),
+        content,
+        logger=get_request_logger(request),
+    )
+    return _single(memory)
+
+
 async def reject(
     request: Request, memory_id: UUID, version: PositiveInt
 ) -> CapabilityOutcome:

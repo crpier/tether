@@ -24,9 +24,9 @@ export const editTool: ToolDefinition<
   name: "edit",
   label: "Edit",
   description:
-    "Params for editing a Memory's content at an observed version.\n\n`facets`, when supplied, replaces the stored Commons facet set verbatim\n(an empty object clears it); omitted, facets stay unchanged.",
+    "Params for editing a loose Memory's content at an observed version.\n\nThe agent must not overwrite tethered Memory content in place. Use `append`\nfor routed human-authored additions to trusted Memories.",
   promptSnippet:
-    "Params for editing a Memory's content at an observed version.\n\n`facets`, when supplied, replaces the stored Commons facet set verbatim\n(an empty object clears it); omitted, facets stay unchanged.",
+    "Params for editing a loose Memory's content at an observed version.\n\nThe agent must not overwrite tethered Memory content in place. Use `append`\nfor routed human-authored additions to trusted Memories.",
   parameters: editParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(
