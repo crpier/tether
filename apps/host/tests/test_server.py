@@ -185,6 +185,18 @@ def telemetry_database_defaults_beside_main_database() -> None:
 
 
 @test()
+def web_search_defaults_enabled() -> None:
+    """The Tavily feature flag is on unless explicitly disabled."""
+    settings = HostSettings(
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
+    )
+
+    assert_true(settings.search_enabled)
+
+
+@test()
 def sync_enabled_defaults_to_true() -> None:
     """Ingestion syncs are on unless a `TETHER_*_SYNC_ENABLED` flag disables them."""
     settings = HostSettings(

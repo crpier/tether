@@ -427,8 +427,8 @@ class HostSettings(BaseSettings):
     """Hard cap on total Supadata uses, persisted across restarts. The background
     sweep stops calling Supadata once this many are spent (remaining videos stay
     pending), bounding spend to a limited plan. Raise it after topping up."""
-    search_enabled: bool = False
-    """Whether the agent may call the paid Tavily web search provider."""
+    search_enabled: bool = True
+    """Whether the agent may call Tavily when an API key is configured."""
     search_api_key: str = ""
     """Tavily API key. Empty keeps web search disabled even when flagged on."""
     search_max_uses: int = 1_000
