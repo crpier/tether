@@ -371,6 +371,61 @@ def add_travel_carries_its_own_fields() -> None:
 
 
 @test()
+def add_purchase_is_ready_for_chat_dogfooding() -> None:
+    """The agent can capture purchase context through one flat tool call."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "add_purchase",
+            name="Aeropress",
+            price="$39.95",
+            store="Coffee Hit",
+            decision_factors=["portable", "easy cleanup"],
+            intent_context="better coffee while travelling",
+        )
+
+    item = envelope["result"]["item"]
+    assert_eq(item["item_type"], "purchase")
+    assert_eq(item["data"]["price"], "$39.95")
+    assert_eq(item["data"]["store"], "Coffee Hit")
+    assert_eq(item["data"]["decision_factors"], ["portable", "easy cleanup"])
+
+
+@test()
+def set_purchase_decision_route_records_a_choice() -> None:
+    """REST clients can record a purchase decision at an observed version."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        added = add_item(client, "purchase", {"name": "Aeropress"})
+        item = added["item"]
+
+        response = client.post(
+            f"/api/bucket-items/{item['id']}/purchase-decision",
+            json={"version": item["version"], "decision": "wait"},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["data"]["decision"], "wait")
+
+
+@test()
+def set_purchase_decision_records_a_choice_from_chat() -> None:
+    """The agent can record a later buy/wait/need-more-info decision."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        added = call_tool(client, "add_purchase", name="Aeropress")
+        item = added["result"]["item"]
+
+        decided = call_tool(
+            client,
+            "set_purchase_decision",
+            bucket_item_id=item["id"],
+            version=item["version"],
+            decision="need-more-info",
+        )
+
+    assert_eq(decided["result"]["data"]["decision"], "need-more-info")
+
+
+@test()
 def add_book_without_author_stores_a_null_author() -> None:
     """Author is optional at the tool seam; the stored payload is the full type."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

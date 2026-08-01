@@ -1036,7 +1036,8 @@
           "movie",
           "place",
           "book",
-          "travel"
+          "travel",
+          "purchase"
         ],
         "type": "string"
       },
@@ -1723,6 +1724,69 @@
         "title": "ProposeEssayGradeRequest",
         "type": "object"
       },
+      "PurchaseDecision": {
+        "enum": [
+          "buy",
+          "wait",
+          "need-more-info"
+        ],
+        "type": "string"
+      },
+      "PurchaseDecisionRequest": {
+        "description": "Body for recording a purchase decision at an observed version.",
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/PurchaseDecision"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision",
+          "version"
+        ],
+        "title": "PurchaseDecisionRequest",
+        "type": "object"
+      },
+      "PurchaseTriage": {
+        "description": "Purchase-flavoured advisories derived from active purchase items.",
+        "properties": {
+          "buy_now": {
+            "items": {
+              "format": "uuid7",
+              "type": "string"
+            },
+            "title": "Buy Now",
+            "type": "array"
+          },
+          "missing_price_context": {
+            "items": {
+              "format": "uuid7",
+              "type": "string"
+            },
+            "title": "Missing Price Context",
+            "type": "array"
+          },
+          "stale_watches": {
+            "items": {
+              "format": "uuid7",
+              "type": "string"
+            },
+            "title": "Stale Watches",
+            "type": "array"
+          }
+        },
+        "required": [
+          "buy_now",
+          "missing_price_context",
+          "stale_watches"
+        ],
+        "title": "PurchaseTriage",
+        "type": "object"
+      },
       "PushConfigRead": {
         "description": "HTTP representation of browser push configuration.",
         "properties": {
@@ -2291,6 +2355,9 @@
             "title": "Duplicates",
             "type": "array"
           },
+          "purchase": {
+            "$ref": "#/components/schemas/PurchaseTriage"
+          },
           "stale": {
             "items": {
               "$ref": "#/components/schemas/StaleItem"
@@ -2310,7 +2377,8 @@
           "active",
           "under_specified",
           "duplicates",
-          "stale"
+          "stale",
+          "purchase"
         ],
         "title": "TriageReport",
         "type": "object"
@@ -3267,6 +3335,43 @@
           }
         },
         "summary": "Complete a Bucket item, moving it to terminal history."
+      }
+    },
+    "/api/bucket-items/{bucket_item_id}/purchase-decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bucket_item_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BucketItemRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Record the human's current decision on a purchase item."
       }
     },
     "/api/capture/voice": {

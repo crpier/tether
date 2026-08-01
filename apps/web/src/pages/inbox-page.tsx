@@ -26,7 +26,13 @@ type InboxItem =
   | { id: string; kind: "memory"; memory: Memory }
   | {
       detail: string;
-      group: "duplicates" | "stale" | "under_specified";
+      group:
+        | "buy_now"
+        | "duplicates"
+        | "missing_price_context"
+        | "stale"
+        | "stale_watches"
+        | "under_specified";
       id: string;
       kind: "bucket-triage";
       title: string;
@@ -71,7 +77,37 @@ function triageItems(
     kind: "bucket-triage" as const,
     title: titleFor(staleItem.bucket_item_id),
   }));
-  return [...underSpecified, ...duplicates, ...stale];
+  const missingPriceContext = report.purchase.missing_price_context.map(
+    (bucketItemId) => ({
+      detail: "Purchase is missing a price or store",
+      group: "missing_price_context" as const,
+      id: `missing-price-context:${bucketItemId}`,
+      kind: "bucket-triage" as const,
+      title: titleFor(bucketItemId),
+    }),
+  );
+  const staleWatches = report.purchase.stale_watches.map((bucketItemId) => ({
+    detail: "Wait decision is 30 days old",
+    group: "stale_watches" as const,
+    id: `stale-watch:${bucketItemId}`,
+    kind: "bucket-triage" as const,
+    title: titleFor(bucketItemId),
+  }));
+  const buyNow = report.purchase.buy_now.map((bucketItemId) => ({
+    detail: "Purchase decision: buy",
+    group: "buy_now" as const,
+    id: `buy-now:${bucketItemId}`,
+    kind: "bucket-triage" as const,
+    title: titleFor(bucketItemId),
+  }));
+  return [
+    ...underSpecified,
+    ...duplicates,
+    ...stale,
+    ...missingPriceContext,
+    ...staleWatches,
+    ...buyNow,
+  ];
 }
 
 function recallVerdict(proposal: EssayGradeProposal): string {

@@ -26,7 +26,7 @@ reason over).
 distilled material by answering spaced recall prompts correctly across \
 rounds. A study item is a loose Memory progressing through Recall.
 - Bucket item: an intention to act on something later (movie, book, place, \
-travel). Unlike a Memory, it can be finished (completed or deleted).
+travel, purchase). Unlike a Memory, it can be finished (completed or deleted).
 - Scheduled trigger: a time-triggered fixed message or agent prompt.
 - Provenance: the objective origin of a capture (a URL, an import, manual). \
 Intent context: the human's subjective reason a Bucket item was saved — \
@@ -74,7 +74,11 @@ the corpus. Prefer `search` over `browse` for finding relevant context.
 - `review_digest` when the user wants help working the review queue \
 (duplicates, conflicts, summaries) — it proposes; the human decides.
 - `triage_report` when the user wants problems in active Bucket items \
-surfaced (under-specified, duplicate, stale). It stores nothing.
+surfaced (under-specified, duplicate, stale), including purchases missing \
+price context, stale waits, and buy-now decisions. It stores nothing.
+- `add_purchase` captures a purchase under consideration with any known price, \
+store, and decision factors. `set_purchase_decision` records the user's \
+explicit buy, wait, or need-more-info choice; never choose for them.
 - `create_trigger` for reminders and scheduled agent prompts.
 
 Your session may start mid-conversation: the visible chat can run longer than \

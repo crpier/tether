@@ -31,6 +31,7 @@ from tether.bucket_items import (
     BucketItem,
     BucketItemService,
     ItemType,
+    PurchaseDecision,
     create_bucket_item_schema,
 )
 from tether.logging import Logger
@@ -76,6 +77,14 @@ class TriageHarness:
     async def complete(self, item: BucketItem[Fetched]) -> BucketItem[Fetched]:
         """Move an item to terminal `completed`."""
         return await self.bucket_service.complete(item, logger=self.logger)
+
+    async def decide(
+        self, item: BucketItem[Fetched], decision: PurchaseDecision
+    ) -> BucketItem[Fetched]:
+        """Record a decision on a purchase item."""
+        return await self.bucket_service.set_purchase_decision(
+            item, decision, logger=self.logger
+        )
 
     async def report(self, *, now: datetime | None = None) -> TriageReport:
         """Compute the Triage report, optionally against an injected clock."""
@@ -314,6 +323,50 @@ async def decay_grows_with_age() -> None:
     assert_true(
         _stale_context(older, item.id).decay > _stale_context(younger, item.id).decay
     )
+
+
+# --- Purchase planning ---
+
+
+@test()
+async def purchase_triage_surfaces_missing_price_context() -> None:
+    """A purchase without both a price and store asks for more context."""
+    harness = await load_fixture(triage_harness())
+    purchase = await harness.add("purchase", {"name": "Aeropress"})
+
+    report = await harness.report()
+
+    assert_in(purchase.id, report.purchase.missing_price_context)
+
+
+@test()
+async def purchase_triage_surfaces_buy_decisions() -> None:
+    """A purchase marked buy is ready to act on now."""
+    harness = await load_fixture(triage_harness())
+    purchase = await harness.add(
+        "purchase",
+        {"name": "Aeropress", "price": "$39.95", "store": "Coffee Hit"},
+    )
+    _ = await harness.decide(purchase, "buy")
+
+    report = await harness.report()
+
+    assert_in(purchase.id, report.purchase.buy_now)
+
+
+@test()
+async def purchase_triage_surfaces_stale_wait_decisions() -> None:
+    """A purchase left waiting for a month comes back for reconsideration."""
+    harness = await load_fixture(triage_harness())
+    purchase = await harness.add(
+        "purchase",
+        {"name": "Aeropress", "price": "$39.95", "store": "Coffee Hit"},
+    )
+    waiting = await harness.decide(purchase, "wait")
+
+    report = await harness.report(now=waiting.updated_at + timedelta(days=30))
+
+    assert_in(purchase.id, report.purchase.stale_watches)
 
 
 # --- No new stored state ---

@@ -31,6 +31,9 @@ from tether.bucket_items import (
     InvalidItemDataError,
     ItemType,
     JsonValue,
+    NotPurchaseItemError,
+    PurchaseData,
+    PurchaseDecision,
     derive_state,
 )
 from tether.capabilities import CapabilityOutcome, ErrorRule
@@ -42,7 +45,11 @@ BUCKET_ERRORS: tuple[ErrorRule, ...] = (
     ),
     ErrorRule((BucketItemConflictError,), "conflict", 409),
     ErrorRule((EmptyBucketSearchQueryError,), "invalid_input", 400),
-    ErrorRule((InvalidItemDataError, EmptyIntentContextError), "invalid_input", 422),
+    ErrorRule(
+        (InvalidItemDataError, EmptyIntentContextError, NotPurchaseItemError),
+        "invalid_input",
+        422,
+    ),
 )
 """The Bucket item domain→code map both surfaces translate failures through."""
 
@@ -245,6 +252,16 @@ async def add_travel(
     return await add(request, "travel", data, intent_context)
 
 
+async def add_purchase(
+    request: Request,
+    purchase: PurchaseData,
+    intent_context: str | None,
+) -> CapabilityOutcome:
+    """Add a `purchase` Bucket item with the context available so far."""
+    data: dict[str, JsonValue] = purchase.model_dump(mode="json")
+    return await add(request, "purchase", data, intent_context)
+
+
 async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:
     """List Bucket items in a lifecycle state (active list / retained history)."""
     items = await request.app.state.bucket_item_service.browse_by_state(
@@ -281,6 +298,21 @@ async def delete(
     """Delete a Bucket item, moving it to terminal history."""
     item = await request.app.state.bucket_item_service.delete(
         _bucket_item_reference(bucket_item_id, version),
+        logger=get_request_logger(request),
+    )
+    return _single(item)
+
+
+async def set_purchase_decision(
+    request: Request,
+    bucket_item_id: UUID,
+    version: PositiveInt,
+    decision: PurchaseDecision,
+) -> CapabilityOutcome:
+    """Record a buy, wait, or need-more-info decision on a purchase."""
+    item = await request.app.state.bucket_item_service.set_purchase_decision(
+        _bucket_item_reference(bucket_item_id, version),
+        decision,
         logger=get_request_logger(request),
     )
     return _single(item)

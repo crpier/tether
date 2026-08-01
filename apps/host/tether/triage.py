@@ -27,7 +27,7 @@ from pydantic import UUID7, BaseModel
 from snekql.sqlite import Database, Fetched, select
 
 from tether.bucket_capabilities import BucketItemRead
-from tether.bucket_items import BucketItem, ItemType
+from tether.bucket_items import BucketItem, ItemType, PurchaseData
 from tether.logging import Logger
 
 STALE_AFTER_DAYS = 180
@@ -48,6 +48,9 @@ decay describes *how far gone* its intent context is.
 
 _MIN_CLUSTER_SIZE = 2
 """A duplicate cluster is only worth surfacing when two or more items share it."""
+
+PURCHASE_WATCH_STALE_AFTER_DAYS = 30
+"""How long a `wait` purchase decision stays quiet before resurfacing."""
 
 
 def _decay(age_days: int) -> float:
@@ -88,6 +91,14 @@ class StaleItem(BaseModel):
     intent_context: DecayedIntentContext
 
 
+class PurchaseTriage(BaseModel):
+    """Purchase-flavoured advisories derived from active purchase items."""
+
+    buy_now: list[UUID7]
+    missing_price_context: list[UUID7]
+    stale_watches: list[UUID7]
+
+
 class TriageReport(BaseModel):
     """The full Triage view of the active Bucket list at one point in time."""
 
@@ -95,6 +106,7 @@ class TriageReport(BaseModel):
     under_specified: list[UnderSpecifiedItem]
     duplicates: list[DuplicateCluster]
     stale: list[StaleItem]
+    purchase: PurchaseTriage
 
 
 def _under_specified_reason(item: BucketItem[Fetched]) -> str | None:
@@ -115,6 +127,8 @@ def _under_specified_reason(item: BucketItem[Fetched]) -> str | None:
             distinguishing_field, reason = "author", "book is missing its author"
         case "travel":
             distinguishing_field, reason = "season", "travel is missing its season"
+        case "purchase":
+            return None
     if item.data.get(distinguishing_field) is None:
         return reason
     return None
@@ -154,6 +168,33 @@ def _stale_items(active: list[BucketItem[Fetched]], now: datetime) -> list[Stale
                 )
             )
     return stale
+
+
+def _purchase_triage(
+    active: list[BucketItem[Fetched]], now: datetime
+) -> PurchaseTriage:
+    """Derive actionable purchase queues from context and human decisions."""
+    buy_now: list[UUID7] = []
+    missing_price_context: list[UUID7] = []
+    stale_watches: list[UUID7] = []
+    for item in active:
+        if item.item_type != "purchase":
+            continue
+        purchase = PurchaseData.model_validate(item.data)
+        if purchase.price is None or purchase.store is None:
+            missing_price_context.append(item.id)
+        if purchase.decision == "buy":
+            buy_now.append(item.id)
+        if (
+            purchase.decision == "wait"
+            and (now - item.updated_at).days >= PURCHASE_WATCH_STALE_AFTER_DAYS
+        ):
+            stale_watches.append(item.id)
+    return PurchaseTriage(
+        buy_now=buy_now,
+        missing_price_context=missing_price_context,
+        stale_watches=stale_watches,
+    )
 
 
 class TriageService:
@@ -197,6 +238,7 @@ class TriageService:
             ],
             duplicates=_duplicate_clusters(active),
             stale=_stale_items(active, moment),
+            purchase=_purchase_triage(active, moment),
         )
         logger.debug(
             "Triage report computed",

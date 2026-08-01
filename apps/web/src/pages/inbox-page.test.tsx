@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   FakeApi,
+  bucketItem,
   duePrompt,
   memory,
   navigateTo,
@@ -84,6 +85,7 @@ describe("Inbox page", () => {
     api.triageReport = {
       active: [],
       duplicates: [],
+      purchase: { buy_now: [], missing_price_context: [], stale_watches: [] },
       stale: [],
       under_specified: [
         {
@@ -103,6 +105,36 @@ describe("Inbox page", () => {
     await waitFor(() => {
       expect(
         screen.getAllByText("movie is missing its release year").length,
+      ).toBeGreaterThan(0);
+    });
+  });
+
+  test("purchase triage surfaces missing price context", async () => {
+    const purchase = bucketItem({
+      id: "purchase-1",
+      item_type: "purchase",
+      title: "Aeropress",
+    });
+    const api = new FakeApi({ authenticated: true, bucketItems: [purchase] });
+    api.triageReport = {
+      active: [purchase],
+      duplicates: [],
+      purchase: {
+        buy_now: [],
+        missing_price_context: [purchase.id],
+        stale_watches: [],
+      },
+      stale: [],
+      under_specified: [],
+    };
+    renderApp(api);
+    await navigateTo("Inbox");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Aeropress" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText("Purchase is missing a price or store").length,
       ).toBeGreaterThan(0);
     });
   });

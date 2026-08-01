@@ -293,6 +293,7 @@ export function artifact(overrides: Partial<Artifact>): Artifact {
 export const emptyTriageReport: BucketTriageReport = {
   active: [],
   duplicates: [],
+  purchase: { buy_now: [], missing_price_context: [], stale_watches: [] },
   stale: [],
   under_specified: [],
 };

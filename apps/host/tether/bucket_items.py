@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypedDict
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
-from pydantic import UUID7, BaseModel, Json, PositiveInt, ValidationError
+from pydantic import UUID7, BaseModel, Field, Json, PositiveInt, ValidationError
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -59,8 +59,11 @@ if TYPE_CHECKING:
 type BucketItemState = Literal["active", "completed", "deleted"]
 """A Bucket item's lifecycle state, derived from its terminal timestamps."""
 
-type ItemType = Literal["movie", "place", "book", "travel"]
+type ItemType = Literal["movie", "place", "book", "travel", "purchase"]
 """The kind of a Bucket item; determines which payload fields it carries."""
+
+type PurchaseDecision = Literal["buy", "wait", "need-more-info"]
+"""The human's current decision about a planned purchase."""
 
 type DedupSeverity = Literal["none", "warn", "inform"]
 """How loudly dedup speaks about pre-existing duplicates of an Added item."""
@@ -106,6 +109,10 @@ class InvalidItemDataError(Exception):
     """Raised when an item-type payload fails its type's validation."""
 
 
+class NotPurchaseItemError(Exception):
+    """Raised when a purchase-only operation targets another item type."""
+
+
 class MovieData(BaseModel):
     """The payload fields a `movie` Bucket item carries."""
 
@@ -134,6 +141,16 @@ class TravelData(BaseModel):
     season: str | None = None
 
 
+class PurchaseData(BaseModel):
+    """The context and current decision carried by a `purchase` Bucket item."""
+
+    name: str
+    price: str | None = None
+    store: str | None = None
+    decision_factors: list[str] = Field(default_factory=list)
+    decision: PurchaseDecision | None = None
+
+
 def _debug(logger: Logger, event: str, **context: object) -> None:
     """Emit a debug event using caller-supplied logging context."""
     logger.debug(event, **context)
@@ -156,6 +173,19 @@ def _normalise_key(text: str) -> str:
     whitespace are noise: "The  Matrix" and "the matrix" are the same intention.
     """
     return " ".join(text.lower().split())
+
+
+def _dedup_with_optional(base: str, optional: str | int | None) -> str:
+    """Append one normalized distinguishing field to a dedup identity."""
+    if optional is None:
+        return base
+    suffix = str(optional) if isinstance(optional, int) else _normalise_key(optional)
+    return f"{base}|{suffix}"
+
+
+def _optional_index_text(value: str | int | None) -> list[str]:
+    """Project an optional typed payload field into searchable text."""
+    return [] if value is None else [str(value)]
 
 
 def _normalise_intent(intent_context: str | None) -> str:
@@ -194,45 +224,48 @@ def _describe_item(item_type: ItemType, data: Mapping[str, object]) -> _ItemDesc
     payload is a well-formed domain error, never a corrupt row.
     """
     try:
+        if item_type == "purchase":
+            purchase = PurchaseData.model_validate(data)
+            return _ItemDescription(
+                data=purchase.model_dump(mode="json"),
+                dedup_key=_normalise_key(purchase.name),
+                title=purchase.name,
+            )
         match item_type:
             case "movie":
                 movie = MovieData.model_validate(data)
-                dedup_key = _normalise_key(movie.title)
-                if movie.year is not None:
-                    dedup_key = f"{dedup_key}|{movie.year}"
                 return _ItemDescription(
                     data=movie.model_dump(mode="json"),
-                    dedup_key=dedup_key,
+                    dedup_key=_dedup_with_optional(
+                        _normalise_key(movie.title), movie.year
+                    ),
                     title=movie.title,
                 )
             case "place":
                 place = PlaceData.model_validate(data)
-                dedup_key = _normalise_key(place.name)
-                if place.location is not None:
-                    dedup_key = f"{dedup_key}|{_normalise_key(place.location)}"
                 return _ItemDescription(
                     data=place.model_dump(mode="json"),
-                    dedup_key=dedup_key,
+                    dedup_key=_dedup_with_optional(
+                        _normalise_key(place.name), place.location
+                    ),
                     title=place.name,
                 )
             case "book":
                 book = BookData.model_validate(data)
-                dedup_key = _normalise_key(book.title)
-                if book.author is not None:
-                    dedup_key = f"{dedup_key}|{_normalise_key(book.author)}"
                 return _ItemDescription(
                     data=book.model_dump(mode="json"),
-                    dedup_key=dedup_key,
+                    dedup_key=_dedup_with_optional(
+                        _normalise_key(book.title), book.author
+                    ),
                     title=book.title,
                 )
             case "travel":
                 travel = TravelData.model_validate(data)
-                dedup_key = _normalise_key(travel.destination)
-                if travel.season is not None:
-                    dedup_key = f"{dedup_key}|{_normalise_key(travel.season)}"
                 return _ItemDescription(
                     data=travel.model_dump(mode="json"),
-                    dedup_key=dedup_key,
+                    dedup_key=_dedup_with_optional(
+                        _normalise_key(travel.destination), travel.season
+                    ),
                     title=travel.destination,
                 )
     except ValidationError as error:
@@ -301,23 +334,24 @@ def bucket_item_index_text(item: BucketItem[Fetched]) -> str:
     item-type field carries additional identifying text (an author, a
     location, a season), not the raw JSON payload."""
     parts = [item.title]
+    if item.item_type == "purchase":
+        purchase = PurchaseData.model_validate(item.data)
+        parts.extend(_optional_index_text(purchase.store))
+        parts.extend(purchase.decision_factors)
+        return "\n".join(parts)
     match item.item_type:
         case "movie":
             movie = MovieData.model_validate(item.data)
-            if movie.year is not None:
-                parts.append(str(movie.year))
+            parts.extend(_optional_index_text(movie.year))
         case "place":
             place = PlaceData.model_validate(item.data)
-            if place.location is not None:
-                parts.append(place.location)
+            parts.extend(_optional_index_text(place.location))
         case "book":
             book = BookData.model_validate(item.data)
-            if book.author is not None:
-                parts.append(book.author)
+            parts.extend(_optional_index_text(book.author))
         case "travel":
             travel = TravelData.model_validate(item.data)
-            if travel.season is not None:
-                parts.append(travel.season)
+            parts.extend(_optional_index_text(travel.season))
     return "\n".join(parts)
 
 
@@ -710,6 +744,63 @@ class BucketItemService:
         )
         await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
         await self._try_deindex(fresh_item.id, logger=logger)
+        return fresh_item
+
+    async def set_purchase_decision(
+        self,
+        item: BucketItem[Fetched],
+        decision: PurchaseDecision,
+        *,
+        logger: Logger,
+    ) -> BucketItem[Fetched]:
+        """Record the human's current decision on an active purchase.
+
+        Decisions remain editable because price and store context can change.
+        The mutation is optimistic-concurrency checked and rejects non-purchase
+        items rather than smuggling purchase behavior into every item type.
+        """
+        _debug(
+            logger,
+            "Setting purchase decision",
+            bucket_item_id=str(item.id),
+            decision=decision,
+            observed_version=item.version,
+        )
+
+        async def _set_decision_tx(tx: Transaction) -> BucketItem[Fetched]:
+            current = await self._fetch(tx, item.id)
+            if current.item_type != "purchase":
+                raise NotPurchaseItemError(item.id)
+            if current.version != item.version:
+                msg = (
+                    f"Tried to update Bucket item {item.id} with version "
+                    f"{item.version} but it had version {current.version}"
+                )
+                raise BucketItemConflictError(msg)
+            purchase = PurchaseData.model_validate(current.data)
+            next_data = purchase.model_copy(update={"decision": decision}).model_dump(
+                mode="json"
+            )
+            _ = await tx.execute(
+                update(BucketItem)
+                .set(BucketItem.data.to(next_data))
+                .set(BucketItem.updated_at.to(CurrentTimestamp))
+                .set(BucketItem.version.to(item.version + 1))
+                .where(BucketItem.id.eq(item.id))
+                .where(BucketItem.version.eq(item.version))
+            )
+            return await self._fetch(tx, item.id)
+
+        fresh_item = await run_in_transaction(self.database, _set_decision_tx)
+        _info(
+            logger,
+            "Purchase decision set",
+            bucket_item_id=str(fresh_item.id),
+            decision=decision,
+            version=fresh_item.version,
+        )
+        await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
+        await self._try_index(fresh_item, logger=logger)
         return fresh_item
 
     async def set_intent(

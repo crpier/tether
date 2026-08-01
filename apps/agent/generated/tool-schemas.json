@@ -508,6 +508,66 @@
       }
     },
     {
+      "endpoint": "/internal/tools/add_purchase",
+      "name": "add_purchase",
+      "params_model": "AddPurchaseParams",
+      "schema": {
+        "description": "Params for capturing a purchase under consideration.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "decision_factors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Decision Factors",
+            "type": "array"
+          },
+          "intent_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent Context"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Price"
+          },
+          "store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Store"
+          }
+        },
+        "required": ["name"],
+        "title": "AddPurchaseParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/complete_bucket_item",
       "name": "complete_bucket_item",
       "params_model": "CompleteBucketItemParams",
@@ -573,6 +633,38 @@
         },
         "required": ["q"],
         "title": "SearchBucketItemsParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/set_purchase_decision",
+      "name": "set_purchase_decision",
+      "params_model": "SetPurchaseDecisionParams",
+      "schema": {
+        "$defs": {
+          "PurchaseDecision": {
+            "enum": ["buy", "wait", "need-more-info"],
+            "type": "string"
+          }
+        },
+        "description": "Params for recording the human's current purchase decision.",
+        "properties": {
+          "bucket_item_id": {
+            "format": "uuid7",
+            "title": "Bucket Item Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "decision": {
+            "$ref": "#/$defs/PurchaseDecision"
+          }
+        },
+        "required": ["bucket_item_id", "version", "decision"],
+        "title": "SetPurchaseDecisionParams",
         "type": "object"
       }
     },

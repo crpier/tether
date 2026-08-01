@@ -16,7 +16,8 @@ surface. Complete, Delete, and Search round out the belt.
 
 from __future__ import annotations
 
-from pydantic import UUID7, BaseModel, PositiveInt
+from pydantic import UUID7, BaseModel, Field, PositiveInt
+from starlette.requests import Request
 from starlette.routing import Route
 
 from tether.bucket_capabilities import (
@@ -24,13 +25,16 @@ from tether.bucket_capabilities import (
     add_book,
     add_movie,
     add_place,
+    add_purchase,
     add_travel,
     complete,
     delete,
     search,
     set_bucket_item_intent,
+    set_purchase_decision,
 )
-from tether.capabilities import bind_params
+from tether.bucket_items import PurchaseData, PurchaseDecision
+from tether.capabilities import CapabilityOutcome, bind_params
 from tether.tools import ToolSpec
 
 
@@ -82,6 +86,32 @@ class AddTravelParams(BaseModel):
     season: str | None = None
 
 
+class AddPurchaseParams(BaseModel):
+    """Params for capturing a purchase under consideration."""
+
+    name: str
+    decision_factors: list[str] = Field(default_factory=list)
+    intent_context: str | None = None
+    price: str | None = None
+    store: str | None = None
+
+
+async def _add_purchase(
+    request: Request, params: AddPurchaseParams
+) -> CapabilityOutcome:
+    """Project flat tool fields onto the purchase payload model."""
+    return await add_purchase(
+        request,
+        PurchaseData(
+            decision_factors=params.decision_factors,
+            name=params.name,
+            price=params.price,
+            store=params.store,
+        ),
+        params.intent_context,
+    )
+
+
 class CompleteBucketItemParams(BaseModel):
     """Params for completing a Bucket item at an observed version."""
 
@@ -103,6 +133,14 @@ class SearchBucketItemsParams(BaseModel):
     limit: PositiveInt = 50
 
 
+class SetPurchaseDecisionParams(BaseModel):
+    """Params for recording the human's current purchase decision."""
+
+    bucket_item_id: UUID7
+    version: PositiveInt
+    decision: PurchaseDecision
+
+
 class SetBucketItemIntentParams(BaseModel):
     """Params for attaching or replacing a Bucket item's intent context.
 
@@ -120,6 +158,7 @@ BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("add_place", AddPlaceParams, bind_params(add_place), BUCKET_ERRORS),
     ToolSpec("add_book", AddBookParams, bind_params(add_book), BUCKET_ERRORS),
     ToolSpec("add_travel", AddTravelParams, bind_params(add_travel), BUCKET_ERRORS),
+    ToolSpec("add_purchase", AddPurchaseParams, _add_purchase, BUCKET_ERRORS),
     ToolSpec(
         "complete_bucket_item",
         CompleteBucketItemParams,
@@ -136,6 +175,12 @@ BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "search_bucket_items",
         SearchBucketItemsParams,
         bind_params(search),
+        BUCKET_ERRORS,
+    ),
+    ToolSpec(
+        "set_purchase_decision",
+        SetPurchaseDecisionParams,
+        bind_params(set_purchase_decision),
         BUCKET_ERRORS,
     ),
     ToolSpec(
