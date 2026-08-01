@@ -127,6 +127,13 @@ from tether.scheduler import (
 from tether.search_fusion import SearchFusionService
 from tether.search_index import SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.search_tools import (
+    HttpTavilyTransport,
+    PersistentSearchSpendGuard,
+    SearchProvider,
+    TavilySearchProvider,
+    internal_search_tool_routes,
+)
 from tether.stt import HttpSttTransport, SttClient
 from tether.telemetry import (
     Telemetry,
@@ -241,6 +248,8 @@ class AppConfig:
     pi_session_root: str | Path | None = None
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
+    search_max_uses: int = 1_000
+    search_provider: SearchProvider | None = None
     search_reconcile_seconds: float = 5 * 60
     secure_cookies: bool = False
     vapid_private_key: str = ""
@@ -418,6 +427,14 @@ class HostSettings(BaseSettings):
     """Hard cap on total Supadata uses, persisted across restarts. The background
     sweep stops calling Supadata once this many are spent (remaining videos stay
     pending), bounding spend to a limited plan. Raise it after topping up."""
+    search_enabled: bool = True
+    """Whether the agent may call Tavily when an API key is configured."""
+    search_api_key: str = ""
+    """Tavily API key. Empty keeps web search disabled even when flagged on."""
+    search_max_uses: int = 1_000
+    """Hard persisted monthly cap on Tavily credits."""
+    search_min_request_interval_seconds: float = 1.0
+    """Minimum spacing between Tavily requests; zero disables pacing."""
     readwise_api_key: str = ""
     """Readwise API token. Empty (the default) keeps the ingestion gate off, so
     the default install never calls Readwise. Paired with
@@ -1419,6 +1436,15 @@ async def _open_databases(
         yield main_database, telemetry_database
 
 
+def _wire_web_search(app: Starlette, config: AppConfig, database: Database) -> None:
+    """Attach configured search and its persisted monthly spend guard."""
+    if isinstance(config.search_provider, TavilySearchProvider):
+        config.search_provider.spend_guard = PersistentSearchSpendGuard(
+            database, max_uses=config.search_max_uses
+        )
+    app.state.search_provider = config.search_provider
+
+
 def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wired gate
     *,
     config: AppConfig,
@@ -1444,6 +1470,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
             await _create_schemas(db)
             await create_health_connect_schema(telemetry_db)
             app.state.health_connect_service = HealthConnectService(telemetry_db)
+            _wire_web_search(app, config, db)
             model_catalog = (
                 AgentModelCatalog(
                     default_model=config.default_model,
@@ -1721,6 +1748,7 @@ def create_app(
             *internal_artifact_tool_routes(),
             *internal_triage_tool_routes(),
             *internal_youtube_tool_routes(),
+            *internal_search_tool_routes(),
             *internal_trigger_tool_routes(),
             *internal_recall_tool_routes(),
             *internal_conversation_history_tool_routes(),
@@ -1769,6 +1797,16 @@ def create_app(
         api_token=config.api_token,
     )
     return app
+
+
+def _build_search_provider(settings: HostSettings) -> SearchProvider | None:
+    """Build Tavily only when both the explicit flag and API key are configured."""
+    if not settings.search_enabled or not settings.search_api_key:
+        return None
+    return TavilySearchProvider(
+        HttpTavilyTransport(settings.search_api_key),
+        min_request_interval_seconds=settings.search_min_request_interval_seconds,
+    )
 
 
 def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
@@ -1848,6 +1886,8 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         logging_level=settings.logging_level,
         log_file=settings.log_file,
         model_allowlist=settings.model_allowlist,
+        search_max_uses=settings.search_max_uses,
+        search_provider=_build_search_provider(settings),
         readwise_api_key=settings.readwise_api_key,
         readwise_sync_enabled=settings.readwise_sync_enabled,
         readwise_sync_interval_seconds=settings.readwise_sync_interval_seconds,

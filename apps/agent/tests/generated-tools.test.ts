@@ -9,7 +9,7 @@ interface RegisteredToolSummary {
 }
 
 describe("generated tool extension", () => {
-  test("registers the Memory, Bucket item, and YouTube tools", () => {
+  test("registers all generated Tether tools", () => {
     const registeredTools: RegisteredToolSummary[] = [];
     const pi = {
       registerTool(tool: RegisteredToolSummary): void {
@@ -52,6 +52,7 @@ describe("generated tool extension", () => {
       "fetch_youtube_transcript",
       "ignore_youtube_video",
       "retry_youtube_video",
+      "web_search",
       "create_trigger",
       "list_triggers",
       "delete_trigger",

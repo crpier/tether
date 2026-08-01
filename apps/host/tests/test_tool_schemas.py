@@ -13,6 +13,7 @@ from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
+from tether.search_tools import internal_search_tool_routes
 from tether.todo_tools import internal_todo_tool_routes
 from tether.tool_schemas import build_tool_schema_document
 from tether.tools import internal_tool_routes
@@ -63,6 +64,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "fetch_youtube_transcript",
             "ignore_youtube_video",
             "retry_youtube_video",
+            "web_search",
             "create_trigger",
             "list_triggers",
             "delete_trigger",
@@ -162,6 +164,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_todo_tool_routes(),
             internal_triage_tool_routes(),
             internal_youtube_tool_routes(),
+            internal_search_tool_routes(),
             internal_trigger_tool_routes(),
             internal_recall_tool_routes(),
             internal_conversation_history_tool_routes(),
