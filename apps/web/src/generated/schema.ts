@@ -2030,6 +2030,162 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/telemetry/health-connect/batches": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["HealthConnectBatchRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["HealthConnectBatchRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/telemetry/health-connect/sync-state": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: {
+      parameters: {
+        query: {
+          installation_id: string;
+          record_types: string;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["HealthConnectSyncStateRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/telemetry/health-connect/sync-state/baselines": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["StartHealthConnectBaselineRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["HealthConnectSyncStateRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/telemetry/health-connect/sync-state/baselines/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reconcile bounded baseline absence and unlock live change pages. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["CompleteHealthConnectBaselineRequest"];
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["HealthConnectBaselineCompletionRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/todos": {
     parameters: {
       query?: never;
@@ -2644,6 +2800,18 @@ export interface components {
       version: number;
     };
     /**
+     * AuthoritativeScanRange
+     * @description Exact time range and IDs returned authoritatively by Health Connect.
+     */
+    AuthoritativeScanRange: {
+      /** End Time */
+      end_time: number;
+      /** Seen Record Ids */
+      seen_record_ids: string[];
+      /** Start Time */
+      start_time: number;
+    };
+    /**
      * BucketItemRead
      * @description HTTP representation of a Bucket item, exposing its derived `state`.
      *
@@ -2723,6 +2891,28 @@ export interface components {
      */
     CaptureRequest: {
       content: components["schemas"]["MemoryContent"];
+    };
+    /**
+     * CompleteHealthConnectBaselineRequest
+     * @description Bounded authoritative scan used to reconcile expired-token gaps.
+     */
+    CompleteHealthConnectBaselineRequest: {
+      /** Baseline Generation */
+      baseline_generation: number;
+      /**
+       * Contract Version
+       * @constant
+       */
+      contract_version: 1;
+      /** Expected Token */
+      expected_token: string;
+      /** Installation Id */
+      installation_id: string;
+      ranges: components["schemas"]["HealthConnectBaselineRanges"];
+      /** Record Types */
+      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      /** Request Id */
+      request_id: string;
     };
     /**
      * CompleteRequest
@@ -2878,6 +3068,27 @@ export interface components {
     /** @enum {string} */
     DedupSeverity: "none" | "warn" | "inform";
     /**
+     * Device
+     * @description Nullable Health Connect writing-device metadata.
+     */
+    Device: {
+      /**
+       * Manufacturer
+       * @default null
+       */
+      manufacturer: string | null;
+      /**
+       * Model
+       * @default null
+       */
+      model: string | null;
+      /**
+       * Type
+       * @default null
+       */
+      type: number | null;
+    };
+    /**
      * DuePromptRead
      * @description An outstanding prompt plus the study item it belongs to.
      */
@@ -2944,6 +3155,67 @@ export interface components {
       /** Rubric */
       rubric: string;
     };
+    /** ExerciseLap */
+    ExerciseLap: {
+      /** End Time */
+      end_time: number;
+      /** Length Meters */
+      length_meters: number | null;
+      /** Start Time */
+      start_time: number;
+    };
+    /** ExerciseRecord */
+    ExerciseRecord: {
+      /** End Time */
+      end_time: number;
+      /** End Zone Offset Seconds */
+      end_zone_offset_seconds: number | null;
+      /** Exercise Type */
+      exercise_type: number;
+      /** Laps */
+      laps: components["schemas"]["ExerciseLap"][];
+      metadata: components["schemas"]["RecordMetadata"];
+      /** Notes */
+      notes: string | null;
+      /** Planned Exercise Session Id */
+      planned_exercise_session_id: string | null;
+      /** Route */
+      route: components["schemas"]["ExerciseRoutePoint"][];
+      /** Segments */
+      segments: components["schemas"]["ExerciseSegment"][];
+      /** Start Time */
+      start_time: number;
+      /** Start Zone Offset Seconds */
+      start_zone_offset_seconds: number | null;
+      /** Title */
+      title: string | null;
+    };
+    /** ExerciseRoutePoint */
+    ExerciseRoutePoint: {
+      /** Altitude Meters */
+      altitude_meters: number | null;
+      /** Horizontal Accuracy Meters */
+      horizontal_accuracy_meters: number | null;
+      /** Latitude */
+      latitude: number;
+      /** Longitude */
+      longitude: number;
+      /** Time */
+      time: number;
+      /** Vertical Accuracy Meters */
+      vertical_accuracy_meters: number | null;
+    };
+    /** ExerciseSegment */
+    ExerciseSegment: {
+      /** End Time */
+      end_time: number;
+      /** Repetitions Count */
+      repetitions_count: number;
+      /** Segment Type */
+      segment_type: number;
+      /** Start Time */
+      start_time: number;
+    };
     /**
      * FusedSearchResultRead
      * @description One fused, source-tagged Search result.
@@ -3002,6 +3274,137 @@ export interface components {
       scope: string | null;
       /** Seen */
       seen: number;
+    };
+    /**
+     * HealthConnectBaselineCompletionRead
+     * @description Safe operational counts from baseline reconciliation.
+     */
+    HealthConnectBaselineCompletionRead: {
+      /** Deleted */
+      deleted: {
+        [key: string]: number;
+      };
+      /**
+       * Status
+       * @constant
+       */
+      status: "completed";
+    };
+    /**
+     * HealthConnectBaselineRanges
+     * @description Authoritative baseline declarations for every contract record type.
+     */
+    HealthConnectBaselineRanges: {
+      exercise: components["schemas"]["AuthoritativeScanRange"];
+      heart_rate: components["schemas"]["AuthoritativeScanRange"];
+      sleep: components["schemas"]["AuthoritativeScanRange"];
+      steps: components["schemas"]["AuthoritativeScanRange"];
+    };
+    /** HealthConnectBatchRead */
+    HealthConnectBatchRead: {
+      /** Accepted */
+      accepted: {
+        [key: string]: number;
+      };
+      /** Deleted */
+      deleted: {
+        [key: string]: number;
+      };
+      /** Replayed */
+      replayed: boolean;
+      /** Skipped */
+      skipped: {
+        [key: string]: number;
+      };
+      /**
+       * Status
+       * @constant
+       */
+      status: "accepted";
+    };
+    /** HealthConnectBatchRequest */
+    HealthConnectBatchRequest: {
+      /**
+       * Contract Version
+       * @constant
+       */
+      contract_version: 1;
+      /** Deletions */
+      deletions: components["schemas"]["HealthConnectDeletion"][];
+      /** Expected Token */
+      expected_token: string;
+      /** Installation Id */
+      installation_id: string;
+      /**
+       * Mode
+       * @enum {string}
+       */
+      mode: "baseline" | "changes";
+      /** Next Token */
+      next_token: string;
+      /** Record Types */
+      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      records: components["schemas"]["HealthConnectRecords"];
+      /** Request Id */
+      request_id: string;
+    };
+    /** HealthConnectDeletion */
+    HealthConnectDeletion: {
+      /** Record Id */
+      record_id: string;
+      /**
+       * Record Type
+       * @enum {string}
+       */
+      record_type: "exercise" | "heart_rate" | "sleep" | "steps";
+    };
+    /** HealthConnectRecords */
+    HealthConnectRecords: {
+      /** Exercise */
+      exercise: components["schemas"]["ExerciseRecord"][];
+      /** Heart Rate */
+      heart_rate: components["schemas"]["HeartRateRecord"][];
+      /** Sleep */
+      sleep: components["schemas"]["SleepRecord"][];
+      /** Steps */
+      steps: components["schemas"]["StepsRecord"][];
+    };
+    /** HealthConnectSyncStateRead */
+    HealthConnectSyncStateRead: {
+      /** Baseline Generation */
+      baseline_generation: number;
+      /** Current Token */
+      current_token: string | null;
+      /** Installation Id */
+      installation_id: string;
+      /** Record Types */
+      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "baseline" | "changes" | "initial";
+    };
+    /** HeartRateRecord */
+    HeartRateRecord: {
+      /** End Time */
+      end_time: number;
+      /** End Zone Offset Seconds */
+      end_zone_offset_seconds: number | null;
+      metadata: components["schemas"]["RecordMetadata"];
+      /** Samples */
+      samples: components["schemas"]["HeartRateSample"][];
+      /** Start Time */
+      start_time: number;
+      /** Start Zone Offset Seconds */
+      start_zone_offset_seconds: number | null;
+    };
+    /** HeartRateSample */
+    HeartRateSample: {
+      /** Beats Per Minute */
+      beats_per_minute: number;
+      /** Time */
+      time: number;
     };
     /** @enum {string} */
     IngestState: "active" | "ignored";
@@ -3410,6 +3813,25 @@ export interface components {
       study_item_id: string;
     };
     /**
+     * RecordMetadata
+     * @description Common metadata exposed by the pinned Health Connect wire contract.
+     */
+    RecordMetadata: {
+      /** Client Record Id */
+      client_record_id: string | null;
+      /** Client Record Version */
+      client_record_version: number | null;
+      /** Data Origin Package */
+      data_origin_package: string;
+      device: components["schemas"]["Device"] | null;
+      /** Id */
+      id: string;
+      /** Last Modified Time */
+      last_modified_time: number | null;
+      /** Recording Method */
+      recording_method: number | null;
+    };
+    /**
      * RejectProposalRequest
      * @description Body for rejecting a proposal at an observed version.
      */
@@ -3459,6 +3881,33 @@ export interface components {
       /** Version */
       version: number;
     };
+    /** SleepRecord */
+    SleepRecord: {
+      /** End Time */
+      end_time: number;
+      /** End Zone Offset Seconds */
+      end_zone_offset_seconds: number | null;
+      metadata: components["schemas"]["RecordMetadata"];
+      /** Notes */
+      notes: string | null;
+      /** Stages */
+      stages: components["schemas"]["SleepStage"][];
+      /** Start Time */
+      start_time: number;
+      /** Start Zone Offset Seconds */
+      start_zone_offset_seconds: number | null;
+      /** Title */
+      title: string | null;
+    };
+    /** SleepStage */
+    SleepStage: {
+      /** End Time */
+      end_time: number;
+      /** Stage */
+      stage: number;
+      /** Start Time */
+      start_time: number;
+    };
     /** @enum {string} */
     SourceType: "memory" | "bucket_item";
     /**
@@ -3497,6 +3946,22 @@ export interface components {
       bucket_item_id: string;
       intent_context: components["schemas"]["DecayedIntentContext"];
     };
+    /** StartHealthConnectBaselineRequest */
+    StartHealthConnectBaselineRequest: {
+      /**
+       * Contract Version
+       * @constant
+       */
+      contract_version: 1;
+      /** Installation Id */
+      installation_id: string;
+      /** Record Types */
+      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      /** Request Id */
+      request_id: string;
+      /** Starting Token */
+      starting_token: string;
+    };
     /**
      * StartRecallRequest
      * @description Body for promoting an ingested educational video into a study item.
@@ -3507,6 +3972,20 @@ export interface components {
     StartRecallRequest: {
       /** Video Id */
       video_id: string;
+    };
+    /** StepsRecord */
+    StepsRecord: {
+      /** Count */
+      count: number;
+      /** End Time */
+      end_time: number;
+      /** End Zone Offset Seconds */
+      end_zone_offset_seconds: number | null;
+      metadata: components["schemas"]["RecordMetadata"];
+      /** Start Time */
+      start_time: number;
+      /** Start Zone Offset Seconds */
+      start_zone_offset_seconds: number | null;
     };
     /**
      * StudyItemRead

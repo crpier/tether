@@ -320,6 +320,35 @@
         "title": "ArtifactSummaryRead",
         "type": "object"
       },
+      "AuthoritativeScanRange": {
+        "additionalProperties": false,
+        "description": "Exact time range and IDs returned authoritatively by Health Connect.",
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "seen_record_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100000,
+            "title": "Seen Record Ids",
+            "type": "array"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_time",
+          "end_time",
+          "seen_record_ids"
+        ],
+        "title": "AuthoritativeScanRange",
+        "type": "object"
+      },
       "BucketItemRead": {
         "description": "HTTP representation of a Bucket item, exposing its derived `state`.\n\n>>> read = BucketItemRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     item_type=\"movie\",\n...     state=\"active\",\n...     title=\"Dune\",\n...     data={\"title\": \"Dune\"},\n...     intent_context=\"recommended\",\n...     version=1,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     completed_at=None,\n...     deleted_at=None,\n... )\n>>> read.state\n'active'",
         "properties": {
@@ -447,6 +476,61 @@
           "content"
         ],
         "title": "CaptureRequest",
+        "type": "object"
+      },
+      "CompleteHealthConnectBaselineRequest": {
+        "additionalProperties": false,
+        "description": "Bounded authoritative scan used to reconcile expired-token gaps.",
+        "properties": {
+          "baseline_generation": {
+            "exclusiveMinimum": 0,
+            "title": "Baseline Generation",
+            "type": "integer"
+          },
+          "contract_version": {
+            "const": 1,
+            "title": "Contract Version",
+            "type": "integer"
+          },
+          "expected_token": {
+            "title": "Expected Token",
+            "type": "string"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "ranges": {
+            "$ref": "#/components/schemas/HealthConnectBaselineRanges"
+          },
+          "record_types": {
+            "items": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ],
+              "type": "string"
+            },
+            "title": "Record Types",
+            "type": "array"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "installation_id",
+          "record_types",
+          "request_id",
+          "expected_token",
+          "baseline_generation",
+          "ranges"
+        ],
+        "title": "CompleteHealthConnectBaselineRequest",
         "type": "object"
       },
       "CompleteRequest": {
@@ -759,6 +843,50 @@
         ],
         "type": "string"
       },
+      "Device": {
+        "additionalProperties": false,
+        "description": "Nullable Health Connect writing-device metadata.",
+        "properties": {
+          "manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Manufacturer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type"
+          }
+        },
+        "title": "Device",
+        "type": "object"
+      },
       "DuePromptRead": {
         "description": "An outstanding prompt plus the study item it belongs to.",
         "properties": {
@@ -886,6 +1014,242 @@
           "reasoning"
         ],
         "title": "EssayGradeProposalRead",
+        "type": "object"
+      },
+      "ExerciseLap": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "length_meters": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length Meters"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_time",
+          "end_time",
+          "length_meters"
+        ],
+        "title": "ExerciseLap",
+        "type": "object"
+      },
+      "ExerciseRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "end_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Zone Offset Seconds"
+          },
+          "exercise_type": {
+            "title": "Exercise Type",
+            "type": "integer"
+          },
+          "laps": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseLap"
+            },
+            "maxItems": 10000,
+            "title": "Laps",
+            "type": "array"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RecordMetadata"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "planned_exercise_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Exercise Session Id"
+          },
+          "route": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseRoutePoint"
+            },
+            "maxItems": 100000,
+            "title": "Route",
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseSegment"
+            },
+            "maxItems": 10000,
+            "title": "Segments",
+            "type": "array"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          },
+          "start_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Zone Offset Seconds"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "metadata",
+          "start_time",
+          "end_time",
+          "start_zone_offset_seconds",
+          "end_zone_offset_seconds",
+          "exercise_type",
+          "title",
+          "notes",
+          "planned_exercise_session_id",
+          "segments",
+          "laps",
+          "route"
+        ],
+        "title": "ExerciseRecord",
+        "type": "object"
+      },
+      "ExerciseRoutePoint": {
+        "additionalProperties": false,
+        "properties": {
+          "altitude_meters": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Altitude Meters"
+          },
+          "horizontal_accuracy_meters": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizontal Accuracy Meters"
+          },
+          "latitude": {
+            "title": "Latitude",
+            "type": "number"
+          },
+          "longitude": {
+            "title": "Longitude",
+            "type": "number"
+          },
+          "time": {
+            "title": "Time",
+            "type": "integer"
+          },
+          "vertical_accuracy_meters": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vertical Accuracy Meters"
+          }
+        },
+        "required": [
+          "time",
+          "latitude",
+          "longitude",
+          "horizontal_accuracy_meters",
+          "vertical_accuracy_meters",
+          "altitude_meters"
+        ],
+        "title": "ExerciseRoutePoint",
+        "type": "object"
+      },
+      "ExerciseSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "repetitions_count": {
+            "minimum": 0,
+            "title": "Repetitions Count",
+            "type": "integer"
+          },
+          "segment_type": {
+            "title": "Segment Type",
+            "type": "integer"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_time",
+          "end_time",
+          "segment_type",
+          "repetitions_count"
+        ],
+        "title": "ExerciseSegment",
         "type": "object"
       },
       "FusedSearchResultRead": {
@@ -1018,6 +1382,407 @@
           "last_rejection"
         ],
         "title": "GrantSuggestionRead",
+        "type": "object"
+      },
+      "HealthConnectBaselineCompletionRead": {
+        "additionalProperties": false,
+        "description": "Safe operational counts from baseline reconciliation.",
+        "properties": {
+          "deleted": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ]
+            },
+            "title": "Deleted",
+            "type": "object"
+          },
+          "status": {
+            "const": "completed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deleted",
+          "status"
+        ],
+        "title": "HealthConnectBaselineCompletionRead",
+        "type": "object"
+      },
+      "HealthConnectBaselineRanges": {
+        "additionalProperties": false,
+        "description": "Authoritative baseline declarations for every contract record type.",
+        "properties": {
+          "exercise": {
+            "$ref": "#/components/schemas/AuthoritativeScanRange"
+          },
+          "heart_rate": {
+            "$ref": "#/components/schemas/AuthoritativeScanRange"
+          },
+          "sleep": {
+            "$ref": "#/components/schemas/AuthoritativeScanRange"
+          },
+          "steps": {
+            "$ref": "#/components/schemas/AuthoritativeScanRange"
+          }
+        },
+        "required": [
+          "exercise",
+          "heart_rate",
+          "sleep",
+          "steps"
+        ],
+        "title": "HealthConnectBaselineRanges",
+        "type": "object"
+      },
+      "HealthConnectBatchRead": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ]
+            },
+            "title": "Accepted",
+            "type": "object"
+          },
+          "deleted": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ]
+            },
+            "title": "Deleted",
+            "type": "object"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "skipped": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ]
+            },
+            "title": "Skipped",
+            "type": "object"
+          },
+          "status": {
+            "const": "accepted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted",
+          "deleted",
+          "replayed",
+          "skipped",
+          "status"
+        ],
+        "title": "HealthConnectBatchRead",
+        "type": "object"
+      },
+      "HealthConnectBatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": 1,
+            "title": "Contract Version",
+            "type": "integer"
+          },
+          "deletions": {
+            "items": {
+              "$ref": "#/components/schemas/HealthConnectDeletion"
+            },
+            "maxItems": 10000,
+            "title": "Deletions",
+            "type": "array"
+          },
+          "expected_token": {
+            "title": "Expected Token",
+            "type": "string"
+          },
+          "installation_id": {
+            "minLength": 1,
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "baseline",
+              "changes"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "next_token": {
+            "title": "Next Token",
+            "type": "string"
+          },
+          "record_types": {
+            "items": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ],
+              "type": "string"
+            },
+            "title": "Record Types",
+            "type": "array"
+          },
+          "records": {
+            "$ref": "#/components/schemas/HealthConnectRecords"
+          },
+          "request_id": {
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "mode",
+          "installation_id",
+          "record_types",
+          "request_id",
+          "expected_token",
+          "next_token",
+          "records",
+          "deletions"
+        ],
+        "title": "HealthConnectBatchRequest",
+        "type": "object"
+      },
+      "HealthConnectDeletion": {
+        "additionalProperties": false,
+        "properties": {
+          "record_id": {
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "record_type": {
+            "enum": [
+              "exercise",
+              "heart_rate",
+              "sleep",
+              "steps"
+            ],
+            "title": "Record Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_type",
+          "record_id"
+        ],
+        "title": "HealthConnectDeletion",
+        "type": "object"
+      },
+      "HealthConnectRecords": {
+        "additionalProperties": false,
+        "properties": {
+          "exercise": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseRecord"
+            },
+            "maxItems": 1000,
+            "title": "Exercise",
+            "type": "array"
+          },
+          "heart_rate": {
+            "items": {
+              "$ref": "#/components/schemas/HeartRateRecord"
+            },
+            "maxItems": 1000,
+            "title": "Heart Rate",
+            "type": "array"
+          },
+          "sleep": {
+            "items": {
+              "$ref": "#/components/schemas/SleepRecord"
+            },
+            "maxItems": 1000,
+            "title": "Sleep",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepsRecord"
+            },
+            "maxItems": 1000,
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "exercise",
+          "heart_rate",
+          "sleep",
+          "steps"
+        ],
+        "title": "HealthConnectRecords",
+        "type": "object"
+      },
+      "HealthConnectSyncStateRead": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_generation": {
+            "title": "Baseline Generation",
+            "type": "integer"
+          },
+          "current_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Token"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "record_types": {
+            "items": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ],
+              "type": "string"
+            },
+            "title": "Record Types",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "baseline",
+              "changes",
+              "initial"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseline_generation",
+          "current_token",
+          "installation_id",
+          "record_types",
+          "status"
+        ],
+        "title": "HealthConnectSyncStateRead",
+        "type": "object"
+      },
+      "HeartRateRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "end_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Zone Offset Seconds"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RecordMetadata"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/HeartRateSample"
+            },
+            "maxItems": 10000,
+            "title": "Samples",
+            "type": "array"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          },
+          "start_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Zone Offset Seconds"
+          }
+        },
+        "required": [
+          "metadata",
+          "start_time",
+          "end_time",
+          "start_zone_offset_seconds",
+          "end_zone_offset_seconds",
+          "samples"
+        ],
+        "title": "HeartRateRecord",
+        "type": "object"
+      },
+      "HeartRateSample": {
+        "additionalProperties": false,
+        "properties": {
+          "beats_per_minute": {
+            "exclusiveMinimum": 0,
+            "title": "Beats Per Minute",
+            "type": "integer"
+          },
+          "time": {
+            "title": "Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "time",
+          "beats_per_minute"
+        ],
+        "title": "HeartRateSample",
         "type": "object"
       },
       "IngestState": {
@@ -1916,6 +2681,87 @@
         "title": "RecallPromptRead",
         "type": "object"
       },
+      "RecordMetadata": {
+        "additionalProperties": false,
+        "description": "Common metadata exposed by the pinned Health Connect wire contract.",
+        "properties": {
+          "client_record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Record Id"
+          },
+          "client_record_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Record Version"
+          },
+          "data_origin_package": {
+            "minLength": 1,
+            "title": "Data Origin Package",
+            "type": "string"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Device"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "last_modified_time": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Modified Time"
+          },
+          "recording_method": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Method"
+          }
+        },
+        "required": [
+          "id",
+          "data_origin_package",
+          "last_modified_time",
+          "client_record_id",
+          "client_record_version",
+          "device",
+          "recording_method"
+        ],
+        "title": "RecordMetadata",
+        "type": "object"
+      },
       "RejectProposalRequest": {
         "description": "Body for rejecting a proposal at an observed version.",
         "properties": {
@@ -2012,6 +2858,110 @@
         "title": "SetTodoStatusRequest",
         "type": "object"
       },
+      "SleepRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "end_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Zone Offset Seconds"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RecordMetadata"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/SleepStage"
+            },
+            "maxItems": 1000,
+            "title": "Stages",
+            "type": "array"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          },
+          "start_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Zone Offset Seconds"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "metadata",
+          "start_time",
+          "end_time",
+          "start_zone_offset_seconds",
+          "end_zone_offset_seconds",
+          "title",
+          "notes",
+          "stages"
+        ],
+        "title": "SleepRecord",
+        "type": "object"
+      },
+      "SleepStage": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "integer"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_time",
+          "end_time",
+          "stage"
+        ],
+        "title": "SleepStage",
+        "type": "object"
+      },
       "SourceType": {
         "enum": [
           "memory",
@@ -2067,6 +3017,50 @@
         "title": "StaleItem",
         "type": "object"
       },
+      "StartHealthConnectBaselineRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": 1,
+            "title": "Contract Version",
+            "type": "integer"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "record_types": {
+            "items": {
+              "enum": [
+                "exercise",
+                "heart_rate",
+                "sleep",
+                "steps"
+              ],
+              "type": "string"
+            },
+            "title": "Record Types",
+            "type": "array"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "starting_token": {
+            "title": "Starting Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "installation_id",
+          "record_types",
+          "request_id",
+          "starting_token"
+        ],
+        "title": "StartHealthConnectBaselineRequest",
+        "type": "object"
+      },
       "StartRecallRequest": {
         "description": "Body for promoting an ingested educational video into a study item.\n\n>>> StartRecallRequest(video_id=\"v1\").video_id\n'v1'",
         "properties": {
@@ -2079,6 +3073,59 @@
           "video_id"
         ],
         "title": "StartRecallRequest",
+        "type": "object"
+      },
+      "StepsRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "end_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Zone Offset Seconds"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RecordMetadata"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          },
+          "start_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Zone Offset Seconds"
+          }
+        },
+        "required": [
+          "metadata",
+          "start_time",
+          "end_time",
+          "start_zone_offset_seconds",
+          "end_zone_offset_seconds",
+          "count"
+        ],
+        "title": "StepsRecord",
         "type": "object"
       },
       "StudyItemRead": {
@@ -4602,6 +5649,124 @@
           }
         },
         "summary": "Transcribe an uploaded audio clip and return the transcript text only."
+      }
+    },
+    "/api/telemetry/health-connect/batches": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealthConnectBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthConnectBatchRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": ""
+      }
+    },
+    "/api/telemetry/health-connect/sync-state": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "installation_id",
+            "required": true,
+            "schema": {
+              "title": "Installation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "record_types",
+            "required": true,
+            "schema": {
+              "title": "Record Types",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthConnectSyncStateRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": ""
+      }
+    },
+    "/api/telemetry/health-connect/sync-state/baselines": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartHealthConnectBaselineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthConnectSyncStateRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": ""
+      }
+    },
+    "/api/telemetry/health-connect/sync-state/baselines/complete": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteHealthConnectBaselineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthConnectBaselineCompletionRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Reconcile bounded baseline absence and unlock live change pages."
       }
     },
     "/api/todos": {

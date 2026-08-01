@@ -127,6 +127,7 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_SECURE_COOKIES="true",
             TETHER_SESSION_SECRET="configured-session-secret",
             TETHER_STT_API_KEY="configured-stt-key",
+            TETHER_TELEMETRY_DATABASE_PATH=f"{directory}/health.sqlite3",
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
             TETHER_TELEMETRY_SERVICE_NAME="tether-test",
@@ -156,6 +157,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_true(settings.reload)
     assert_eq(settings.session_secret, "configured-session-secret")
     assert_eq(settings.stt_api_key, "configured-stt-key")
+    assert_eq(settings.telemetry_database_path, Path(directory) / "health.sqlite3")
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
     assert_eq(settings.telemetry.service_name, "tether-test")
@@ -165,6 +167,21 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.vapid_subject, "mailto:test@example.com")
     assert_false(settings.youtube_sync_enabled)
     assert_false(settings.transcript_sync_enabled)
+
+
+@test()
+def telemetry_database_defaults_beside_main_database() -> None:
+    """An unconfigured telemetry store sits beside the configured main store."""
+    settings = HostSettings(
+        app_password="test-app-password",
+        database_path=Path("/data/custom-main.sqlite3"),
+        session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
+    )
+
+    assert_eq(
+        settings.resolved_telemetry_database_path, Path("/data/telemetry.sqlite3")
+    )
 
 
 @test()
