@@ -3,14 +3,14 @@
 A deliberately dumb Android client for capturing into a running Tether host.
 Two Gradle modules ship from here:
 
-- **`app`** — the phone client. It does two things and nothing else:
-  1. **Share-target** — share plain text or a URL from any app into "Tether
-     Capture"; it `POST`s the text to `<host>/api/memories` and toasts the
-     result.
-  2. **Hold-to-record voice note** — the single button on the main screen
-     records while held (m4a via `MediaRecorder`); on release it uploads the
-     clip to `<host>/api/capture/voice`, shows the returned transcript, and
-     deletes the local file.
+- **`app`** — the phone client:
+  1. **Share-target** — shares text or URLs to `<host>/api/memories`.
+  2. **Hold-to-record voice capture** — uploads m4a audio to
+     `<host>/api/capture/voice`, then deletes the local file.
+  3. **Health Connect ingestion gate** — after explicit permission, syncs heart
+     rate, sleep, steps, and exercise records to the host immediately and about
+     every six hours. Health data is read and transferred, never analyzed on the
+     phone.
 - **`wear`** — a Wear OS companion: a tile (single tap) launches a
   hold-to-record screen that mirrors `app`'s voice-note flow and uploads
   directly to the same host, independent of the phone. See
@@ -76,7 +76,50 @@ adb install -r wear/build/outputs/apk/debug/wear-debug.apk   # to a paired watch
   (no trailing `/api`; the client appends the paths itself).
 - **API token** — the value of the host's `TETHER_API_TOKEN`.
 
-Grant the microphone permission when first recording a voice note.
+Grant the microphone permission when first recording a voice capture.
+
+## Health Connect
+
+Health Connect must be available (built into Android 14+, or installed on a
+supported earlier Android release). In **Settings → Health Connect**:
+
+1. Tap **Enable / grant**.
+2. Grant heart rate, sleep, steps, and exercise read access. History and
+   background-read access are requested where the provider supports them.
+3. Permission grant queues an immediate baseline. **Sync now** queues another
+   unique sync without racing an active run.
+
+Without history access, the authoritative baseline is limited to Health
+Connect's normally accessible recent window. Missing background/history access
+is shown in Settings. Unsupported devices retain text-share and voice capture.
+The section also shows running state, last success, and a sanitized last failure;
+raw values, notes, and opaque cursor tokens are never displayed or logged.
+
+The host must include the Health Connect API from
+[`docs/health-connect-wire-v1.md`](../../docs/health-connect-wire-v1.md).
+
+### Manual worker validation
+
+With the phone attached:
+
+```sh
+adb shell dumpsys jobscheduler | grep -A20 com.tether.capture
+# Find the WorkManager JobScheduler id, then force it:
+adb shell cmd jobscheduler run -f com.tether.capture <job-id>
+```
+
+Return to Settings to verify **Last success** or the actionable failure. For a
+fresh baseline, revoke then grant the four record permissions, or clear app data
+and configure the host again. Clearing app data creates a new installation id.
+
+Troubleshooting:
+
+- **Install or update Health Connect**: open the Health Connect settings/store
+  flow from **Enable / grant**.
+- **Health permissions changed**: grant the four required reads again.
+- **Host unavailable**: verify host URL, bearer token, network, and the host's
+  telemetry API.
+- A worker that cannot reach the host retries without acknowledging its page.
 
 ## What it deliberately does not do
 
@@ -84,10 +127,9 @@ Grant the microphone permission when first recording a voice note.
 - No streaming STT, wake words, or on-device transcription.
 - No token issuance/login flow — you paste the static host token.
 - No retained audio: voice clips are deleted after a successful upload.
-- No background sync, notifications beyond the capture toast/snackbar, or offline
-  queue. If the host is unreachable, the capture simply reports failure.
-- Not part of the repo's JS/Python validation gate; verified via
-  `gradle assembleDebug` + lint + JVM unit tests only.
+- No health interpretation, charts, alerts, aggregation, or Health Connect writes.
+- No capture offline queue; failed text/voice captures report failure directly.
+- Android verification uses phone/wear assemble, lint, and JVM unit tests.
 
 See [`wear/README.md`](./wear/README.md) for the watch companion's own scope
 and setup.

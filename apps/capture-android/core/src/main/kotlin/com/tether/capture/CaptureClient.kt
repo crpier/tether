@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  * the [send] helpers wrap those requests in a short-timeout OkHttp call.
  */
 object CaptureClient {
-    private const val JSON_MEDIA_TYPE = "application/json; charset=utf-8"
+    const val JSON_MEDIA_TYPE = "application/json; charset=utf-8"
     private const val AUDIO_MEDIA_TYPE = "audio/mp4"
 
     /** Single-tenant local server: keep timeouts tight so hangs surface fast. */
