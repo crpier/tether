@@ -1,19 +1,10 @@
-"""HTTP route for voice capture: an audio note transcribed into a Memory.
+"""HTTP route for voice capture: an audio note transcribed into chat.
 
 `POST /api/capture/voice` accepts a multipart audio upload (m4a/ogg/wav),
-transcribes it through the shared STT capability, and captures the transcript
-on the existing memory path. A voice note is the human's own assertion, but
-transcription can err, so it lands loose (plain `capture`, not tethered) with a
-`voice` provenance and a `source: voice` facet — Review calibrates from there.
-The audio itself is never persisted; it exists only for the length of the
-request. STT is an always-on host dependency (ADR 0018), so this endpoint has
-no unconfigured/503 path.
-
-This is the "dumb client" capture path (spec #225) — memory-direct, no chat
-involvement. The web chat composer instead uses the transcribe-only route in
-`stt_routes.py`, which returns just a transcript with no Memory side effect
-(issue #19); rewiring this endpoint onto chat is explicitly out of scope here
-(issue #239).
+transcribes it through the shared STT capability, and appends the transcript as
+an ordinary user chat turn. The audio itself is never persisted; it exists only
+for the length of the request. STT is an always-on host dependency, so this
+endpoint has no unconfigured/503 path.
 """
 
 from __future__ import annotations
@@ -25,43 +16,22 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether import memory_capabilities
-from tether.memories import EmptyMemoryContentError, MemoryProvenance
-from tether.memory_capabilities import MemoryRead
+from tether.conversations import MessageDraft, MessageRead
 from tether.openapi import EndpointRoute, endpoint
 from tether.stt import SttClient, SttError
 from tether.voice_http import read_audio_upload, transcription_error_response
 
-_VOICE_FACETS = {"source": "voice"}
-"""The Commons facet set stamped on every voice-captured Memory."""
-
 
 class VoiceCaptureResponse(BaseModel):
-    """A transcribed voice note and the loose Memory it captured.
+    """A transcribed voice note and the user chat message it appended."""
 
-    >>> VoiceCaptureResponse(
-    ...     memory=MemoryRead(
-    ...         content="buy oat milk",
-    ...         created_at=datetime(2026, 1, 1),
-    ...         facets={"source": "voice"},
-    ...         id="018f0000-0000-7000-8000-000000000000",
-    ...         state="loose",
-    ...         tethered_at=None,
-    ...         updated_at=datetime(2026, 1, 1),
-    ...         version=1,
-    ...     ),
-    ...     transcript="buy oat milk",
-    ... ).transcript
-    'buy oat milk'
-    """
-
-    memory: MemoryRead
+    message: MessageRead
     transcript: str
 
 
 @endpoint(response=VoiceCaptureResponse, status=201)
 async def capture_voice(request: Request) -> Response:
-    """Transcribe an uploaded audio note and capture it as a loose Memory."""
+    """Transcribe an uploaded audio note and append it as a user chat turn."""
     stt_client = cast("SttClient", request.app.state.stt_client)
     audio = await read_audio_upload(request)
     if isinstance(audio, JSONResponse):
@@ -70,19 +40,27 @@ async def capture_voice(request: Request) -> Response:
         transcript = await stt_client.transcribe(audio)
     except SttError as error:
         return transcription_error_response(error)
-    try:
-        outcome = await memory_capabilities.capture(
-            request,
-            transcript,
-            facets=dict(_VOICE_FACETS),
-            provenance=MemoryProvenance(kind="voice"),
-        )
-    except EmptyMemoryContentError:
+    normalised_transcript = transcript.strip()
+    if not normalised_transcript:
         return JSONResponse(
             {"detail": "no speech detected in the audio"}, status_code=422
         )
+    conversation = (await request.app.state.conversation_service.list_conversations())[
+        0
+    ]
+    message = await request.app.state.conversation_service.append_message(
+        MessageDraft(
+            content=normalised_transcript,
+            conversation_id=conversation.id,
+            role="user",
+        )
+    )
     return JSONResponse(
-        {"transcript": transcript, "memory": outcome.result}, status_code=201
+        {
+            "transcript": normalised_transcript,
+            "message": MessageRead.from_message(message).model_dump(mode="json"),
+        },
+        status_code=201,
     )
 
 

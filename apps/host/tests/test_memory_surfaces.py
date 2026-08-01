@@ -230,8 +230,69 @@ def capture_tether_search_invariant_holds_at_the_tool_seam() -> None:
 
 
 @test()
-def all_six_tools_are_invokable() -> None:
-    """capture, browse, search, tether, edit, reject all reach MemoryService."""
+def append_tool_adds_a_marked_block() -> None:
+    """`append` preserves existing Memory content and marks agent routing."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        memory = tool_capture(client, "Desk mull")
+
+        envelope = call_tool(
+            client,
+            "append",
+            memory_id=memory["id"],
+            content="maybe move the lamp left",
+            version=memory["version"],
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"]["version"], memory["version"] + 1)
+    assert_in("Desk mull", envelope["result"]["content"])
+    assert_in("agent-routed", envelope["result"]["content"])
+    assert_in("maybe move the lamp left", envelope["result"]["content"])
+
+
+@test()
+def edit_tool_rejects_tethered_content_overwrite() -> None:
+    """The agent cannot overwrite trusted human-authored Memory content in place."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        memory = tool_capture(client, "I live in Berlin")
+        tethered = call_tool(
+            client, "tether", memory_id=memory["id"], version=memory["version"]
+        )["result"]
+
+        envelope = call_tool(
+            client,
+            "edit",
+            memory_id=memory["id"],
+            content="I live in Munich",
+            version=tethered["version"],
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "conflict")
+
+
+@test()
+def rest_patch_still_edits_tethered_memory() -> None:
+    """A human REST edit is itself the review and can overwrite trusted content."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        memory = rest_capture(client, "I live in Berlin")
+        tethered = client.post(
+            f"/api/memories/{memory['id']}/tether",
+            json={"version": memory["version"]},
+        ).json()
+
+        response = client.patch(
+            f"/api/memories/{memory['id']}",
+            json={"content": "I live in Munich", "version": tethered["version"]},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["content"], "I live in Munich")
+
+
+@test()
+def all_seven_memory_tools_are_invokable() -> None:
+    """capture, browse, search, tether, edit, append, reject reach MemoryService."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         memory = tool_capture(client, "I live in Berlin")
 
@@ -244,11 +305,20 @@ def all_six_tools_are_invokable() -> None:
         )
         assert_eq(edited["result"]["content"], "I live in Munich")
 
+        appended = call_tool(
+            client,
+            "append",
+            memory_id=memory["id"],
+            content="also near the river",
+            version=edited["result"]["version"],
+        )
+        assert_in("also near the river", appended["result"]["content"])
+
         tethered = call_tool(
             client,
             "tether",
             memory_id=memory["id"],
-            version=edited["result"]["version"],
+            version=appended["result"]["version"],
         )
         assert_eq(tethered["result"]["state"], "tethered")
 

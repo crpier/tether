@@ -146,6 +146,14 @@ class LoggedMemoryService:
             memory, content, facets=facets, logger=self.logger
         )
 
+    async def append_content(
+        self,
+        memory: Memory[Fetched],
+        content: str,
+    ) -> Memory[Fetched]:
+        """Append through the wrapped service with logging context."""
+        return await self.service.append_content(memory, content, logger=self.logger)
+
     async def delete(self, memory: Memory[Fetched]) -> Memory[Fetched]:
         """Delete through the wrapped service with logging context."""
         return await self.service.delete(memory, logger=self.logger)
@@ -644,6 +652,55 @@ async def edit_bumps_version() -> None:
     edited = await service.edit_content(memory, "I live in Munich")
 
     assert_eq(edited.version, memory.version + 1)
+
+
+@test()
+async def append_bumps_version() -> None:
+    """Agent-routed append consumes one observed revision and returns the next."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("Desk mull")
+
+    appended = await service.append_content(memory, "maybe move the lamp left")
+
+    assert_eq(appended.version, memory.version + 1)
+
+
+@test()
+async def append_preserves_existing_content_and_marks_agent_routing() -> None:
+    """An append keeps the original text and adds a marked verbatim block."""
+    service = await load_fixture(memory_service())
+    memory = await service.capture("Desk mull")
+
+    appended = await service.append_content(memory, "maybe move the lamp left")
+
+    assert_true(appended.content.startswith("Desk mull\n\n"))
+    assert_in("agent-routed", appended.content)
+    assert_in("maybe move the lamp left", appended.content)
+
+
+@test()
+async def appending_a_tethered_memory_refreshes_projection() -> None:
+    """A tethered append flows into the Knowledge base projection immediately."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(service, "Desk mull")
+
+    appended = await service.append_content(memory, "maybe move the lamp left")
+
+    contents = projection_path(service, appended).read_text()
+    assert_in("maybe move the lamp left", contents)
+    assert_in("agent-routed", contents)
+
+
+@test()
+async def appending_a_tethered_memory_is_searchable_by_new_text() -> None:
+    """A tethered append re-indexes the Memory under the new text."""
+    service = (await load_fixture(searchable_memory_service())).service
+    memory = await capture_tethered_memory(service, "Desk mull")
+
+    appended = await service.append_content(memory, "maybe move the lamp left")
+
+    found = [hit.id for hit in await service.search("lamp")]
+    assert_in(appended.id, found)
 
 
 @test()

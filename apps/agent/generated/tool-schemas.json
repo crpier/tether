@@ -195,7 +195,7 @@
             "type": "string"
           }
         },
-        "description": "Params for editing a Memory's content at an observed version.\n\n`facets`, when supplied, replaces the stored Commons facet set verbatim\n(an empty object clears it); omitted, facets stay unchanged.",
+        "description": "Params for editing a loose Memory's content at an observed version.\n\nThe agent must not overwrite tethered Memory content in place. Use `append`\nfor routed human-authored additions to trusted Memories.",
         "properties": {
           "memory_id": {
             "format": "uuid7",
@@ -228,6 +228,38 @@
         },
         "required": ["memory_id", "content", "version"],
         "title": "EditParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/append",
+      "name": "append",
+      "params_model": "AppendParams",
+      "schema": {
+        "$defs": {
+          "MemoryContent": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "description": "Params for appending agent-routed verbatim content to a Memory.",
+        "properties": {
+          "memory_id": {
+            "format": "uuid7",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/$defs/MemoryContent"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["memory_id", "content", "version"],
+        "title": "AppendParams",
         "type": "object"
       }
     },

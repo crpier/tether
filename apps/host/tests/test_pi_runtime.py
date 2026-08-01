@@ -626,6 +626,7 @@ export default function inspectTools(pi) {
             "add_place",
             "add_travel",
             "answer_recall_prompt",
+            "append",
             "browse",
             "browse_youtube",
             "capture",

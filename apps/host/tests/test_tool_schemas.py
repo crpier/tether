@@ -37,6 +37,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "review_digest",
             "tether",
             "edit",
+            "append",
             "reject",
             "facet_overview",
             "rename_facet_key",
@@ -86,6 +87,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
     browse_schema = cast("dict[str, Any]", tools["browse"]["schema"])
     search_schema = cast("dict[str, Any]", tools["search"]["schema"])
     tether_schema = cast("dict[str, Any]", tools["tether"]["schema"])
+    append_schema = cast("dict[str, Any]", tools["append"]["schema"])
 
     assert_eq(tools["capture"]["endpoint"], "/internal/tools/capture")
     assert_eq(tools["capture"]["params_model"], "CaptureParams")
@@ -98,6 +100,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
     )
     assert_eq(search_schema["properties"]["limit"]["default"], 50)
     assert_in("memory_id", tether_schema["required"])
+    assert_eq(tools["append"]["endpoint"], "/internal/tools/append")
+    assert_in("content", append_schema["required"])
 
 
 @test()
