@@ -67,6 +67,7 @@ from tether.gmail_oauth import (
     HttpGmailTransport,
 )
 from tether.gmail_purge import GmailPurgeSweepService
+from tether.health_connect import HealthConnectService, create_health_connect_schema
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
@@ -188,6 +189,7 @@ class AppConfig:
     session_secret: str
     api_token: str = ""
     database_path: str | Path = Path(".tether/tether.sqlite3")
+    telemetry_database_path: str | Path | None = None
     default_model: str | None = None
     default_model_id: str | None = None
     default_model_provider: str | None = None
@@ -278,6 +280,15 @@ class HostSettings(BaseSettings):
     passes the app-session gate exactly as a valid cookie would; revocation is
     rotating this value."""
     database_path: Path = Path(".tether/tether.sqlite3")
+    telemetry_database_path: Path | None = None
+
+    @property
+    def resolved_telemetry_database_path(self) -> Path:
+        """Resolve the independent telemetry store beside the main database."""
+        if self.telemetry_database_path is not None:
+            return self.telemetry_database_path
+        return self.database_path.parent / "telemetry.sqlite3"
+
     host: str = "127.0.0.1"
     kb_root: Path = Path(".tether")
     kosync_enabled: bool = False
@@ -1369,6 +1380,45 @@ async def _shutdown_background_tasks(
             await task
 
 
+@asynccontextmanager
+async def _open_databases(
+    config: AppConfig,
+) -> AsyncGenerator[tuple[Database, Database]]:
+    """Open independent main and telemetry handles for the application lifetime."""
+    database_config = (
+        ":memory:"
+        if str(config.database_path) == ":memory:"
+        else Path(config.database_path)
+    )
+    telemetry_database_path = config.telemetry_database_path
+    if telemetry_database_path is None:
+        telemetry_database_path = (
+            ":memory:"
+            if database_config == ":memory:"
+            else database_config.parent / "telemetry.sqlite3"
+        )
+    telemetry_database_config = (
+        ":memory:"
+        if str(telemetry_database_path) == ":memory:"
+        else Path(telemetry_database_path)
+    )
+    for configured_database in (database_config, telemetry_database_config):
+        if configured_database != ":memory:":
+            await AsyncPath(configured_database.parent).mkdir(
+                parents=True, exist_ok=True
+            )
+    async with contextlib.AsyncExitStack() as database_stack:
+        main_database = await database_stack.enter_async_context(
+            await Database.initialize(backend=Config(database=database_config))
+        )
+        telemetry_database = await database_stack.enter_async_context(
+            await Database.initialize(
+                backend=Config(database=telemetry_database_config)
+            )
+        )
+        yield main_database, telemetry_database
+
+
 def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wired gate
     *,
     config: AppConfig,
@@ -1390,20 +1440,10 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
         app.state.telemetry = telemetry
         configured_kb_root = Path(config.kb_root)
         await AsyncPath(configured_kb_root).mkdir(parents=True, exist_ok=True)
-        database_config = (
-            ":memory:"
-            if str(config.database_path) == ":memory:"
-            else Path(config.database_path)
-        )
-        if database_config != ":memory:":
-            await AsyncPath(database_config.parent).mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-        async with await Database.initialize(
-            backend=Config(database=database_config),
-        ) as db:
+        async with _open_databases(config) as (db, telemetry_db):
             await _create_schemas(db)
+            await create_health_connect_schema(telemetry_db)
+            app.state.health_connect_service = HealthConnectService(telemetry_db)
             model_catalog = (
                 AgentModelCatalog(
                     default_model=config.default_model,
@@ -1795,6 +1835,7 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         api_token=settings.api_token,
         app_password=settings.app_password,
         database_path=settings.database_path,
+        telemetry_database_path=settings.resolved_telemetry_database_path,
         default_model=settings.default_model,
         ebook_statistics_db_path=settings.ebook_statistics_db_path,
         ebook_statistics_sync_interval_seconds=(

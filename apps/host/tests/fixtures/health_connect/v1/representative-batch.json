@@ -1,0 +1,64 @@
+{
+  "contract_version": 1,
+  "installation_id": "pixel-installation",
+  "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+  "request_id": "page-request-1",
+  "mode": "baseline",
+  "expected_token": "opaque-starting-token",
+  "next_token": "opaque-starting-token",
+  "records": {
+    "heart_rate": [{
+      "metadata": {
+        "id": "heart-1", "data_origin_package": "com.example.watch",
+        "last_modified_time": 1700000000100, "client_record_id": null,
+        "client_record_version": null,
+        "device": {"manufacturer": "Google", "model": "Pixel Watch 3", "type": 2},
+        "recording_method": 1
+      },
+      "start_time": 1700000000000, "end_time": 1700000060000,
+      "start_zone_offset_seconds": -18000, "end_zone_offset_seconds": -18000,
+      "samples": [
+        {"time": 1700000001000, "beats_per_minute": 61},
+        {"time": 1700000002000, "beats_per_minute": 63}
+      ]
+    }],
+    "sleep": [{
+      "metadata": {
+        "id": "sleep-1", "data_origin_package": "com.example.phone",
+        "last_modified_time": 1700000000200, "client_record_id": "client-sleep",
+        "client_record_version": 3, "device": null, "recording_method": 2
+      },
+      "start_time": 1699980000000, "end_time": 1700008800000,
+      "start_zone_offset_seconds": null, "end_zone_offset_seconds": null,
+      "title": "Night sleep", "notes": "Representative fixture note",
+      "stages": [{"start_time": 1699980000000, "end_time": 1699983600000, "stage": 4}]
+    }],
+    "steps": [{
+      "metadata": {
+        "id": "steps-1", "data_origin_package": "com.example.phone",
+        "last_modified_time": null, "client_record_id": null,
+        "client_record_version": null, "device": null, "recording_method": null
+      },
+      "start_time": 1700000000000, "end_time": 1700003600000,
+      "start_zone_offset_seconds": 3600, "end_zone_offset_seconds": 3600,
+      "count": 1234
+    }],
+    "exercise": [{
+      "metadata": {
+        "id": "exercise-1", "data_origin_package": "com.example.watch",
+        "last_modified_time": 1700000000300, "client_record_id": "run-1",
+        "client_record_version": 1,
+        "device": {"manufacturer": "Google", "model": "Pixel Watch 3", "type": 2},
+        "recording_method": 1
+      },
+      "start_time": 1700000000000, "end_time": 1700003600000,
+      "start_zone_offset_seconds": -18000, "end_zone_offset_seconds": -18000,
+      "exercise_type": 56, "title": "Morning run", "notes": null,
+      "planned_exercise_session_id": null,
+      "segments": [{"start_time": 1700000000000, "end_time": 1700000600000, "segment_type": 57, "repetitions_count": 2}],
+      "laps": [{"start_time": 1700000000000, "end_time": 1700000600000, "length_meters": 1000.5}],
+      "route": [{"time": 1700000001000, "latitude": 40.1, "longitude": -73.2, "horizontal_accuracy_meters": 3.2, "vertical_accuracy_meters": null, "altitude_meters": 12.5}]
+    }]
+  },
+  "deletions": []
+}
