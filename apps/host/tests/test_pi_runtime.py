@@ -456,6 +456,45 @@ async def stream_turn_yields_typed_events_until_the_agent_ends() -> None:
 
 
 @test()
+async def stream_turn_preserves_provider_error_from_settled_message() -> None:
+    """pi's terminal assistant error remains available to chat consumers."""
+    runtime = PiRuntime(
+        client=PiRpcClient(reader=ControlledByteReader(), writer=MemoryByteWriter()),
+        process=cast("asyncio.subprocess.Process", None),
+        session_id=str(uuid4()),
+        session_registry=SessionRegistry(),
+    )
+    runtime.client.events.put_nowait(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error",
+                "errorMessage": "Provided authentication token is expired.",
+            },
+        }
+    )
+    runtime.client.events.put_nowait({"type": "agent_end"})
+
+    turn_events = [
+        turn_event async for turn_event in runtime.stream_turn(wait_seconds=0.5)
+    ]
+
+    assert_eq(
+        turn_events,
+        [
+            MessageSettled(
+                reasoning="",
+                text="",
+                error="Provided authentication token is expired.",
+            ),
+            AgentEnded(),
+        ],
+    )
+
+
+@test()
 async def spawn_command_replaces_the_default_prompt_when_one_is_configured() -> None:
     """A configured system prompt rides the command line as `--system-prompt`.
 

@@ -378,6 +378,7 @@ class MessageSettled:
 
     reasoning: str
     text: str
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -546,6 +547,11 @@ def decode_turn_event(event: dict[str, Any]) -> TurnEvent | None:
             return MessageSettled(
                 reasoning=_joined_content_text(message_data, item_type="thinking"),
                 text=_joined_content_text(message_data, item_type="text"),
+                error=(
+                    _string_or_none(message_data.get("errorMessage"))
+                    if message_data.get("stopReason") == "error"
+                    else None
+                ),
             )
         case "tool_execution_start" | "tool_execution_end":
             return _decode_tool_execution(event)
