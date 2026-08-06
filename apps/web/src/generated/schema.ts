@@ -2503,6 +2503,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/youtube/transcript-decisions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List transcript failures awaiting a human decision. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TranscriptDecisionListResponse"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/youtube/{video_id}/ignore": {
     parameters: {
       query?: never;
@@ -2607,6 +2643,82 @@ export interface paths {
           };
           content: {
             "application/json": components["schemas"]["YouTubeTranscriptResponse"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/youtube/{video_id}/transcript-decision/give-up": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Confirm that a review-needed video has no transcript worth pursuing. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          video_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TranscriptDecisionOutcomeRead"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/youtube/{video_id}/transcript-decision/keep-trying": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Return a review-needed transcript to pending acquisition. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          video_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["TranscriptDecisionOutcomeRead"];
           };
         };
       };
@@ -4102,6 +4214,38 @@ export interface components {
     /** @enum {string} */
     TodoStatus: "active" | "completed" | "abandoned";
     /**
+     * TranscriptDecisionListResponse
+     * @description The Inbox's pending transcript decisions.
+     */
+    TranscriptDecisionListResponse: components["schemas"]["TranscriptDecisionRead"][];
+    /**
+     * TranscriptDecisionOutcomeRead
+     * @description The transcript status after a human decision.
+     */
+    TranscriptDecisionOutcomeRead: {
+      transcript_status: components["schemas"]["TranscriptStatus"];
+      /** Video Id */
+      video_id: string;
+    };
+    /**
+     * TranscriptDecisionRead
+     * @description A transcript failure awaiting the human's decision in Inbox.
+     */
+    TranscriptDecisionRead: {
+      /** Attempts */
+      attempts: number;
+      /** Channel */
+      channel: string;
+      /** Last Error */
+      last_error: string | null;
+      /** Title */
+      title: string;
+      /** @default needs_review */
+      transcript_status: components["schemas"]["TranscriptStatus"];
+      /** Video Id */
+      video_id: string;
+    };
+    /**
      * TranscriptProviderPauseRead
      * @description HTTP representation of a transcript source paused by an IP block.
      */
@@ -4114,6 +4258,9 @@ export interface components {
       /** Source */
       source: string;
     };
+    /** @enum {string} */
+    TranscriptStatus:
+      "pending" | "retrying" | "needs_review" | "available" | "unavailable";
     /**
      * TranscriptionResponse
      * @description The recognized transcript text for one uploaded audio clip.
@@ -4304,6 +4451,7 @@ export interface components {
      *     ...     videos_total=3,
      *     ...     transcripts_done=1,
      *     ...     transcripts_pending=1,
+     *     ...     transcripts_needs_review=0,
      *     ...     transcripts_unavailable=1,
      *     ...     last_synced_at=None,
      *     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
@@ -4324,6 +4472,8 @@ export interface components {
       transcript_providers_paused: components["schemas"]["TranscriptProviderPauseRead"][];
       /** Transcripts Done */
       transcripts_done: number;
+      /** Transcripts Needs Review */
+      transcripts_needs_review: number;
       /** Transcripts Pending */
       transcripts_pending: number;
       /** Transcripts Unavailable */
@@ -4373,6 +4523,7 @@ export interface components {
      *     ...     topic="python",
      *     ...     description="",
      *     ...     transcript=None,
+     *     ...     transcript_status="pending",
      *     ...     created_at=datetime(2026, 1, 1),
      *     ...     updated_at=datetime(2026, 1, 1),
      *     ...     ignored_at=None,
@@ -4405,6 +4556,7 @@ export interface components {
       topic: string;
       /** Transcript */
       transcript: string | null;
+      transcript_status: components["schemas"]["TranscriptStatus"];
       /**
        * Updated At
        * Format: date-time

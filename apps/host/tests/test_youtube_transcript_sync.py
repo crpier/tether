@@ -5,9 +5,8 @@ path) against a real in-memory SQLite database and a programmable fake
 `TranscriptProvider` — never real captions, never the network. The fake returns
 success, unavailable, excluded, or transient outcomes (scripted per video, so a
 transient failure can later succeed), letting us assert the full per-video state
-machine: store-and-done, terminal-and-never-retried, excluded-and-purged,
-backed-off retries that survive a fresh worker instance, budget exhaustion, and
-recency ordering.
+machine: available, review-needed, explicitly unavailable, backed-off retries
+that survive a fresh worker instance, budget exhaustion, and recency ordering.
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ from snektest import (
     assert_in,
     assert_is_none,
     assert_is_not_none,
-    assert_not_in,
     assert_raises,
     assert_true,
     fixture,
@@ -257,7 +255,7 @@ async def successful_fetch_stores_transcript_and_marks_done() -> None:
     assert_eq(stored.transcript, "coroutines at length")
     persisted = await state_of(env.db, "v1")
     assert_is_not_none(persisted)
-    assert_eq(persisted.status if persisted is not None else None, "done")
+    assert_eq(persisted.status if persisted is not None else None, "available")
     search = await env.service.search("coroutines", logger=test_logger())
     assert_in("v1", {row.video_id for row in search.videos})
 
@@ -335,12 +333,12 @@ async def a_text_only_fetch_stores_null_segments() -> None:
     assert_is_none((await env.service.get_video("v1")).transcript_segments_json)
 
 
-# --- Unavailable: terminal, never retried -----------------------------------
+# --- Unavailable: needs human review, never automatically retried -----------
 
 
 @test()
-async def unavailable_marks_terminal_and_is_never_retried() -> None:
-    """An unavailable result goes terminal and is skipped on later passes."""
+async def unavailable_needs_review_and_is_never_automatically_retried() -> None:
+    """An unavailable result awaits a decision and is skipped on later passes."""
     provider = FakeTranscriptProvider({"v1": [UNAVAILABLE]})
     env = await load_fixture(make_env(provider))
     await seed(env.db, "v1")
@@ -349,20 +347,20 @@ async def unavailable_marks_terminal_and_is_never_retried() -> None:
     second = await env.worker.sync(logger=test_logger())
 
     assert_eq(first.unavailable, 1)
-    # Terminal videos are excluded from the next pass, so the provider is not
-    # called again and nothing is processed.
+    # Review-needed videos are excluded from the next pass, so the provider is
+    # not called again and nothing is processed.
     assert_eq(second.unavailable, 0)
     assert_eq(env.provider.calls["v1"], 1)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "terminal")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
 
 
-# --- Excluded: terminal + purged from active ingestion ----------------------
+# --- Excluded: human review without hiding the video ------------------------
 
 
 @test()
-async def excluded_marks_terminal_and_purges_from_ingestion() -> None:
-    """An excluded (members-only) result goes terminal and drops out of browse."""
+async def excluded_needs_review_and_stays_in_ingestion() -> None:
+    """An excluded (members-only) result awaits a decision and remains browsable."""
     provider = FakeTranscriptProvider({"v1": [EXCLUDED]})
     env = await load_fixture(make_env(provider))
     await seed(env.db, "v1")
@@ -371,9 +369,9 @@ async def excluded_marks_terminal_and_purges_from_ingestion() -> None:
 
     assert_eq(report.excluded, 1)
     browsed = await env.service.browse(logger=test_logger())
-    assert_not_in("v1", {row.video_id for row in browsed.videos})
-    purged = await env.service.get_video("v1")
-    assert_is_not_none(purged.ignored_at)
+    assert_in("v1", {row.video_id for row in browsed.videos})
+    persisted = await state_of(env.db, "v1")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
 
 
 # --- Transient: backed-off retry that survives a restart --------------------
@@ -391,7 +389,7 @@ async def transient_failure_schedules_a_backed_off_retry() -> None:
 
     assert_eq(first.retried, 1)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "retry")
+    assert_eq(persisted.status if persisted is not None else None, "retrying")
     assert_eq(persisted.attempts if persisted is not None else None, 1)
     assert_is_not_none(persisted.next_attempt_at if persisted is not None else None)
 
@@ -540,6 +538,7 @@ async def sync_forever_survives_an_unclassified_exception_and_keeps_looping() ->
         _ = task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+        await db.close()
 
     # A real cancellation still propagates — the broad `except Exception` must
     # not also swallow `CancelledError`.
@@ -633,12 +632,12 @@ async def on_demand_fetch_uses_the_same_provider() -> None:
     assert_eq(result.transcript, "manual body")
     assert_eq(env.provider.calls["v1"], 1)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "done")
+    assert_eq(persisted.status if persisted is not None else None, "available")
 
 
 @test()
-async def on_demand_unavailable_raises_and_marks_terminal() -> None:
-    """An on-demand unavailable surfaces an error and stops future retries."""
+async def on_demand_unavailable_raises_and_needs_review() -> None:
+    """An on-demand unavailable surfaces an error and awaits a decision."""
     provider = FakeTranscriptProvider({"v1": [UNAVAILABLE]})
     env = await load_fixture(make_env(provider))
     await seed(env.db, "v1")
@@ -651,7 +650,7 @@ async def on_demand_unavailable_raises_and_marks_terminal() -> None:
 
     assert_eq(raised, True)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "terminal")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
 
 
 @test()
@@ -909,6 +908,8 @@ async def an_unbound_chain_with_only_fallback_sources_never_touches_the_quota() 
 
     assert_eq(report.fetched, 2)
     assert_eq(await quota.used(now=clock.now()), 0)
+
+    await db.close()
 
 
 @test()

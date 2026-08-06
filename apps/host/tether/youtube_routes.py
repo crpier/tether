@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -29,7 +29,9 @@ from tether.youtube import (
     CacheMeta,
     QuotaMeta,
     SearchResult,
+    TranscriptDecision,
     TranscriptResult,
+    TranscriptStatus,
     YouTubeSource,
     YouTubeSyncStatus,
 )
@@ -70,7 +72,13 @@ class YouTubeVideoListResponse(BaseModel):
     ) -> YouTubeVideoListResponse:
         """Render a browse/search result as its HTTP representation."""
         return cls(
-            videos=[YouTubeVideoRead.from_video(video) for video in result.videos],
+            videos=[
+                YouTubeVideoRead.from_video(
+                    video,
+                    transcript_status=result.transcript_statuses[video.video_id],
+                )
+                for video in result.videos
+            ],
             quota=result.quota,
             cache=result.cache,
         )
@@ -88,7 +96,9 @@ class YouTubeTranscriptResponse(BaseModel):
     def from_result(cls, result: TranscriptResult) -> YouTubeTranscriptResponse:
         """Render a transcript result as its HTTP representation."""
         return cls(
-            video=YouTubeVideoRead.from_video(result.video),
+            video=YouTubeVideoRead.from_video(
+                result.video, transcript_status="available"
+            ),
             transcript=result.transcript,
             quota=result.quota,
             cache=result.cache,
@@ -126,6 +136,7 @@ class YouTubeSyncStatusRead(BaseModel):
     ...     videos_total=3,
     ...     transcripts_done=1,
     ...     transcripts_pending=1,
+    ...     transcripts_needs_review=0,
     ...     transcripts_unavailable=1,
     ...     last_synced_at=None,
     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
@@ -140,6 +151,7 @@ class YouTubeSyncStatusRead(BaseModel):
     videos_total: int
     transcripts_done: int
     transcripts_pending: int
+    transcripts_needs_review: int
     transcripts_unavailable: int
     last_synced_at: datetime | None
     quota: QuotaMeta
@@ -154,6 +166,7 @@ class YouTubeSyncStatusRead(BaseModel):
             videos_total=status.videos_total,
             transcripts_done=status.transcripts_done,
             transcripts_pending=status.transcripts_pending,
+            transcripts_needs_review=status.transcripts_needs_review,
             transcripts_unavailable=status.transcripts_unavailable,
             last_synced_at=status.last_synced_at,
             quota=status.quota,
@@ -174,6 +187,38 @@ class YouTubeSyncStatusRead(BaseModel):
                 for source, usage in status.usage.items()
             },
         )
+
+
+class TranscriptDecisionRead(BaseModel):
+    """A transcript failure awaiting the human's decision in Inbox."""
+
+    video_id: str
+    title: str
+    channel: str
+    transcript_status: TranscriptStatus = "needs_review"
+    last_error: str | None
+    attempts: int
+
+    @classmethod
+    def from_decision(cls, decision: TranscriptDecision) -> TranscriptDecisionRead:
+        return cls(
+            video_id=decision.video.video_id,
+            title=decision.video.title,
+            channel=decision.video.channel,
+            last_error=decision.last_error,
+            attempts=decision.attempts,
+        )
+
+
+class TranscriptDecisionListResponse(RootModel[list[TranscriptDecisionRead]]):
+    """The Inbox's pending transcript decisions."""
+
+
+class TranscriptDecisionOutcomeRead(BaseModel):
+    """The transcript status after a human decision."""
+
+    video_id: str
+    transcript_status: TranscriptStatus
 
 
 def _path_video_id(request: Request) -> str:
@@ -222,6 +267,18 @@ async def search_youtube(request: Request, query: SearchYouTubeQuery) -> Respons
     )
 
 
+@endpoint(response=TranscriptDecisionListResponse)
+async def transcript_decisions(request: Request) -> Response:
+    """List transcript failures awaiting a human decision."""
+    decisions = await request.app.state.youtube_service.transcript_decisions(
+        logger=get_request_logger(request)
+    )
+    body = TranscriptDecisionListResponse(
+        [TranscriptDecisionRead.from_decision(item) for item in decisions]
+    )
+    return JSONResponse(body.model_dump(mode="json"))
+
+
 @endpoint(response=YouTubeTranscriptResponse)
 @_translate_domain_errors
 async def fetch_youtube_transcript(request: Request) -> Response:
@@ -233,6 +290,32 @@ async def fetch_youtube_transcript(request: Request) -> Response:
     return JSONResponse(
         YouTubeTranscriptResponse.from_result(result).model_dump(mode="json")
     )
+
+
+@endpoint(response=TranscriptDecisionOutcomeRead)
+@_translate_domain_errors
+async def keep_trying_transcript(request: Request) -> Response:
+    """Return a review-needed transcript to pending acquisition."""
+    outcome = await request.app.state.youtube_service.keep_trying_transcript(
+        _path_video_id(request), logger=get_request_logger(request)
+    )
+    body = TranscriptDecisionOutcomeRead(
+        video_id=outcome.video_id, transcript_status=outcome.transcript_status
+    )
+    return JSONResponse(body.model_dump())
+
+
+@endpoint(response=TranscriptDecisionOutcomeRead)
+@_translate_domain_errors
+async def give_up_transcript(request: Request) -> Response:
+    """Confirm that a review-needed video has no transcript worth pursuing."""
+    outcome = await request.app.state.youtube_service.give_up_transcript(
+        _path_video_id(request), logger=get_request_logger(request)
+    )
+    body = TranscriptDecisionOutcomeRead(
+        video_id=outcome.video_id, transcript_status=outcome.transcript_status
+    )
+    return JSONResponse(body.model_dump())
 
 
 @endpoint(response=YouTubeVideoRead)
@@ -258,8 +341,21 @@ youtube_routes: list[Route] = [
     EndpointRoute("/api/youtube/status", youtube_sync_status, methods=["GET"]),
     EndpointRoute("/api/youtube/search", search_youtube, methods=["GET"]),
     EndpointRoute(
+        "/api/youtube/transcript-decisions", transcript_decisions, methods=["GET"]
+    ),
+    EndpointRoute(
         "/api/youtube/{video_id}/transcript",
         fetch_youtube_transcript,
+        methods=["POST"],
+    ),
+    EndpointRoute(
+        "/api/youtube/{video_id}/transcript-decision/keep-trying",
+        keep_trying_transcript,
+        methods=["POST"],
+    ),
+    EndpointRoute(
+        "/api/youtube/{video_id}/transcript-decision/give-up",
+        give_up_transcript,
         methods=["POST"],
     ),
     EndpointRoute(

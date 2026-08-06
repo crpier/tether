@@ -43,6 +43,10 @@ export type RecallAnswerInput = Pick<AnswerPromptRequest, "response_ms"> &
     >
   >;
 export type YouTubeSyncStatus = components["schemas"]["YouTubeSyncStatusRead"];
+export type TranscriptDecision =
+  components["schemas"]["TranscriptDecisionRead"];
+export type TranscriptDecisionOutcome =
+  components["schemas"]["TranscriptDecisionOutcomeRead"];
 export type Notification = components["schemas"]["NotificationRead"];
 export type BucketItem = components["schemas"]["BucketItemRead"];
 export type BucketItemType = components["schemas"]["ItemType"];
@@ -108,6 +112,9 @@ export interface TetherApi {
   subscribePush(endpoint: string, p256dh: string, auth: string): Promise<void>;
   unsubscribePush(endpoint: string): Promise<PushStatus>;
   getYouTubeSyncStatus(): Promise<YouTubeSyncStatus>;
+  listTranscriptDecisions(): Promise<TranscriptDecision[]>;
+  keepTryingTranscript(videoId: string): Promise<TranscriptDecisionOutcome>;
+  giveUpTranscript(videoId: string): Promise<TranscriptDecisionOutcome>;
   listDueRecallPrompts(): Promise<DuePrompt[]>;
   answerRecallPrompt(
     promptId: string,
@@ -323,6 +330,26 @@ export function createRestApi(
     },
     async getYouTubeSyncStatus() {
       const { data, response } = await client.GET("/api/youtube/status");
+      return requireData(data, response);
+    },
+    async listTranscriptDecisions() {
+      const { data, response } = await client.GET(
+        "/api/youtube/transcript-decisions",
+      );
+      return requireData(data, response);
+    },
+    async keepTryingTranscript(videoId) {
+      const { data, response } = await client.POST(
+        "/api/youtube/{video_id}/transcript-decision/keep-trying",
+        { params: { path: { video_id: videoId } } },
+      );
+      return requireData(data, response);
+    },
+    async giveUpTranscript(videoId) {
+      const { data, response } = await client.POST(
+        "/api/youtube/{video_id}/transcript-decision/give-up",
+        { params: { path: { video_id: videoId } } },
+      );
       return requireData(data, response);
     },
     async listDueRecallPrompts() {

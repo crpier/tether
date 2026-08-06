@@ -24,6 +24,8 @@ from tether.youtube import (
     IngestedVideo,
     IngestState,
     TranscriptBlockedError,
+    TranscriptNeedsReviewError,
+    TranscriptStatus,
     TranscriptTransientError,
     TranscriptUnavailableError,
     YouTubeQuotaExceededError,
@@ -34,7 +36,19 @@ from tether.youtube import (
 
 YOUTUBE_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule(
-        (YouTubeVideoNotFoundError, TranscriptUnavailableError),
+        (TranscriptNeedsReviewError,),
+        "transcript_needs_review",
+        409,
+        detail="transcript acquisition needs human review",
+    ),
+    ErrorRule(
+        (TranscriptUnavailableError,),
+        "transcript_unavailable",
+        404,
+        detail="transcript is explicitly unavailable",
+    ),
+    ErrorRule(
+        (YouTubeVideoNotFoundError,),
         "not_found",
         404,
         detail="youtube video not found",
@@ -47,9 +61,10 @@ YOUTUBE_ERRORS: tuple[ErrorRule, ...] = (
 )
 """The YouTube domain→code map both surfaces translate failures through.
 
-Absence (an unknown video, or a permanently unavailable/excluded transcript) is
-a 404; a blank keyword query is a 400; a depleted quota budget is a 429; a
-transient transcript failure or a blocked provider is a 503 (retry later).
+An unknown video is ``not_found``; provider exhaustion is
+``transcript_needs_review``; human-settled absence is ``transcript_unavailable``;
+a blank Search is invalid input; depleted quota is 429; transient/provider blocks
+are 503.
 """
 
 
@@ -66,6 +81,7 @@ class YouTubeVideoRead(BaseModel):
     ...     topic="python",
     ...     description="",
     ...     transcript=None,
+    ...     transcript_status="pending",
     ...     created_at=datetime(2026, 1, 1),
     ...     updated_at=datetime(2026, 1, 1),
     ...     ignored_at=None,
@@ -83,13 +99,19 @@ class YouTubeVideoRead(BaseModel):
     topic: str
     description: str
     transcript: str | None
+    transcript_status: TranscriptStatus
     created_at: datetime
     updated_at: datetime
     ignored_at: datetime | None
 
     @classmethod
-    def from_video(cls, video: IngestedVideo[Fetched]) -> YouTubeVideoRead:
-        """Render a stored ingested video as its HTTP representation."""
+    def from_video(
+        cls,
+        video: IngestedVideo[Fetched],
+        *,
+        transcript_status: TranscriptStatus,
+    ) -> YouTubeVideoRead:
+        """Render a stored video with its normalized transcript status."""
         return cls(
             id=video.id,
             video_id=video.video_id,
@@ -100,16 +122,22 @@ class YouTubeVideoRead(BaseModel):
             topic=video.topic,
             description=video.description,
             transcript=video.transcript,
+            transcript_status=transcript_status,
             created_at=video.created_at,
             updated_at=video.updated_at,
             ignored_at=video.ignored_at,
         )
 
 
-def _single(video: IngestedVideo[Fetched]) -> CapabilityOutcome:
+async def _single(request: Request, video: IngestedVideo[Fetched]) -> CapabilityOutcome:
     """Render a single ingested video (ignore/retry carry no quota/cache)."""
+    transcript_status = await request.app.state.youtube_service.transcript_status(
+        video.video_id
+    )
     return CapabilityOutcome(
-        result=YouTubeVideoRead.from_video(video).model_dump(mode="json")
+        result=YouTubeVideoRead.from_video(
+            video, transcript_status=transcript_status
+        ).model_dump(mode="json")
     )
 
 
@@ -119,7 +147,7 @@ async def ignore(request: Request, video_id: str) -> CapabilityOutcome:
         video_id,
         logger=get_request_logger(request),
     )
-    return _single(video)
+    return await _single(request, video)
 
 
 async def retry(request: Request, video_id: str) -> CapabilityOutcome:
@@ -128,4 +156,4 @@ async def retry(request: Request, video_id: str) -> CapabilityOutcome:
         video_id,
         logger=get_request_logger(request),
     )
-    return _single(video)
+    return await _single(request, video)

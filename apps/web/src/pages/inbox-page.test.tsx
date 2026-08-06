@@ -15,6 +15,7 @@ import {
   navigateTo,
   notification,
   renderApp,
+  transcriptDecision,
 } from "../testing/harness";
 
 afterEach(cleanup);
@@ -136,6 +137,84 @@ describe("Inbox page", () => {
       expect(
         screen.getAllByText("Purchase is missing a price or store").length,
       ).toBeGreaterThan(0);
+    });
+  });
+
+  test("transcript failures ask for a decision with source context", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      transcriptDecisions: [
+        transcriptDecision({
+          last_error: "No caption track found",
+          title: "Captionless talk",
+          video_id: "video-1",
+        }),
+      ],
+    });
+    renderApp(api);
+    await navigateTo("Inbox");
+
+    expect(
+      await screen.findByText("Transcript decision (1)"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Captionless talk" }),
+    );
+
+    const detail = (
+      await screen.findAllByLabelText("Inbox item: Captionless talk")
+    )[0];
+    expect(
+      within(detail).getByText("No caption track found"),
+    ).toBeInTheDocument();
+    expect(
+      within(detail).getByRole("link", { name: "Watch on YouTube" }),
+    ).toHaveAttribute("href", "https://www.youtube.com/watch?v=video-1");
+  });
+
+  test("keeping a transcript attempt reopens acquisition and clears the item", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      transcriptDecisions: [transcriptDecision({ video_id: "video-1" })],
+    });
+    renderApp(api);
+    await navigateTo("Inbox");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Captionless talk" }),
+    );
+
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Keep trying" }))[0],
+    );
+
+    await waitFor(() => {
+      expect(api.keepTryingTranscriptCalls).toEqual(["video-1"]);
+      expect(
+        screen.queryByText("Transcript decision (1)"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  test("giving up settles transcript absence and clears the item", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      transcriptDecisions: [transcriptDecision({ video_id: "video-1" })],
+    });
+    renderApp(api);
+    await navigateTo("Inbox");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Captionless talk" }),
+    );
+
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Give up" }))[0],
+    );
+
+    await waitFor(() => {
+      expect(api.giveUpTranscriptCalls).toEqual(["video-1"]);
+      expect(
+        screen.queryByText("Transcript decision (1)"),
+      ).not.toBeInTheDocument();
     });
   });
 

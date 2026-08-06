@@ -576,7 +576,7 @@ async def a_completed_backfill_records_its_completion_time() -> None:
     assert_is_none(await env.sync.backfill_cursor())
 
 
-async def _seed_terminal_video(
+async def _seed_transcript_state(
     db: Database, video_id: str, *, status: TranscriptStatus, caption_available: int
 ) -> None:
     """Insert a video with a given caption flag and a transcript-state row."""
@@ -600,10 +600,12 @@ async def _seed_terminal_video(
 
 
 @test()
-async def captions_appearing_reopens_a_terminal_video() -> None:
-    """A false->true caption flip clears the terminal state so the sweep retries it."""
+async def captions_appearing_reopens_an_unavailable_video() -> None:
+    """A false->true caption flip clears unavailability so acquisition retries."""
     env = await load_fixture(make_env(InMemoryYouTubeApi()))
-    await _seed_terminal_video(env.db, "v1", status="terminal", caption_available=0)
+    await _seed_transcript_state(
+        env.db, "v1", status="unavailable", caption_available=0
+    )
 
     async with env.db.transaction() as tx:
         await upsert_ingested_video(
@@ -620,10 +622,10 @@ async def captions_appearing_reopens_a_terminal_video() -> None:
 
 
 @test()
-async def captions_appearing_leaves_a_done_video_untouched() -> None:
-    """A caption flip does not disturb an already-transcribed (done) video."""
+async def captions_appearing_leaves_an_available_video_untouched() -> None:
+    """A caption flip does not disturb an already-available transcript."""
     env = await load_fixture(make_env(InMemoryYouTubeApi()))
-    await _seed_terminal_video(env.db, "v1", status="done", caption_available=0)
+    await _seed_transcript_state(env.db, "v1", status="available", caption_available=0)
 
     async with env.db.transaction() as tx:
         await upsert_ingested_video(
@@ -636,7 +638,7 @@ async def captions_appearing_leaves_a_done_video_untouched() -> None:
                 YouTubeTranscriptState.video_id.eq("v1")
             )
         )
-    assert_eq(state.status if state is not None else None, "done")
+    assert_eq(state.status if state is not None else None, "available")
 
 
 @test()
@@ -1099,26 +1101,32 @@ def _ingested(
 
 @test()
 async def sync_status_partitions_the_corpus_by_transcript_state() -> None:
-    """Status counts active videos, splitting them into done/pending/unavailable."""
+    """Status partitions active videos across the normalized transcript lifecycle."""
     env = await load_fixture(make_env(InMemoryYouTubeApi(), daily_limit=50))
     async with env.db.transaction() as tx:
-        _ = await tx.execute(insert(_ingested("done", transcript="hello")))
+        _ = await tx.execute(insert(_ingested("available", transcript="hello")))
         _ = await tx.execute(insert(_ingested("pending")))
-        _ = await tx.execute(insert(_ingested("terminal")))
+        _ = await tx.execute(insert(_ingested("needs-review")))
+        _ = await tx.execute(insert(_ingested("unavailable")))
         # An ignored video is out of the corpus and not counted at all.
         _ = await tx.execute(
             insert(_ingested("ignored", ignored_at=datetime(2026, 1, 1, tzinfo=UTC)))
         )
-        # `terminal` will never get a transcript -> unavailable, not pending.
         _ = await tx.execute(
-            insert(YouTubeTranscriptState(video_id="terminal", status="terminal"))
+            insert(
+                YouTubeTranscriptState(video_id="needs-review", status="needs_review")
+            )
+        )
+        _ = await tx.execute(
+            insert(YouTubeTranscriptState(video_id="unavailable", status="unavailable"))
         )
 
     status = await env.service.sync_status(logger=test_logger())
 
-    assert_eq(status.videos_total, 3)
+    assert_eq(status.videos_total, 4)
     assert_eq(status.transcripts_done, 1)
     assert_eq(status.transcripts_pending, 1)
+    assert_eq(status.transcripts_needs_review, 1)
     assert_eq(status.transcripts_unavailable, 1)
 
 
@@ -1212,6 +1220,49 @@ async def sync_status_is_empty_before_any_sync() -> None:
     assert_eq(status.videos_total, 0)
     assert_eq(status.transcripts_pending, 0)
     assert_is_none(status.last_synced_at)
+
+
+@test()
+async def schema_normalizes_legacy_transcript_statuses() -> None:
+    """A pre-normalization database upgrades machine states and settled absence."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await db.migrate(
+        {
+            "008_create_you_tube_transcript_state": (
+                'CREATE TABLE "you_tube_transcript_state" ('
+                '"video_id" TEXT PRIMARY KEY NOT NULL, '
+                '"status" TEXT NOT NULL, "attempts" INTEGER, '
+                '"next_attempt_at" TEXT, "last_error" TEXT, "updated_at" TEXT'
+                ") STRICT"
+            ),
+            "test_seed_done": (
+                'INSERT INTO "you_tube_transcript_state" ("video_id", "status") '
+                "VALUES ('with-transcript', 'done')"
+            ),
+            "test_seed_retry": (
+                'INSERT INTO "you_tube_transcript_state" ("video_id", "status") '
+                "VALUES ('try-later', 'retry')"
+            ),
+            "test_seed_terminal": (
+                'INSERT INTO "you_tube_transcript_state" ("video_id", "status") '
+                "VALUES ('give-up', 'terminal')"
+            ),
+        }
+    )
+
+    await create_youtube_schema(db)
+
+    async with db.transaction() as tx:
+        rows = await tx.fetch_all(select(YouTubeTranscriptState).all())
+    assert_eq(
+        {row.video_id: row.status for row in rows},
+        {
+            "with-transcript": "available",
+            "try-later": "retrying",
+            "give-up": "unavailable",
+        },
+    )
+    await db.close()
 
 
 @test()

@@ -29,6 +29,7 @@ from tether.youtube import (
     Fetched,
     IngestedVideo,
     SearchResult,
+    TranscriptStatus,
     YouTubeSource,
     derive_ingest_state,
 )
@@ -95,7 +96,10 @@ def _description_preview(description: str) -> str | None:
 
 
 def _compact_video(
-    video: IngestedVideo[Fetched], *, snippet: str | None = None
+    video: IngestedVideo[Fetched],
+    *,
+    transcript_status: TranscriptStatus,
+    snippet: str | None = None,
 ) -> dict[str, object]:
     """A transcript-free list row for the model.
 
@@ -113,6 +117,7 @@ def _compact_video(
         "topic": video.topic,
         "source": video.source,
         "state": derive_ingest_state(video),
+        "transcript_status": transcript_status,
     }
     description = _description_preview(video.description)
     if description is not None:
@@ -127,7 +132,11 @@ def _compact_videos(result: BrowseResult | SearchResult) -> CapabilityOutcome:
     snippets = result.snippets if isinstance(result, SearchResult) else {}
     return CapabilityOutcome(
         result=[
-            _compact_video(video, snippet=snippets.get(video.video_id))
+            _compact_video(
+                video,
+                transcript_status=result.transcript_statuses[video.video_id],
+                snippet=snippets.get(video.video_id),
+            )
             for video in result.videos
         ],
         quota=result.quota,
@@ -168,7 +177,9 @@ async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcom
     )
     return CapabilityOutcome(
         result={
-            "video": YouTubeVideoRead.from_video(result.video).model_dump(mode="json"),
+            "video": YouTubeVideoRead.from_video(
+                result.video, transcript_status="available"
+            ).model_dump(mode="json"),
             "transcript": result.transcript,
         },
         quota=result.quota,

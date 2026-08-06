@@ -3367,6 +3367,77 @@
         ],
         "type": "string"
       },
+      "TranscriptDecisionListResponse": {
+        "description": "The Inbox's pending transcript decisions.",
+        "items": {
+          "$ref": "#/components/schemas/TranscriptDecisionRead"
+        },
+        "title": "TranscriptDecisionListResponse",
+        "type": "array"
+      },
+      "TranscriptDecisionOutcomeRead": {
+        "description": "The transcript status after a human decision.",
+        "properties": {
+          "transcript_status": {
+            "$ref": "#/components/schemas/TranscriptStatus"
+          },
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "transcript_status"
+        ],
+        "title": "TranscriptDecisionOutcomeRead",
+        "type": "object"
+      },
+      "TranscriptDecisionRead": {
+        "description": "A transcript failure awaiting the human's decision in Inbox.",
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "transcript_status": {
+            "$ref": "#/components/schemas/TranscriptStatus",
+            "default": "needs_review"
+          },
+          "video_id": {
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "title",
+          "channel",
+          "last_error",
+          "attempts"
+        ],
+        "title": "TranscriptDecisionRead",
+        "type": "object"
+      },
       "TranscriptProviderPauseRead": {
         "description": "HTTP representation of a transcript source paused by an IP block.",
         "properties": {
@@ -3386,6 +3457,16 @@
         ],
         "title": "TranscriptProviderPauseRead",
         "type": "object"
+      },
+      "TranscriptStatus": {
+        "enum": [
+          "pending",
+          "retrying",
+          "needs_review",
+          "available",
+          "unavailable"
+        ],
+        "type": "string"
       },
       "TranscriptionResponse": {
         "description": "The recognized transcript text for one uploaded audio clip.\n\n>>> TranscriptionResponse(transcript=\"buy oat milk\").transcript\n'buy oat milk'",
@@ -3800,7 +3881,7 @@
         "type": "string"
       },
       "YouTubeSyncStatusRead": {
-        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n...     usage={},\n... )\n>>> read.videos_total\n3",
+        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_needs_review=0,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n...     usage={},\n... )\n>>> read.videos_total\n3",
         "properties": {
           "api_paused_until": {
             "anyOf": [
@@ -3840,6 +3921,10 @@
             "title": "Transcripts Done",
             "type": "integer"
           },
+          "transcripts_needs_review": {
+            "title": "Transcripts Needs Review",
+            "type": "integer"
+          },
           "transcripts_pending": {
             "title": "Transcripts Pending",
             "type": "integer"
@@ -3865,6 +3950,7 @@
           "videos_total",
           "transcripts_done",
           "transcripts_pending",
+          "transcripts_needs_review",
           "transcripts_unavailable",
           "last_synced_at",
           "quota",
@@ -3926,7 +4012,7 @@
         "type": "object"
       },
       "YouTubeVideoRead": {
-        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     transcript=None,\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n... )\n>>> read.state\n'active'",
+        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     transcript=None,\n...     transcript_status=\"pending\",\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n... )\n>>> read.state\n'active'",
         "properties": {
           "channel": {
             "title": "Channel",
@@ -3983,6 +4069,9 @@
             ],
             "title": "Transcript"
           },
+          "transcript_status": {
+            "$ref": "#/components/schemas/TranscriptStatus"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -4003,6 +4092,7 @@
           "topic",
           "description",
           "transcript",
+          "transcript_status",
           "created_at",
           "updated_at",
           "ignored_at"
@@ -6053,6 +6143,23 @@
         "summary": "Report the background ingestion's progress and health (local read only)."
       }
     },
+    "/api/youtube/transcript-decisions": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptDecisionListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List transcript failures awaiting a human decision."
+      }
+    },
     "/api/youtube/{video_id}/ignore": {
       "post": {
         "parameters": [
@@ -6132,6 +6239,60 @@
           }
         },
         "summary": "Fetch and persist a transcript for an ingested video."
+      }
+    },
+    "/api/youtube/{video_id}/transcript-decision/give-up": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptDecisionOutcomeRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Confirm that a review-needed video has no transcript worth pursuing."
+      }
+    },
+    "/api/youtube/{video_id}/transcript-decision/keep-trying": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptDecisionOutcomeRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Return a review-needed transcript to pending acquisition."
       }
     }
   }

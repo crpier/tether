@@ -9,6 +9,7 @@ import type {
   EssayGradeProposal,
   Memory,
   Notification,
+  TranscriptDecision,
 } from "../api";
 import { formatDate, formatSyncTimestamp } from "../lib/format";
 import { queryKeys } from "../lib/query-keys";
@@ -38,13 +39,19 @@ type InboxItem =
       title: string;
     }
   | { due: DuePrompt; id: string; kind: "recall" }
-  | { id: string; kind: "notification"; notification: Notification };
+  | { id: string; kind: "notification"; notification: Notification }
+  | {
+      decision: TranscriptDecision;
+      id: string;
+      kind: "transcript-decision";
+    };
 
 const KIND_LABEL: Record<InboxItem["kind"], string> = {
   "bucket-triage": "Bucket triage",
   memory: "Memory review",
   notification: "Fired reminder",
   recall: "Recall due",
+  "transcript-decision": "Transcript decision",
 };
 
 function triageItems(
@@ -148,6 +155,10 @@ export function InboxPage() {
     queryFn: () => api.listNotifications(),
     queryKey: queryKeys.notifications,
   }));
+  const transcriptDecisionsQuery = createQuery(() => ({
+    queryFn: () => api.listTranscriptDecisions(),
+    queryKey: queryKeys.youtubeTranscriptDecisions,
+  }));
 
   const items = createMemo<InboxItem[]>(() => [
     ...(looseQuery.data ?? []).map((memoryItem): InboxItem => ({
@@ -165,6 +176,11 @@ export function InboxPage() {
       id: `notification:${item.id}`,
       kind: "notification",
       notification: item,
+    })),
+    ...(transcriptDecisionsQuery.data ?? []).map((decision): InboxItem => ({
+      decision,
+      id: `transcript-decision:${decision.video_id}`,
+      kind: "transcript-decision",
     })),
   ]);
 
@@ -225,6 +241,33 @@ export function InboxPage() {
       await api.dismissNotification(notificationId);
       setSelectedId(undefined);
       void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
+    })();
+  };
+
+  const transcriptDecisionAct = (
+    decision: TranscriptDecision,
+    action: "keep-trying" | "give-up",
+  ) => {
+    setError(undefined);
+    void (async () => {
+      try {
+        if (action === "keep-trying") {
+          await api.keepTryingTranscript(decision.video_id);
+        } else {
+          await api.giveUpTranscript(decision.video_id);
+        }
+        setSelectedId(undefined);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.youtube });
+        void queryClient.refetchQueries({
+          queryKey: queryKeys.youtubeTranscriptDecisions,
+        });
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Could not save the transcript decision",
+        );
+      }
     })();
   };
 
@@ -350,6 +393,7 @@ export function InboxPage() {
                     dismissNotification={dismissNotification}
                     item={item()}
                     memoryAct={memoryAct}
+                    transcriptDecisionAct={transcriptDecisionAct}
                   />
                 )}
               </Show>
@@ -373,6 +417,7 @@ export function InboxPage() {
                     dismissNotification={dismissNotification}
                     item={item()}
                     memoryAct={memoryAct}
+                    transcriptDecisionAct={transcriptDecisionAct}
                   />
                 </div>
               )}
@@ -394,6 +439,8 @@ function itemTitle(item: InboxItem): string {
       return item.due.prompt.question;
     case "notification":
       return item.notification.body;
+    case "transcript-decision":
+      return item.decision.title;
   }
 }
 
@@ -402,6 +449,10 @@ function InboxDetail(props: {
   dismissNotification: (notificationId: string) => void;
   item: InboxItem;
   memoryAct: (item: Memory, action: "tether" | "reject") => void;
+  transcriptDecisionAct: (
+    decision: TranscriptDecision,
+    action: "keep-trying" | "give-up",
+  ) => void;
 }) {
   return (
     <div
@@ -452,6 +503,59 @@ function InboxDetail(props: {
               <p class="text-muted-foreground text-xs">
                 Manage this item on Browse → Bucket.
               </p>
+            </div>
+          )}
+        </Match>
+        <Match when={props.item.kind === "transcript-decision" && props.item}>
+          {(entry) => (
+            <div class="space-y-3">
+              <div>
+                <h2 class="text-lg font-semibold">{entry().decision.title}</h2>
+                <p class="text-muted-foreground text-xs">
+                  {entry().decision.channel}
+                </p>
+              </div>
+              <p class="text-sm">
+                No configured transcript provider could retrieve this video.
+                Should Tether keep trying?
+              </p>
+              <Show when={entry().decision.last_error}>
+                {(message) => (
+                  <p class="text-muted-foreground text-xs">{message()}</p>
+                )}
+              </Show>
+              <a
+                class="text-primary block text-sm underline-offset-4 hover:underline"
+                href={`https://www.youtube.com/watch?v=${entry().decision.video_id}`}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Watch on YouTube
+              </a>
+              <div class="flex gap-2">
+                <Button
+                  onClick={() => {
+                    props.transcriptDecisionAct(
+                      entry().decision,
+                      "keep-trying",
+                    );
+                  }}
+                  size="sm"
+                  type="button"
+                >
+                  Keep trying
+                </Button>
+                <Button
+                  onClick={() => {
+                    props.transcriptDecisionAct(entry().decision, "give-up");
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Give up
+                </Button>
+              </div>
             </div>
           )}
         </Match>

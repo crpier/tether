@@ -88,12 +88,13 @@ class TranscriptSyncService:
     """Background transcript fetching, reconciler-shaped like the likes sync.
 
     An idempotent `sync` pass (run at startup and on a periodic loop) walks the
-    newest videos still lacking a transcript — skipping ones whose per-video state
-    is terminal or whose backed-off retry is not yet due — and fetches each through
+    newest videos still lacking a transcript — skipping ones awaiting review,
+    explicitly unavailable, or whose backed-off retry is not yet due — and fetches
+    each through
     the shared `TranscriptProvider` path within the daily budget, newest-liked
     first. It stops for the day the moment the budget is exhausted, resuming next
     pass. The per-video state machine (`YouTubeTranscriptState`) makes retries and
-    terminal classifications durable across restarts.
+    review and unavailability classifications durable across restarts.
     """
 
     def __init__(
@@ -343,15 +344,15 @@ class TranscriptSyncService:
     def _eligible_query(self, now: datetime):  # noqa: ANN202 (snekql query type is internal)
         """Build the select for videos eligible for a transcript fetch.
 
-        Active, still-untranscribed videos whose state is neither terminal nor a
-        not-yet-due retry, newest-liked first. Terminal and not-due rows are
-        excluded in SQL (not just sliced out in Python) so the recent window never
-        fills with permanently-failed videos and starves the backlog.
+        Active, still-untranscribed videos not awaiting review/unavailable and not
+        inside retry backoff, newest-liked first. Blocked rows are excluded in SQL
+        so the recent window cannot fill with settled/decision-bound videos and
+        starve the backlog.
         """
         blocked = select(YouTubeTranscriptState.video_id).where(
-            YouTubeTranscriptState.status.eq("terminal")
+            YouTubeTranscriptState.status.in_("needs_review", "unavailable")
             | (
-                YouTubeTranscriptState.status.eq("retry")
+                YouTubeTranscriptState.status.eq("retrying")
                 & YouTubeTranscriptState.next_attempt_at.gt(now.isoformat())
             )
         )
@@ -372,7 +373,7 @@ class TranscriptSyncService:
             return await tx.fetch_all(query)
 
     async def _pending_count(self, now: datetime) -> int:
-        """Count active videos still owed a transcript (excluding terminal)."""
+        """Count active videos still eligible for automatic acquisition."""
         async with self.database.transaction() as tx:
             rows = await tx.fetch_all(self._eligible_query(now))
         return len(rows)
