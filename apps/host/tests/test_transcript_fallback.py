@@ -291,6 +291,28 @@ async def composite_tries_a_gated_source_as_last_resort_when_the_fallback_is_pau
 
 
 @test()
+async def composite_preserves_a_gated_last_resort_unavailable_outcome() -> None:
+    """A paid last resort's definitive unavailable outcome wins over deferral.
+
+    The paused free fallback remains untried, but Supadata has answered the
+    transcript question. Deferring would bill the same unavailable video again on
+    every worker pass.
+    """
+    primary = FakeSource({"v1": [UNAVAILABLE]}, name="captions")
+    library = FakeSource({"v1": [Ok("library")]}, name="library")
+    supadata = FakeSource({"v1": [UNAVAILABLE]}, name="supadata")
+    composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await composite.fetch(
+            "v1",
+            paused_sources=frozenset({"library"}),
+            skip_sources=frozenset({"supadata"}),
+        )
+    assert_eq(supadata.calls.get("v1"), 1)
+
+
+@test()
 async def composite_still_defers_when_the_gated_last_resort_is_also_paused() -> None:
     """A gated source that is itself paused is not tried as a last resort — the
     composite still defers rather than reaching a source known to be unreachable."""
@@ -766,6 +788,27 @@ async def a_caption_less_video_tries_supadata_as_last_resort_while_library_is_pa
     assert_eq(report.blocked, 1)
     assert_eq(report.fetched, 1)
     assert_eq(await transcript_of(env.db, "v1"), "last resort")
+    assert_eq(env.supadata.calls.get("v1"), 1)
+
+
+@test()
+async def a_last_resort_unavailable_video_is_not_billed_again() -> None:
+    """Supadata unavailability becomes terminal even while the library is paused."""
+    captions = FakeSource(
+        {"v_block": [UNAVAILABLE], "v1": [UNAVAILABLE]}, name="captions"
+    )
+    library = FakeSource({"v_block": [Blocked()], "v1": [UNAVAILABLE]}, name="library")
+    supadata = FakeSource({"v1": [UNAVAILABLE]}, name="supadata")
+    env = await load_fixture(make_env3(captions, library, supadata))
+    await seed(env.db, "v_block", liked_at=LATER, caption_available=1)
+    await seed(env.db, "v1", liked_at=EARLIER, caption_available=0)
+
+    first_report = await env.worker.sync(logger=test_logger())
+    _ = await env.worker.sync(logger=test_logger())
+
+    assert_eq(first_report.unavailable, 1)
+    persisted = await state_of(env.db, "v1")
+    assert_eq(persisted.status if persisted is not None else None, "terminal")
     assert_eq(env.supadata.calls.get("v1"), 1)
 
 

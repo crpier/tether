@@ -215,6 +215,25 @@ async def not_found_is_unavailable() -> None:
 
 
 @test()
+async def partial_content_status_is_unavailable() -> None:
+    """Supadata's HTTP 206 means transcript unavailable, not partial success."""
+    transport = FakeSupadataTransport(
+        submit=[
+            SupadataResponse(
+                206,
+                {
+                    "error": "transcript-unavailable",
+                    "message": "Transcript Unavailable",
+                },
+            )
+        ]
+    )
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
 async def rate_limit_is_blocked_with_retry_after_and_source() -> None:
     """A 429 maps to *blocked*, carrying its retry-after hint and the supadata source."""
     transport = FakeSupadataTransport(

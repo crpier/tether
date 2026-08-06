@@ -96,7 +96,9 @@ def _start_of_next_month(now: datetime) -> datetime:
 _HTTP_TOO_MANY_REQUESTS = 429
 """Supadata's rate-limit / quota status — the *blocked* outcome."""
 _HTTP_NOT_FOUND = 404
-"""Supadata's "no transcript for this video" status — the *unavailable* outcome."""
+"""Supadata's conventional "no transcript" status — an *unavailable* outcome."""
+_HTTP_PARTIAL_CONTENT = 206
+"""Supadata's nonstandard `transcript-unavailable` status, not a partial result."""
 _HTTP_CLIENT_ERROR_FLOOR = 400
 """Any status at or above this is an error response to classify, not a transcript."""
 
@@ -189,7 +191,7 @@ def _is_rate_limited(response: SupadataResponse) -> bool:
 
 def _is_unavailable(response: SupadataResponse) -> bool:
     """Whether a response means Supadata has no transcript (terminal *unavailable*)."""
-    if response.status_code == _HTTP_NOT_FOUND:
+    if response.status_code in {_HTTP_NOT_FOUND, _HTTP_PARTIAL_CONTENT}:
         return True
     error = response.payload.get("error")
     if isinstance(error, str):
