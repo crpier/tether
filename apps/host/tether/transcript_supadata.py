@@ -95,6 +95,8 @@ def _start_of_next_month(now: datetime) -> datetime:
 
 _HTTP_TOO_MANY_REQUESTS = 429
 """Supadata's rate-limit / quota status — the *blocked* outcome."""
+_HTTP_FORBIDDEN = 403
+"""Supadata cannot access this video, so retrying cannot produce a transcript."""
 _HTTP_NOT_FOUND = 404
 """Supadata's conventional "no transcript" status — an *unavailable* outcome."""
 _HTTP_PARTIAL_CONTENT = 206
@@ -191,7 +193,11 @@ def _is_rate_limited(response: SupadataResponse) -> bool:
 
 def _is_unavailable(response: SupadataResponse) -> bool:
     """Whether a response means Supadata has no transcript (terminal *unavailable*)."""
-    if response.status_code in {_HTTP_NOT_FOUND, _HTTP_PARTIAL_CONTENT}:
+    if response.status_code in {
+        _HTTP_FORBIDDEN,
+        _HTTP_NOT_FOUND,
+        _HTTP_PARTIAL_CONTENT,
+    }:
         return True
     error = response.payload.get("error")
     if isinstance(error, str):
@@ -255,8 +261,9 @@ def _classify_failure(video_id: str, response: SupadataResponse) -> Exception:
     """Map a non-success Supadata response onto a typed `TranscriptProvider` signal.
 
     Rate limits are the *blocked* outcome (carrying any retry-after hint so the
-    worker's Supadata pause honors it); a missing transcript is *unavailable*
-    (terminal); everything else — 5xx, malformed bodies — is *transient*.
+    worker's Supadata pause honors it); a forbidden or missing transcript is
+    *unavailable* (terminal); everything else — 5xx, malformed bodies — is
+    *transient*.
     """
     if _is_rate_limited(response):
         return TranscriptBlockedError(

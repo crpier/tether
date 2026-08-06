@@ -5,8 +5,8 @@ The Supadata HTTP layer is faked by `FakeSupadataTransport` (scripted `submit` /
 against fixture payloads without a network call or an API key. A fake `sleep`
 makes the bounded async-job polling resolve instantly. Covered: a direct hit
 (string and timed-cue content, tagged with the Supadata source), no-transcript ->
-*unavailable*, a 404 -> *unavailable*, a 429 / quota body -> *blocked* with its
-retry-after and source, the async job model (pending then complete), a failed
+*unavailable*, a 403/404 -> *unavailable*, a 429 / quota body -> *blocked* with
+its retry-after and source, the async job model (pending then complete), a failed
 job -> *unavailable*, an over-budget poll -> *transient*, and the transport's
 key/`Retry-After` handling. The flag/key gating is asserted against the
 `tether.transcript_provider_composition` wiring helpers.
@@ -227,6 +227,17 @@ async def partial_content_status_is_unavailable() -> None:
                 },
             )
         ]
+    )
+
+    with assert_raises(TranscriptUnavailableError):
+        _ = await _provider(transport).fetch("v1")
+
+
+@test()
+async def forbidden_is_unavailable() -> None:
+    """A plain 403 is permanent for the video, so it must not retry forever."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataResponse(403, {"error": "forbidden"})]
     )
 
     with assert_raises(TranscriptUnavailableError):
@@ -460,6 +471,7 @@ async def the_persisted_cap_allows_exactly_max_uses_charges() -> None:
     await guard.charge()
     with assert_raises(SupadataBudgetExhaustedError):
         await guard.charge()
+    await db.close()
 
 
 @test()
@@ -472,6 +484,7 @@ async def the_persisted_cap_survives_a_restart() -> None:
     reborn = PersistentSupadataSpendGuard(db, max_uses=1)
     with assert_raises(SupadataBudgetExhaustedError):
         await reborn.charge()
+    await db.close()
 
 
 class FakeClock:
@@ -498,6 +511,7 @@ async def the_monthly_cap_resets_at_the_next_utc_month() -> None:
 
     clock.advance(timedelta(days=20))  # into August
     await guard.charge()  # the new month's budget is fresh; does not raise
+    await db.close()
 
 
 @test()
@@ -514,6 +528,7 @@ async def an_exhausted_cap_reports_the_wait_until_the_month_boundary() -> None:
 
     # One hour remains until 2026-08-01T00:00Z, when the cap resets.
     assert_eq(raised.exception.retry_after, timedelta(hours=1))
+    await db.close()
 
 
 @test()
@@ -527,6 +542,7 @@ async def binding_the_cap_reaches_supadata_inside_a_fallback_chain() -> None:
     bind_supadata_spend_guard(chain, db, max_uses=5)
 
     assert_true(isinstance(supadata.spend_guard, PersistentSupadataSpendGuard))
+    await db.close()
 
 
 # --- Monthly usage snapshot (separate from the YouTube daily quota) ---------
@@ -551,6 +567,7 @@ async def guard_snapshot_reports_used_limit_and_month_without_charging() -> None
     # A snapshot never spends: a further charge still counts from 2, not 3.
     await guard.charge()
     assert_eq((await guard.snapshot(now=clock.now())).used, 3)
+    await db.close()
 
 
 @test()
@@ -564,6 +581,7 @@ async def guard_snapshot_reports_zero_used_with_no_prior_charge() -> None:
 
     assert_eq(usage.used, 0)
     assert_eq(usage.remaining, 10)
+    await db.close()
 
 
 @test()
@@ -592,6 +610,7 @@ async def usage_finds_the_bound_supadata_leaf_inside_a_chain() -> None:
     assert "supadata" in usage
     assert_eq(usage["supadata"].used, 0)
     assert_eq(usage["supadata"].limit, 100)
+    await db.close()
 
 
 @test()
