@@ -509,6 +509,11 @@ class FallbackTranscriptProvider(TranscriptProvider):
                 if not isinstance(outcome, TranscriptUnavailableError):
                     return outcome
                 last_unavailable = outcome
+            if gated_last_resort:
+                # The last resort answered definitively. Preserve that outcome so
+                # the worker records terminal state instead of billing it again on
+                # every pass merely because an earlier free provider was paused.
+                raise last_unavailable or TranscriptUnavailableError(video_id)
             message = f"provider paused; skipped blockable fallbacks for {video_id}"
             raise TranscriptBlockedError(message)
         raise last_unavailable or TranscriptUnavailableError(video_id)
