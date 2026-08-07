@@ -62,6 +62,47 @@ function latestFakeRecorder(): FakeMediaRecorder {
 }
 
 describe("Chat view", () => {
+  test("shows only the confirmed loaded skill count in the header", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    await screen.findByRole("heading", { name: "Tether chat" });
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "skill_status",
+      loaded_count: 2,
+      type: "chat",
+    });
+
+    expect(await screen.findByText("Skills loaded · 2")).toBeInTheDocument();
+    expect(screen.queryByText("grilling")).not.toBeInTheDocument();
+    expect(screen.queryByText("writing-great-skills")).not.toBeInTheDocument();
+  });
+
+  test("hides skill status before a runtime confirms loading", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+
+    expect(screen.queryByText(/Skills loaded/)).not.toBeInTheDocument();
+  });
+
+  test("hides a confirmed zero skill count", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    await screen.findByRole("heading", { name: "Tether chat" });
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "skill_status",
+      loaded_count: 0,
+      type: "chat",
+    });
+
+    expect(screen.queryByText(/Skills loaded/)).not.toBeInTheDocument();
+  });
+
   test("rehydrates settled chat history", async () => {
     const api = new FakeApi({
       authenticated: true,

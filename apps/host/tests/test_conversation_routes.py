@@ -55,8 +55,16 @@ class FakePiClient:
 class FakeRuntime:
     """pi runtime test double that streams queued typed turn events."""
 
-    def __init__(self, turn_events: list[TurnEvent]) -> None:
+    def __init__(
+        self,
+        turn_events: list[TurnEvent],
+        *,
+        loaded_skills: tuple[str, ...] = (),
+        skills_confirmed: bool = False,
+    ) -> None:
         self.client: FakePiClient = FakePiClient()
+        self.loaded_skills: tuple[str, ...] = loaded_skills
+        self.skills_confirmed: bool = skills_confirmed
         self._turn_events: list[TurnEvent] = turn_events
 
     def drain_events(self) -> int:
@@ -1101,6 +1109,94 @@ def websocket_abort_is_processed_while_generation_is_running() -> None:
     assert_eq(first_frame["event"], "user_message")
     assert_eq(abort_frame["event"], "abort_ack")
     assert_eq(fake_runtime.client.commands, ["prompt", "abort"])
+
+
+@test()
+def websocket_reports_only_the_confirmed_loaded_skill_count() -> None:
+    """Chat receives generic runtime status without skill metadata."""
+    fake_runtime = FakeRuntime(
+        [AgentEnded()],
+        loaded_skills=("grilling", "writing-great-skills"),
+        skills_confirmed=True,
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello",
+                }
+            )
+            frames: list[dict[str, Any]] = []
+            while True:
+                frame = cast("dict[str, Any]", websocket.receive_json())
+                frames.append(frame)
+                if frame.get("event") == "agent_end":
+                    break
+
+    status = next(frame for frame in frames if frame.get("event") == "skill_status")
+    assert_eq(
+        status,
+        {
+            "type": "chat",
+            "conversation_id": conversation_id,
+            "event": "skill_status",
+            "loaded_count": 2,
+        },
+    )
+
+
+@test()
+def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
+    """Progressive disclosure remains internal to pi's agent session."""
+    fake_runtime = FakeRuntime(
+        [
+            ToolStarted(
+                args={"path": "/app/apps/agent/skills/grilling/SKILL.md"},
+                tool_call_id="call-read",
+                tool_name="read",
+            ),
+            ToolSettled(
+                result={"content": "private skill instructions"},
+                tool_call_id="call-read",
+                tool_name="read",
+            ),
+            AgentEnded(),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Grill my plan",
+                }
+            )
+            frame_events: list[object] = []
+            while True:
+                frame = cast("dict[str, Any]", websocket.receive_json())
+                frame_events.append(frame.get("event"))
+                if frame.get("event") == "agent_end":
+                    break
+
+        messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
+
+    assert_eq(frame_events, ["user_message", "agent_end"])
+    assert_eq([message["role"] for message in messages], ["user"])
 
 
 @test()

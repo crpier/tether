@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -25,6 +26,7 @@ from tether.chat_frames import (
     MessageEndFrame,
     MessageStartFrame,
     NotifyFrame,
+    SkillStatusFrame,
     StreamUpdateFrame,
     ToolEndFrame,
     ToolStartFrame,
@@ -55,6 +57,9 @@ _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
 _LOCALTIME_PATH = Path("/etc/localtime")
 _ZONEINFO_MARKER = "zoneinfo/"
+
+_logger = structlog.stdlib.get_logger("tether.chat_ws")
+"""Operational chat diagnostics that exclude user and skill contents."""
 
 type InboundType = Literal["prompt", "abort"]
 
@@ -264,6 +269,43 @@ async def _settle_tool_end(
     )
 
 
+async def _relay_tool_event(
+    websocket: WebSocket,
+    *,
+    conversation_id: UUID,
+    tool_event: ToolStarted | ToolSettled,
+    pending_tool_args: dict[str, dict[str, Any]],
+) -> None:
+    """Relay ordinary tools while keeping bundled skill reads operational-only."""
+    match tool_event:
+        case ToolStarted(tool_name="read"):
+            _logger.info(
+                "Bundled skill read started",
+                conversation_id=str(conversation_id),
+                tool_call_id=tool_event.tool_call_id,
+            )
+        case ToolSettled(tool_name="read"):
+            _logger.info(
+                "Bundled skill read settled",
+                conversation_id=str(conversation_id),
+                tool_call_id=tool_event.tool_call_id,
+            )
+        case ToolStarted():
+            await _forward_tool_start(
+                websocket,
+                conversation_id=conversation_id,
+                started=tool_event,
+                pending_tool_args=pending_tool_args,
+            )
+        case ToolSettled():
+            await _settle_tool_end(
+                websocket,
+                conversation_id=conversation_id,
+                settled=tool_event,
+                pending_tool_args=pending_tool_args,
+            )
+
+
 async def _stream_runtime(
     websocket: WebSocket,
     *,
@@ -295,6 +337,8 @@ async def _stream_runtime(
                 await websocket.send_json(
                     MessageStartFrame(conversation_id=conversation_id).wire()
                 )
+            case AssistantStreamNote(kind=kind) if kind.startswith("toolcall_"):
+                continue
             case TextDelta() | ThinkingDelta() | AssistantStreamNote():
                 await _relay_stream_update(
                     websocket,
@@ -319,18 +363,11 @@ async def _stream_runtime(
                 )
                 streamed_text.clear()
                 streamed_reasoning.clear()
-            case ToolStarted():
-                await _forward_tool_start(
+            case ToolStarted() | ToolSettled():
+                await _relay_tool_event(
                     websocket,
                     conversation_id=conversation_id,
-                    started=turn_event,
-                    pending_tool_args=pending_tool_args,
-                )
-            case ToolSettled():
-                await _settle_tool_end(
-                    websocket,
-                    conversation_id=conversation_id,
-                    settled=turn_event,
+                    tool_event=turn_event,
                     pending_tool_args=pending_tool_args,
                 )
             case AgentEnded():
@@ -394,6 +431,13 @@ async def _run_prompt(
                     conversation
                 )
             )
+            if getattr(runtime, "skills_confirmed", False):
+                await websocket.send_json(
+                    SkillStatusFrame(
+                        conversation_id=conversation_id,
+                        loaded_count=len(getattr(runtime, "loaded_skills", ())),
+                    ).wire()
+                )
             # Drop any events left in the shared queue by a prior turn that was
             # aborted or cut off by a disconnect, so this prompt streams clean.
             _ = runtime.drain_events()

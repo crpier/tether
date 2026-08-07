@@ -451,6 +451,9 @@ export function ChatPage() {
   const queryClient = useQueryClient();
   const [draft, setDraft] = createSignal("");
   const [error, setError] = createSignal<string | undefined>();
+  const [loadedSkillCount, setLoadedSkillCount] = createSignal<
+    number | undefined
+  >();
   const [turn, setTurn] = createSignal<LiveTurn>(emptyTurn());
   const [messagesRefresh, setMessagesRefresh] = createSignal(0);
   // Survives the live turn being retired by settled history, so the "stopped"
@@ -519,6 +522,7 @@ export function ChatPage() {
     if (id !== previousId) {
       setAccumulated(new Map());
       setHasMoreHistory(false);
+      setLoadedSkillCount(undefined);
     }
     return id;
   }, undefined);
@@ -629,6 +633,15 @@ export function ChatPage() {
     ) {
       return;
     }
+    if (
+      frame.event === "skill_status" &&
+      typeof frame.loaded_count === "number" &&
+      Number.isInteger(frame.loaded_count) &&
+      frame.loaded_count >= 0
+    ) {
+      setLoadedSkillCount(frame.loaded_count);
+      return;
+    }
     setTurn((current) => reduceFrame(current, frame, Date.now()));
     if (frame.event === "abort_ack") {
       setInterrupted(true);
@@ -686,6 +699,7 @@ export function ChatPage() {
         await api.clearConversation(id);
         setInterrupted(false);
         setTurn(emptyTurn());
+        setLoadedSkillCount(undefined);
         setAccumulated(new Map());
         setHasMoreHistory(false);
         rehydrate();
@@ -732,6 +746,11 @@ export function ChatPage() {
         >
           Tether chat
         </h1>
+        <Show when={(loadedSkillCount() ?? 0) > 0}>
+          <p class="text-muted-foreground text-xs">
+            Skills loaded · {loadedSkillCount()}
+          </p>
+        </Show>
         <Button
           disabled={clearing() || conversation() === undefined}
           onClick={clearConversation}

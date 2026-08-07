@@ -6,6 +6,7 @@ export type ChatFrame =
       delta?: unknown;
       detail?: string;
       message_id?: string;
+      loaded_count?: number;
       seq?: number;
       tool_name?: string | null;
       tool_id?: string | null;
