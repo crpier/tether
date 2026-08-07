@@ -42,9 +42,10 @@ services:
     volumes:
       - data:/data
       - model-cache:/cache
-      # Local default: seed from ~/.pi/agent/auth.json if desired. Deployment
-      # sets TETHER_PI_AGENT_DIR=/srv/tether/pi-agent. It is durable but not
-      # currently covered by deploy/backup.sh; see docs/deployment.md.
+      # Tether authorizes and refreshes this server-owned credential from the
+      # Settings device-code flow. Deployment sets
+      # TETHER_PI_AGENT_DIR=/srv/tether/pi-agent. It is durable but not currently
+      # covered by deploy/backup.sh; see docs/deployment.md.
       - ${TETHER_PI_AGENT_DIR:-${HOME}/.local/share/tether/pi-agent}:/pi-agent
 
 volumes:

@@ -3179,6 +3179,74 @@
         "title": "ProposeEssayGradeRequest",
         "type": "object"
       },
+      "ProviderAuthRead": {
+        "description": "Browser-safe server credential or active device-code state.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "expires_in_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Seconds"
+          },
+          "state": {
+            "enum": [
+              "authorizing",
+              "connected",
+              "disconnected",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "user_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Code"
+          },
+          "verification_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Uri"
+          }
+        },
+        "required": [
+          "error",
+          "expires_in_seconds",
+          "state",
+          "user_code",
+          "verification_uri"
+        ],
+        "title": "ProviderAuthRead",
+        "type": "object"
+      },
       "PurchaseDecision": {
         "enum": [
           "buy",
@@ -6111,6 +6179,53 @@
           }
         },
         "summary": "Reject a pending proposal (terminal), returning any revocable grants."
+      }
+    },
+    "/api/provider-auth/openai-codex": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAuthRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Cancel an active OpenAI Codex authorization attempt."
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAuthRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Check and refresh the server-owned OpenAI Codex credential."
+      },
+      "post": {
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAuthRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Start OpenAI Codex device-code authorization on the server."
       }
     },
     "/api/push/config": {

@@ -32,6 +32,7 @@ import type {
   ProposalAction,
   ProposalRejection,
   ProposalState,
+  ProviderAuthStatus,
   PushStatus,
   RecallAnswerInput,
   RejectProposalInput,
@@ -384,6 +385,15 @@ export class FakeApi implements TetherApi {
   serverTodoVersions: Record<string, number> = {};
   // Forced per-call rejections, consumed FIFO before any version check.
   setTodoStatusRejections: ApiError[] = [];
+  cancelProviderAuthCalls = 0;
+  nextProviderAuthStatus: ProviderAuthStatus | undefined;
+  providerAuthStatus: ProviderAuthStatus = {
+    error: null,
+    expires_in_seconds: null,
+    state: "connected",
+    user_code: null,
+    verification_uri: null,
+  };
   youTubeSyncStatus: YouTubeSyncStatus = {
     api_paused_until: null,
     last_synced_at: null,
@@ -511,6 +521,30 @@ export class FakeApi implements TetherApi {
   logout() {
     this.authenticated = false;
     return Promise.resolve();
+  }
+
+  getProviderAuthStatus() {
+    return Promise.resolve(this.providerAuthStatus);
+  }
+
+  startProviderAuth() {
+    if (this.nextProviderAuthStatus !== undefined) {
+      this.providerAuthStatus = this.nextProviderAuthStatus;
+      this.nextProviderAuthStatus = undefined;
+    }
+    return Promise.resolve(this.providerAuthStatus);
+  }
+
+  cancelProviderAuth() {
+    this.cancelProviderAuthCalls += 1;
+    this.providerAuthStatus = {
+      error: null,
+      expires_in_seconds: null,
+      state: "disconnected",
+      user_code: null,
+      verification_uri: null,
+    };
+    return Promise.resolve(this.providerAuthStatus);
   }
 
   listConversations() {

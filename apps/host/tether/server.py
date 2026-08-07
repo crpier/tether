@@ -85,6 +85,12 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.proposals import ProposalService, create_proposal_schema
+from tether.provider_auth import (
+    ProviderAuthBackend,
+    ProviderAuthService,
+    SubprocessProviderAuthBackend,
+    provider_auth_helper_command,
+)
 from tether.push import (
     PushService,
     StoredPushSender,
@@ -211,6 +217,7 @@ class AppConfig:
     log_file: str | Path | None = None
     model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
     pi_binary: Path | None = None
+    provider_auth_backend: ProviderAuthBackend | None = None
     youtube_api: YouTubeApi | None = None
     youtube_daily_quota_limit: int = 10_000
     youtube_sync_enabled: bool = True
@@ -1369,6 +1376,34 @@ process group as the outer backstop for that.
 """
 
 
+def _wire_provider_auth(
+    app: Starlette,
+    *,
+    config: AppConfig,
+    runtime_registry: ConversationRuntimeRegistry,
+) -> ProviderAuthService:
+    """Wire server-owned provider auth with live-runtime invalidation."""
+    service = ProviderAuthService(
+        config.provider_auth_backend
+        or SubprocessProviderAuthBackend(provider_auth_helper_command()),
+        on_authorized=runtime_registry.shutdown_all,
+    )
+    app.state.provider_auth_service = service
+    return service
+
+
+async def _shutdown_agent_runtime_services(
+    *,
+    provider_auth_service: ProviderAuthService,
+    runtime_registry: ConversationRuntimeRegistry,
+    scheduler: Scheduler,
+) -> None:
+    """Stop agent-producing services before their shared runtime state."""
+    await scheduler.shutdown()
+    await provider_auth_service.shutdown()
+    await runtime_registry.shutdown_all()
+
+
 async def _shutdown_background_tasks(
     tasks: Sequence[asyncio.Task[None]],
     *,
@@ -1582,6 +1617,9 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 )
             )
             app.state.conversation_runtime_registry = runtime_registry
+            provider_auth_service = _wire_provider_auth(
+                app, config=config, runtime_registry=runtime_registry
+            )
             trigger_service = TriggerService(
                 database=db,
                 event_publisher=event_hub,
@@ -1655,8 +1693,11 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 yield
             finally:
                 await _shutdown_background_tasks(background_tasks, logger=app_logger)
-                await scheduler.shutdown()
-                await runtime_registry.shutdown_all()
+                await _shutdown_agent_runtime_services(
+                    provider_auth_service=provider_auth_service,
+                    runtime_registry=runtime_registry,
+                    scheduler=scheduler,
+                )
                 await _close_gmail_transport(config)
                 telemetry.shutdown()
 

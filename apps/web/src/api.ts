@@ -12,6 +12,7 @@ export type CreateTrigger = components["schemas"]["CreateTriggerRequest"];
 export type UpdateTrigger = components["schemas"]["UpdateTriggerRequest"];
 export type PushConfig = components["schemas"]["PushConfigRead"];
 export type PushStatus = components["schemas"]["PushStatusRead"];
+export type ProviderAuthStatus = components["schemas"]["ProviderAuthRead"];
 export type TriggerRecurrence = components["schemas"]["TriggerRecurrence"];
 export type TriggerActionKind = components["schemas"]["TriggerActionKind"];
 export type DuePrompt = components["schemas"]["DuePromptRead"];
@@ -92,6 +93,9 @@ export interface TetherApi {
   getSession(): Promise<Session>;
   login(password: string): Promise<void>;
   logout(): Promise<void>;
+  getProviderAuthStatus(): Promise<ProviderAuthStatus>;
+  startProviderAuth(): Promise<ProviderAuthStatus>;
+  cancelProviderAuth(): Promise<ProviderAuthStatus>;
   listConversations(): Promise<Conversation[]>;
   listMessages(
     conversationId: string,
@@ -243,6 +247,26 @@ export function createRestApi(
     async logout() {
       const { response } = await client.POST("/api/auth/logout");
       requireOk(response);
+    },
+    async getProviderAuthStatus() {
+      const { data, response } = await client.GET(
+        "/api/provider-auth/openai-codex",
+      );
+      return requireData(data, response);
+    },
+    async startProviderAuth() {
+      const { data, response } = await client.POST(
+        "/api/provider-auth/openai-codex",
+      );
+      return requireData(data, response, {
+        409: "Provider authorization is already active.",
+      });
+    },
+    async cancelProviderAuth() {
+      const { data, response } = await client.DELETE(
+        "/api/provider-auth/openai-codex",
+      );
+      return requireData(data, response);
     },
     async listConversations() {
       const { data, response } = await client.GET("/api/conversations");

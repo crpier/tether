@@ -30,7 +30,7 @@ not to iterate. For the fast dev loop use `just dev` ([development.md](./develop
 1. Copy the env template and fill it in:
    ```sh
    cp .env.example .env
-   # set TETHER_APP_PASSWORD, TETHER_SESSION_SECRET, and a provider API key
+   # set TETHER_APP_PASSWORD, TETHER_SESSION_SECRET, and the model allowlist
    ```
    Generate strong secrets:
    ```sh
@@ -41,8 +41,9 @@ not to iterate. For the fast dev loop use `just dev` ([development.md](./develop
    ```sh
    docker compose up -d --build
    ```
-3. Open <http://localhost:8000>, log in with `TETHER_APP_PASSWORD`, and you're in
-   the chat view.
+3. Open <http://localhost:8000>, log in with `TETHER_APP_PASSWORD`, then open
+   **Settings → Model provider** and select **Connect ChatGPT**. Follow the
+   device-code link before using chat.
 
 The published port binds to `127.0.0.1` only. If `8000` is taken on your machine
 (e.g. a `just host` dev process), override the host-side port:
@@ -156,17 +157,19 @@ non-browser clients. Leave
 `TETHER_SECURE_COOKIES=true` (the template's default — the VM is only ever
 reached over Tailscale HTTPS).
 
-The VM has no native Node/pnpm install. Authorize the provider locally with pi,
-then copy its credential and lock down permissions:
+Do not copy a workstation's rotating pi credentials onto the VM. The server is
+the sole credential authority: after the first deploy, log into Tether, open
+**Settings → Model provider**, select **Connect ChatGPT**, open the displayed
+OpenAI link, and enter the one-time device code. The container runs pi's own
+OAuth implementation and writes `/srv/tether/pi-agent/auth.json` through the
+`/pi-agent` mount; no token reaches browser storage or an API response.
 
-```sh
-scp ~/.pi/agent/auth.json tether@<box>:/srv/tether/pi-agent/auth.json
-ssh tether@<box> 'chmod 700 /srv/tether/pi-agent && chmod 600 /srv/tether/pi-agent/auth.json'
-```
-
-The container silently refreshes it afterward. `pi-agent/auth.json` is durable
-across deploys but is not currently in the backup set; provider reauthorization
-or a separately secured copy is the recovery path.
+Pi refreshes the server credential automatically before model requests. Opening
+Settings also performs a refresh-aware health check; if refresh becomes
+unrecoverable, the same **Reconnect ChatGPT** flow replaces the credential and
+restarts live conversation runtimes. `pi-agent/auth.json` is durable across
+deploys but is not currently in the backup set; web reauthorization or a
+separately secured server-side backup is the recovery path.
 
 Fill in `restic.env` — see [Backups](#backups) below.
 
@@ -188,8 +191,10 @@ the VM's anonymous pull. Images contain code, not runtime secrets.
 
 - `restart: unless-stopped` plus Docker-enabled-at-boot (cloud-init) keeps the
   host running across reboots and crashes.
-- Open `https://<box>.<tailnet>.ts.net` from a tailnet device (laptop and
-  phone): the SPA loads and login → chat works over HTTPS.
+- Open `https://<box>.<tailnet>.ts.net` from a tailnet device, log in, and use
+  **Settings → Model provider → Connect ChatGPT** before the first chat turn.
+  The SPA and OAuth recovery stay behind Tailscale HTTPS and Tether's session
+  authentication.
 
 If this is a fresh box (not yet holding real data), see
 [Migrating from local](#migrating-from-local) next.
@@ -466,7 +471,7 @@ compose + Dockerfile) + the B2 bucket (data) is everything needed to rebuild.
    named volume/checkout using the stopped helper-container pattern in
    [Migrating from local](#migrating-from-local). Restore `restic.env` from
    1Password.
-4. Reauthorize/copy pi provider credentials and any enabled ingestion OAuth
+4. Reauthorize pi from Tether Settings and restore any enabled ingestion OAuth
    state; those are outside the current backup set.
 5. Deploy from the laptop to bring the app up, verify data, then enable
    `tether-backup.timer`.

@@ -1,5 +1,23 @@
 import { expect, test } from "./fixtures";
 
+test("settings reports the server-owned model provider", async ({
+  page,
+  login,
+}) => {
+  await login();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: /^Settings/u })
+    .click();
+
+  const provider = page.getByRole("region", { name: "Model provider" });
+  await expect(provider).toBeVisible();
+  await expect(provider).toContainText("OpenAI Codex");
+  await expect(provider).toContainText(
+    /Connected|Not connected|Status unavailable/u,
+  );
+});
+
 test("logs in and lands on pure chat, with the nav present", async ({
   page,
   login,

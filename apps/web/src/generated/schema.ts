@@ -1634,6 +1634,82 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/provider-auth/openai-codex": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Check and refresh the server-owned OpenAI Codex credential. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ProviderAuthRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Start OpenAI Codex device-code authorization on the server. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        202: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ProviderAuthRead"];
+          };
+        };
+      };
+    };
+    /** Cancel an active OpenAI Codex authorization attempt. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ProviderAuthRead"];
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/push/config": {
     parameters: {
       query?: never;
@@ -4086,6 +4162,25 @@ export interface components {
     ProposeEssayGradeRequest: {
       /** Answer Text */
       answer_text: string;
+    };
+    /**
+     * ProviderAuthRead
+     * @description Browser-safe server credential or active device-code state.
+     */
+    ProviderAuthRead: {
+      /** Error */
+      error: string | null;
+      /** Expires In Seconds */
+      expires_in_seconds: number | null;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "authorizing" | "connected" | "disconnected" | "error";
+      /** User Code */
+      user_code: string | null;
+      /** Verification Uri */
+      verification_uri: string | null;
     };
     /** @enum {string} */
     PurchaseDecision: "buy" | "wait" | "need-more-info";
