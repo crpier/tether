@@ -34,7 +34,7 @@ class HealthConnectSyncCoordinatorTest {
         )
 
         assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
-        assertTrue(requestIds.stableKeys.all { it.startsWith("health-connect-v2:") })
+        assertTrue(requestIds.stableKeys.all { it.startsWith("health-connect-v3:") })
         assertEquals(
             listOf(
                 "host.uploadBaseline(request-2,token,token,records=500)",

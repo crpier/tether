@@ -15,10 +15,10 @@ All other record types use generic raw storage until Tether grows typed tables:
 {
   "metadata": {"id": "weight-1", "data_origin_package": "com.example.scale"},
   "start_time": 1700000000000,
-  "end_time": 1700000000000,
-  "start_zone_offset_seconds": null,
+  "end_time": null,
+  "start_zone_offset_seconds": 0,
   "end_zone_offset_seconds": null,
-  "payload": {"weight_grams": 72500.0}
+  "payload": {"time": 1700000000000, "weight": {"kilograms": 72.5}}
 }
 ```
 

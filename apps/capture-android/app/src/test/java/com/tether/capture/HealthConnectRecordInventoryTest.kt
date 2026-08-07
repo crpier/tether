@@ -10,6 +10,18 @@ import java.util.jar.JarFile
 
 class HealthConnectRecordInventoryTest {
     @Test
+    fun inventoryMapsEveryCoreWireTypeToOneSdkRecordType() {
+        assertEquals(
+            HealthConnectRecordType.entries.toSet(),
+            HealthConnectRecordInventory.entries.map { it.recordType }.toSet(),
+        )
+        assertEquals(
+            HealthConnectRecordInventory.entries.size,
+            HealthConnectRecordInventory.entries.map { it.recordType }.toSet().size,
+        )
+    }
+
+    @Test
     fun inventoryNamesEveryConcreteSdkRecordType() {
         assertEquals(
             sdkRecordTypeNames(),

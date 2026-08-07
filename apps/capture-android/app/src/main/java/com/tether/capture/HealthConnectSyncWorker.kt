@@ -36,7 +36,7 @@ class HealthConnectSyncWorker(
             )
             return@withLock Result.failure()
         }
-        if (!available.permissions.canReadCapturedRecords) {
+        if (!available.permissions.canReadAnyRecord) {
             repository.markHealthConnectFailure("Health permissions changed; grant access again")
             return@withLock Result.failure()
         }
@@ -51,7 +51,7 @@ class HealthConnectSyncWorker(
             )
             val coordinator = HealthConnectSyncCoordinator(
                 installationId = installationId,
-                recordTypes = available.permissions.capturedRecordTypes,
+                recordTypes = available.permissions.grantedRecordTypes,
                 health = source,
                 host = HealthConnectHostHttpClient(settings.hostUrl, settings.token),
                 requestIds = UuidRequestIds,
@@ -90,11 +90,6 @@ class HealthConnectSyncWorker(
 
     companion object {
         private val syncMutex = Mutex()
-        val ALL_RECORD_TYPES: Set<HealthConnectRecordType> = linkedSetOf(
-            HealthConnectRecordType.HEART_RATE,
-            HealthConnectRecordType.SLEEP,
-            HealthConnectRecordType.STEPS,
-            HealthConnectRecordType.EXERCISE,
-        )
+        val ALL_RECORD_TYPES: Set<HealthConnectRecordType> = HealthConnectRecordType.entries.toCollection(linkedSetOf())
     }
 }

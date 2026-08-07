@@ -11,6 +11,7 @@ class HealthConnectPermissionsTest {
         )
 
         assertEquals(false, summary.canReadAllRecords)
+        assertEquals(true, summary.canReadAnyRecord)
         assertEquals(true, summary.canReadCapturedRecords)
         assertEquals(HealthConnectPermissions.required - HealthConnectPermissions.captured, summary.missingRequired)
         assertEquals(emptySet<HealthConnectRecordType>(), summary.missingCapturedRecordTypes)
@@ -24,13 +25,17 @@ class HealthConnectPermissionsTest {
     }
 
     @Test
-    fun permittedCapturedCategoriesRemainSyncableWhenAnotherCategoryIsDenied() {
+    fun permittedCategoriesRemainSyncableWhenAnotherCategoryIsDenied() {
         val summary = HealthConnectPermissions.summarize(
             granted = setOf("android.permission.health.READ_STEPS"),
             supportedOptional = emptySet(),
         )
 
-        assertEquals(true, summary.canReadCapturedRecords)
+        assertEquals(true, summary.canReadAnyRecord)
+        assertEquals(
+            setOf(HealthConnectRecordType.STEPS, HealthConnectRecordType.STEPS_CADENCE),
+            summary.grantedRecordTypes,
+        )
         assertEquals(setOf(HealthConnectRecordType.STEPS), summary.capturedRecordTypes)
         assertEquals(
             setOf(
@@ -40,6 +45,17 @@ class HealthConnectPermissionsTest {
             ),
             summary.missingCapturedRecordTypes,
         )
+    }
+
+    @Test
+    fun plannedCategoriesBecomeSyncableWhenGranted() {
+        val summary = HealthConnectPermissions.summarize(
+            granted = setOf("android.permission.health.READ_WEIGHT"),
+            supportedOptional = emptySet(),
+        )
+
+        assertEquals(true, summary.canReadAnyRecord)
+        assertEquals(setOf(HealthConnectRecordType.WEIGHT), summary.grantedRecordTypes)
     }
 
     @Test

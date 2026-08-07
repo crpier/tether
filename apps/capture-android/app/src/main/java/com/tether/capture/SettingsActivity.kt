@@ -22,7 +22,7 @@ class SettingsActivity : AppCompatActivity() {
         PermissionController.createRequestPermissionResultContract(),
     ) { granted ->
         val summary = HealthConnectPermissions.summarize(granted)
-        if (summary.canReadCapturedRecords) {
+        if (summary.canReadAnyRecord) {
             scheduler.ensurePeriodicSync()
             scheduler.syncNow()
             toast(getString(R.string.health_connect_sync_queued))
@@ -109,7 +109,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.healthPermissions.setText(
             when {
                 available == null -> R.string.health_connect_permissions_missing
-                !available.permissions.canReadCapturedRecords -> R.string.health_connect_permissions_missing
+                !available.permissions.canReadAnyRecord -> R.string.health_connect_permissions_missing
                 !available.permissions.canReadAllRecords -> R.string.health_connect_permissions_partial
                 available.permissions.missingOptional.isNotEmpty() -> R.string.health_connect_optional_missing
                 else -> R.string.health_connect_permissions_granted
@@ -128,8 +128,8 @@ class SettingsActivity : AppCompatActivity() {
             getString(R.string.health_connect_last_failure, failure)
         } ?: getString(R.string.health_connect_no_failure)
         binding.healthGrantButton.isEnabled = platform != HealthConnectStatus.Unsupported
-        binding.healthSyncButton.isEnabled = available?.permissions?.canReadCapturedRecords == true && !sync.running
-        if (available?.permissions?.canReadCapturedRecords == true) {
+        binding.healthSyncButton.isEnabled = available?.permissions?.canReadAnyRecord == true && !sync.running
+        if (available?.permissions?.canReadAnyRecord == true) {
             scheduler.ensurePeriodicSync()
         }
     }

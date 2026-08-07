@@ -47,10 +47,11 @@ import kotlin.reflect.KClass
 
 enum class HealthConnectRecordCaptureStatus {
     CAPTURED_V2,
-    CAPTURE_PLANNED,
+    CAPTURED_GENERIC_V3,
 }
 
 data class HealthConnectRecordInventoryEntry(
+    val recordType: HealthConnectRecordType,
     val recordClass: KClass<out Record>,
     val readPermission: String,
     val status: HealthConnectRecordCaptureStatus,
@@ -58,62 +59,72 @@ data class HealthConnectRecordInventoryEntry(
 
 object HealthConnectRecordInventory {
     val entries: List<HealthConnectRecordInventoryEntry> = listOf(
-        captured(ExerciseSessionRecord::class),
-        captured(HeartRateRecord::class),
-        captured(SleepSessionRecord::class),
-        captured(StepsRecord::class),
-        planned(ActiveCaloriesBurnedRecord::class),
-        planned(BasalBodyTemperatureRecord::class),
-        planned(BasalMetabolicRateRecord::class),
-        planned(BloodGlucoseRecord::class),
-        planned(BloodPressureRecord::class),
-        planned(BodyFatRecord::class),
-        planned(BodyTemperatureRecord::class),
-        planned(BodyWaterMassRecord::class),
-        planned(BoneMassRecord::class),
-        planned(CervicalMucusRecord::class),
-        planned(CyclingPedalingCadenceRecord::class),
-        planned(DistanceRecord::class),
-        planned(ElevationGainedRecord::class),
-        planned(FloorsClimbedRecord::class),
-        planned(HeartRateVariabilityRmssdRecord::class),
-        planned(HeightRecord::class),
-        planned(HydrationRecord::class),
-        planned(IntermenstrualBleedingRecord::class),
-        planned(LeanBodyMassRecord::class),
-        planned(MenstruationFlowRecord::class),
-        planned(MenstruationPeriodRecord::class),
-        planned(MindfulnessSessionRecord::class),
-        planned(NutritionRecord::class),
-        planned(OvulationTestRecord::class),
-        planned(OxygenSaturationRecord::class),
-        planned(PlannedExerciseSessionRecord::class),
-        planned(PowerRecord::class),
-        planned(RespiratoryRateRecord::class),
-        planned(RestingHeartRateRecord::class),
-        planned(SexualActivityRecord::class),
-        planned(SkinTemperatureRecord::class),
-        planned(SpeedRecord::class),
-        planned(StepsCadenceRecord::class),
-        planned(TotalCaloriesBurnedRecord::class),
-        planned(Vo2MaxRecord::class),
-        planned(WeightRecord::class),
-        planned(WheelchairPushesRecord::class),
+        captured(HealthConnectRecordType.EXERCISE, ExerciseSessionRecord::class),
+        captured(HealthConnectRecordType.HEART_RATE, HeartRateRecord::class),
+        captured(HealthConnectRecordType.SLEEP, SleepSessionRecord::class),
+        captured(HealthConnectRecordType.STEPS, StepsRecord::class),
+        generic(HealthConnectRecordType.ACTIVE_CALORIES_BURNED, ActiveCaloriesBurnedRecord::class),
+        generic(HealthConnectRecordType.BASAL_BODY_TEMPERATURE, BasalBodyTemperatureRecord::class),
+        generic(HealthConnectRecordType.BASAL_METABOLIC_RATE, BasalMetabolicRateRecord::class),
+        generic(HealthConnectRecordType.BLOOD_GLUCOSE, BloodGlucoseRecord::class),
+        generic(HealthConnectRecordType.BLOOD_PRESSURE, BloodPressureRecord::class),
+        generic(HealthConnectRecordType.BODY_FAT, BodyFatRecord::class),
+        generic(HealthConnectRecordType.BODY_TEMPERATURE, BodyTemperatureRecord::class),
+        generic(HealthConnectRecordType.BODY_WATER_MASS, BodyWaterMassRecord::class),
+        generic(HealthConnectRecordType.BONE_MASS, BoneMassRecord::class),
+        generic(HealthConnectRecordType.CERVICAL_MUCUS, CervicalMucusRecord::class),
+        generic(HealthConnectRecordType.CYCLING_PEDALING_CADENCE, CyclingPedalingCadenceRecord::class),
+        generic(HealthConnectRecordType.DISTANCE, DistanceRecord::class),
+        generic(HealthConnectRecordType.ELEVATION_GAINED, ElevationGainedRecord::class),
+        generic(HealthConnectRecordType.FLOORS_CLIMBED, FloorsClimbedRecord::class),
+        generic(HealthConnectRecordType.HEART_RATE_VARIABILITY_RMSSD, HeartRateVariabilityRmssdRecord::class),
+        generic(HealthConnectRecordType.HEIGHT, HeightRecord::class),
+        generic(HealthConnectRecordType.HYDRATION, HydrationRecord::class),
+        generic(HealthConnectRecordType.INTERMENSTRUAL_BLEEDING, IntermenstrualBleedingRecord::class),
+        generic(HealthConnectRecordType.LEAN_BODY_MASS, LeanBodyMassRecord::class),
+        generic(HealthConnectRecordType.MENSTRUATION_FLOW, MenstruationFlowRecord::class),
+        generic(HealthConnectRecordType.MENSTRUATION_PERIOD, MenstruationPeriodRecord::class),
+        generic(HealthConnectRecordType.MINDFULNESS_SESSION, MindfulnessSessionRecord::class),
+        generic(HealthConnectRecordType.NUTRITION, NutritionRecord::class),
+        generic(HealthConnectRecordType.OVULATION_TEST, OvulationTestRecord::class),
+        generic(HealthConnectRecordType.OXYGEN_SATURATION, OxygenSaturationRecord::class),
+        generic(HealthConnectRecordType.PLANNED_EXERCISE_SESSION, PlannedExerciseSessionRecord::class),
+        generic(HealthConnectRecordType.POWER, PowerRecord::class),
+        generic(HealthConnectRecordType.RESPIRATORY_RATE, RespiratoryRateRecord::class),
+        generic(HealthConnectRecordType.RESTING_HEART_RATE, RestingHeartRateRecord::class),
+        generic(HealthConnectRecordType.SEXUAL_ACTIVITY, SexualActivityRecord::class),
+        generic(HealthConnectRecordType.SKIN_TEMPERATURE, SkinTemperatureRecord::class),
+        generic(HealthConnectRecordType.SPEED, SpeedRecord::class),
+        generic(HealthConnectRecordType.STEPS_CADENCE, StepsCadenceRecord::class),
+        generic(HealthConnectRecordType.TOTAL_CALORIES_BURNED, TotalCaloriesBurnedRecord::class),
+        generic(HealthConnectRecordType.VO2_MAX, Vo2MaxRecord::class),
+        generic(HealthConnectRecordType.WEIGHT, WeightRecord::class),
+        generic(HealthConnectRecordType.WHEELCHAIR_PUSHES, WheelchairPushesRecord::class),
     )
 
+    val entryByRecordType: Map<HealthConnectRecordType, HealthConnectRecordInventoryEntry> = entries
+        .associateBy { it.recordType }
+
+    val entryByRecordClass: Map<KClass<out Record>, HealthConnectRecordInventoryEntry> = entries
+        .associateBy { it.recordClass }
+
     private fun captured(
+        recordType: HealthConnectRecordType,
         recordClass: KClass<out Record>,
     ): HealthConnectRecordInventoryEntry = HealthConnectRecordInventoryEntry(
+        recordType = recordType,
         recordClass = recordClass,
         readPermission = HealthPermission.getReadPermission(recordClass),
         status = HealthConnectRecordCaptureStatus.CAPTURED_V2,
     )
 
-    private fun planned(
+    private fun generic(
+        recordType: HealthConnectRecordType,
         recordClass: KClass<out Record>,
     ): HealthConnectRecordInventoryEntry = HealthConnectRecordInventoryEntry(
+        recordType = recordType,
         recordClass = recordClass,
         readPermission = HealthPermission.getReadPermission(recordClass),
-        status = HealthConnectRecordCaptureStatus.CAPTURE_PLANNED,
+        status = HealthConnectRecordCaptureStatus.CAPTURED_GENERIC_V3,
     )
 }

@@ -87,9 +87,9 @@ supported earlier Android release). In **Settings → Health Connect**:
    every readable record type in the pinned SDK; denied categories are shown but
    do not block granted categories. History and background-read access are
    requested where the provider supports them.
-3. Permission grant queues an immediate baseline when at least one currently
-   captured category is granted. **Sync now** queues another unique sync without
-   racing an active run.
+3. Permission grant queues an immediate baseline when at least one readable
+   category is granted. **Sync now** queues another unique sync without racing an
+   active run.
 
 Without history access, the authoritative baseline is limited to Health
 Connect's normally accessible recent window. Missing background/history access
@@ -98,7 +98,7 @@ The section also shows running state, last success, and a sanitized last failure
 raw values, notes, and opaque cursor tokens are never displayed or logged.
 
 The host must include the Health Connect API from
-[`docs/health-connect-wire-v2.md`](../../docs/health-connect-wire-v2.md).
+[`docs/health-connect-wire-v3.md`](../../docs/health-connect-wire-v3.md).
 
 ### Manual worker validation
 
@@ -119,7 +119,7 @@ Troubleshooting:
 
 - **Install or update Health Connect**: open the Health Connect settings/store
   flow from **Enable / grant**.
-- **Health permissions changed**: grant at least one currently captured read
+- **Health permissions changed**: grant at least one readable Health Connect
   category again.
 - **Host unavailable**: verify host URL, bearer token, network, and the host's
   telemetry API.

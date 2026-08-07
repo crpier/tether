@@ -4,9 +4,9 @@ Pinned client: `androidx.health.connect:connect-client:1.1.0-alpha12`.
 
 Status vocabulary:
 
-- `captured_v2`: mapped to the current wire contract and persisted by host.
-- `capture_planned`: readable in the pinned SDK; inventory prevents silent
-  omission while the expanded contract/storage work lands.
+- `captured_v2`: mapped to a typed v2/v3 shape and persisted in typed host tables.
+- `captured_generic_v3`: mapped to v3 generic JSON payloads and persisted in
+  generic host storage until typed per-record projections are needed.
 
 The pinned SDK does not expose medical-record typed `Record` classes. Medical
 records remain outside this inventory until the AndroidX client exposes stable
@@ -14,44 +14,44 @@ readable record types and Tether has a policy/permission treatment for them.
 
 | Permission | Record type | Status |
 | --- | --- | --- |
-| `READ_ACTIVE_CALORIES_BURNED` | `ActiveCaloriesBurnedRecord` | `capture_planned` |
-| `READ_BASAL_BODY_TEMPERATURE` | `BasalBodyTemperatureRecord` | `capture_planned` |
-| `READ_BASAL_METABOLIC_RATE` | `BasalMetabolicRateRecord` | `capture_planned` |
-| `READ_BLOOD_GLUCOSE` | `BloodGlucoseRecord` | `capture_planned` |
-| `READ_BLOOD_PRESSURE` | `BloodPressureRecord` | `capture_planned` |
-| `READ_BODY_FAT` | `BodyFatRecord` | `capture_planned` |
-| `READ_BODY_TEMPERATURE` | `BodyTemperatureRecord` | `capture_planned` |
-| `READ_BODY_WATER_MASS` | `BodyWaterMassRecord` | `capture_planned` |
-| `READ_BONE_MASS` | `BoneMassRecord` | `capture_planned` |
-| `READ_CERVICAL_MUCUS` | `CervicalMucusRecord` | `capture_planned` |
-| `READ_DISTANCE` | `DistanceRecord` | `capture_planned` |
-| `READ_ELEVATION_GAINED` | `ElevationGainedRecord` | `capture_planned` |
-| `READ_EXERCISE` | `CyclingPedalingCadenceRecord` | `capture_planned` |
+| `READ_ACTIVE_CALORIES_BURNED` | `ActiveCaloriesBurnedRecord` | `captured_generic_v3` |
+| `READ_BASAL_BODY_TEMPERATURE` | `BasalBodyTemperatureRecord` | `captured_generic_v3` |
+| `READ_BASAL_METABOLIC_RATE` | `BasalMetabolicRateRecord` | `captured_generic_v3` |
+| `READ_BLOOD_GLUCOSE` | `BloodGlucoseRecord` | `captured_generic_v3` |
+| `READ_BLOOD_PRESSURE` | `BloodPressureRecord` | `captured_generic_v3` |
+| `READ_BODY_FAT` | `BodyFatRecord` | `captured_generic_v3` |
+| `READ_BODY_TEMPERATURE` | `BodyTemperatureRecord` | `captured_generic_v3` |
+| `READ_BODY_WATER_MASS` | `BodyWaterMassRecord` | `captured_generic_v3` |
+| `READ_BONE_MASS` | `BoneMassRecord` | `captured_generic_v3` |
+| `READ_CERVICAL_MUCUS` | `CervicalMucusRecord` | `captured_generic_v3` |
+| `READ_DISTANCE` | `DistanceRecord` | `captured_generic_v3` |
+| `READ_ELEVATION_GAINED` | `ElevationGainedRecord` | `captured_generic_v3` |
+| `READ_EXERCISE` | `CyclingPedalingCadenceRecord` | `captured_generic_v3` |
 | `READ_EXERCISE` | `ExerciseSessionRecord` | `captured_v2` |
-| `READ_FLOORS_CLIMBED` | `FloorsClimbedRecord` | `capture_planned` |
+| `READ_FLOORS_CLIMBED` | `FloorsClimbedRecord` | `captured_generic_v3` |
 | `READ_HEART_RATE` | `HeartRateRecord` | `captured_v2` |
-| `READ_HEART_RATE_VARIABILITY` | `HeartRateVariabilityRmssdRecord` | `capture_planned` |
-| `READ_HEIGHT` | `HeightRecord` | `capture_planned` |
-| `READ_HYDRATION` | `HydrationRecord` | `capture_planned` |
-| `READ_INTERMENSTRUAL_BLEEDING` | `IntermenstrualBleedingRecord` | `capture_planned` |
-| `READ_LEAN_BODY_MASS` | `LeanBodyMassRecord` | `capture_planned` |
-| `READ_MENSTRUATION` | `MenstruationFlowRecord` | `capture_planned` |
-| `READ_MENSTRUATION` | `MenstruationPeriodRecord` | `capture_planned` |
-| `READ_MINDFULNESS_SESSION` | `MindfulnessSessionRecord` | `capture_planned` |
-| `READ_NUTRITION` | `NutritionRecord` | `capture_planned` |
-| `READ_OVULATION_TEST` | `OvulationTestRecord` | `capture_planned` |
-| `READ_OXYGEN_SATURATION` | `OxygenSaturationRecord` | `capture_planned` |
-| `READ_PLANNED_EXERCISE` | `PlannedExerciseSessionRecord` | `capture_planned` |
-| `READ_POWER` | `PowerRecord` | `capture_planned` |
-| `READ_RESPIRATORY_RATE` | `RespiratoryRateRecord` | `capture_planned` |
-| `READ_RESTING_HEART_RATE` | `RestingHeartRateRecord` | `capture_planned` |
-| `READ_SEXUAL_ACTIVITY` | `SexualActivityRecord` | `capture_planned` |
-| `READ_SKIN_TEMPERATURE` | `SkinTemperatureRecord` | `capture_planned` |
+| `READ_HEART_RATE_VARIABILITY` | `HeartRateVariabilityRmssdRecord` | `captured_generic_v3` |
+| `READ_HEIGHT` | `HeightRecord` | `captured_generic_v3` |
+| `READ_HYDRATION` | `HydrationRecord` | `captured_generic_v3` |
+| `READ_INTERMENSTRUAL_BLEEDING` | `IntermenstrualBleedingRecord` | `captured_generic_v3` |
+| `READ_LEAN_BODY_MASS` | `LeanBodyMassRecord` | `captured_generic_v3` |
+| `READ_MENSTRUATION` | `MenstruationFlowRecord` | `captured_generic_v3` |
+| `READ_MENSTRUATION` | `MenstruationPeriodRecord` | `captured_generic_v3` |
+| `READ_MINDFULNESS_SESSION` | `MindfulnessSessionRecord` | `captured_generic_v3` |
+| `READ_NUTRITION` | `NutritionRecord` | `captured_generic_v3` |
+| `READ_OVULATION_TEST` | `OvulationTestRecord` | `captured_generic_v3` |
+| `READ_OXYGEN_SATURATION` | `OxygenSaturationRecord` | `captured_generic_v3` |
+| `READ_PLANNED_EXERCISE` | `PlannedExerciseSessionRecord` | `captured_generic_v3` |
+| `READ_POWER` | `PowerRecord` | `captured_generic_v3` |
+| `READ_RESPIRATORY_RATE` | `RespiratoryRateRecord` | `captured_generic_v3` |
+| `READ_RESTING_HEART_RATE` | `RestingHeartRateRecord` | `captured_generic_v3` |
+| `READ_SEXUAL_ACTIVITY` | `SexualActivityRecord` | `captured_generic_v3` |
+| `READ_SKIN_TEMPERATURE` | `SkinTemperatureRecord` | `captured_generic_v3` |
 | `READ_SLEEP` | `SleepSessionRecord` | `captured_v2` |
-| `READ_SPEED` | `SpeedRecord` | `capture_planned` |
-| `READ_STEPS` | `StepsCadenceRecord` | `capture_planned` |
+| `READ_SPEED` | `SpeedRecord` | `captured_generic_v3` |
+| `READ_STEPS` | `StepsCadenceRecord` | `captured_generic_v3` |
 | `READ_STEPS` | `StepsRecord` | `captured_v2` |
-| `READ_TOTAL_CALORIES_BURNED` | `TotalCaloriesBurnedRecord` | `capture_planned` |
-| `READ_VO2_MAX` | `Vo2MaxRecord` | `capture_planned` |
-| `READ_WEIGHT` | `WeightRecord` | `capture_planned` |
-| `READ_WHEELCHAIR_PUSHES` | `WheelchairPushesRecord` | `capture_planned` |
+| `READ_TOTAL_CALORIES_BURNED` | `TotalCaloriesBurnedRecord` | `captured_generic_v3` |
+| `READ_VO2_MAX` | `Vo2MaxRecord` | `captured_generic_v3` |
+| `READ_WEIGHT` | `WeightRecord` | `captured_generic_v3` |
+| `READ_WHEELCHAIR_PUSHES` | `WheelchairPushesRecord` | `captured_generic_v3` |
