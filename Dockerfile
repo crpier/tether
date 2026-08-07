@@ -23,6 +23,11 @@ WORKDIR /app/apps/agent
 COPY apps/agent/package.json apps/agent/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY apps/agent/ ./
+# Fail the image build if a release omits any allowlisted product skill or its
+# progressively disclosed reference material.
+RUN test -f skills/grilling/SKILL.md \
+    && test -f skills/writing-great-skills/SKILL.md \
+    && test -f skills/writing-great-skills/GLOSSARY.md
 
 # ---- Stage: runtime --------------------------------------------------------
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS runtime

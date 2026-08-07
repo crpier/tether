@@ -261,6 +261,8 @@ class ScriptedRpcClient:
     async def request(self, command_type: str, **fields: object) -> dict[str, object]:
         """Log the command and answer with the scripted success flag."""
         self.requests.append((command_type, fields))
+        if command_type == "get_commands":
+            return {"success": True, "data": {"commands": "not-a-list"}}
         if command_type == "set_thinking_level":
             response: dict[str, object] = {"success": self._thinking_success}
             if not self._thinking_success and self._thinking_error is not None:
@@ -296,6 +298,17 @@ def _runtime_with_client(client: ScriptedRpcClient) -> PiRuntime:
         session_id=str(uuid4()),
         session_registry=SessionRegistry(),
     )
+
+
+@test()
+async def malformed_skill_confirmation_is_unavailable_and_counts_nothing() -> None:
+    """Malformed pi command payloads cannot create a false loaded status."""
+    runtime = _runtime_with_client(ScriptedRpcClient(success=True))
+
+    await runtime.confirm_loaded_skills()
+
+    assert_eq(runtime.loaded_skills, ())
+    assert_eq(runtime.skills_confirmed, False)
 
 
 @test()
@@ -495,6 +508,33 @@ async def stream_turn_preserves_provider_error_from_settled_message() -> None:
 
 
 @test()
+async def spawn_command_allowlists_only_bundled_product_skills() -> None:
+    """Every pi process disables discovery and explicitly loads Tether resources."""
+    command = _spawn_command(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+        ),
+        "019f08f0-0000-7000-8000-000000000002",
+    )
+
+    assert_in("--no-extensions", command)
+    assert_in("--no-skills", command)
+    assert_eq(
+        [
+            Path(command[index + 1]).name
+            for index, value in enumerate(command)
+            if value == "--skill"
+        ],
+        ["grilling", "writing-great-skills"],
+    )
+    assert_in(
+        str(Path.cwd().parent / "agent/src/restricted-skill-read.ts"),
+        command,
+    )
+
+
+@test()
 async def spawn_command_replaces_the_default_prompt_when_one_is_configured() -> None:
     """A configured system prompt rides the command line as `--system-prompt`.
 
@@ -548,6 +588,24 @@ async def runtime_spawned_with_a_system_prompt_boots_healthy() -> None:
     )
 
     assert_true(await runtime.health())
+    await runtime.shutdown()
+
+
+@test()
+async def runtime_confirms_bundled_skills_through_pi_commands() -> None:
+    """Loaded status comes from pi's `get_commands`, not configured paths."""
+    session_dir = await load_fixture(pi_session_dir())
+    runtime = await PiRuntime.spawn(
+        PiRuntimeConfig(
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+            session_dir=session_dir,
+        ),
+        session_registry=SessionRegistry(),
+    )
+
+    assert_eq(runtime.loaded_skills, ("grilling", "writing-great-skills"))
+    assert_true(runtime.skills_confirmed)
     await runtime.shutdown()
 
 
@@ -696,6 +754,7 @@ export default function inspectTools(pi) {
             "merge_facet_value",
             "propose",
             "propose_essay_grade",
+            "read",
             "read_conversation_history",
             "reject",
             "rename_facet_key",
@@ -716,7 +775,7 @@ export default function inspectTools(pi) {
         ],
     )
     assert_not_in("bash", active_tools)
-    assert_not_in("read", active_tools)
+    assert_in("read", active_tools)
     assert_in("capture", active_tools)
 
 

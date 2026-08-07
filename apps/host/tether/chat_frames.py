@@ -68,6 +68,13 @@ class MessageEndFrame(_ConversationFrame):
     event: Literal["message_end"] = "message_end"
 
 
+class SkillStatusFrame(_ConversationFrame):
+    """Generic count of skills confirmed by the active pi runtime."""
+
+    event: Literal["skill_status"] = "skill_status"
+    loaded_count: int
+
+
 class ToolStartFrame(_ConversationFrame):
     """pi began executing one tool call."""
 

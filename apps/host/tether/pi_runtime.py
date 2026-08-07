@@ -13,10 +13,14 @@ from pathlib import Path
 from typing import Any, Protocol, Self, cast
 from uuid import UUID
 
+import structlog
 from anyio import Path as AsyncPath
 
 from tether.model_selection import AgentModelConfig
 from tether.tools import SessionRegistry
+
+_BUNDLED_SKILL_NAMES = ("grilling", "writing-great-skills")
+"""Release-managed skills explicitly allowlisted into every pi process."""
 
 _JSONL_READ_LIMIT = 65536
 """Maximum bytes requested from pi stdout per async read."""
@@ -26,6 +30,9 @@ _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 _UUID_VERSION_7 = 7
 """UUID version emitted by pi for new session identities."""
+
+_logger = structlog.stdlib.get_logger("tether.pi_runtime")
+"""Operational diagnostics for pi startup and resource confirmation."""
 
 
 class PiRuntimeError(Exception):
@@ -577,6 +584,8 @@ class PiRuntime:
         self.session_id: str = session_id
         self.session_registry: SessionRegistry = session_registry
         self.session_uuid: UUID = UUID(session_id)
+        self.loaded_skills: tuple[str, ...] = ()
+        self.skills_confirmed: bool = False
         self._shutdown_complete: bool = False
 
     async def __aenter__(self) -> Self:
@@ -623,6 +632,7 @@ class PiRuntime:
         try:
             resolved_session_id = await runtime._resolve_session_id()
             runtime._confirm_session_id(resolved_session_id)
+            await runtime.confirm_loaded_skills()
             session_registry.register(resolved_session_id)
         except Exception:
             await runtime.shutdown()
@@ -662,6 +672,56 @@ class PiRuntime:
                     f"{thinking_response.get('error', 'unknown error')}"
                 )
                 raise PiRuntimeError(message)
+
+    async def confirm_loaded_skills(self) -> None:
+        """Confirm loaded skills through pi without exposing resource metadata."""
+        try:
+            response = await self.client.request("get_commands")
+        except Exception as error:
+            _logger.warning(
+                "Pi skill confirmation unavailable",
+                error_type=type(error).__name__,
+                session_id=self.session_id,
+            )
+            return
+        data = response.get("data")
+        if response.get("success") is not True or not isinstance(data, dict):
+            _logger.warning(
+                "Pi skill confirmation malformed",
+                session_id=self.session_id,
+            )
+            return
+        commands = cast("dict[str, object]", data).get("commands")
+        if not isinstance(commands, list):
+            _logger.warning(
+                "Pi skill confirmation malformed",
+                session_id=self.session_id,
+            )
+            return
+        loaded_skill_names: set[str] = set()
+        for raw_command in cast("list[object]", commands):
+            if not isinstance(raw_command, dict):
+                continue
+            command = cast("dict[str, object]", raw_command)
+            name = command.get("name")
+            if command.get("source") != "skill" or not isinstance(name, str):
+                continue
+            skill_name = name.removeprefix("skill:")
+            if name == skill_name or not skill_name.replace("-", "").isalnum():
+                continue
+            if skill_name in _BUNDLED_SKILL_NAMES:
+                loaded_skill_names.add(skill_name)
+        self.loaded_skills = tuple(
+            name for name in _BUNDLED_SKILL_NAMES if name in loaded_skill_names
+        )
+        self.skills_confirmed = True
+        if len(self.loaded_skills) != len(_BUNDLED_SKILL_NAMES):
+            _logger.warning(
+                "Bundled pi skills missing",
+                expected_count=len(_BUNDLED_SKILL_NAMES),
+                loaded_count=len(self.loaded_skills),
+                session_id=self.session_id,
+            )
 
     def drain_events(self) -> int:
         """Discard pending events left over from a previous turn."""
@@ -783,11 +843,14 @@ def _repo_root() -> Path:
 
 def _spawn_command(config: PiRuntimeConfig, session_id: str) -> list[str]:
     """Build the closed-tool-world pi command line."""
+    agent_root = _repo_root() / "apps/agent"
     command = [
-        str(config.pi_binary or _repo_root() / "apps/agent/node_modules/.bin/pi"),
+        str(config.pi_binary or agent_root / "node_modules/.bin/pi"),
         "--mode",
         "rpc",
         "--no-builtin-tools",
+        "--no-extensions",
+        "--no-skills",
         "--approve",
         "--session-id",
         session_id,
@@ -797,10 +860,13 @@ def _spawn_command(config: PiRuntimeConfig, session_id: str) -> list[str]:
     if config.system_prompt is not None:
         command.extend(["--system-prompt", config.system_prompt, "--no-context-files"])
     for extension_path in [
-        config.extension_path or _repo_root() / "apps/agent/src/generated/index.ts",
+        config.extension_path or agent_root / "src/generated/index.ts",
+        agent_root / "src/restricted-skill-read.ts",
         *config.extra_extension_paths,
     ]:
         command.extend(["-e", str(extension_path)])
+    for skill_name in _BUNDLED_SKILL_NAMES:
+        command.extend(["--skill", str(agent_root / "skills" / skill_name)])
     return command
 
 
