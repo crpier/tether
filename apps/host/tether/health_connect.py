@@ -720,7 +720,7 @@ class HealthConnectCursorConflictError(Exception):
     """The page expected a cursor that is no longer current."""
 
 
-_SCHEMA_MODELS = [
+_LEGACY_SCHEMA_MODELS = [
     HealthConnectSyncState,
     HcOrigin,
     HcPageRequest,
@@ -733,8 +733,8 @@ _SCHEMA_MODELS = [
     HcExerciseSegment,
     HcExerciseLap,
     HcExerciseRoutePoint,
-    HcGenericRecord,
 ]
+_SCHEMA_MODELS = [*_LEGACY_SCHEMA_MODELS, HcGenericRecord]
 _MODELS = [*_SCHEMA_MODELS, HcBaselineSeen]
 _PARENT_MODELS = {
     "exercise": HcExerciseSession,
@@ -1780,32 +1780,61 @@ _CURRENT_VIEW_MIGRATIONS = {
     "hc_exercise_session_current": 'CREATE VIEW "hc_exercise_session_current" AS SELECT parent.* FROM "hc_exercise_session" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_exercise_session" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
     "hc_generic_record_current": 'CREATE VIEW "hc_generic_record_current" AS SELECT parent.* FROM "hc_generic_record" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_generic_record" candidate WHERE candidate."record_type" = parent."record_type" AND candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
 }
+_CHILD_CURRENT_VIEW_MIGRATIONS = {
+    "hc_heart_rate_sample_current": 'SELECT child.* FROM "hc_heart_rate_sample" child JOIN "hc_heart_rate_record_current" parent ON parent."version_id" = child."version_id"',
+    "hc_sleep_stage_current": 'SELECT child.* FROM "hc_sleep_stage" child JOIN "hc_sleep_session_current" parent ON parent."version_id" = child."version_id"',
+    "hc_exercise_segment_current": 'SELECT child.* FROM "hc_exercise_segment" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
+    "hc_exercise_lap_current": 'SELECT child.* FROM "hc_exercise_lap" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
+    "hc_exercise_route_point_current": 'SELECT child.* FROM "hc_exercise_route_point" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
+}
+
+
+def _create_if_not_exists(sql: str) -> str:
+    """Make scaffold/view DDL safe when adopting a shifted migration key."""
+    for prefix in (
+        "CREATE UNIQUE INDEX ",
+        "CREATE INDEX ",
+        "CREATE TABLE ",
+        "CREATE VIEW ",
+    ):
+        if sql.startswith(prefix):
+            return sql.replace(prefix, f"{prefix}IF NOT EXISTS ", 1)
+    return sql
 
 
 async def create_health_connect_schema(database: Database) -> None:
     """Initialize every typed table, index, and current-version view."""
-    statements = scaffold(_SCHEMA_MODELS).splitlines()
+    # Freeze the original positional migration keys. Appending HcGenericRecord to
+    # the combined scaffold shifted every later key and replayed existing views
+    # on production. Future schema additions must likewise append explicit keys.
+    legacy_statements = scaffold(_LEGACY_SCHEMA_MODELS).splitlines()
     migrations = {
         f"{index:04d}_health_connect_schema": sql
-        for index, sql in enumerate(statements, start=1)
+        for index, sql in enumerate(legacy_statements, start=1)
     }
     next_index = len(migrations) + 1
     for view, sql in _CURRENT_VIEW_MIGRATIONS.items():
-        migrations[f"{next_index:04d}_{view}"] = sql
+        if view == "hc_generic_record_current":
+            continue
+        migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
         next_index += 1
-    child_views = {
-        "hc_heart_rate_sample_current": 'SELECT child.* FROM "hc_heart_rate_sample" child JOIN "hc_heart_rate_record_current" parent ON parent."version_id" = child."version_id"',
-        "hc_sleep_stage_current": 'SELECT child.* FROM "hc_sleep_stage" child JOIN "hc_sleep_session_current" parent ON parent."version_id" = child."version_id"',
-        "hc_exercise_segment_current": 'SELECT child.* FROM "hc_exercise_segment" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
-        "hc_exercise_lap_current": 'SELECT child.* FROM "hc_exercise_lap" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
-        "hc_exercise_route_point_current": 'SELECT child.* FROM "hc_exercise_route_point" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
-    }
-    for view, query in child_views.items():
-        migrations[f"{next_index:04d}_{view}"] = f'CREATE VIEW "{view}" AS {query}'
+    for view, query in _CHILD_CURRENT_VIEW_MIGRATIONS.items():
+        sql = f'CREATE VIEW "{view}" AS {query}'
+        migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
         next_index += 1
     for sql in scaffold([HcBaselineSeen]).splitlines():
-        migrations[f"{next_index:04d}_baseline_seen"] = sql
+        migrations[f"{next_index:04d}_baseline_seen"] = _create_if_not_exists(sql)
         next_index += 1
+
+    # Preserve the five keys already applied by the failed v3 production boot.
+    generic_start = len(legacy_statements) + 1
+    for index, sql in enumerate(
+        scaffold([HcGenericRecord]).splitlines(), start=generic_start
+    ):
+        migrations[f"{index:04d}_health_connect_schema"] = sql
+    generic_view = _CURRENT_VIEW_MIGRATIONS["hc_generic_record_current"]
+    migrations["0045_hc_generic_record_current"] = _create_if_not_exists(generic_view)
+
     await database.migrate(migrations)
     await database.verify(_MODELS)
 
