@@ -39,6 +39,8 @@ import type {
   Todo,
   TodoReadiness,
   TodoStatus,
+  TranscriptDecision,
+  TranscriptDecisionOutcome,
   Trigger,
   UpdatePanel,
   UpdateTrigger,
@@ -298,6 +300,20 @@ export const emptyTriageReport: BucketTriageReport = {
   under_specified: [],
 };
 
+export function transcriptDecision(
+  overrides: Partial<TranscriptDecision>,
+): TranscriptDecision {
+  return {
+    attempts: 1,
+    channel: "PyConf",
+    last_error: "transcript unavailable",
+    title: "Captionless talk",
+    transcript_status: "needs_review",
+    video_id: "v1",
+    ...overrides,
+  };
+}
+
 export function notification(overrides: Partial<Notification>): Notification {
   return {
     action_kind: "message",
@@ -375,10 +391,14 @@ export class FakeApi implements TetherApi {
     usage: {},
     transcript_providers_paused: [],
     transcripts_done: 0,
+    transcripts_needs_review: 0,
     transcripts_pending: 0,
     transcripts_unavailable: 0,
     videos_total: 0,
   };
+  storedTranscriptDecisions: TranscriptDecision[];
+  keepTryingTranscriptCalls: string[] = [];
+  giveUpTranscriptCalls: string[] = [];
   storedMemories: Memory[];
   captureMemoryCalls: string[] = [];
   editMemoryCalls: { content: string; memoryId: string; version: number }[] =
@@ -460,6 +480,7 @@ export class FakeApi implements TetherApi {
     panels?: Panel[];
     proposals?: Proposal[];
     todos?: Todo[];
+    transcriptDecisions?: TranscriptDecision[];
     triggers?: Trigger[];
   }) {
     this.authenticated = options.authenticated;
@@ -468,6 +489,7 @@ export class FakeApi implements TetherApi {
     this.storedDuePrompts = options.duePrompts ?? [];
     this.storedBucketItems = options.bucketItems ?? [];
     this.storedTodos = options.todos ?? [];
+    this.storedTranscriptDecisions = options.transcriptDecisions ?? [];
     this.storedMemories = options.memories ?? [];
     this.storedPanels = options.panels ?? [];
     this.storedPanelResults = options.panelResults ?? {};
@@ -657,6 +679,29 @@ export class FakeApi implements TetherApi {
 
   getYouTubeSyncStatus(): Promise<YouTubeSyncStatus> {
     return Promise.resolve(this.youTubeSyncStatus);
+  }
+
+  listTranscriptDecisions(): Promise<TranscriptDecision[]> {
+    return Promise.resolve(this.storedTranscriptDecisions);
+  }
+
+  keepTryingTranscript(videoId: string): Promise<TranscriptDecisionOutcome> {
+    this.keepTryingTranscriptCalls.push(videoId);
+    this.storedTranscriptDecisions = this.storedTranscriptDecisions.filter(
+      (decision) => decision.video_id !== videoId,
+    );
+    return Promise.resolve({ transcript_status: "pending", video_id: videoId });
+  }
+
+  giveUpTranscript(videoId: string): Promise<TranscriptDecisionOutcome> {
+    this.giveUpTranscriptCalls.push(videoId);
+    this.storedTranscriptDecisions = this.storedTranscriptDecisions.filter(
+      (decision) => decision.video_id !== videoId,
+    );
+    return Promise.resolve({
+      transcript_status: "unavailable",
+      video_id: videoId,
+    });
   }
 
   listDueRecallPrompts(): Promise<DuePrompt[]> {

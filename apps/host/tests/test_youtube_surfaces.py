@@ -85,6 +85,7 @@ def get_youtube_browses_with_quota_and_cache_metadata() -> None:
     # Browse is local: a cache hit, reporting the boot sync's spend (list+detail).
     assert_eq(body["cache"]["hit"], True)
     assert_eq(body["quota"]["used"], 2)
+    assert_eq({item["transcript_status"] for item in body["videos"]}, {"pending"})
 
 
 @test()
@@ -141,6 +142,7 @@ def post_transcript_fetches_and_makes_it_searchable() -> None:
         body = response.json()
         assert_eq(body["transcript"], "today we cover coroutines")
         assert_eq(body["video"]["transcript"], "today we cover coroutines")
+        assert_eq(body["video"]["transcript_status"], "available")
 
         found = client.get("/api/youtube/search", params={"q": "coroutines"})
 
@@ -185,6 +187,60 @@ def post_transcript_when_provider_blocked_is_503() -> None:
         response = client.post("/api/youtube/v1/transcript")
 
     assert_eq(response.status_code, 503)
+
+
+@test()
+def unavailable_transcript_appears_in_the_decision_queue() -> None:
+    """A permanent provider failure becomes reviewable with useful video context."""
+    api = InMemoryYouTubeApi(liked=[video("v1", title="Captionless talk")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        login(client)
+        _ = client.post("/api/youtube/v1/transcript")
+
+        response = client.get("/api/youtube/transcript-decisions")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        response.json(),
+        [
+            {
+                "video_id": "v1",
+                "title": "Captionless talk",
+                "channel": "PyConf",
+                "transcript_status": "needs_review",
+                "last_error": "v1",
+                "attempts": 0,
+            }
+        ],
+    )
+
+
+@test()
+def transcript_decisions_can_keep_trying_or_give_up() -> None:
+    """Human decisions either re-open acquisition or settle transcript absence."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        login(client)
+        _ = client.post("/api/youtube/v1/transcript")
+
+        keep_trying = client.post("/api/youtube/v1/transcript-decision/keep-trying")
+        assert_eq(keep_trying.status_code, 200)
+        assert_eq(
+            keep_trying.json(),
+            {"video_id": "v1", "transcript_status": "pending"},
+        )
+        assert_eq(client.get("/api/youtube/transcript-decisions").json(), [])
+
+        _ = client.post("/api/youtube/v1/transcript")
+        give_up = client.post("/api/youtube/v1/transcript-decision/give-up")
+        assert_eq(give_up.status_code, 200)
+        assert_eq(
+            give_up.json(),
+            {"video_id": "v1", "transcript_status": "unavailable"},
+        )
+        decisions = client.get("/api/youtube/transcript-decisions")
+
+    assert_eq(decisions.json(), [])
 
 
 @test()
@@ -239,6 +295,7 @@ def get_youtube_status_reports_sync_progress() -> None:
     assert_eq(body["videos_total"], 2)
     assert_eq(body["transcripts_pending"], 2)
     assert_eq(body["transcripts_done"], 0)
+    assert_eq(body["transcripts_needs_review"], 0)
     assert_eq(body["transcripts_unavailable"], 0)
     # The boot sync ran, so last-run is stamped and the day's spend is reported.
     assert body["last_synced_at"] is not None
@@ -286,6 +343,7 @@ def browse_returns_videos_with_quota_and_cache_metadata() -> None:
     assert_eq(envelope["cache"]["source"], "cache")
     assert_eq(envelope["quota"]["limit"], 1000)
     assert_eq(envelope["quota"]["used"], 2)
+    assert_eq({item["transcript_status"] for item in envelope["result"]}, {"pending"})
 
 
 @test()
@@ -307,9 +365,18 @@ def browse_rows_are_compact_and_omit_the_transcript() -> None:
     assert_not_in("transcript", row)
     # This video has no description, so the optional field is absent.
     assert_not_in("description", row)
+    assert_eq(row["transcript_status"], "available")
     assert_eq(
         set(row),
-        {"video_id", "title", "channel", "topic", "source", "state"},
+        {
+            "video_id",
+            "title",
+            "channel",
+            "topic",
+            "source",
+            "state",
+            "transcript_status",
+        },
     )
 
 
@@ -362,6 +429,28 @@ def search_caps_rows_at_the_limit() -> None:
         envelope = call_tool(client, "search_youtube", q="async", limit=2)
 
     assert_eq(len(envelope["result"]), 2)
+
+
+@test()
+def tool_rows_distinguish_review_needed_from_confirmed_unavailable() -> None:
+    """The agent sees provider exhaustion and the later human disposition."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        failed = call_tool(client, "fetch_youtube_transcript", video_id="v1")
+        assert_eq(failed["success"], False)
+        assert_eq(failed["error"]["code"], "transcript_needs_review")
+        assert_eq(api.transcript_calls, 1)
+        needs_review = call_tool(client, "browse_youtube")["result"][0]
+        assert_eq(needs_review["transcript_status"], "needs_review")
+
+        login(client)
+        _ = client.post("/api/youtube/v1/transcript-decision/give-up")
+        unavailable = call_tool(client, "browse_youtube")["result"][0]
+        stopped = call_tool(client, "fetch_youtube_transcript", video_id="v1")
+
+    assert_eq(unavailable["transcript_status"], "unavailable")
+    assert_eq(stopped["error"]["code"], "transcript_unavailable")
+    assert_eq(api.transcript_calls, 1)
 
 
 @test()
@@ -443,6 +532,7 @@ def fetch_transcript_returns_text_and_makes_it_searchable() -> None:
 
         fetched = call_tool(client, "fetch_youtube_transcript", video_id="v1")
         assert_eq(fetched["result"]["transcript"], "today we cover coroutines")
+        assert_eq(fetched["result"]["video"]["transcript_status"], "available")
         assert_eq(fetched["cache"]["hit"], False)
 
         found = call_tool(client, "search_youtube", q="coroutines")

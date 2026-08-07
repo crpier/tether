@@ -45,6 +45,7 @@ export const queryKeys = {
   todos: ["todos"] as const,
   triggers: ["triggers"] as const,
   youtube: ["youtube"] as const,
+  youtubeTranscriptDecisions: ["youtube", "transcript-decisions"] as const,
 };
 
 export function invalidateNamedKey(

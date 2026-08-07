@@ -137,18 +137,21 @@ class YouTubeVideoNotFoundError(Exception):
 class TranscriptUnavailableError(Exception):
     """Raised when a provider has no transcript for a video (permanent).
 
-    The *unavailable* outcome of the `TranscriptProvider` port: the video has no
-    usable captions and never will, so the worker marks it terminal and stops
-    retrying. Expected to be common with the captions-only first provider.
+    The *unavailable* outcome of one `TranscriptProvider`: that source has no
+    usable captions. Once every configured source agrees, acquisition moves to
+    ``needs_review`` for a human decision.
     """
+
+
+class TranscriptNeedsReviewError(TranscriptUnavailableError):
+    """Raised when provider exhaustion requires a human transcript decision."""
 
 
 class TranscriptExcludedError(Exception):
     """Raised when a video can never be transcribed by this provider (permanent).
 
     The *excluded* outcome: members-only, region-blocked, or otherwise barred
-    content. The worker marks it terminal *and* purges it from active ingestion
-    so it stops churning browse/search alongside the worker.
+    content. Acquisition moves to ``needs_review`` without hiding the video.
     """
 
 
@@ -339,7 +342,7 @@ class TranscriptProvider(Protocol):
     this fetch entirely, as if unconfigured (used to skip Supadata for a video with
     no captions, saving its paid budget). Unlike a pause it never defers — the
     remaining sources decide the outcome — so a video with every reachable source
-    unavailable still goes terminal. Leaf providers ignore it.
+    unavailable still reaches review. Leaf providers ignore it.
     """
 
     source: str
@@ -386,7 +389,7 @@ class FallbackTranscriptProvider(TranscriptProvider):
     but IP-block-prone library, then the paid Supadata last resort) is tried in
     order until one yields a transcript. Any *excluded*, *transient*, or *blocked*
     outcome surfaces immediately — only *unavailable* falls through — so the worker
-    still sees the single best outcome. A video is *unavailable* (terminal) only
+    still sees the single best outcome. A video is conclusively *unavailable* only
     when the primary **and** every fallback report unavailable.
 
     `paused_sources` is the worker's pause hook: a fallback whose `source` is in
@@ -397,12 +400,12 @@ class FallbackTranscriptProvider(TranscriptProvider):
     right provider. If every *remaining* source is unavailable but at least one
     blockable fallback was skipped, the composite raises `TranscriptBlockedError`
     with `source=None` (a deferral) rather than *unavailable*, so the worker keeps
-    the video pending for after the cooldown instead of marking it terminal on a
-    source it never tried.
+    the video pending for after the cooldown instead of requesting review based on
+    a source it never tried.
 
     `skip_sources` (e.g. Supadata gated off a caption-less video) deprioritizes
     rather than excludes: a gated source is dropped from the normal pass so a
-    clean *unavailable* from the rest of the chain still goes terminal without
+    clean *unavailable* from the rest of the chain still requests review without
     spending it (the cost-avoidance intent). But when the *only* reason nothing
     else succeeded is that a real fallback was paused (not cleanly unavailable),
     a gated source that is itself reachable (not also paused) is tried as a
@@ -465,9 +468,9 @@ class FallbackTranscriptProvider(TranscriptProvider):
 
         A source in `skip_sources` is dropped from the normal pass — the primary
         included — deprioritizing it rather than excluding it outright: it is
-        retried as a last resort (see below) before this ever defers or goes
-        terminal. A source in `paused_sources` is skipped and defers (keeps the
-        video pending) rather than going terminal.
+        retried as a last resort (see below) before this ever defers or concludes
+        unavailability. A source in `paused_sources` is skipped and keeps the video
+        pending rather than requesting review.
         """
         last_unavailable: TranscriptUnavailableError | None = None
         skipped_paused = False
@@ -511,7 +514,7 @@ class FallbackTranscriptProvider(TranscriptProvider):
                 last_unavailable = outcome
             if gated_last_resort:
                 # The last resort answered definitively. Preserve that outcome so
-                # the worker records terminal state instead of billing it again on
+                # the worker requests one human decision instead of billing it again on
                 # every pass merely because an earlier free provider was paused.
                 raise last_unavailable or TranscriptUnavailableError(video_id)
             message = f"provider paused; skipped blockable fallbacks for {video_id}"
@@ -594,12 +597,15 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     __indexes__: ClassVar = [Index(topic)]
 
 
-type TranscriptStatus = Literal["done", "retry", "terminal"]
+type TranscriptStatus = Literal[
+    "pending", "retrying", "needs_review", "available", "unavailable"
+]
 """The persisted per-video transcript state.
 
-A video with no row is *pending* (eligible to fetch); ``done`` once its transcript
-is stored, ``retry`` while transient failures back off, ``terminal`` once a
-permanent outcome (unavailable / excluded) means it must never be tried again.
+A video with no row is *pending* (eligible to fetch); ``available`` once its
+transcript is stored; ``retrying`` while a transient failure backs off;
+``needs_review`` when providers are exhausted and the Inbox owes a decision; and
+``unavailable`` once the human chooses to give up.
 """
 
 
@@ -618,7 +624,7 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
         default=None, nullable=True
     )
     """When the next retry becomes due, as an ISO-8601 UTC string; null unless
-    `status` is ``retry``."""
+    `status` is ``retrying``."""
     last_error: YouTubeTranscriptState.Col[str | None] = Text(
         default=None, nullable=True
     )
@@ -686,6 +692,7 @@ class BrowseResult:
     """A topic-filtered browse: the local videos plus the day's quota/cache."""
 
     videos: list[IngestedVideo[Fetched]]
+    transcript_statuses: Mapping[str, TranscriptStatus]
     cache: CacheMeta
     quota: QuotaMeta
 
@@ -699,6 +706,7 @@ class SearchResult:
     lexical fallback."""
 
     videos: list[IngestedVideo[Fetched]]
+    transcript_statuses: Mapping[str, TranscriptStatus]
     cache: CacheMeta
     quota: QuotaMeta
     snippets: dict[str, str] = field(default_factory=_empty_snippets)
@@ -712,6 +720,23 @@ class TranscriptResult:
     transcript: str
     cache: CacheMeta
     quota: QuotaMeta
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptDecision:
+    """A provider-exhausted video awaiting the human's transcript decision."""
+
+    video: IngestedVideo[Fetched]
+    last_error: str | None
+    attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptDecisionOutcome:
+    """The normalized status produced by a human transcript decision."""
+
+    video_id: str
+    transcript_status: Literal["pending", "unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -837,10 +862,9 @@ async def transcript_provider_usage(
 class YouTubeSyncStatus:
     """A snapshot of the background ingestion's progress and health.
 
-    The four counts partition the active corpus: every active video is either
-    already transcribed (``transcripts_done``), still owed one
-    (``transcripts_pending``), or permanently without one
-    (``transcripts_unavailable``); their sum is ``videos_total``. `last_synced_at`
+    The transcript counts partition the active corpus: every active video is
+    transcribed, still pending/retrying, awaiting a human decision, or explicitly
+    unavailable; their sum is ``videos_total``. `last_synced_at`
     is when the likes sync last ran, `quota` the day's YouTube Data API budget
     (only actual Data API usage — captions.list/download and the liked-list/
     metadata calls — counts against it), `usage` a per-source map of any
@@ -853,6 +877,7 @@ class YouTubeSyncStatus:
     videos_total: int
     transcripts_done: int
     transcripts_pending: int
+    transcripts_needs_review: int
     transcripts_unavailable: int
     last_synced_at: datetime | None
     quota: QuotaMeta
@@ -1097,20 +1122,17 @@ async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
         .set(IngestedVideo.updated_at.to(CurrentTimestamp))
         .where(IngestedVideo.video_id.eq(raw.video_id))
     )
-    # Self-correction: when captions appear on a video the worker previously gave
-    # up on (its manual-caption flag flipped false -> true), clear any terminal
-    # transcript state so it re-enters the sweep instead of staying unavailable.
+    # Self-correction: when captions appear on a video the worker previously could
+    # not transcribe (its manual-caption flag flipped false -> true), clear the
+    # settled/review state so it re-enters the sweep.
     if existing.caption_available == 0 and raw.caption_available is True:
-        await _clear_terminal_transcript_state(tx, raw.video_id)
+        await _reopen_unavailable_transcript(tx, raw.video_id)
 
 
-async def _clear_terminal_transcript_state(tx: Transaction, video_id: str) -> None:
-    """Drop a video's transcript state row when it is terminal, re-opening the fetch.
-
-    Absence of a row means *pending*, so deleting a terminal row is what returns the
-    video to the eligible sweep; a `done` or `retry` row is left untouched."""
+async def _reopen_unavailable_transcript(tx: Transaction, video_id: str) -> None:
+    """Return a review-needed/unavailable transcript to pending when captions appear."""
     existing = await _transcript_state(tx, video_id)
-    if existing is None or existing.status != "terminal":
+    if existing is None or existing.status not in {"needs_review", "unavailable"}:
         return
     _ = await tx.execute(
         delete(YouTubeTranscriptState).where(
@@ -1518,6 +1540,34 @@ class YouTubeSyncService:
 # --- Per-video transcript state machine + the shared fetch/persist path --------
 
 
+def derive_transcript_status(
+    video: IngestedVideo[Fetched],
+    state: YouTubeTranscriptState[Fetched] | None,
+) -> TranscriptStatus:
+    """Derive the normalized public status from transcript content and acquisition."""
+    if video.transcript is not None:
+        return "available"
+    return state.status if state is not None else "pending"
+
+
+async def _transcript_statuses(
+    tx: Transaction, videos: Sequence[IngestedVideo[Fetched]]
+) -> dict[str, TranscriptStatus]:
+    """Load normalized transcript statuses for a batch of video rows."""
+    if not videos:
+        return {}
+    states = await tx.fetch_all(
+        select(YouTubeTranscriptState).where(
+            YouTubeTranscriptState.video_id.in_(*(video.video_id for video in videos))
+        )
+    )
+    state_by_id = {state.video_id: state for state in states}
+    return {
+        video.video_id: derive_transcript_status(video, state_by_id.get(video.video_id))
+        for video in videos
+    }
+
+
 async def _transcript_state(
     tx: Transaction, video_id: str
 ) -> YouTubeTranscriptState[Fetched] | None:
@@ -1639,8 +1689,8 @@ async def fetch_and_store_transcript(
     The single code path shared by the background worker and the on-demand fetch:
     the caller charges the budget first, then this calls the provider and maps the
     outcome onto storage. Success stores the transcript and marks the state
-    ``done``; *unavailable* marks terminal; *excluded* marks terminal and purges
-    the video from active ingestion; *transient* increments attempts and schedules
+    ``available``; *unavailable*/*excluded* become ``needs_review`` without hiding
+    the video; *transient* increments attempts and schedules
     a backed-off retry; *blocked* leaves the per-video state untouched (it is a
     provider-level signal the worker handles by pausing the whole provider) and
     carries any retry-after hint back. It never raises for the four failure
@@ -1655,10 +1705,12 @@ async def fetch_and_store_transcript(
             video_id, paused_sources=paused_sources, skip_sources=skip_sources
         )
     except TranscriptUnavailableError as error:
-        await _mark_terminal(database, video_id, error=str(error), purge=False)
+        await _mark_needs_review(database, video_id, error=str(error))
+        await context.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return TranscriptAttempt(outcome="unavailable")
     except TranscriptExcludedError as error:
-        await _mark_terminal(database, video_id, error=str(error), purge=True)
+        await _mark_needs_review(database, video_id, error=str(error))
+        await context.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return TranscriptAttempt(outcome="excluded")
     except TranscriptBlockedError as error:
         return TranscriptAttempt(
@@ -1715,7 +1767,7 @@ async def _store_transcript(
             tx,
             video_id,
             _StateWrite(
-                status="done",
+                status="available",
                 attempts=attempts,
                 next_attempt_at=None,
                 last_error=None,
@@ -1731,10 +1783,8 @@ async def _store_transcript(
     return updated
 
 
-async def _mark_terminal(
-    database: Database, video_id: str, *, error: str, purge: bool
-) -> None:
-    """Mark a video's transcript terminal; optionally purge it from ingestion."""
+async def _mark_needs_review(database: Database, video_id: str, *, error: str) -> None:
+    """Pause transcript acquisition until the human decides in Inbox."""
 
     async def _mark(tx: Transaction) -> None:
         existing = await _transcript_state(tx, video_id)
@@ -1743,20 +1793,12 @@ async def _mark_terminal(
             tx,
             video_id,
             _StateWrite(
-                status="terminal",
+                status="needs_review",
                 attempts=attempts,
                 next_attempt_at=None,
                 last_error=error,
             ),
         )
-        if purge:
-            _ = await tx.execute(
-                update(IngestedVideo)
-                .set(IngestedVideo.ignored_at.to(CurrentTimestamp))
-                .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(video_id))
-                .where(IngestedVideo.ignored_at.is_null())
-            )
 
     await run_in_transaction(database, _mark)
 
@@ -1778,7 +1820,7 @@ async def _record_retry(
             tx,
             video_id,
             _StateWrite(
-                status="retry",
+                status="retrying",
                 attempts=attempts,
                 next_attempt_at=_next_attempt_at(now, attempts, config),
                 last_error=error,
@@ -1850,11 +1892,102 @@ class YouTubeService:
                 query = query.limit(limit)
             async with self.database.transaction() as tx:
                 videos = await tx.fetch_all(query)
+                transcript_statuses = await _transcript_statuses(tx, videos)
         _debug(logger, "YouTube browse completed", result_count=len(videos))
         return BrowseResult(
             videos=videos,
+            transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
+        )
+
+    async def transcript_status(self, video_id: str) -> TranscriptStatus:
+        """Read one video's normalized transcript status from local state."""
+        async with self.database.transaction() as tx:
+            video = await self._fetch(tx, video_id)
+            state = await _transcript_state(tx, video_id)
+        return derive_transcript_status(video, state)
+
+    async def transcript_decisions(self, *, logger: Logger) -> list[TranscriptDecision]:
+        """List active videos whose providers are exhausted, newest decision first."""
+        with self.tracer.start_as_current_span("YouTubeService.transcript_decisions"):
+            async with self.database.transaction() as tx:
+                states = await tx.fetch_all(
+                    select(YouTubeTranscriptState)
+                    .where(YouTubeTranscriptState.status.eq("needs_review"))
+                    .order_by(YouTubeTranscriptState.updated_at.desc())
+                )
+                if not states:
+                    return []
+                videos = await tx.fetch_all(
+                    select(IngestedVideo)
+                    .where(
+                        IngestedVideo.video_id.in_(
+                            *(state.video_id for state in states)
+                        )
+                    )
+                    .where(IngestedVideo.ignored_at.is_null())
+                )
+            video_by_id = {video.video_id: video for video in videos}
+            decisions = [
+                TranscriptDecision(
+                    video=video_by_id[state.video_id],
+                    last_error=state.last_error,
+                    attempts=state.attempts,
+                )
+                for state in states
+                if state.video_id in video_by_id
+            ]
+        _debug(logger, "Listed transcript decisions", result_count=len(decisions))
+        return decisions
+
+    async def keep_trying_transcript(
+        self, video_id: str, *, logger: Logger
+    ) -> TranscriptDecisionOutcome:
+        """Return a review-needed transcript to the background acquisition queue."""
+
+        async def _keep_trying(tx: Transaction) -> None:
+            _ = await self._fetch(tx, video_id)
+            state = await _transcript_state(tx, video_id)
+            if state is None or state.status != "needs_review":
+                raise TranscriptUnavailableError(video_id)
+            _ = await tx.execute(
+                delete(YouTubeTranscriptState).where(
+                    YouTubeTranscriptState.video_id.eq(video_id)
+                )
+            )
+
+        await run_in_transaction(self.database, _keep_trying)
+        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
+        _info(logger, "Transcript acquisition re-opened", video_id=video_id)
+        return TranscriptDecisionOutcome(video_id=video_id, transcript_status="pending")
+
+    async def give_up_transcript(
+        self, video_id: str, *, logger: Logger
+    ) -> TranscriptDecisionOutcome:
+        """Settle a review-needed transcript as explicitly unavailable."""
+
+        async def _give_up(tx: Transaction) -> None:
+            _ = await self._fetch(tx, video_id)
+            state = await _transcript_state(tx, video_id)
+            if state is None or state.status != "needs_review":
+                raise TranscriptUnavailableError(video_id)
+            await _write_transcript_state(
+                tx,
+                video_id,
+                _StateWrite(
+                    status="unavailable",
+                    attempts=state.attempts,
+                    next_attempt_at=None,
+                    last_error=state.last_error,
+                ),
+            )
+
+        await run_in_transaction(self.database, _give_up)
+        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
+        _info(logger, "Transcript marked unavailable", video_id=video_id)
+        return TranscriptDecisionOutcome(
+            video_id=video_id, transcript_status="unavailable"
         )
 
     async def sync_status(self, *, logger: Logger) -> YouTubeSyncStatus:
@@ -1868,29 +2001,25 @@ class YouTubeService:
         """
         with self.tracer.start_as_current_span("YouTubeService.sync_status"):
             now = self.client.now()
-            terminal_ids = select(YouTubeTranscriptState.video_id).where(
-                YouTubeTranscriptState.status.eq("terminal")
-            )
             async with self.database.transaction() as tx:
                 active = await tx.fetch_all(
                     select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
                 )
-                untranscribed = await tx.fetch_all(
-                    select(IngestedVideo)
-                    .where(IngestedVideo.ignored_at.is_null())
-                    .where(IngestedVideo.transcript.is_null())
-                )
-                # Pending excludes the permanently-failed (terminal) videos, so the
-                # remainder of the untranscribed set is the unavailable count.
-                pending = await tx.fetch_all(
-                    select(IngestedVideo)
-                    .where(IngestedVideo.ignored_at.is_null())
-                    .where(IngestedVideo.transcript.is_null())
-                    .where(IngestedVideo.video_id.not_in_subquery(terminal_ids))
-                )
+                states = await tx.fetch_all(select(YouTubeTranscriptState).all())
+            state_by_video_id = {state.video_id: state.status for state in states}
+            done_count = sum(video.transcript is not None for video in active)
+            needs_review_count = sum(
+                video.transcript is None
+                and state_by_video_id.get(video.video_id) == "needs_review"
+                for video in active
+            )
+            unavailable_count = sum(
+                video.transcript is None
+                and state_by_video_id.get(video.video_id) == "unavailable"
+                for video in active
+            )
             total = len(active)
-            owed = len(untranscribed)
-            pending_count = len(pending)
+            pending_count = total - done_count - needs_review_count - unavailable_count
             last_run = await _read_last_run_at(self.database)
             api_paused_until = await self.client.api_paused_until(now=now)
             pauses = await load_all_provider_pauses(self.database)
@@ -1902,9 +2031,10 @@ class YouTubeService:
         usage = await transcript_provider_usage(self.provider, now=now)
         status = YouTubeSyncStatus(
             videos_total=total,
-            transcripts_done=total - owed,
+            transcripts_done=done_count,
             transcripts_pending=pending_count,
-            transcripts_unavailable=owed - pending_count,
+            transcripts_needs_review=needs_review_count,
+            transcripts_unavailable=unavailable_count,
             last_synced_at=last_run,
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
@@ -1952,6 +2082,7 @@ class YouTubeService:
             _debug(logger, "YouTube semantic search completed", result_count=0)
             return SearchResult(
                 videos=[],
+                transcript_statuses={},
                 cache=CacheMeta(hit=True, source="cache"),
                 quota=await self.client.snapshot(),
             )
@@ -1962,6 +2093,7 @@ class YouTubeService:
                 .where(IngestedVideo.video_id.in_(*video_ids))
                 .where(IngestedVideo.ignored_at.is_null())
             )
+            transcript_statuses = await _transcript_statuses(tx, videos)
         by_video_id = {video.video_id: video for video in videos}
         # Preserve relevance order and drop any match whose video has since been
         # ignored or deleted (index drift the next reconcile would clean up).
@@ -1978,6 +2110,7 @@ class YouTubeService:
         _debug(logger, "YouTube semantic search completed", result_count=len(ordered))
         return SearchResult(
             videos=ordered,
+            transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
             snippets=snippets,
@@ -2004,9 +2137,11 @@ class YouTubeService:
             statement = statement.limit(limit)
         async with self.database.transaction() as tx:
             videos = await tx.fetch_all(statement)
+            transcript_statuses = await _transcript_statuses(tx, videos)
         _debug(logger, "YouTube search completed", result_count=len(videos))
         return SearchResult(
             videos=videos,
+            transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
         )
@@ -2031,6 +2166,11 @@ class YouTubeService:
         """
         _debug(logger, "Fetching YouTube transcript", video_id=video_id)
         video = await self.get_video(video_id)
+        transcript_status = await self.transcript_status(video_id)
+        if transcript_status == "needs_review":
+            raise TranscriptNeedsReviewError(video_id)
+        if transcript_status == "unavailable":
+            raise TranscriptUnavailableError(video_id)
         if video.transcript is not None:
             return TranscriptResult(
                 video=video,
@@ -2048,7 +2188,7 @@ class YouTubeService:
             context, video_id=video_id, now=self.client.now()
         )
         if attempt.outcome in ("unavailable", "excluded"):
-            raise TranscriptUnavailableError(video_id)
+            raise TranscriptNeedsReviewError(video_id)
         if attempt.outcome == "blocked":
             message = f"transcript provider blocked while fetching {video_id}"
             raise TranscriptBlockedError(message, retry_after=attempt.retry_after)
@@ -2206,6 +2346,13 @@ def _youtube_migrations() -> dict[str, str]:
     )
     migrations["009_ingested_video_transcript_source"] = (
         'ALTER TABLE "ingested_video" ADD COLUMN "transcript_source" TEXT'
+    )
+    migrations["010_normalize_transcript_status"] = (
+        'UPDATE "you_tube_transcript_state" SET "status" = CASE "status" '
+        "WHEN 'done' THEN 'available' "
+        "WHEN 'retry' THEN 'retrying' "
+        "WHEN 'terminal' THEN 'unavailable' "
+        'ELSE "status" END'
     )
     return migrations
 

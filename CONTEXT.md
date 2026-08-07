@@ -82,6 +82,10 @@ _Avoid_: private mode, incognito, safe mode
 A scheduled sync that brings external data in without a chat turn (Readwise, Gmail, Health Connect, ebooks). Content it produces carries machine-synced Provenance, trusted at capture.
 _Avoid_: sync job, importer, connector
 
+**Transcript status**:
+The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. *Needs review* means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. *Unavailable* means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
+_Avoid_: terminal, caption state, transcript error
+
 **Telemetry**:
 Raw time-series data landing through an Ingestion gate (heart rate, location, read events). Vertical data — it never enters the Memory pool as-is; only a Distillation derived from it can.
 _Avoid_: metrics, events, raw data

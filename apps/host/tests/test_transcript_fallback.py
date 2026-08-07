@@ -454,7 +454,7 @@ async def both_unavailable_marks_terminal() -> None:
 
     assert_eq(report.unavailable, 1)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "terminal")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
 
 
 @test()
@@ -593,7 +593,7 @@ async def a_per_video_transient_does_not_trip_the_global_pause() -> None:
     assert_eq(pause.streak, 0)
     assert_is_none(pause.paused_until)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "retry")
+    assert_eq(persisted.status if persisted is not None else None, "retrying")
 
 
 # --- Worker integration with a paid Supadata fallback in the chain -----------
@@ -678,7 +678,7 @@ async def a_caption_less_video_with_no_library_transcript_goes_terminal() -> Non
     assert_eq(report.unavailable, 1)
     assert_eq(supadata.calls.get("v1"), None)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "terminal")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
 
 
 @test()
@@ -710,7 +710,7 @@ async def supadata_covers_what_the_free_sources_miss() -> None:
     assert_eq(report.fetched, 1)
     assert_eq(await transcript_of(env.db, "v1"), "supadata body")
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "done")
+    assert_eq(persisted.status if persisted is not None else None, "available")
 
 
 @test()
@@ -728,7 +728,7 @@ async def terminal_requires_supadata_to_also_be_unavailable() -> None:
     # Every configured source was consulted before giving up.
     assert_eq(env.supadata.calls.get("v1"), 1)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "terminal")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
 
 
 @test()
@@ -808,7 +808,7 @@ async def a_last_resort_unavailable_video_is_not_billed_again() -> None:
 
     assert_eq(first_report.unavailable, 1)
     persisted = await state_of(env.db, "v1")
-    assert_eq(persisted.status if persisted is not None else None, "terminal")
+    assert_eq(persisted.status if persisted is not None else None, "needs_review")
     assert_eq(env.supadata.calls.get("v1"), 1)
 
 

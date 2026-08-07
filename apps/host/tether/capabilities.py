@@ -34,7 +34,13 @@ from tether.memories import MemoryProvenance
 from tether.youtube import CacheMeta, QuotaMeta
 
 type ToolErrorCode = Literal[
-    "invalid_input", "not_found", "conflict", "quota_exceeded", "upstream_error"
+    "invalid_input",
+    "not_found",
+    "conflict",
+    "quota_exceeded",
+    "upstream_error",
+    "transcript_needs_review",
+    "transcript_unavailable",
 ]
 
 

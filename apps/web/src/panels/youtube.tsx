@@ -52,6 +52,11 @@ export function YouTubeSyncPanel(props: { api: TetherApi }) {
                   <Badge variant="outline">
                     {`${String(status().transcripts_pending)} pending`}
                   </Badge>
+                  <Show when={status().transcripts_needs_review > 0}>
+                    <Badge variant="outline">
+                      {`${String(status().transcripts_needs_review)} needs review`}
+                    </Badge>
+                  </Show>
                   <Show when={status().transcripts_unavailable > 0}>
                     <Badge variant="outline">
                       {`${String(status().transcripts_unavailable)} unavailable`}
