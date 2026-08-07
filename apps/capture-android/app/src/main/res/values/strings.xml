@@ -19,7 +19,7 @@
     <string name="recording_too_short">Recording too short</string>
     <string name="mic_permission_denied">Microphone permission is required to record</string>
     <string name="health_connect_rationale_title">Health Connect sync</string>
-    <string name="health_connect_rationale_body">Tether reads heart rate, sleep, steps, and exercise from Health Connect after you grant access. The phone only syncs raw records to your Tether host; it does not analyze health data.</string>
+    <string name="health_connect_rationale_body">Tether asks Health Connect for every readable record type, then syncs granted raw records to your Tether host. Denying one category does not block other granted categories. The phone does not analyze health data.</string>
     <string name="close">Close</string>
     <string name="health_connect_section_title">Health Connect</string>
     <string name="health_connect_available">Available</string>
@@ -27,6 +27,7 @@
     <string name="health_connect_update_required">Install or update Health Connect</string>
     <string name="health_connect_permissions_granted">Record access granted</string>
     <string name="health_connect_permissions_missing">Record access required</string>
+    <string name="health_connect_permissions_partial">Some record access denied; permitted data will sync</string>
     <string name="health_connect_optional_missing">Background/history access missing; sync is limited</string>
     <string name="health_connect_idle">Not syncing</string>
     <string name="health_connect_running">Sync running</string>

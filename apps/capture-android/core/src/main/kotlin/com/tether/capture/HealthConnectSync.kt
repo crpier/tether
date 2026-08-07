@@ -1,10 +1,47 @@
 package com.tether.capture
 
 enum class HealthConnectRecordType(val wireName: String) {
-    HEART_RATE("heart_rate"),
-    SLEEP("sleep"),
-    STEPS("steps"),
+    ACTIVE_CALORIES_BURNED("active_calories_burned"),
+    BASAL_BODY_TEMPERATURE("basal_body_temperature"),
+    BASAL_METABOLIC_RATE("basal_metabolic_rate"),
+    BLOOD_GLUCOSE("blood_glucose"),
+    BLOOD_PRESSURE("blood_pressure"),
+    BODY_FAT("body_fat"),
+    BODY_TEMPERATURE("body_temperature"),
+    BODY_WATER_MASS("body_water_mass"),
+    BONE_MASS("bone_mass"),
+    CERVICAL_MUCUS("cervical_mucus"),
+    CYCLING_PEDALING_CADENCE("cycling_pedaling_cadence"),
+    DISTANCE("distance"),
+    ELEVATION_GAINED("elevation_gained"),
     EXERCISE("exercise"),
+    FLOORS_CLIMBED("floors_climbed"),
+    HEART_RATE("heart_rate"),
+    HEART_RATE_VARIABILITY_RMSSD("heart_rate_variability_rmssd"),
+    HEIGHT("height"),
+    HYDRATION("hydration"),
+    INTERMENSTRUAL_BLEEDING("intermenstrual_bleeding"),
+    LEAN_BODY_MASS("lean_body_mass"),
+    MENSTRUATION_FLOW("menstruation_flow"),
+    MENSTRUATION_PERIOD("menstruation_period"),
+    MINDFULNESS_SESSION("mindfulness_session"),
+    NUTRITION("nutrition"),
+    OVULATION_TEST("ovulation_test"),
+    OXYGEN_SATURATION("oxygen_saturation"),
+    PLANNED_EXERCISE_SESSION("planned_exercise_session"),
+    POWER("power"),
+    RESPIRATORY_RATE("respiratory_rate"),
+    RESTING_HEART_RATE("resting_heart_rate"),
+    SEXUAL_ACTIVITY("sexual_activity"),
+    SKIN_TEMPERATURE("skin_temperature"),
+    SLEEP("sleep"),
+    SPEED("speed"),
+    STEPS("steps"),
+    STEPS_CADENCE("steps_cadence"),
+    TOTAL_CALORIES_BURNED("total_calories_burned"),
+    VO2_MAX("vo2_max"),
+    WEIGHT("weight"),
+    WHEELCHAIR_PUSHES("wheelchair_pushes"),
 }
 
 data class HealthConnectMetadata(
@@ -25,8 +62,8 @@ data class HealthConnectDevice(
 
 sealed class HealthConnectRecord {
     abstract val metadata: HealthConnectMetadata
-    abstract val startTimeEpochMillis: Long
-    abstract val endTimeEpochMillis: Long
+    abstract val startTimeEpochMillis: Long?
+    abstract val endTimeEpochMillis: Long?
     abstract val startZoneOffsetSeconds: Int?
     abstract val endZoneOffsetSeconds: Int?
     abstract val recordType: HealthConnectRecordType
@@ -82,6 +119,16 @@ sealed class HealthConnectRecord {
     ) : HealthConnectRecord() {
         override val recordType = HealthConnectRecordType.EXERCISE
     }
+
+    data class Generic(
+        override val recordType: HealthConnectRecordType,
+        override val metadata: HealthConnectMetadata,
+        override val startTimeEpochMillis: Long? = null,
+        override val endTimeEpochMillis: Long? = null,
+        override val startZoneOffsetSeconds: Int? = null,
+        override val endZoneOffsetSeconds: Int? = null,
+        val payload: Map<String, Any?> = emptyMap(),
+    ) : HealthConnectRecord()
 }
 
 data class HeartRateSample(val timeEpochMillis: Long, val beatsPerMinute: Long)
@@ -360,7 +407,7 @@ class HealthConnectSyncCoordinator(
     }
 
     private fun stableRequestId(key: String): String =
-        requestIds.stable("health-connect-v2:$key")
+        requestIds.stable("health-connect-v3:$key")
 
     private fun List<HealthConnectRecord>.recordIdentityKey(): String = joinToString(",") { record ->
         "${record.recordType.wireName}:${record.metadata.id}:${record.metadata.lastModifiedTimeEpochMillis}"

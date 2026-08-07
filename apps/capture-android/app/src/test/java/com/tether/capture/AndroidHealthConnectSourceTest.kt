@@ -3,7 +3,9 @@ package com.tether.capture
 import androidx.health.connect.client.changes.DeletionChange
 import androidx.health.connect.client.changes.UpsertionChange
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Metadata
+import androidx.health.connect.client.units.Mass
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -89,6 +91,37 @@ class AndroidHealthConnectSourceTest {
     }
 
     @Test
+    fun baselineMapsPlannedRecordsAsGenericPayloads() = runTest {
+        val gateway = FakeHealthConnectGateway(
+            baselinePages = mutableMapOf(
+                WeightRecord::class to ArrayDeque(
+                    listOf(
+                        AndroidHealthConnectReadPage(
+                            records = listOf(weightRecord("weight-1")),
+                            nextPageToken = null,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val source = AndroidHealthConnectSource(
+            gateway = gateway,
+            clock = { Instant.ofEpochMilli(2_000) },
+        )
+
+        val consumed = mutableListOf<HealthConnectRecord>()
+        source.scanBaseline(setOf(HealthConnectRecordType.WEIGHT)) { records -> consumed += records }
+
+        val record = consumed.single() as HealthConnectRecord.Generic
+        assertEquals(HealthConnectRecordType.WEIGHT, record.recordType)
+        assertEquals("weight-1", record.metadata.id)
+        assertEquals(1_000L, record.startTimeEpochMillis)
+        assertEquals(null, record.endTimeEpochMillis)
+        assertEquals(70.5, (record.payload.getValue("weight") as Map<*, *>)["kilograms"])
+        assertEquals(listOf("read(WeightRecord,null)"), gateway.events)
+    }
+
+    @Test
     fun changesReturnOneDurablePageAndContinuationToken() = runTest {
         val gateway = FakeHealthConnectGateway(
             changePages = ArrayDeque(
@@ -149,5 +182,12 @@ private fun stepsRecord(id: String): StepsRecord = StepsRecord(
     Instant.ofEpochMilli(1_500),
     ZoneOffset.UTC,
     10,
+    Metadata.unknownRecordingMethodWithId(id),
+)
+
+private fun weightRecord(id: String): WeightRecord = WeightRecord(
+    Instant.ofEpochMilli(1_000),
+    ZoneOffset.UTC,
+    Mass.kilograms(70.5),
     Metadata.unknownRecordingMethodWithId(id),
 )

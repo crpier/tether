@@ -497,7 +497,8 @@
           "contract_version": {
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Contract Version",
             "type": "integer"
@@ -511,15 +512,101 @@
             "type": "string"
           },
           "ranges": {
-            "$ref": "#/components/schemas/HealthConnectBaselineRanges"
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AuthoritativeScanRange"
+            },
+            "propertyNames": {
+              "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
+                "exercise",
+                "floors_climbed",
+                "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
+                "sleep",
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
+              ]
+            },
+            "title": "Ranges",
+            "type": "object"
           },
           "record_types": {
             "items": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ],
               "type": "string"
             },
@@ -1297,6 +1384,72 @@
         "title": "FusedSearchResultRead",
         "type": "object"
       },
+      "GenericRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time"
+          },
+          "end_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Zone Offset Seconds"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RecordMetadata"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Time"
+          },
+          "start_zone_offset_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Zone Offset Seconds"
+          }
+        },
+        "required": [
+          "metadata"
+        ],
+        "title": "GenericRecord",
+        "type": "object"
+      },
       "GrantRead": {
         "description": "HTTP representation of a live autonomy grant.",
         "properties": {
@@ -1404,10 +1557,47 @@
             },
             "propertyNames": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ]
             },
             "title": "Deleted",
@@ -1426,32 +1616,6 @@
         "title": "HealthConnectBaselineCompletionRead",
         "type": "object"
       },
-      "HealthConnectBaselineRanges": {
-        "additionalProperties": false,
-        "description": "Authoritative baseline declarations for every contract record type.",
-        "properties": {
-          "exercise": {
-            "$ref": "#/components/schemas/AuthoritativeScanRange"
-          },
-          "heart_rate": {
-            "$ref": "#/components/schemas/AuthoritativeScanRange"
-          },
-          "sleep": {
-            "$ref": "#/components/schemas/AuthoritativeScanRange"
-          },
-          "steps": {
-            "$ref": "#/components/schemas/AuthoritativeScanRange"
-          }
-        },
-        "required": [
-          "exercise",
-          "heart_rate",
-          "sleep",
-          "steps"
-        ],
-        "title": "HealthConnectBaselineRanges",
-        "type": "object"
-      },
       "HealthConnectBatchRead": {
         "additionalProperties": false,
         "properties": {
@@ -1461,10 +1625,47 @@
             },
             "propertyNames": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ]
             },
             "title": "Accepted",
@@ -1476,10 +1677,47 @@
             },
             "propertyNames": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ]
             },
             "title": "Deleted",
@@ -1495,10 +1733,47 @@
             },
             "propertyNames": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ]
             },
             "title": "Skipped",
@@ -1526,7 +1801,8 @@
           "contract_version": {
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Contract Version",
             "type": "integer"
@@ -1563,10 +1839,47 @@
           "record_types": {
             "items": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ],
               "type": "string"
             },
@@ -1606,10 +1919,47 @@
           },
           "record_type": {
             "enum": [
+              "active_calories_burned",
+              "basal_body_temperature",
+              "basal_metabolic_rate",
+              "blood_glucose",
+              "blood_pressure",
+              "body_fat",
+              "body_temperature",
+              "body_water_mass",
+              "bone_mass",
+              "cervical_mucus",
+              "cycling_pedaling_cadence",
+              "distance",
+              "elevation_gained",
               "exercise",
+              "floors_climbed",
               "heart_rate",
+              "heart_rate_variability_rmssd",
+              "height",
+              "hydration",
+              "intermenstrual_bleeding",
+              "lean_body_mass",
+              "menstruation_flow",
+              "menstruation_period",
+              "mindfulness_session",
+              "nutrition",
+              "ovulation_test",
+              "oxygen_saturation",
+              "planned_exercise_session",
+              "power",
+              "respiratory_rate",
+              "resting_heart_rate",
+              "sexual_activity",
+              "skin_temperature",
               "sleep",
-              "steps"
+              "speed",
+              "steps",
+              "steps_cadence",
+              "total_calories_burned",
+              "vo2_max",
+              "weight",
+              "wheelchair_pushes"
             ],
             "title": "Record Type",
             "type": "string"
@@ -1625,12 +1975,124 @@
       "HealthConnectRecords": {
         "additionalProperties": false,
         "properties": {
+          "active_calories_burned": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Active Calories Burned",
+            "type": "array"
+          },
+          "basal_body_temperature": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Basal Body Temperature",
+            "type": "array"
+          },
+          "basal_metabolic_rate": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Basal Metabolic Rate",
+            "type": "array"
+          },
+          "blood_glucose": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Blood Glucose",
+            "type": "array"
+          },
+          "blood_pressure": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Blood Pressure",
+            "type": "array"
+          },
+          "body_fat": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Body Fat",
+            "type": "array"
+          },
+          "body_temperature": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Body Temperature",
+            "type": "array"
+          },
+          "body_water_mass": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Body Water Mass",
+            "type": "array"
+          },
+          "bone_mass": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Bone Mass",
+            "type": "array"
+          },
+          "cervical_mucus": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Cervical Mucus",
+            "type": "array"
+          },
+          "cycling_pedaling_cadence": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Cycling Pedaling Cadence",
+            "type": "array"
+          },
+          "distance": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Distance",
+            "type": "array"
+          },
+          "elevation_gained": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Elevation Gained",
+            "type": "array"
+          },
           "exercise": {
             "items": {
               "$ref": "#/components/schemas/ExerciseRecord"
             },
             "maxItems": 1000,
             "title": "Exercise",
+            "type": "array"
+          },
+          "floors_climbed": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Floors Climbed",
             "type": "array"
           },
           "heart_rate": {
@@ -1641,12 +2103,156 @@
             "title": "Heart Rate",
             "type": "array"
           },
+          "heart_rate_variability_rmssd": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Heart Rate Variability Rmssd",
+            "type": "array"
+          },
+          "height": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Height",
+            "type": "array"
+          },
+          "hydration": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Hydration",
+            "type": "array"
+          },
+          "intermenstrual_bleeding": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Intermenstrual Bleeding",
+            "type": "array"
+          },
+          "lean_body_mass": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Lean Body Mass",
+            "type": "array"
+          },
+          "menstruation_flow": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Menstruation Flow",
+            "type": "array"
+          },
+          "menstruation_period": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Menstruation Period",
+            "type": "array"
+          },
+          "mindfulness_session": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Mindfulness Session",
+            "type": "array"
+          },
+          "nutrition": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Nutrition",
+            "type": "array"
+          },
+          "ovulation_test": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Ovulation Test",
+            "type": "array"
+          },
+          "oxygen_saturation": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Oxygen Saturation",
+            "type": "array"
+          },
+          "planned_exercise_session": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Planned Exercise Session",
+            "type": "array"
+          },
+          "power": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Power",
+            "type": "array"
+          },
+          "respiratory_rate": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Respiratory Rate",
+            "type": "array"
+          },
+          "resting_heart_rate": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Resting Heart Rate",
+            "type": "array"
+          },
+          "sexual_activity": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Sexual Activity",
+            "type": "array"
+          },
+          "skin_temperature": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Skin Temperature",
+            "type": "array"
+          },
           "sleep": {
             "items": {
               "$ref": "#/components/schemas/SleepRecord"
             },
             "maxItems": 1000,
             "title": "Sleep",
+            "type": "array"
+          },
+          "speed": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Speed",
             "type": "array"
           },
           "steps": {
@@ -1656,14 +2262,48 @@
             "maxItems": 1000,
             "title": "Steps",
             "type": "array"
+          },
+          "steps_cadence": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Steps Cadence",
+            "type": "array"
+          },
+          "total_calories_burned": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Total Calories Burned",
+            "type": "array"
+          },
+          "vo2_max": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Vo2 Max",
+            "type": "array"
+          },
+          "weight": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Weight",
+            "type": "array"
+          },
+          "wheelchair_pushes": {
+            "items": {
+              "$ref": "#/components/schemas/GenericRecord"
+            },
+            "maxItems": 1000,
+            "title": "Wheelchair Pushes",
+            "type": "array"
           }
         },
-        "required": [
-          "exercise",
-          "heart_rate",
-          "sleep",
-          "steps"
-        ],
         "title": "HealthConnectRecords",
         "type": "object"
       },
@@ -1692,10 +2332,47 @@
           "record_types": {
             "items": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ],
               "type": "string"
             },
@@ -3036,7 +3713,8 @@
           "contract_version": {
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Contract Version",
             "type": "integer"
@@ -3048,10 +3726,47 @@
           "record_types": {
             "items": {
               "enum": [
+                "active_calories_burned",
+                "basal_body_temperature",
+                "basal_metabolic_rate",
+                "blood_glucose",
+                "blood_pressure",
+                "body_fat",
+                "body_temperature",
+                "body_water_mass",
+                "bone_mass",
+                "cervical_mucus",
+                "cycling_pedaling_cadence",
+                "distance",
+                "elevation_gained",
                 "exercise",
+                "floors_climbed",
                 "heart_rate",
+                "heart_rate_variability_rmssd",
+                "height",
+                "hydration",
+                "intermenstrual_bleeding",
+                "lean_body_mass",
+                "menstruation_flow",
+                "menstruation_period",
+                "mindfulness_session",
+                "nutrition",
+                "ovulation_test",
+                "oxygen_saturation",
+                "planned_exercise_session",
+                "power",
+                "respiratory_rate",
+                "resting_heart_rate",
+                "sexual_activity",
+                "skin_temperature",
                 "sleep",
-                "steps"
+                "speed",
+                "steps",
+                "steps_cadence",
+                "total_calories_burned",
+                "vo2_max",
+                "weight",
+                "wheelchair_pushes"
               ],
               "type": "string"
             },

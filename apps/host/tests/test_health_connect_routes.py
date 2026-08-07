@@ -129,6 +129,110 @@ def sync_state_requires_existing_api_authentication() -> None:
 
 
 @test()
+def partial_baseline_completion_accepts_requested_ranges_only() -> None:
+    """Partial Health Connect grants keep independent bounded streams syncable."""
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        _ = client.post(
+            BASELINE_PATH,
+            headers=AUTHORIZATION,
+            json={
+                "contract_version": 2,
+                "installation_id": "pixel-installation",
+                "record_types": ["steps"],
+                "request_id": "baseline-request-steps",
+                "starting_token": "opaque-starting-token",
+            },
+        )
+
+        response = client.post(
+            BASELINE_COMPLETE_PATH,
+            headers=AUTHORIZATION,
+            json={
+                "contract_version": 2,
+                "installation_id": "pixel-installation",
+                "record_types": ["steps"],
+                "request_id": "baseline-complete-steps",
+                "expected_token": "opaque-starting-token",
+                "baseline_generation": 1,
+                "ranges": {
+                    "steps": {"start_time": 0, "end_time": 2000000000000},
+                },
+            },
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), {"deleted": {"steps": 0}, "status": "completed"})
+
+
+@test()
+def v3_planned_record_persists_raw_payload_without_typed_storage() -> None:
+    """The expanded contract stores planned SDK records losslessly by type."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        with health_connect_client(root) as client:
+            _ = client.post(
+                BASELINE_PATH,
+                headers=AUTHORIZATION,
+                json={
+                    "contract_version": 3,
+                    "installation_id": "pixel-installation",
+                    "record_types": ["weight"],
+                    "request_id": "baseline-request-weight",
+                    "starting_token": "opaque-starting-token",
+                },
+            )
+            response = client.post(
+                BATCH_PATH,
+                headers=AUTHORIZATION,
+                json={
+                    "contract_version": 3,
+                    "installation_id": "pixel-installation",
+                    "record_types": ["weight"],
+                    "request_id": "page-request-weight",
+                    "mode": "baseline",
+                    "expected_token": "opaque-starting-token",
+                    "next_token": "opaque-starting-token",
+                    "records": {
+                        "weight": [
+                            {
+                                "metadata": {
+                                    "id": "weight-1",
+                                    "data_origin_package": "com.example.scale",
+                                    "last_modified_time": 1700000000400,
+                                    "client_record_id": None,
+                                    "client_record_version": None,
+                                    "device": None,
+                                    "recording_method": None,
+                                },
+                                "start_time": 1700000000000,
+                                "end_time": 1700000000000,
+                                "start_zone_offset_seconds": None,
+                                "end_zone_offset_seconds": None,
+                                "payload": {"weight_grams": 72500.0},
+                            }
+                        ]
+                    },
+                    "deletions": [],
+                },
+            )
+        with closing(sqlite3.connect(root / "telemetry.sqlite3")) as database:
+            row = database.execute(
+                """
+                SELECT record_type, record_uid, start_time, payload_json
+                FROM hc_generic_record_current
+                """
+            ).fetchone()
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["accepted"], {"weight": 1})
+    assert_eq(row[:3], ("weight", "weight-1", 1700000000000))
+    assert_eq(json.loads(row[3]), {"weight_grams": 72500.0})
+
+
+@test()
 def representative_page_advances_its_cursor_atomically() -> None:
     """One valid page accepts every typed record and advances its stream token."""
     batch = json.loads((FIXTURE_ROOT / "representative-batch.json").read_text())

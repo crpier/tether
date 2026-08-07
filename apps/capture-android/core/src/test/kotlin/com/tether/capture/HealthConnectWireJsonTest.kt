@@ -2,10 +2,50 @@ package com.tether.capture
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import java.io.File
 
 class HealthConnectWireJsonTest {
+    @Test
+    fun genericV3RecordsSerializeUnderTheirWireRecordType() {
+        val request = HealthConnectBatchRequest(
+            installationId = "pixel-installation",
+            recordTypes = linkedSetOf(HealthConnectRecordType.WEIGHT),
+            requestId = "page-request-1",
+            mode = HealthConnectBatchMode.Baseline,
+            expectedToken = "opaque-starting-token",
+            nextToken = "opaque-starting-token",
+            records = listOf(
+                HealthConnectRecord.Generic(
+                    recordType = HealthConnectRecordType.WEIGHT,
+                    metadata = HealthConnectMetadata(
+                        id = "weight-1",
+                        dataOriginPackage = "com.example.scale",
+                        lastModifiedTimeEpochMillis = 1700000000100,
+                    ),
+                    startTimeEpochMillis = 1700000000000,
+                    startZoneOffsetSeconds = -18000,
+                    payload = linkedMapOf(
+                        "weight" to linkedMapOf("kilograms" to 70.5),
+                        "time" to 1700000000000,
+                    ),
+                ),
+            ),
+            deletions = emptyList(),
+        )
+
+        val json = HealthConnectWireJson.batchRequest(request)
+        val weight = json.getJSONObject("records").getJSONArray("weight").getJSONObject(0)
+
+        assertEquals(3, json.getInt("contract_version"))
+        assertEquals("weight-1", weight.getJSONObject("metadata").getString("id"))
+        assertEquals(1700000000000, weight.getLong("start_time"))
+        assertEquals(JSONObject.NULL, weight.get("end_time"))
+        assertEquals(70.5, weight.getJSONObject("payload").getJSONObject("weight").getDouble("kilograms"), 0.0)
+        assertFalse(json.getJSONObject("records").has("heart_rate"))
+    }
+
     @Test
     fun representativeBatchMatchesHostFixture() {
         val request = HealthConnectBatchRequest(
@@ -97,10 +137,17 @@ class HealthConnectWireJsonTest {
             deletions = emptyList(),
         )
 
-        assertEquals(
-            JSONObject(fixtureText()).toString(),
-            HealthConnectWireJson.batchRequest(request).toString(),
-        )
+        val expected = JSONObject(fixtureText()).put("contract_version", 3)
+        val actual = HealthConnectWireJson.batchRequest(request)
+
+        assertEquals(expected.getInt("contract_version"), actual.getInt("contract_version"))
+        assertEquals(expected.getJSONArray("record_types").toString(), actual.getJSONArray("record_types").toString())
+        for (type in listOf("heart_rate", "sleep", "steps", "exercise")) {
+            assertEquals(
+                expected.getJSONObject("records").getJSONArray(type).toString(),
+                actual.getJSONObject("records").getJSONArray(type).toString(),
+            )
+        }
     }
 
     private fun fixtureText(): String {

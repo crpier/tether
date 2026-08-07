@@ -32,9 +32,8 @@ class HealthConnectStatusReaderTest {
 
         assertEquals(
             HealthConnectStatus.Available(
-                permissions = HealthConnectPermissionSummary(
-                    missingRequired = emptySet(),
-                    missingOptional = HealthConnectPermissions.optional,
+                permissions = HealthConnectPermissions.summarize(
+                    granted = HealthConnectPermissions.required,
                 ),
             ),
             reader.read(),

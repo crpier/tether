@@ -147,19 +147,17 @@ class AndroidHealthConnectSource(
     private fun Set<HealthConnectRecordType>.toAndroidRecordClasses(): Set<KClass<out Record>> =
         map { it.toAndroidRecordClass() }.toSet()
 
-    private fun HealthConnectRecordType.toAndroidRecordClass(): KClass<out Record> = when (this) {
-        HealthConnectRecordType.HEART_RATE -> AndroidHeartRateRecord::class
-        HealthConnectRecordType.SLEEP -> AndroidSleepSessionRecord::class
-        HealthConnectRecordType.STEPS -> AndroidStepsRecord::class
-        HealthConnectRecordType.EXERCISE -> AndroidExerciseSessionRecord::class
-    }
+    private fun HealthConnectRecordType.toAndroidRecordClass(): KClass<out Record> =
+        HealthConnectRecordInventory.entryByRecordType.getValue(this).recordClass
 
     private fun Record.toWireRecordOrNull(): HealthConnectRecord? = when (this) {
         is AndroidHeartRateRecord -> HealthConnectRecordMapper.map(this)
         is AndroidSleepSessionRecord -> HealthConnectRecordMapper.map(this)
         is AndroidStepsRecord -> HealthConnectRecordMapper.map(this)
         is AndroidExerciseSessionRecord -> HealthConnectRecordMapper.map(this)
-        else -> null
+        else -> HealthConnectRecordInventory.entryByRecordClass[this::class]?.let { entry ->
+            HealthConnectRecordMapper.mapGeneric(entry.recordType, this)
+        }
     }
 
     companion object {

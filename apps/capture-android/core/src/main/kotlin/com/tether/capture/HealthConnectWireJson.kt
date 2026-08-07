@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object HealthConnectWireJson {
-    private const val CONTRACT_VERSION = 2
+    private const val CONTRACT_VERSION = 3
 
     fun startBaselineRequest(request: StartBaselineRequest): JSONObject = JSONObject()
         .put("contract_version", CONTRACT_VERSION)
@@ -46,28 +46,31 @@ object HealthConnectWireJson {
         return json
     }
 
-    private fun recordsByType(records: List<HealthConnectRecord>): JSONObject = JSONObject()
-        .put(
-            HealthConnectRecordType.HEART_RATE.wireName,
-            JSONArray(records.filterIsInstance<HealthConnectRecord.HeartRate>().map { heartRateJson(it) }),
-        )
-        .put(
-            HealthConnectRecordType.SLEEP.wireName,
-            JSONArray(records.filterIsInstance<HealthConnectRecord.Sleep>().map { sleepJson(it) }),
-        )
-        .put(
-            HealthConnectRecordType.STEPS.wireName,
-            JSONArray(records.filterIsInstance<HealthConnectRecord.Steps>().map { stepsJson(it) }),
-        )
-        .put(
-            HealthConnectRecordType.EXERCISE.wireName,
-            JSONArray(records.filterIsInstance<HealthConnectRecord.Exercise>().map { exerciseJson(it) }),
-        )
+    private fun recordsByType(records: List<HealthConnectRecord>): JSONObject {
+        val json = JSONObject()
+        records.groupBy { it.recordType }.toSortedMap(compareBy { it.wireName }).forEach { (type, typeRecords) ->
+            json.put(
+                type.wireName,
+                JSONArray(
+                    typeRecords.map { record ->
+                        when (record) {
+                            is HealthConnectRecord.HeartRate -> heartRateJson(record)
+                            is HealthConnectRecord.Sleep -> sleepJson(record)
+                            is HealthConnectRecord.Steps -> stepsJson(record)
+                            is HealthConnectRecord.Exercise -> exerciseJson(record)
+                            is HealthConnectRecord.Generic -> genericJson(record)
+                        }
+                    },
+                ),
+            )
+        }
+        return json
+    }
 
     private fun commonRecordJson(record: HealthConnectRecord): JSONObject = JSONObject()
         .put("metadata", metadataJson(record.metadata))
-        .put("start_time", record.startTimeEpochMillis)
-        .put("end_time", record.endTimeEpochMillis)
+        .put("start_time", nullable(record.startTimeEpochMillis))
+        .put("end_time", nullable(record.endTimeEpochMillis))
         .put("start_zone_offset_seconds", nullable(record.startZoneOffsetSeconds))
         .put("end_zone_offset_seconds", nullable(record.endZoneOffsetSeconds))
 
@@ -100,6 +103,9 @@ object HealthConnectWireJson {
 
     private fun stepsJson(record: HealthConnectRecord.Steps): JSONObject = commonRecordJson(record)
         .put("count", record.count)
+
+    private fun genericJson(record: HealthConnectRecord.Generic): JSONObject = commonRecordJson(record)
+        .put("payload", JSONObject(record.payload.mapValues { (_, value) -> jsonValue(value) }))
 
     private fun exerciseJson(record: HealthConnectRecord.Exercise): JSONObject = commonRecordJson(record)
         .put("exercise_type", record.exerciseType)
@@ -168,4 +174,14 @@ object HealthConnectWireJson {
     }
 
     private fun nullable(value: Any?): Any = value ?: JSONObject.NULL
+
+    private fun jsonValue(value: Any?): Any = when (value) {
+        null -> JSONObject.NULL
+        is Map<*, *> -> JSONObject(
+            value.entries.associate { (key, child) -> key.toString() to jsonValue(child) },
+        )
+        is Iterable<*> -> JSONArray(value.map { jsonValue(it) })
+        is Array<*> -> JSONArray(value.map { jsonValue(it) })
+        else -> value
+    }
 }
