@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Literal, Self, cast
+from typing import Any, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from snekql.sqlite import (
@@ -33,9 +33,101 @@ from starlette.routing import Route
 from tether.logging import Logger
 from tether.openapi import EndpointRoute, endpoint
 
-HealthRecordType = Literal["exercise", "heart_rate", "sleep", "steps"]
-_ALLOWED_RECORD_TYPES = frozenset({"exercise", "heart_rate", "sleep", "steps"})
+HealthRecordType = Literal[
+    "active_calories_burned",
+    "basal_body_temperature",
+    "basal_metabolic_rate",
+    "blood_glucose",
+    "blood_pressure",
+    "body_fat",
+    "body_temperature",
+    "body_water_mass",
+    "bone_mass",
+    "cervical_mucus",
+    "cycling_pedaling_cadence",
+    "distance",
+    "elevation_gained",
+    "exercise",
+    "floors_climbed",
+    "heart_rate",
+    "heart_rate_variability_rmssd",
+    "height",
+    "hydration",
+    "intermenstrual_bleeding",
+    "lean_body_mass",
+    "menstruation_flow",
+    "menstruation_period",
+    "mindfulness_session",
+    "nutrition",
+    "ovulation_test",
+    "oxygen_saturation",
+    "planned_exercise_session",
+    "power",
+    "respiratory_rate",
+    "resting_heart_rate",
+    "sexual_activity",
+    "skin_temperature",
+    "sleep",
+    "speed",
+    "steps",
+    "steps_cadence",
+    "total_calories_burned",
+    "vo2_max",
+    "weight",
+    "wheelchair_pushes",
+]
+_ALL_RECORD_TYPES: tuple[HealthRecordType, ...] = (
+    "active_calories_burned",
+    "basal_body_temperature",
+    "basal_metabolic_rate",
+    "blood_glucose",
+    "blood_pressure",
+    "body_fat",
+    "body_temperature",
+    "body_water_mass",
+    "bone_mass",
+    "cervical_mucus",
+    "cycling_pedaling_cadence",
+    "distance",
+    "elevation_gained",
+    "exercise",
+    "floors_climbed",
+    "heart_rate",
+    "heart_rate_variability_rmssd",
+    "height",
+    "hydration",
+    "intermenstrual_bleeding",
+    "lean_body_mass",
+    "menstruation_flow",
+    "menstruation_period",
+    "mindfulness_session",
+    "nutrition",
+    "ovulation_test",
+    "oxygen_saturation",
+    "planned_exercise_session",
+    "power",
+    "respiratory_rate",
+    "resting_heart_rate",
+    "sexual_activity",
+    "skin_temperature",
+    "sleep",
+    "speed",
+    "steps",
+    "steps_cadence",
+    "total_calories_burned",
+    "vo2_max",
+    "weight",
+    "wheelchair_pushes",
+)
+_CAPTURED_RECORD_TYPES = frozenset({"exercise", "heart_rate", "sleep", "steps"})
+_ALLOWED_RECORD_TYPES = frozenset(_ALL_RECORD_TYPES)
+_GENERIC_RECORD_TYPES: tuple[HealthRecordType, ...] = tuple(
+    record_type
+    for record_type in _ALL_RECORD_TYPES
+    if record_type not in _CAPTURED_RECORD_TYPES
+)
 RecordStatus = Literal["baseline", "changes", "initial"]
+GENERIC_RECORD_CONTRACT_VERSION = 3
 
 
 class HealthConnectSyncState[S = Pending](Model[S, "HealthConnectSyncState[Fetched]"]):
@@ -260,6 +352,30 @@ class HcExerciseRoutePoint[S = Pending](Model[S, "HcExerciseRoutePoint[Fetched]"
     altitude_meters: HcExerciseRoutePoint.Col[float | None] = Real(nullable=True)
 
 
+class HcGenericRecord[S = Pending](Model[S, "HcGenericRecord[Fetched]"]):
+    """Append-only raw storage for expanded Health Connect record types."""
+
+    version_id: HcGenericRecord.GenCol[int] = Integer(
+        primary_key=True, auto_increment=True, default=PENDING_GENERATION
+    )
+    record_type: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
+    record_uid: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
+    origin_id: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    modified_at: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    received_at: HcGenericRecord.Col[int] = Integer(nullable=False)
+    request_id: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
+    is_deleted: HcGenericRecord.Col[bool] = Integer(nullable=False)
+    payload_hash: HcGenericRecord.Col[str] = Text(nullable=False)
+    client_record_id: HcGenericRecord.Col[str | None] = Text(nullable=True)
+    client_record_version: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    recording_method: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    start_time: HcGenericRecord.Col[int | None] = Integer(nullable=True, index=True)
+    end_time: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: HcGenericRecord.Col[int | None] = Integer(nullable=True)
+    payload_json: HcGenericRecord.Col[str | None] = Text(nullable=True)
+
+
 class HcHeartRateRecordCurrent[S = Pending](
     Model[S, "HcHeartRateRecordCurrent[Fetched]"]
 ):
@@ -290,6 +406,14 @@ class HcExerciseSessionCurrent[S = Pending](
     record_uid: HcExerciseSessionCurrent.Col[str] = Text(nullable=False)
     start_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
     end_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
+
+
+class HcGenericRecordCurrent[S = Pending](Model[S, "HcGenericRecordCurrent[Fetched]"]):
+    version_id: HcGenericRecordCurrent.Col[int] = Integer(primary_key=True)
+    record_type: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
+    record_uid: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
+    start_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
+    end_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
 
 
 class HealthConnectWireModel(BaseModel):
@@ -395,11 +519,77 @@ class ExerciseRecord(HealthConnectWireModel):
     route: list[ExerciseRoutePoint] = Field(max_length=100_000)
 
 
+class GenericRecord(HealthConnectWireModel):
+    metadata: RecordMetadata
+    start_time: int | None = None
+    end_time: int | None = None
+    start_zone_offset_seconds: int | None = None
+    end_zone_offset_seconds: int | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+def _generic_record_list_field() -> list[GenericRecord]:
+    return cast("list[GenericRecord]", Field(default_factory=list, max_length=1_000))
+
+
+def _exercise_record_list_field() -> list[ExerciseRecord]:
+    return cast("list[ExerciseRecord]", Field(default_factory=list, max_length=1_000))
+
+
+def _heart_rate_record_list_field() -> list[HeartRateRecord]:
+    return cast("list[HeartRateRecord]", Field(default_factory=list, max_length=1_000))
+
+
+def _sleep_record_list_field() -> list[SleepRecord]:
+    return cast("list[SleepRecord]", Field(default_factory=list, max_length=1_000))
+
+
+def _steps_record_list_field() -> list[StepsRecord]:
+    return cast("list[StepsRecord]", Field(default_factory=list, max_length=1_000))
+
+
 class HealthConnectRecords(HealthConnectWireModel):
-    exercise: list[ExerciseRecord] = Field(max_length=1_000)
-    heart_rate: list[HeartRateRecord] = Field(max_length=1_000)
-    sleep: list[SleepRecord] = Field(max_length=1_000)
-    steps: list[StepsRecord] = Field(max_length=1_000)
+    active_calories_burned: list[GenericRecord] = _generic_record_list_field()
+    basal_body_temperature: list[GenericRecord] = _generic_record_list_field()
+    basal_metabolic_rate: list[GenericRecord] = _generic_record_list_field()
+    blood_glucose: list[GenericRecord] = _generic_record_list_field()
+    blood_pressure: list[GenericRecord] = _generic_record_list_field()
+    body_fat: list[GenericRecord] = _generic_record_list_field()
+    body_temperature: list[GenericRecord] = _generic_record_list_field()
+    body_water_mass: list[GenericRecord] = _generic_record_list_field()
+    bone_mass: list[GenericRecord] = _generic_record_list_field()
+    cervical_mucus: list[GenericRecord] = _generic_record_list_field()
+    cycling_pedaling_cadence: list[GenericRecord] = _generic_record_list_field()
+    distance: list[GenericRecord] = _generic_record_list_field()
+    elevation_gained: list[GenericRecord] = _generic_record_list_field()
+    exercise: list[ExerciseRecord] = _exercise_record_list_field()
+    floors_climbed: list[GenericRecord] = _generic_record_list_field()
+    heart_rate: list[HeartRateRecord] = _heart_rate_record_list_field()
+    heart_rate_variability_rmssd: list[GenericRecord] = _generic_record_list_field()
+    height: list[GenericRecord] = _generic_record_list_field()
+    hydration: list[GenericRecord] = _generic_record_list_field()
+    intermenstrual_bleeding: list[GenericRecord] = _generic_record_list_field()
+    lean_body_mass: list[GenericRecord] = _generic_record_list_field()
+    menstruation_flow: list[GenericRecord] = _generic_record_list_field()
+    menstruation_period: list[GenericRecord] = _generic_record_list_field()
+    mindfulness_session: list[GenericRecord] = _generic_record_list_field()
+    nutrition: list[GenericRecord] = _generic_record_list_field()
+    ovulation_test: list[GenericRecord] = _generic_record_list_field()
+    oxygen_saturation: list[GenericRecord] = _generic_record_list_field()
+    planned_exercise_session: list[GenericRecord] = _generic_record_list_field()
+    power: list[GenericRecord] = _generic_record_list_field()
+    respiratory_rate: list[GenericRecord] = _generic_record_list_field()
+    resting_heart_rate: list[GenericRecord] = _generic_record_list_field()
+    sexual_activity: list[GenericRecord] = _generic_record_list_field()
+    skin_temperature: list[GenericRecord] = _generic_record_list_field()
+    sleep: list[SleepRecord] = _sleep_record_list_field()
+    speed: list[GenericRecord] = _generic_record_list_field()
+    steps: list[StepsRecord] = _steps_record_list_field()
+    steps_cadence: list[GenericRecord] = _generic_record_list_field()
+    total_calories_burned: list[GenericRecord] = _generic_record_list_field()
+    vo2_max: list[GenericRecord] = _generic_record_list_field()
+    weight: list[GenericRecord] = _generic_record_list_field()
+    wheelchair_pushes: list[GenericRecord] = _generic_record_list_field()
 
 
 class HealthConnectDeletion(HealthConnectWireModel):
@@ -408,7 +598,7 @@ class HealthConnectDeletion(HealthConnectWireModel):
 
 
 class HealthConnectBatchRequest(HealthConnectWireModel):
-    contract_version: Literal[1, 2]
+    contract_version: Literal[1, 2, 3]
     mode: Literal["baseline", "changes"]
     installation_id: str = Field(min_length=1)
     record_types: list[HealthRecordType]
@@ -427,15 +617,6 @@ class AuthoritativeScanRange(HealthConnectWireModel):
     seen_record_ids: list[str] | None = Field(default=None, max_length=100_000)
 
 
-class HealthConnectBaselineRanges(HealthConnectWireModel):
-    """Authoritative baseline declarations for every contract record type."""
-
-    exercise: AuthoritativeScanRange
-    heart_rate: AuthoritativeScanRange
-    sleep: AuthoritativeScanRange
-    steps: AuthoritativeScanRange
-
-
 class V1SeenIdsRequiredError(ValueError):
     """A v1 completion omitted its authoritative client ID set."""
 
@@ -443,28 +624,32 @@ class V1SeenIdsRequiredError(ValueError):
         super().__init__("contract v1 completion requires seen_record_ids")
 
 
+class BaselineRangesMismatchError(ValueError):
+    """Baseline completion ranges do not match the stream's record types."""
+
+    def __init__(self) -> None:
+        super().__init__("ranges must match record_types")
+
+
 class CompleteHealthConnectBaselineRequest(HealthConnectWireModel):
     """Bounded authoritative scan used to reconcile expired-token gaps."""
 
-    contract_version: Literal[1, 2]
+    contract_version: Literal[1, 2, 3]
     installation_id: str
     record_types: list[HealthRecordType]
     request_id: str
     expected_token: str
     baseline_generation: int = Field(gt=0)
-    ranges: HealthConnectBaselineRanges
+    ranges: dict[HealthRecordType, AuthoritativeScanRange]
 
     @model_validator(mode="after")
-    def v1_requires_client_seen_ids(self) -> Self:
-        """Preserve v1 while v2 derives seen IDs from uploaded pages."""
-        ranges = (
-            self.ranges.exercise,
-            self.ranges.heart_rate,
-            self.ranges.sleep,
-            self.ranges.steps,
-        )
+    def ranges_match_record_types(self) -> Self:
+        """Reconcile only streams explicitly granted and scanned by Android."""
+        record_types = set(_canonical_record_types(list(self.record_types)))
+        if set(self.ranges) != record_types:
+            raise BaselineRangesMismatchError
         if self.contract_version == 1 and any(
-            scan.seen_record_ids is None for scan in ranges
+            scan.seen_record_ids is None for scan in self.ranges.values()
         ):
             raise V1SeenIdsRequiredError
         return self
@@ -483,7 +668,7 @@ class HealthConnectSyncStateQuery(HealthConnectWireModel):
 
 
 class StartHealthConnectBaselineRequest(HealthConnectWireModel):
-    contract_version: Literal[1, 2]
+    contract_version: Literal[1, 2, 3]
     installation_id: str
     record_types: list[HealthRecordType]
     request_id: str
@@ -548,6 +733,7 @@ _SCHEMA_MODELS = [
     HcExerciseSegment,
     HcExerciseLap,
     HcExerciseRoutePoint,
+    HcGenericRecord,
 ]
 _MODELS = [*_SCHEMA_MODELS, HcBaselineSeen]
 _PARENT_MODELS = {
@@ -558,8 +744,10 @@ _PARENT_MODELS = {
 }
 
 
-def _empty_counts() -> dict[HealthRecordType, int]:
-    return {"exercise": 0, "heart_rate": 0, "sleep": 0, "steps": 0}
+def _empty_counts(
+    record_types: tuple[HealthRecordType, ...],
+) -> dict[HealthRecordType, int]:
+    return dict.fromkeys(record_types, 0)
 
 
 def _state_key(installation_id: str, record_types: tuple[HealthRecordType, ...]) -> str:
@@ -577,6 +765,17 @@ def _canonical_record_types(raw: list[str]) -> tuple[HealthRecordType, ...]:
     if len(set(raw)) != len(raw):
         raise DuplicateRecordTypesError
     return _parse_record_types(",".join(raw))
+
+
+def _validate_versioned_record_types(
+    contract_version: int,
+    record_types: tuple[HealthRecordType, ...],
+) -> None:
+    if (
+        contract_version < GENERIC_RECORD_CONTRACT_VERSION
+        and not set(record_types) <= _CAPTURED_RECORD_TYPES
+    ):
+        raise UnsupportedRecordTypesError
 
 
 def _state_read(stored: HealthConnectSyncState[Fetched]) -> HealthConnectSyncStateRead:
@@ -713,6 +912,7 @@ class HealthConnectService:
     ) -> HealthConnectBaselineCompletionRead:
         """Reconcile only bounded authoritative ranges and enter changes mode."""
         record_types = _canonical_record_types(list(body.record_types))
+        _validate_versioned_record_types(body.contract_version, record_types)
         key = _state_key(body.installation_id, record_types)
         async with self.database.transaction() as transaction:
             state = await transaction.fetch_one_or_none(
@@ -757,13 +957,7 @@ class HealthConnectService:
     ) -> dict[HealthRecordType, int]:
         """Tombstone missing current records in bounded batches."""
         if body.contract_version == 1:
-            v1_ranges = (
-                ("exercise", body.ranges.exercise),
-                ("heart_rate", body.ranges.heart_rate),
-                ("sleep", body.ranges.sleep),
-                ("steps", body.ranges.steps),
-            )
-            for record_type, scan in v1_ranges:
+            for record_type, scan in body.ranges.items():
                 for record_uid in scan.seen_record_ids or []:
                     _ = await transaction.execute(
                         insert(
@@ -778,174 +972,25 @@ class HealthConnectService:
                             )
                         )
                     )
-        deleted, skipped = _empty_counts(), _empty_counts()
-        cursors: dict[HealthRecordType, int] = {
-            "exercise": 0,
-            "heart_rate": 0,
-            "sleep": 0,
-            "steps": 0,
-        }
+        deleted, skipped = _empty_counts(record_types), _empty_counts(record_types)
+        cursors: dict[HealthRecordType, int] = dict.fromkeys(record_types, 0)
         while True:
-            heart_rows = await transaction.fetch_all(
-                select(HcHeartRateRecordCurrent)
-                .where(HcHeartRateRecordCurrent.version_id.gt(cursors["heart_rate"]))
-                .where(
-                    HcHeartRateRecordCurrent.start_time.gte(
-                        body.ranges.heart_rate.start_time
-                    )
-                )
-                .where(
-                    HcHeartRateRecordCurrent.end_time.lte(
-                        body.ranges.heart_rate.end_time
-                    )
-                )
-                .where(
-                    not_exists(
-                        select(HcBaselineSeen.seen_key)
-                        .where(HcBaselineSeen.state_key.eq(key))
-                        .where(
-                            HcBaselineSeen.baseline_generation.eq(
-                                body.baseline_generation
-                            )
-                        )
-                        .where(HcBaselineSeen.record_type.eq("heart_rate"))
-                        .where(
-                            HcBaselineSeen.record_uid.eq_col(
-                                HcHeartRateRecordCurrent.record_uid
-                            )
-                        )
-                    )
-                )
-                .order_by(HcHeartRateRecordCurrent.version_id.asc())
-                .limit(500)
+            rows_by_type = await self._fetch_missing_current_rows(
+                transaction, body, key, record_types, cursors
             )
-            sleep_rows = await transaction.fetch_all(
-                select(HcSleepSessionCurrent)
-                .where(HcSleepSessionCurrent.version_id.gt(cursors["sleep"]))
-                .where(
-                    HcSleepSessionCurrent.start_time.gte(body.ranges.sleep.start_time)
-                )
-                .where(HcSleepSessionCurrent.end_time.lte(body.ranges.sleep.end_time))
-                .where(
-                    not_exists(
-                        select(HcBaselineSeen.seen_key)
-                        .where(HcBaselineSeen.state_key.eq(key))
-                        .where(
-                            HcBaselineSeen.baseline_generation.eq(
-                                body.baseline_generation
-                            )
-                        )
-                        .where(HcBaselineSeen.record_type.eq("sleep"))
-                        .where(
-                            HcBaselineSeen.record_uid.eq_col(
-                                HcSleepSessionCurrent.record_uid
-                            )
-                        )
-                    )
-                )
-                .order_by(HcSleepSessionCurrent.version_id.asc())
-                .limit(500)
-            )
-            step_rows = await transaction.fetch_all(
-                select(HcStepIntervalCurrent)
-                .where(HcStepIntervalCurrent.version_id.gt(cursors["steps"]))
-                .where(
-                    HcStepIntervalCurrent.start_time.gte(body.ranges.steps.start_time)
-                )
-                .where(HcStepIntervalCurrent.end_time.lte(body.ranges.steps.end_time))
-                .where(
-                    not_exists(
-                        select(HcBaselineSeen.seen_key)
-                        .where(HcBaselineSeen.state_key.eq(key))
-                        .where(
-                            HcBaselineSeen.baseline_generation.eq(
-                                body.baseline_generation
-                            )
-                        )
-                        .where(HcBaselineSeen.record_type.eq("steps"))
-                        .where(
-                            HcBaselineSeen.record_uid.eq_col(
-                                HcStepIntervalCurrent.record_uid
-                            )
-                        )
-                    )
-                )
-                .order_by(HcStepIntervalCurrent.version_id.asc())
-                .limit(500)
-            )
-            exercise_rows = await transaction.fetch_all(
-                select(HcExerciseSessionCurrent)
-                .where(HcExerciseSessionCurrent.version_id.gt(cursors["exercise"]))
-                .where(
-                    HcExerciseSessionCurrent.start_time.gte(
-                        body.ranges.exercise.start_time
-                    )
-                )
-                .where(
-                    HcExerciseSessionCurrent.end_time.lte(body.ranges.exercise.end_time)
-                )
-                .where(
-                    not_exists(
-                        select(HcBaselineSeen.seen_key)
-                        .where(HcBaselineSeen.state_key.eq(key))
-                        .where(
-                            HcBaselineSeen.baseline_generation.eq(
-                                body.baseline_generation
-                            )
-                        )
-                        .where(HcBaselineSeen.record_type.eq("exercise"))
-                        .where(
-                            HcBaselineSeen.record_uid.eq_col(
-                                HcExerciseSessionCurrent.record_uid
-                            )
-                        )
-                    )
-                )
-                .order_by(HcExerciseSessionCurrent.version_id.asc())
-                .limit(500)
-            )
-            if (
-                not heart_rows
-                and not sleep_rows
-                and not step_rows
-                and not exercise_rows
-            ):
+            if not any(rows_by_type.values()):
                 break
-            if heart_rows:
-                cursors["heart_rate"] = heart_rows[-1].version_id
-            if sleep_rows:
-                cursors["sleep"] = sleep_rows[-1].version_id
-            if step_rows:
-                cursors["steps"] = step_rows[-1].version_id
-            if exercise_rows:
-                cursors["exercise"] = exercise_rows[-1].version_id
+            for record_type, rows in rows_by_type.items():
+                if rows:
+                    cursors[record_type] = rows[-1].version_id
             reconciliation_batch = HealthConnectBatchRequest(
                 contract_version=1,
                 deletions=[
-                    *(
-                        HealthConnectDeletion(
-                            record_type="heart_rate", record_id=row.record_uid
-                        )
-                        for row in heart_rows
-                    ),
-                    *(
-                        HealthConnectDeletion(
-                            record_type="sleep", record_id=row.record_uid
-                        )
-                        for row in sleep_rows
-                    ),
-                    *(
-                        HealthConnectDeletion(
-                            record_type="steps", record_id=row.record_uid
-                        )
-                        for row in step_rows
-                    ),
-                    *(
-                        HealthConnectDeletion(
-                            record_type="exercise", record_id=row.record_uid
-                        )
-                        for row in exercise_rows
-                    ),
+                    HealthConnectDeletion(
+                        record_type=record_type, record_id=row.record_uid
+                    )
+                    for record_type, rows in rows_by_type.items()
+                    for row in rows
                 ],
                 expected_token=body.expected_token,
                 installation_id=body.installation_id,
@@ -969,10 +1014,130 @@ class HealthConnectService:
         )
         return deleted
 
+    async def _fetch_missing_current_rows(
+        self,
+        transaction: Transaction,
+        body: CompleteHealthConnectBaselineRequest,
+        key: str,
+        record_types: tuple[HealthRecordType, ...],
+        cursors: dict[HealthRecordType, int],
+    ) -> dict[HealthRecordType, list[Any]]:
+        rows: dict[HealthRecordType, list[Any]] = {}
+        if "heart_rate" in record_types:
+            scan = body.ranges["heart_rate"]
+            rows["heart_rate"] = await transaction.fetch_all(
+                select(HcHeartRateRecordCurrent)
+                .where(HcHeartRateRecordCurrent.version_id.gt(cursors["heart_rate"]))
+                .where(HcHeartRateRecordCurrent.start_time.gte(scan.start_time))
+                .where(HcHeartRateRecordCurrent.end_time.lte(scan.end_time))
+                .where(
+                    not_exists(
+                        select(HcBaselineSeen.seen_key)
+                        .where(HcBaselineSeen.state_key.eq(key))
+                        .where(
+                            HcBaselineSeen.baseline_generation.eq(
+                                body.baseline_generation
+                            )
+                        )
+                        .where(HcBaselineSeen.record_type.eq("heart_rate"))
+                        .where(
+                            HcBaselineSeen.record_uid.eq_col(
+                                HcHeartRateRecordCurrent.record_uid
+                            )
+                        )
+                    )
+                )
+                .order_by(HcHeartRateRecordCurrent.version_id.asc())
+                .limit(500)
+            )
+        if "sleep" in record_types:
+            scan = body.ranges["sleep"]
+            rows["sleep"] = await transaction.fetch_all(
+                select(HcSleepSessionCurrent)
+                .where(HcSleepSessionCurrent.version_id.gt(cursors["sleep"]))
+                .where(HcSleepSessionCurrent.start_time.gte(scan.start_time))
+                .where(HcSleepSessionCurrent.end_time.lte(scan.end_time))
+                .where(
+                    not_exists(
+                        select(HcBaselineSeen.seen_key)
+                        .where(HcBaselineSeen.state_key.eq(key))
+                        .where(
+                            HcBaselineSeen.baseline_generation.eq(
+                                body.baseline_generation
+                            )
+                        )
+                        .where(HcBaselineSeen.record_type.eq("sleep"))
+                        .where(
+                            HcBaselineSeen.record_uid.eq_col(
+                                HcSleepSessionCurrent.record_uid
+                            )
+                        )
+                    )
+                )
+                .order_by(HcSleepSessionCurrent.version_id.asc())
+                .limit(500)
+            )
+        if "steps" in record_types:
+            scan = body.ranges["steps"]
+            rows["steps"] = await transaction.fetch_all(
+                select(HcStepIntervalCurrent)
+                .where(HcStepIntervalCurrent.version_id.gt(cursors["steps"]))
+                .where(HcStepIntervalCurrent.start_time.gte(scan.start_time))
+                .where(HcStepIntervalCurrent.end_time.lte(scan.end_time))
+                .where(
+                    not_exists(
+                        select(HcBaselineSeen.seen_key)
+                        .where(HcBaselineSeen.state_key.eq(key))
+                        .where(
+                            HcBaselineSeen.baseline_generation.eq(
+                                body.baseline_generation
+                            )
+                        )
+                        .where(HcBaselineSeen.record_type.eq("steps"))
+                        .where(
+                            HcBaselineSeen.record_uid.eq_col(
+                                HcStepIntervalCurrent.record_uid
+                            )
+                        )
+                    )
+                )
+                .order_by(HcStepIntervalCurrent.version_id.asc())
+                .limit(500)
+            )
+        if "exercise" in record_types:
+            scan = body.ranges["exercise"]
+            rows["exercise"] = await transaction.fetch_all(
+                select(HcExerciseSessionCurrent)
+                .where(HcExerciseSessionCurrent.version_id.gt(cursors["exercise"]))
+                .where(HcExerciseSessionCurrent.start_time.gte(scan.start_time))
+                .where(HcExerciseSessionCurrent.end_time.lte(scan.end_time))
+                .where(
+                    not_exists(
+                        select(HcBaselineSeen.seen_key)
+                        .where(HcBaselineSeen.state_key.eq(key))
+                        .where(
+                            HcBaselineSeen.baseline_generation.eq(
+                                body.baseline_generation
+                            )
+                        )
+                        .where(HcBaselineSeen.record_type.eq("exercise"))
+                        .where(
+                            HcBaselineSeen.record_uid.eq_col(
+                                HcExerciseSessionCurrent.record_uid
+                            )
+                        )
+                    )
+                )
+                .order_by(HcExerciseSessionCurrent.version_id.asc())
+                .limit(500)
+            )
+        return rows
+
     async def ingest_batch(
         self, batch: HealthConnectBatchRequest
     ) -> HealthConnectBatchRead:
         record_types = _canonical_record_types(list(batch.record_types))
+        _validate_versioned_record_types(batch.contract_version, record_types)
         key = _state_key(batch.installation_id, record_types)
         payload_hash = _hash_json(batch.model_dump(mode="json"))
         async with self.database.transaction() as transaction:
@@ -1005,21 +1170,25 @@ class HealthConnectService:
             if batch.mode == "changes" and state.status != "changes":
                 raise HealthConnectCursorConflictError
             accepted, skipped, deleted = (
-                _empty_counts(),
-                _empty_counts(),
-                _empty_counts(),
+                _empty_counts(record_types),
+                _empty_counts(record_types),
+                _empty_counts(record_types),
             )
             received_at = time.time_ns() // 1_000_000
             await self._append_records(
                 transaction, batch, received_at, accepted, skipped
             )
             if batch.mode == "baseline":
-                baseline_records = (
+                baseline_records = [
                     ("exercise", batch.records.exercise),
                     ("heart_rate", batch.records.heart_rate),
                     ("sleep", batch.records.sleep),
                     ("steps", batch.records.steps),
-                )
+                    *(
+                        (record_type, getattr(batch.records, record_type))
+                        for record_type in _GENERIC_RECORD_TYPES
+                    ),
+                ]
                 for record_type, records in baseline_records:
                     for record in records:
                         _ = await transaction.execute(
@@ -1081,135 +1250,223 @@ class HealthConnectService:
         skipped: dict[HealthRecordType, int],
     ) -> None:
         """Append tombstones, resolving origin only from accepted history."""
+        appenders = {
+            "exercise": self._append_exercise_deletion,
+            "heart_rate": self._append_heart_rate_deletion,
+            "sleep": self._append_sleep_deletion,
+            "steps": self._append_steps_deletion,
+        }
         for deletion in batch.deletions:
-            if deletion.record_type == "heart_rate":
-                latest = await transaction.fetch_one_or_none(
-                    select(HcHeartRateRecord)
-                    .where(HcHeartRateRecord.record_uid.eq(deletion.record_id))
-                    .order_by(HcHeartRateRecord.version_id.desc())
-                    .limit(1)
+            appender = appenders.get(
+                deletion.record_type, self._append_generic_deletion
+            )
+            if await appender(transaction, batch, deletion, received_at, skipped):
+                deleted[deletion.record_type] += 1
+
+    async def _append_heart_rate_deletion(
+        self,
+        transaction: Transaction,
+        batch: HealthConnectBatchRequest,
+        deletion: HealthConnectDeletion,
+        received_at: int,
+        skipped: dict[HealthRecordType, int],
+    ) -> bool:
+        latest = await transaction.fetch_one_or_none(
+            select(HcHeartRateRecord)
+            .where(HcHeartRateRecord.record_uid.eq(deletion.record_id))
+            .order_by(HcHeartRateRecord.version_id.desc())
+            .limit(1)
+        )
+        if latest is not None and latest.is_deleted:
+            skipped["heart_rate"] += 1
+            return False
+        _ = await transaction.execute(
+            insert(
+                HcHeartRateRecord(
+                    client_record_id=None,
+                    client_record_version=None,
+                    end_time=None,
+                    end_zone_offset_seconds=None,
+                    is_deleted=True,
+                    modified_at=None,
+                    origin_id=None if latest is None else latest.origin_id,
+                    payload_hash=_hash_json(deletion.model_dump(mode="json")),
+                    received_at=received_at,
+                    recording_method=None,
+                    record_uid=deletion.record_id,
+                    request_id=batch.request_id,
+                    start_time=None,
+                    start_zone_offset_seconds=None,
                 )
-                if latest is not None and latest.is_deleted:
-                    skipped["heart_rate"] += 1
-                    continue
-                _ = await transaction.execute(
-                    insert(
-                        HcHeartRateRecord(
-                            client_record_id=None,
-                            client_record_version=None,
-                            end_time=None,
-                            end_zone_offset_seconds=None,
-                            is_deleted=True,
-                            modified_at=None,
-                            origin_id=None if latest is None else latest.origin_id,
-                            payload_hash=_hash_json(deletion.model_dump(mode="json")),
-                            received_at=received_at,
-                            recording_method=None,
-                            record_uid=deletion.record_id,
-                            request_id=batch.request_id,
-                            start_time=None,
-                            start_zone_offset_seconds=None,
-                        )
-                    )
+            )
+        )
+        return True
+
+    async def _append_sleep_deletion(
+        self,
+        transaction: Transaction,
+        batch: HealthConnectBatchRequest,
+        deletion: HealthConnectDeletion,
+        received_at: int,
+        skipped: dict[HealthRecordType, int],
+    ) -> bool:
+        latest = await transaction.fetch_one_or_none(
+            select(HcSleepSession)
+            .where(HcSleepSession.record_uid.eq(deletion.record_id))
+            .order_by(HcSleepSession.version_id.desc())
+            .limit(1)
+        )
+        if latest is not None and latest.is_deleted:
+            skipped["sleep"] += 1
+            return False
+        _ = await transaction.execute(
+            insert(
+                HcSleepSession(
+                    client_record_id=None,
+                    client_record_version=None,
+                    end_time=None,
+                    end_zone_offset_seconds=None,
+                    is_deleted=True,
+                    modified_at=None,
+                    notes=None,
+                    origin_id=None if latest is None else latest.origin_id,
+                    payload_hash=_hash_json(deletion.model_dump(mode="json")),
+                    received_at=received_at,
+                    recording_method=None,
+                    record_uid=deletion.record_id,
+                    request_id=batch.request_id,
+                    start_time=None,
+                    start_zone_offset_seconds=None,
+                    title=None,
                 )
-            elif deletion.record_type == "sleep":
-                latest = await transaction.fetch_one_or_none(
-                    select(HcSleepSession)
-                    .where(HcSleepSession.record_uid.eq(deletion.record_id))
-                    .order_by(HcSleepSession.version_id.desc())
-                    .limit(1)
+            )
+        )
+        return True
+
+    async def _append_steps_deletion(
+        self,
+        transaction: Transaction,
+        batch: HealthConnectBatchRequest,
+        deletion: HealthConnectDeletion,
+        received_at: int,
+        skipped: dict[HealthRecordType, int],
+    ) -> bool:
+        latest = await transaction.fetch_one_or_none(
+            select(HcStepInterval)
+            .where(HcStepInterval.record_uid.eq(deletion.record_id))
+            .order_by(HcStepInterval.version_id.desc())
+            .limit(1)
+        )
+        if latest is not None and latest.is_deleted:
+            skipped["steps"] += 1
+            return False
+        _ = await transaction.execute(
+            insert(
+                HcStepInterval(
+                    client_record_id=None,
+                    client_record_version=None,
+                    count=None,
+                    end_time=None,
+                    end_zone_offset_seconds=None,
+                    is_deleted=True,
+                    modified_at=None,
+                    origin_id=None if latest is None else latest.origin_id,
+                    payload_hash=_hash_json(deletion.model_dump(mode="json")),
+                    received_at=received_at,
+                    recording_method=None,
+                    record_uid=deletion.record_id,
+                    request_id=batch.request_id,
+                    start_time=None,
+                    start_zone_offset_seconds=None,
                 )
-                if latest is not None and latest.is_deleted:
-                    skipped["sleep"] += 1
-                    continue
-                _ = await transaction.execute(
-                    insert(
-                        HcSleepSession(
-                            client_record_id=None,
-                            client_record_version=None,
-                            end_time=None,
-                            end_zone_offset_seconds=None,
-                            is_deleted=True,
-                            modified_at=None,
-                            notes=None,
-                            origin_id=None if latest is None else latest.origin_id,
-                            payload_hash=_hash_json(deletion.model_dump(mode="json")),
-                            received_at=received_at,
-                            recording_method=None,
-                            record_uid=deletion.record_id,
-                            request_id=batch.request_id,
-                            start_time=None,
-                            start_zone_offset_seconds=None,
-                            title=None,
-                        )
-                    )
+            )
+        )
+        return True
+
+    async def _append_exercise_deletion(
+        self,
+        transaction: Transaction,
+        batch: HealthConnectBatchRequest,
+        deletion: HealthConnectDeletion,
+        received_at: int,
+        skipped: dict[HealthRecordType, int],
+    ) -> bool:
+        latest = await transaction.fetch_one_or_none(
+            select(HcExerciseSession)
+            .where(HcExerciseSession.record_uid.eq(deletion.record_id))
+            .order_by(HcExerciseSession.version_id.desc())
+            .limit(1)
+        )
+        if latest is not None and latest.is_deleted:
+            skipped["exercise"] += 1
+            return False
+        _ = await transaction.execute(
+            insert(
+                HcExerciseSession(
+                    client_record_id=None,
+                    client_record_version=None,
+                    end_time=None,
+                    end_zone_offset_seconds=None,
+                    exercise_type=None,
+                    is_deleted=True,
+                    modified_at=None,
+                    notes=None,
+                    origin_id=None if latest is None else latest.origin_id,
+                    payload_hash=_hash_json(deletion.model_dump(mode="json")),
+                    planned_exercise_session_id=None,
+                    received_at=received_at,
+                    recording_method=None,
+                    record_uid=deletion.record_id,
+                    request_id=batch.request_id,
+                    start_time=None,
+                    start_zone_offset_seconds=None,
+                    title=None,
                 )
-            elif deletion.record_type == "steps":
-                latest = await transaction.fetch_one_or_none(
-                    select(HcStepInterval)
-                    .where(HcStepInterval.record_uid.eq(deletion.record_id))
-                    .order_by(HcStepInterval.version_id.desc())
-                    .limit(1)
+            )
+        )
+        return True
+
+    async def _append_generic_deletion(
+        self,
+        transaction: Transaction,
+        batch: HealthConnectBatchRequest,
+        deletion: HealthConnectDeletion,
+        received_at: int,
+        skipped: dict[HealthRecordType, int],
+    ) -> bool:
+        latest = await transaction.fetch_one_or_none(
+            select(HcGenericRecord)
+            .where(HcGenericRecord.record_type.eq(deletion.record_type))
+            .where(HcGenericRecord.record_uid.eq(deletion.record_id))
+            .order_by(HcGenericRecord.version_id.desc())
+            .limit(1)
+        )
+        if latest is not None and latest.is_deleted:
+            skipped[deletion.record_type] += 1
+            return False
+        _ = await transaction.execute(
+            insert(
+                HcGenericRecord(
+                    client_record_id=None,
+                    client_record_version=None,
+                    end_time=None,
+                    end_zone_offset_seconds=None,
+                    is_deleted=True,
+                    modified_at=None,
+                    origin_id=None if latest is None else latest.origin_id,
+                    payload_hash=_hash_json(deletion.model_dump(mode="json")),
+                    payload_json=None,
+                    received_at=received_at,
+                    recording_method=None,
+                    record_type=deletion.record_type,
+                    record_uid=deletion.record_id,
+                    request_id=batch.request_id,
+                    start_time=None,
+                    start_zone_offset_seconds=None,
                 )
-                if latest is not None and latest.is_deleted:
-                    skipped["steps"] += 1
-                    continue
-                _ = await transaction.execute(
-                    insert(
-                        HcStepInterval(
-                            client_record_id=None,
-                            client_record_version=None,
-                            count=None,
-                            end_time=None,
-                            end_zone_offset_seconds=None,
-                            is_deleted=True,
-                            modified_at=None,
-                            origin_id=None if latest is None else latest.origin_id,
-                            payload_hash=_hash_json(deletion.model_dump(mode="json")),
-                            received_at=received_at,
-                            recording_method=None,
-                            record_uid=deletion.record_id,
-                            request_id=batch.request_id,
-                            start_time=None,
-                            start_zone_offset_seconds=None,
-                        )
-                    )
-                )
-            else:
-                latest = await transaction.fetch_one_or_none(
-                    select(HcExerciseSession)
-                    .where(HcExerciseSession.record_uid.eq(deletion.record_id))
-                    .order_by(HcExerciseSession.version_id.desc())
-                    .limit(1)
-                )
-                if latest is not None and latest.is_deleted:
-                    skipped["exercise"] += 1
-                    continue
-                _ = await transaction.execute(
-                    insert(
-                        HcExerciseSession(
-                            client_record_id=None,
-                            client_record_version=None,
-                            end_time=None,
-                            end_zone_offset_seconds=None,
-                            exercise_type=None,
-                            is_deleted=True,
-                            modified_at=None,
-                            notes=None,
-                            origin_id=None if latest is None else latest.origin_id,
-                            payload_hash=_hash_json(deletion.model_dump(mode="json")),
-                            planned_exercise_session_id=None,
-                            received_at=received_at,
-                            recording_method=None,
-                            record_uid=deletion.record_id,
-                            request_id=batch.request_id,
-                            start_time=None,
-                            start_zone_offset_seconds=None,
-                            title=None,
-                        )
-                    )
-                )
-            deleted[deletion.record_type] += 1
+            )
+        )
+        return True
 
     async def _append_records(
         self,
@@ -1225,6 +1482,7 @@ class HealthConnectService:
         await self._append_sleep(transaction, batch, received_at, accepted, skipped)
         await self._append_steps(transaction, batch, received_at, accepted, skipped)
         await self._append_exercise(transaction, batch, received_at, accepted, skipped)
+        await self._append_generic(transaction, batch, received_at, accepted, skipped)
 
     async def _append_heart_rates(
         self,
@@ -1464,12 +1722,63 @@ class HealthConnectService:
                 )
             accepted["exercise"] += 1
 
+    async def _append_generic(
+        self,
+        transaction: Transaction,
+        batch: HealthConnectBatchRequest,
+        received_at: int,
+        accepted: dict[HealthRecordType, int],
+        skipped: dict[HealthRecordType, int],
+    ) -> None:
+        for record_type in _GENERIC_RECORD_TYPES:
+            for record in getattr(batch.records, record_type):
+                digest = _hash_json(record.model_dump(mode="json"))
+                latest = await transaction.fetch_one_or_none(
+                    select(HcGenericRecord)
+                    .where(HcGenericRecord.record_type.eq(record_type))
+                    .where(HcGenericRecord.record_uid.eq(record.metadata.id))
+                    .order_by(HcGenericRecord.version_id.desc())
+                    .limit(1)
+                )
+                if latest is not None and latest.payload_hash == digest:
+                    skipped[record_type] += 1
+                    continue
+                metadata = record.metadata
+                _ = await transaction.execute(
+                    insert(
+                        HcGenericRecord(
+                            record_type=record_type,
+                            record_uid=metadata.id,
+                            origin_id=await _origin_id(transaction, metadata),
+                            modified_at=metadata.last_modified_time,
+                            received_at=received_at,
+                            request_id=batch.request_id,
+                            is_deleted=False,
+                            payload_hash=digest,
+                            payload_json=json.dumps(
+                                record.payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            client_record_id=metadata.client_record_id,
+                            client_record_version=metadata.client_record_version,
+                            recording_method=metadata.recording_method,
+                            start_time=record.start_time,
+                            end_time=record.end_time,
+                            start_zone_offset_seconds=record.start_zone_offset_seconds,
+                            end_zone_offset_seconds=record.end_zone_offset_seconds,
+                        )
+                    )
+                )
+                accepted[record_type] += 1
+
 
 _CURRENT_VIEW_MIGRATIONS = {
     "hc_heart_rate_record_current": 'CREATE VIEW "hc_heart_rate_record_current" AS SELECT parent.* FROM "hc_heart_rate_record" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_heart_rate_record" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
     "hc_sleep_session_current": 'CREATE VIEW "hc_sleep_session_current" AS SELECT parent.* FROM "hc_sleep_session" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_sleep_session" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
     "hc_step_interval_current": 'CREATE VIEW "hc_step_interval_current" AS SELECT parent.* FROM "hc_step_interval" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_step_interval" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
     "hc_exercise_session_current": 'CREATE VIEW "hc_exercise_session_current" AS SELECT parent.* FROM "hc_exercise_session" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_exercise_session" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
+    "hc_generic_record_current": 'CREATE VIEW "hc_generic_record_current" AS SELECT parent.* FROM "hc_generic_record" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_generic_record" candidate WHERE candidate."record_type" = parent."record_type" AND candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
 }
 
 
@@ -1527,6 +1836,7 @@ async def start_health_connect_baseline(
 ) -> Response:
     try:
         record_types = _canonical_record_types(list(body.record_types))
+        _validate_versioned_record_types(body.contract_version, record_types)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=422)
     service = cast("HealthConnectService", request.app.state.health_connect_service)

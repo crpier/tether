@@ -9,8 +9,9 @@ nested limits represented by the checked-in fixture at
 
 ## Stream identity and baseline
 
-A cursor stream is identified by `installation_id` plus the exact set of
-`record_types`: `exercise`, `heart_rate`, `sleep`, and `steps`.
+A cursor stream is identified by `installation_id` plus the exact granted set of
+v2 `record_types`: any non-empty subset of `exercise`, `heart_rate`, `sleep`,
+and `steps`.
 
 - `GET /sync-state?installation_id=…&record_types=heart_rate,sleep,steps,exercise`
   returns `initial`, `baseline`, or `changes`, the generation, and the complete
@@ -21,8 +22,8 @@ A cursor stream is identified by `installation_id` plus the exact set of
 - Baseline pages use `mode: "baseline"` and must keep `next_token` equal to
   `expected_token`. This preserves the pre-baseline token while records page in.
 - `POST /sync-state/baselines/complete` carries the expected token/generation
-  plus, for every record type, an inclusive authoritative `start_time`/
-  `end_time`. The host durably indexes record IDs as bounded baseline pages
+  plus, for every record type in the stream, an inclusive authoritative
+  `start_time`/`end_time`. The host durably indexes record IDs as bounded baseline pages
   arrive; completion uses that generation index to tombstone missing current IDs
   wholly inside those bounds, then removes the temporary index. Records outside
   remain current. Completion
@@ -78,7 +79,8 @@ Metric fields:
 The representative fixture is normative for nullability, ordering, nested
 shape, enum preservation, and canonical units. Contract changes are additive
 and require a new fixture/version; supported fields must never be silently
-ignored.
+ignored. v3 adds generic raw storage for all other SDK record types; see
+[`health-connect-wire-v3.md`](./health-connect-wire-v3.md).
 
 ## Storage/read contract
 
