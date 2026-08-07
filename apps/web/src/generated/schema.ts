@@ -3018,14 +3018,59 @@ export interface components {
        * Contract Version
        * @enum {integer}
        */
-      contract_version: 1 | 2;
+      contract_version: 1 | 2 | 3;
       /** Expected Token */
       expected_token: string;
       /** Installation Id */
       installation_id: string;
-      ranges: components["schemas"]["HealthConnectBaselineRanges"];
+      /** Ranges */
+      ranges: {
+        [key: string]: components["schemas"]["AuthoritativeScanRange"];
+      };
       /** Record Types */
-      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      record_types: (
+        | "active_calories_burned"
+        | "basal_body_temperature"
+        | "basal_metabolic_rate"
+        | "blood_glucose"
+        | "blood_pressure"
+        | "body_fat"
+        | "body_temperature"
+        | "body_water_mass"
+        | "bone_mass"
+        | "cervical_mucus"
+        | "cycling_pedaling_cadence"
+        | "distance"
+        | "elevation_gained"
+        | "exercise"
+        | "floors_climbed"
+        | "heart_rate"
+        | "heart_rate_variability_rmssd"
+        | "height"
+        | "hydration"
+        | "intermenstrual_bleeding"
+        | "lean_body_mass"
+        | "menstruation_flow"
+        | "menstruation_period"
+        | "mindfulness_session"
+        | "nutrition"
+        | "ovulation_test"
+        | "oxygen_saturation"
+        | "planned_exercise_session"
+        | "power"
+        | "respiratory_rate"
+        | "resting_heart_rate"
+        | "sexual_activity"
+        | "skin_temperature"
+        | "sleep"
+        | "speed"
+        | "steps"
+        | "steps_cadence"
+        | "total_calories_burned"
+        | "vo2_max"
+        | "weight"
+        | "wheelchair_pushes"
+      )[];
       /** Request Id */
       request_id: string;
     };
@@ -3350,6 +3395,34 @@ export interface components {
       memory: components["schemas"]["MemoryRead"] | null;
       source: components["schemas"]["SourceType"];
     };
+    /** GenericRecord */
+    GenericRecord: {
+      /**
+       * End Time
+       * @default null
+       */
+      end_time: number | null;
+      /**
+       * End Zone Offset Seconds
+       * @default null
+       */
+      end_zone_offset_seconds: number | null;
+      metadata: components["schemas"]["RecordMetadata"];
+      /** Payload */
+      payload?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Start Time
+       * @default null
+       */
+      start_time: number | null;
+      /**
+       * Start Zone Offset Seconds
+       * @default null
+       */
+      start_zone_offset_seconds: number | null;
+    };
     /**
      * GrantRead
      * @description HTTP representation of a live autonomy grant.
@@ -3405,16 +3478,6 @@ export interface components {
        */
       status: "completed";
     };
-    /**
-     * HealthConnectBaselineRanges
-     * @description Authoritative baseline declarations for every contract record type.
-     */
-    HealthConnectBaselineRanges: {
-      exercise: components["schemas"]["AuthoritativeScanRange"];
-      heart_rate: components["schemas"]["AuthoritativeScanRange"];
-      sleep: components["schemas"]["AuthoritativeScanRange"];
-      steps: components["schemas"]["AuthoritativeScanRange"];
-    };
     /** HealthConnectBatchRead */
     HealthConnectBatchRead: {
       /** Accepted */
@@ -3443,7 +3506,7 @@ export interface components {
        * Contract Version
        * @enum {integer}
        */
-      contract_version: 1 | 2;
+      contract_version: 1 | 2 | 3;
       /** Deletions */
       deletions: components["schemas"]["HealthConnectDeletion"][];
       /** Expected Token */
@@ -3458,7 +3521,49 @@ export interface components {
       /** Next Token */
       next_token: string;
       /** Record Types */
-      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      record_types: (
+        | "active_calories_burned"
+        | "basal_body_temperature"
+        | "basal_metabolic_rate"
+        | "blood_glucose"
+        | "blood_pressure"
+        | "body_fat"
+        | "body_temperature"
+        | "body_water_mass"
+        | "bone_mass"
+        | "cervical_mucus"
+        | "cycling_pedaling_cadence"
+        | "distance"
+        | "elevation_gained"
+        | "exercise"
+        | "floors_climbed"
+        | "heart_rate"
+        | "heart_rate_variability_rmssd"
+        | "height"
+        | "hydration"
+        | "intermenstrual_bleeding"
+        | "lean_body_mass"
+        | "menstruation_flow"
+        | "menstruation_period"
+        | "mindfulness_session"
+        | "nutrition"
+        | "ovulation_test"
+        | "oxygen_saturation"
+        | "planned_exercise_session"
+        | "power"
+        | "respiratory_rate"
+        | "resting_heart_rate"
+        | "sexual_activity"
+        | "skin_temperature"
+        | "sleep"
+        | "speed"
+        | "steps"
+        | "steps_cadence"
+        | "total_calories_burned"
+        | "vo2_max"
+        | "weight"
+        | "wheelchair_pushes"
+      )[];
       records: components["schemas"]["HealthConnectRecords"];
       /** Request Id */
       request_id: string;
@@ -3471,18 +3576,133 @@ export interface components {
        * Record Type
        * @enum {string}
        */
-      record_type: "exercise" | "heart_rate" | "sleep" | "steps";
+      record_type:
+        | "active_calories_burned"
+        | "basal_body_temperature"
+        | "basal_metabolic_rate"
+        | "blood_glucose"
+        | "blood_pressure"
+        | "body_fat"
+        | "body_temperature"
+        | "body_water_mass"
+        | "bone_mass"
+        | "cervical_mucus"
+        | "cycling_pedaling_cadence"
+        | "distance"
+        | "elevation_gained"
+        | "exercise"
+        | "floors_climbed"
+        | "heart_rate"
+        | "heart_rate_variability_rmssd"
+        | "height"
+        | "hydration"
+        | "intermenstrual_bleeding"
+        | "lean_body_mass"
+        | "menstruation_flow"
+        | "menstruation_period"
+        | "mindfulness_session"
+        | "nutrition"
+        | "ovulation_test"
+        | "oxygen_saturation"
+        | "planned_exercise_session"
+        | "power"
+        | "respiratory_rate"
+        | "resting_heart_rate"
+        | "sexual_activity"
+        | "skin_temperature"
+        | "sleep"
+        | "speed"
+        | "steps"
+        | "steps_cadence"
+        | "total_calories_burned"
+        | "vo2_max"
+        | "weight"
+        | "wheelchair_pushes";
     };
     /** HealthConnectRecords */
     HealthConnectRecords: {
+      /** Active Calories Burned */
+      active_calories_burned?: components["schemas"]["GenericRecord"][];
+      /** Basal Body Temperature */
+      basal_body_temperature?: components["schemas"]["GenericRecord"][];
+      /** Basal Metabolic Rate */
+      basal_metabolic_rate?: components["schemas"]["GenericRecord"][];
+      /** Blood Glucose */
+      blood_glucose?: components["schemas"]["GenericRecord"][];
+      /** Blood Pressure */
+      blood_pressure?: components["schemas"]["GenericRecord"][];
+      /** Body Fat */
+      body_fat?: components["schemas"]["GenericRecord"][];
+      /** Body Temperature */
+      body_temperature?: components["schemas"]["GenericRecord"][];
+      /** Body Water Mass */
+      body_water_mass?: components["schemas"]["GenericRecord"][];
+      /** Bone Mass */
+      bone_mass?: components["schemas"]["GenericRecord"][];
+      /** Cervical Mucus */
+      cervical_mucus?: components["schemas"]["GenericRecord"][];
+      /** Cycling Pedaling Cadence */
+      cycling_pedaling_cadence?: components["schemas"]["GenericRecord"][];
+      /** Distance */
+      distance?: components["schemas"]["GenericRecord"][];
+      /** Elevation Gained */
+      elevation_gained?: components["schemas"]["GenericRecord"][];
       /** Exercise */
-      exercise: components["schemas"]["ExerciseRecord"][];
+      exercise?: components["schemas"]["ExerciseRecord"][];
+      /** Floors Climbed */
+      floors_climbed?: components["schemas"]["GenericRecord"][];
       /** Heart Rate */
-      heart_rate: components["schemas"]["HeartRateRecord"][];
+      heart_rate?: components["schemas"]["HeartRateRecord"][];
+      /** Heart Rate Variability Rmssd */
+      heart_rate_variability_rmssd?: components["schemas"]["GenericRecord"][];
+      /** Height */
+      height?: components["schemas"]["GenericRecord"][];
+      /** Hydration */
+      hydration?: components["schemas"]["GenericRecord"][];
+      /** Intermenstrual Bleeding */
+      intermenstrual_bleeding?: components["schemas"]["GenericRecord"][];
+      /** Lean Body Mass */
+      lean_body_mass?: components["schemas"]["GenericRecord"][];
+      /** Menstruation Flow */
+      menstruation_flow?: components["schemas"]["GenericRecord"][];
+      /** Menstruation Period */
+      menstruation_period?: components["schemas"]["GenericRecord"][];
+      /** Mindfulness Session */
+      mindfulness_session?: components["schemas"]["GenericRecord"][];
+      /** Nutrition */
+      nutrition?: components["schemas"]["GenericRecord"][];
+      /** Ovulation Test */
+      ovulation_test?: components["schemas"]["GenericRecord"][];
+      /** Oxygen Saturation */
+      oxygen_saturation?: components["schemas"]["GenericRecord"][];
+      /** Planned Exercise Session */
+      planned_exercise_session?: components["schemas"]["GenericRecord"][];
+      /** Power */
+      power?: components["schemas"]["GenericRecord"][];
+      /** Respiratory Rate */
+      respiratory_rate?: components["schemas"]["GenericRecord"][];
+      /** Resting Heart Rate */
+      resting_heart_rate?: components["schemas"]["GenericRecord"][];
+      /** Sexual Activity */
+      sexual_activity?: components["schemas"]["GenericRecord"][];
+      /** Skin Temperature */
+      skin_temperature?: components["schemas"]["GenericRecord"][];
       /** Sleep */
-      sleep: components["schemas"]["SleepRecord"][];
+      sleep?: components["schemas"]["SleepRecord"][];
+      /** Speed */
+      speed?: components["schemas"]["GenericRecord"][];
       /** Steps */
-      steps: components["schemas"]["StepsRecord"][];
+      steps?: components["schemas"]["StepsRecord"][];
+      /** Steps Cadence */
+      steps_cadence?: components["schemas"]["GenericRecord"][];
+      /** Total Calories Burned */
+      total_calories_burned?: components["schemas"]["GenericRecord"][];
+      /** Vo2 Max */
+      vo2_max?: components["schemas"]["GenericRecord"][];
+      /** Weight */
+      weight?: components["schemas"]["GenericRecord"][];
+      /** Wheelchair Pushes */
+      wheelchair_pushes?: components["schemas"]["GenericRecord"][];
     };
     /** HealthConnectSyncStateRead */
     HealthConnectSyncStateRead: {
@@ -3493,7 +3713,49 @@ export interface components {
       /** Installation Id */
       installation_id: string;
       /** Record Types */
-      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      record_types: (
+        | "active_calories_burned"
+        | "basal_body_temperature"
+        | "basal_metabolic_rate"
+        | "blood_glucose"
+        | "blood_pressure"
+        | "body_fat"
+        | "body_temperature"
+        | "body_water_mass"
+        | "bone_mass"
+        | "cervical_mucus"
+        | "cycling_pedaling_cadence"
+        | "distance"
+        | "elevation_gained"
+        | "exercise"
+        | "floors_climbed"
+        | "heart_rate"
+        | "heart_rate_variability_rmssd"
+        | "height"
+        | "hydration"
+        | "intermenstrual_bleeding"
+        | "lean_body_mass"
+        | "menstruation_flow"
+        | "menstruation_period"
+        | "mindfulness_session"
+        | "nutrition"
+        | "ovulation_test"
+        | "oxygen_saturation"
+        | "planned_exercise_session"
+        | "power"
+        | "respiratory_rate"
+        | "resting_heart_rate"
+        | "sexual_activity"
+        | "skin_temperature"
+        | "sleep"
+        | "speed"
+        | "steps"
+        | "steps_cadence"
+        | "total_calories_burned"
+        | "vo2_max"
+        | "weight"
+        | "wheelchair_pushes"
+      )[];
       /**
        * Status
        * @enum {string}
@@ -4067,11 +4329,53 @@ export interface components {
        * Contract Version
        * @enum {integer}
        */
-      contract_version: 1 | 2;
+      contract_version: 1 | 2 | 3;
       /** Installation Id */
       installation_id: string;
       /** Record Types */
-      record_types: ("exercise" | "heart_rate" | "sleep" | "steps")[];
+      record_types: (
+        | "active_calories_burned"
+        | "basal_body_temperature"
+        | "basal_metabolic_rate"
+        | "blood_glucose"
+        | "blood_pressure"
+        | "body_fat"
+        | "body_temperature"
+        | "body_water_mass"
+        | "bone_mass"
+        | "cervical_mucus"
+        | "cycling_pedaling_cadence"
+        | "distance"
+        | "elevation_gained"
+        | "exercise"
+        | "floors_climbed"
+        | "heart_rate"
+        | "heart_rate_variability_rmssd"
+        | "height"
+        | "hydration"
+        | "intermenstrual_bleeding"
+        | "lean_body_mass"
+        | "menstruation_flow"
+        | "menstruation_period"
+        | "mindfulness_session"
+        | "nutrition"
+        | "ovulation_test"
+        | "oxygen_saturation"
+        | "planned_exercise_session"
+        | "power"
+        | "respiratory_rate"
+        | "resting_heart_rate"
+        | "sexual_activity"
+        | "skin_temperature"
+        | "sleep"
+        | "speed"
+        | "steps"
+        | "steps_cadence"
+        | "total_calories_burned"
+        | "vo2_max"
+        | "weight"
+        | "wheelchair_pushes"
+      )[];
       /** Request Id */
       request_id: string;
       /** Starting Token */
