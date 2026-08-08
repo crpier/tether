@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
+  createBusHarness,
   FakeHost,
   grant,
   grantSuggestion,
@@ -108,6 +109,55 @@ describe("Proposals page", () => {
     expect(
       await screen.findByLabelText("Grant: send_email"),
     ).toBeInTheDocument();
+  });
+
+  test("honors proposals tab and page query params", async () => {
+    const grants = Array.from({ length: 40 }, (_, index) =>
+      grant({
+        id: `grant-${index.toString()}`,
+        kind: `grant-${index.toString()}`,
+      }),
+    );
+    const host = new FakeHost({ authenticated: true, grants });
+    renderApp(host, createBusHarness(), {
+      path: "/proposals?tab=grants&page=2",
+    });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    expect(await screen.findByRole("tab", { name: /Grants/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const panel = screen.getByRole("tabpanel", { name: /Grants/ });
+    expect(
+      await within(panel).findByLabelText("Grant: grant-25"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("Page 2 of 2")).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search).toBe(
+      "/proposals?tab=grants&page=2",
+    );
+  });
+
+  test("normalizes out-of-range proposals page query params", async () => {
+    const grants = Array.from({ length: 40 }, (_, index) =>
+      grant({
+        id: `grant-${index.toString()}`,
+        kind: `grant-${index.toString()}`,
+      }),
+    );
+    const host = new FakeHost({ authenticated: true, grants });
+    renderApp(host, createBusHarness(), {
+      path: "/proposals?tab=grants&page=8",
+    });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    const panel = screen.getByRole("tabpanel", { name: /Grants/ });
+    expect(await within(panel).findByText("Page 2 of 2")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.location.pathname + window.location.search).toBe(
+        "/proposals?tab=grants&page=2",
+      );
+    });
   });
 
   test("view switcher exposes tabs and selected panel state", async () => {
