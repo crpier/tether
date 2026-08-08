@@ -53,17 +53,18 @@ export function BrowsePage() {
         />
       </header>
       <div class="mx-auto w-full max-w-3xl flex-1 space-y-4 p-4 sm:p-5">
+        {/* Keep Memories mounted while another Browse tab is selected so an
+            in-progress edit remains intact when the user returns. */}
+        <div
+          aria-labelledby={segmentedTabId("browse-view", "memories")}
+          hidden={view() !== "memories"}
+          id={segmentedPanelId("browse-view", "memories")}
+          role="tabpanel"
+        >
+          {/* Review lives on the Inbox page; Browse only opens on Corpus. */}
+          <MemoriesPanel api={memories} initialView="corpus" />
+        </div>
         <Switch>
-          <Match when={view() === "memories"}>
-            <div
-              aria-labelledby={segmentedTabId("browse-view", "memories")}
-              id={segmentedPanelId("browse-view", "memories")}
-              role="tabpanel"
-            >
-              {/* Review lives on the Inbox page; Browse only opens on Corpus. */}
-              <MemoriesPanel api={memories} initialView="corpus" />
-            </div>
-          </Match>
           <Match when={view() === "bucket"}>
             <div
               aria-labelledby={segmentedTabId("browse-view", "bucket")}
