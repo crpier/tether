@@ -2,7 +2,8 @@ import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { FakeApi, artifact } from "../testing/harness";
+import { artifact } from "../testing/harness";
+import { FakeArtifactsHost } from "../testing/fakes/artifacts";
 import { ArtifactOverlay, injectArtifactCsp } from "./artifact-viewer";
 
 function noop(): void {
@@ -44,7 +45,7 @@ describe("injectArtifactCsp", () => {
 
 describe("ArtifactOverlay", () => {
   test("renders nothing when no artifact is open", () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
     const { container } = render(() => (
       <ArtifactOverlay api={api} artifact={null} onClose={noop} />
     ));
@@ -54,7 +55,7 @@ describe("ArtifactOverlay", () => {
   });
 
   test("fetches and mounts the artifact's HTML in a sandboxed iframe", async () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
     api.storedArtifacts = [
       artifact({
         html: "<p>Hello artifact</p>",
@@ -91,7 +92,7 @@ describe("ArtifactOverlay", () => {
   });
 
   test("relays a postMessage from the mounted iframe to the events API", async () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
     api.storedArtifacts = [
       artifact({
         html: "<p>hi</p>",
@@ -130,7 +131,7 @@ describe("ArtifactOverlay", () => {
   });
 
   test("ignores a postMessage whose source is not the mounted iframe", async () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
     api.storedArtifacts = [
       artifact({
         html: "<p>hi</p>",
@@ -163,7 +164,7 @@ describe("ArtifactOverlay", () => {
   });
 
   test("ignores a non-object postMessage payload", async () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
     api.storedArtifacts = [
       artifact({
         html: "<p>hi</p>",
@@ -197,7 +198,7 @@ describe("ArtifactOverlay", () => {
   });
 
   test("closing tears down the overlay; reopening re-fetches", async () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
     const pointer = {
       id: "018f0000-0000-7000-8000-0000000005ee",
       title: "Quiz",
@@ -259,7 +260,7 @@ describe("ArtifactOverlay", () => {
   });
 
   test("shows an error when the fetch fails", async () => {
-    const api = new FakeApi({ authenticated: true });
+    const api = new FakeArtifactsHost();
 
     const { container } = render(() => (
       <ArtifactOverlay

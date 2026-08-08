@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { formatDate } from "../lib/format";
-import { FakeApi, navigateTo, renderApp, todo } from "../testing/harness";
+import { FakeHost, navigateTo, renderApp, todo } from "../testing/harness";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -17,11 +17,11 @@ afterEach(() => {
 
 describe("Todos panel", () => {
   test("lists ready todos under the Ready heading", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       todos: [todo({ action: "call the dentist" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
@@ -31,7 +31,7 @@ describe("Todos panel", () => {
   });
 
   test("waiting todos show their condition and deadline", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       todos: [
         todo({
@@ -42,7 +42,7 @@ describe("Todos panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
@@ -53,11 +53,11 @@ describe("Todos panel", () => {
   });
 
   test("completing a todo calls the API with its version and status", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       todos: [todo({ action: "water plants", id: "todo-1", version: 3 })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
@@ -65,7 +65,7 @@ describe("Todos panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
-      expect(api.setTodoStatusCalls).toEqual([
+      expect(host.todos.setTodoStatusCalls).toEqual([
         { status: "completed", todoId: "todo-1", version: 3 },
       ]);
     });
@@ -77,11 +77,11 @@ describe("Todos panel", () => {
   });
 
   test("abandoning a todo transitions it to abandoned", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       todos: [todo({ action: "old task", id: "todo-2", version: 1 })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
@@ -89,19 +89,19 @@ describe("Todos panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Abandon/ }));
 
     await waitFor(() => {
-      expect(api.setTodoStatusCalls).toEqual([
+      expect(host.todos.setTodoStatusCalls).toEqual([
         { status: "abandoned", todoId: "todo-2", version: 1 },
       ]);
     });
   });
 
   test("a status transition recovers from a stale-version 409 by refetching", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       todos: [todo({ action: "water plants", id: "todo-1", version: 1 })],
     });
-    api.serverTodoVersions = { "todo-1": 2 };
-    renderApp(api);
+    host.todos.serverTodoVersions = { "todo-1": 2 };
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
@@ -109,7 +109,7 @@ describe("Todos panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
-      expect(api.setTodoStatusCalls).toEqual([
+      expect(host.todos.setTodoStatusCalls).toEqual([
         { status: "completed", todoId: "todo-1", version: 1 },
         { status: "completed", todoId: "todo-1", version: 2 },
       ]);
@@ -118,8 +118,8 @@ describe("Todos panel", () => {
   });
 
   test("an empty list explains todos and opens a focused Chat starter", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
@@ -137,21 +137,21 @@ describe("Todos panel", () => {
   });
 
   test("a todos invalidate frame refetches the list", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     await screen.findByRole("heading", { name: "Todos" });
     await waitFor(() => {
-      expect(api.listTodosCalls).toBeGreaterThan(0);
+      expect(host.todos.listTodosCalls).toBeGreaterThan(0);
     });
-    const before = api.listTodosCalls;
-    api.storedTodos = [todo({ action: "captured by the agent" })];
+    const before = host.todos.listTodosCalls;
+    host.todos.storedTodos = [todo({ action: "captured by the agent" })];
     bus.emit({ keys: ["todos"], type: "invalidate" });
 
     await waitFor(() => {
-      expect(api.listTodosCalls).toBeGreaterThan(before);
+      expect(host.todos.listTodosCalls).toBeGreaterThan(before);
     });
     expect(
       await screen.findByLabelText("Todo: captured by the agent"),

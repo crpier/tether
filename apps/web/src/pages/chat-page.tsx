@@ -14,8 +14,8 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { useAppContext } from "../app-context";
-import type { Conversation, TetherApi } from "../api";
+import { useAppContext, useHost } from "../app-context";
+import type { ChatHost, Conversation } from "../host/chat";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
@@ -60,7 +60,7 @@ function bubbleClass(role: ChatRole): string {
 const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
 
-function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
+function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   const queryClient = useQueryClient();
   const modelsQuery = createQuery(() => ({
     queryFn: () => props.api.listModels(),
@@ -432,7 +432,9 @@ function MessageRows(props: {
 }
 
 export function ChatPage() {
-  const { api, bus, chatFrame, connection } = useAppContext();
+  const { bus, chatFrame, connection } = useAppContext();
+  const api = useHost("chat");
+  const artifacts = useHost("artifacts");
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const promptParam = searchParams.prompt;
@@ -798,7 +800,7 @@ export function ChatPage() {
         </Show>
       </div>
       <ArtifactOverlay
-        api={api}
+        api={artifacts}
         artifact={openArtifact()}
         onClose={() => {
           setOpenArtifact(null);

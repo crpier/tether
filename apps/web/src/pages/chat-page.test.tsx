@@ -7,9 +7,9 @@ import {
 } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError } from "../host/error";
 import {
-  FakeApi,
+  FakeHost,
   conversation,
   message,
   renderApp,
@@ -63,8 +63,8 @@ function latestFakeRecorder(): FakeMediaRecorder {
 
 describe("Chat view", () => {
   test("does not expose a destructive transcript reset", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     await screen.findByRole("heading", { name: "Tether chat" });
 
@@ -74,8 +74,8 @@ describe("Chat view", () => {
   });
 
   test("shows only the confirmed loaded skill count in the header", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     await screen.findByRole("heading", { name: "Tether chat" });
 
     bus.emit({
@@ -91,8 +91,8 @@ describe("Chat view", () => {
   });
 
   test("hides skill status before a runtime confirms loading", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     await screen.findByRole("heading", { name: "Tether chat" });
 
@@ -100,8 +100,8 @@ describe("Chat view", () => {
   });
 
   test("hides a confirmed zero skill count", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     await screen.findByRole("heading", { name: "Tether chat" });
 
     bus.emit({
@@ -115,7 +115,7 @@ describe("Chat view", () => {
   });
 
   test("rehydrates settled chat history", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       messages: [
         message({ content: "remember aisle seats", role: "user", seq: 1 }),
@@ -134,7 +134,7 @@ describe("Chat view", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
 
     expect(await screen.findByText("remember aisle seats")).toBeInTheDocument();
     expect(screen.getByText("used capture")).toBeInTheDocument();
@@ -151,8 +151,8 @@ describe("Chat view", () => {
   });
 
   test("sends prompts and renders streamed assistant deltas", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     const messageBox = textarea(await screen.findByLabelText("Message"));
     fireEvent.input(messageBox, { target: { value: "Hello" } });
@@ -185,8 +185,8 @@ describe("Chat view", () => {
   });
 
   test("renders streamed answers as markdown", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "format please" },
@@ -210,8 +210,8 @@ describe("Chat view", () => {
   });
 
   test("shows inline tool activity transitioning to done", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "use a tool" },
@@ -238,8 +238,8 @@ describe("Chat view", () => {
   });
 
   test("surfaces tool call args and result inline", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "use a tool" },
@@ -268,8 +268,8 @@ describe("Chat view", () => {
   });
 
   test("shows a working indicator until the first token arrives", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "think" },
@@ -295,8 +295,8 @@ describe("Chat view", () => {
   });
 
   test("keeps reasoning in a separate row from the answer", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "reason" },
@@ -326,8 +326,8 @@ describe("Chat view", () => {
   });
 
   test("error frames show a dismissible banner", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     await screen.findByRole("heading", { name: "Tether chat" });
     bus.emit({
@@ -353,8 +353,8 @@ describe("Chat view", () => {
   });
 
   test("Enter sends the prompt", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     const messageBox = textarea(await screen.findByLabelText("Message"));
     fireEvent.input(messageBox, { target: { value: "Hello" } });
@@ -367,8 +367,8 @@ describe("Chat view", () => {
   });
 
   test("sending during generation visibly queues the message", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     const messageBox = textarea(await screen.findByLabelText("Message"));
     fireEvent.input(messageBox, { target: { value: "First" } });
@@ -385,8 +385,8 @@ describe("Chat view", () => {
   });
 
   test("queued messages are sent in order as turns finish", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     const messageBox = textarea(await screen.findByLabelText("Message"));
 
     for (const content of ["First", "Second", "Third"]) {
@@ -425,8 +425,8 @@ describe("Chat view", () => {
   });
 
   test("queued messages can be edited and cancelled", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     const messageBox = textarea(await screen.findByLabelText("Message"));
 
     fireEvent.input(messageBox, { target: { value: "First" } });
@@ -463,8 +463,8 @@ describe("Chat view", () => {
   });
 
   test("Send now stops the active turn before sending the chosen message", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     const messageBox = textarea(await screen.findByLabelText("Message"));
 
     for (const content of ["First", "Second", "Urgent correction"]) {
@@ -505,8 +505,8 @@ describe("Chat view", () => {
   });
 
   test("a prompt rejected before acceptance remains queued for retry", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     const messageBox = textarea(await screen.findByLabelText("Message"));
     fireEvent.input(messageBox, { target: { value: "Do not lose this" } });
     fireEvent.keyDown(messageBox, { key: "Enter" });
@@ -536,8 +536,8 @@ describe("Chat view", () => {
   });
 
   test("Shift+Enter inserts a newline instead of sending", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     const messageBox = textarea(await screen.findByLabelText("Message"));
     fireEvent.input(messageBox, { target: { value: "line one" } });
@@ -547,8 +547,8 @@ describe("Chat view", () => {
   });
 
   test("stop aborts an in-flight generation", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "Keep going" },
@@ -567,8 +567,8 @@ describe("Chat view", () => {
   });
 
   test("Send is disabled until the input has non-whitespace text", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     const send = await screen.findByRole("button", { name: "Send" });
     expect(send).toBeDisabled();
@@ -582,8 +582,8 @@ describe("Chat view", () => {
   });
 
   test("a stopped generation keeps an interrupted marker on the transcript", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
       target: { value: "Keep going" },
@@ -607,29 +607,29 @@ describe("Chat view", () => {
     // Settled history arriving must not wipe the marker off the partial reply.
     bus.emit({ keys: ["messages"], type: "invalidate" });
     await waitFor(() => {
-      expect(api.messageCalls).toBeGreaterThan(1);
+      expect(host.chat.messageCalls).toBeGreaterThan(1);
     });
     expect(screen.getByText("Generation stopped.")).toBeInTheDocument();
   });
 
   test("invalidate frames refetch named query keys", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     await waitFor(() => {
-      expect(api.messageCalls).toBe(1);
+      expect(host.chat.messageCalls).toBe(1);
     });
 
     bus.emit({ keys: ["messages"], type: "invalidate" });
 
     await waitFor(() => {
-      expect(api.messageCalls).toBeGreaterThan(1);
+      expect(host.chat.messageCalls).toBeGreaterThan(1);
     });
   });
 
   test("keeps model selection beside the composer", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     const selector = await screen.findByRole("group", { name: "Model" });
 
@@ -637,8 +637,8 @@ describe("Chat view", () => {
   });
 
   test("selecting a model persists it without moving the transcript", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     const transcript = await screen.findByLabelText("Chat transcript");
     transcript.scrollTop = 123;
 
@@ -647,22 +647,22 @@ describe("Chat view", () => {
     );
 
     await waitFor(() => {
-      expect(api.selectedModel).toBe("anthropic:claude-sonnet-4");
+      expect(host.chat.selectedModel).toBe("anthropic:claude-sonnet-4");
     });
     expect(transcript.scrollTop).toBe(123);
   });
 
   test("only fetches the latest page of history by default", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       messages: [message({ content: "hi", role: "user", seq: 1 })],
     });
-    renderApp(api);
+    renderApp(host);
 
     await waitFor(() => {
-      expect(api.listMessagesCalls.length).toBeGreaterThan(0);
+      expect(host.chat.listMessagesCalls.length).toBeGreaterThan(0);
     });
-    expect(api.listMessagesCalls[0]).toEqual({
+    expect(host.chat.listMessagesCalls[0]).toEqual({
       limit: 30,
       beforeSeq: undefined,
     });
@@ -676,8 +676,8 @@ describe("Chat view", () => {
         seq: index + 1,
       }),
     );
-    const api = new FakeApi({ authenticated: true, messages });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true, messages });
+    renderApp(host);
 
     // The default page is the newest 30 rows (seq 3..32); the oldest two are
     // not yet loaded.
@@ -689,7 +689,7 @@ describe("Chat view", () => {
     expect(await screen.findByText("msg-1")).toBeInTheDocument();
     expect(screen.getByText("msg-2")).toBeInTheDocument();
     await waitFor(() => {
-      expect(api.listMessagesCalls).toEqual([
+      expect(host.chat.listMessagesCalls).toEqual([
         { limit: 30, beforeSeq: undefined },
         { limit: 30, beforeSeq: 3 },
       ]);
@@ -698,11 +698,11 @@ describe("Chat view", () => {
 
   test("stops fetching once the oldest page is smaller than the limit", async () => {
     const messages = [message({ content: "only one", role: "user", seq: 1 })];
-    const api = new FakeApi({ authenticated: true, messages });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true, messages });
+    renderApp(host);
 
     expect(await screen.findByText("only one")).toBeInTheDocument();
-    const callsAfterInitialLoad = api.listMessagesCalls.length;
+    const callsAfterInitialLoad = host.chat.listMessagesCalls.length;
 
     fireEvent.scroll(screen.getByLabelText("Chat transcript"));
     fireEvent.scroll(screen.getByLabelText("Chat transcript"));
@@ -710,12 +710,12 @@ describe("Chat view", () => {
     // hasMore is false (the first page came back under the limit), so the
     // near-top scroll must not trigger another fetch.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(api.listMessagesCalls.length).toBe(callsAfterInitialLoad);
+    expect(host.chat.listMessagesCalls.length).toBe(callsAfterInitialLoad);
   });
 
   test("shows a fresh-session hint when there is no prior activity", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     expect(
       await screen.findByText("Next message starts a fresh session"),
@@ -723,13 +723,13 @@ describe("Chat view", () => {
   });
 
   test("hides the fresh-session hint once activity is inside the gap", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.storedConversation = {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversation = {
       ...conversation,
       latest_activity: new Date().toISOString(),
       session_gap_seconds: 300,
     };
-    renderApp(api);
+    renderApp(host);
 
     await screen.findByRole("heading", { name: "Tether chat" });
     expect(
@@ -738,13 +738,13 @@ describe("Chat view", () => {
   });
 
   test("shows the fresh-session hint once activity is past the gap", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.storedConversation = {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversation = {
       ...conversation,
       latest_activity: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
       session_gap_seconds: 300,
     };
-    renderApp(api);
+    renderApp(host);
 
     expect(
       await screen.findByText("Next message starts a fresh session"),
@@ -752,8 +752,8 @@ describe("Chat view", () => {
   });
 
   test("hides the fresh-session hint while a turn is generating", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
 
     expect(
       await screen.findByText("Next message starts a fresh session"),
@@ -786,9 +786,9 @@ describe("Chat view", () => {
 
     test("review mode fills the composer instead of sending", async () => {
       stubVoiceRecording();
-      const api = new FakeApi({ authenticated: true });
-      api.nextTranscript = "buy oat milk";
-      const bus = renderApp(api);
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "buy oat milk";
+      const bus = renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(
@@ -810,9 +810,9 @@ describe("Chat view", () => {
 
     test("auto-send mode sends the transcript through the normal send path", async () => {
       stubVoiceRecording();
-      const api = new FakeApi({ authenticated: true });
-      api.nextTranscript = "call the dentist";
-      const bus = renderApp(api);
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "call the dentist";
+      const bus = renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
@@ -834,9 +834,9 @@ describe("Chat view", () => {
 
     test("auto-send queues a transcript while a turn is generating", async () => {
       stubVoiceRecording();
-      const api = new FakeApi({ authenticated: true });
-      api.nextTranscript = "voice follow up";
-      const bus = renderApp(api);
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "voice follow up";
+      const bus = renderApp(host);
       const messageBox = textarea(await screen.findByLabelText("Message"));
       fireEvent.input(messageBox, { target: { value: "First" } });
       fireEvent.keyDown(messageBox, { key: "Enter" });
@@ -856,9 +856,9 @@ describe("Chat view", () => {
 
     test("a failed transcription keeps the clip with retry/discard, entering nothing into chat", async () => {
       stubVoiceRecording();
-      const api = new FakeApi({ authenticated: true });
-      api.transcribeAudioRejections = [new ApiError(502)];
-      const bus = renderApp(api);
+      const host = new FakeHost({ authenticated: true });
+      host.chat.transcribeAudioRejections = [new ApiError(502)];
+      const bus = renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
@@ -872,7 +872,7 @@ describe("Chat view", () => {
         ),
       ).toBeInTheDocument();
       expect(bus.sent).toEqual([]);
-      expect(api.transcribeAudioCalls).toHaveLength(1);
+      expect(host.chat.transcribeAudioCalls).toHaveLength(1);
 
       // Discard drops the clip and returns to the idle two-button state.
       fireEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -883,10 +883,10 @@ describe("Chat view", () => {
 
     test("retry re-uploads the retained clip and can then succeed", async () => {
       stubVoiceRecording();
-      const api = new FakeApi({ authenticated: true });
-      api.transcribeAudioRejections = [new ApiError(502)];
-      api.nextTranscript = "buy oat milk";
-      renderApp(api);
+      const host = new FakeHost({ authenticated: true });
+      host.chat.transcribeAudioRejections = [new ApiError(502)];
+      host.chat.nextTranscript = "buy oat milk";
+      renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(
@@ -905,13 +905,13 @@ describe("Chat view", () => {
       await waitFor(() => {
         expect(messageBox.value).toBe("buy oat milk");
       });
-      expect(api.transcribeAudioCalls).toHaveLength(2);
+      expect(host.chat.transcribeAudioCalls).toHaveLength(2);
     });
 
     test("cancel mid-recording never uploads anything", async () => {
       stubVoiceRecording();
-      const api = new FakeApi({ authenticated: true });
-      renderApp(api);
+      const host = new FakeHost({ authenticated: true });
+      renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(
@@ -924,7 +924,7 @@ describe("Chat view", () => {
       expect(
         await screen.findByRole("button", { name: /Record and review/ }),
       ).toBeInTheDocument();
-      expect(api.transcribeAudioCalls).toEqual([]);
+      expect(host.chat.transcribeAudioCalls).toEqual([]);
     });
   });
 });

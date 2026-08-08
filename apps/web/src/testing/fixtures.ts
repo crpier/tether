@@ -1,0 +1,291 @@
+import type {
+  Artifact,
+  BucketItem,
+  BucketTriageReport,
+  Conversation,
+  DuePrompt,
+  Grant,
+  GrantSuggestion,
+  Memory,
+  Message,
+  ModelList,
+  Notification,
+  Panel,
+  Proposal,
+  ProposalAction,
+  Todo,
+  TranscriptDecision,
+  Trigger,
+} from "../host";
+
+export const conversation: Conversation = {
+  created_at: "2026-01-01T00:00:00Z",
+  id: "018f0000-0000-7000-8000-000000000001",
+  latest_activity: null,
+  pi_session_id: "018f0000-0000-7000-8000-000000000002",
+  selected_model: "openai:gpt-4.1",
+  session_gap_seconds: 300,
+  title: null,
+};
+
+export const models: ModelList = {
+  default_model: "openai:gpt-4.1",
+  models: [
+    {
+      display_name: "GPT 4.1",
+      id: "openai:gpt-4.1",
+      model_id: "gpt-4.1",
+      provider: "openai",
+      thinking_level: null,
+    },
+    {
+      display_name: "Claude Sonnet",
+      id: "anthropic:claude-sonnet-4",
+      model_id: "claude-sonnet-4",
+      provider: "anthropic",
+      thinking_level: "medium",
+    },
+  ],
+};
+
+export function message(overrides: Partial<Message>): Message {
+  return {
+    content: "",
+    conversation_id: conversation.id,
+    created_at: "2026-01-01T00:00:00Z",
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    pi_message_id: null,
+    role: "assistant",
+    seq: 1,
+    tool_args: null,
+    tool_name: null,
+    tool_result: null,
+    ...overrides,
+  };
+}
+
+export function duePrompt(overrides: {
+  choices?: string[];
+  kind?: DuePrompt["prompt"]["kind"];
+  promptId?: string;
+  question?: string;
+  sourceTitle?: string;
+}): DuePrompt {
+  const promptId = overrides.promptId ?? "018f0000-0000-7000-8000-0000000000c1";
+  const kind = overrides.kind ?? "multiple_choice";
+  return {
+    prompt: {
+      choices:
+        overrides.choices ??
+        (kind === "multiple_choice" ? ["One thread", "Many threads"] : []),
+      due_at: "2026-01-01T00:00:00Z",
+      id: promptId,
+      kind,
+      question: overrides.question ?? "What does async IO multiplex?",
+      study_item_id: "018f0000-0000-7000-8000-0000000000d1",
+    },
+    study_item: {
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      id: "018f0000-0000-7000-8000-0000000000d1",
+      memory_id: "018f0000-0000-7000-8000-0000000000e1",
+      source_title: overrides.sourceTitle ?? "Async IO Explained",
+      source_video_id: "v1",
+      state: "studying",
+      updated_at: "2026-01-01T00:00:00Z",
+    },
+  };
+}
+
+export function trigger(overrides: Partial<Trigger>): Trigger {
+  return {
+    action_kind: "message",
+    attempts: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    id: "018f0000-0000-7000-8000-0000000000aa",
+    last_error: null,
+    next_attempt_at: null,
+    next_fire_at: "2099-01-01T15:00:00Z",
+    payload: "call the dentist",
+    recurrence: "once",
+    status: "active",
+    timezone: "UTC",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    wall_time: null,
+    weekday: null,
+    ...overrides,
+  };
+}
+
+export function bucketItem(overrides: Partial<BucketItem>): BucketItem {
+  const title = overrides.title ?? "Dune";
+  return {
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00Z",
+    data: { title },
+    deleted_at: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    intent_context: "saved on a whim",
+    item_type: "movie",
+    state: "active",
+    title,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    ...overrides,
+  };
+}
+
+export function todo(overrides: Partial<Todo>): Todo {
+  return {
+    action: "call the dentist",
+    condition: null,
+    created_at: "2026-01-01T00:00:00Z",
+    deadline: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    status: "active",
+    trigger_id: null,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    waiting: false,
+    ...overrides,
+  };
+}
+
+export function memory(overrides: Partial<Memory>): Memory {
+  return {
+    content: "I prefer aisle seats",
+    created_at: "2026-01-01T00:00:00Z",
+    facets: {},
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    state: "loose",
+    tethered_at: null,
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    ...overrides,
+  };
+}
+
+export function proposalAction(
+  overrides: Partial<ProposalAction>,
+): ProposalAction {
+  return {
+    disposition: "approved",
+    display: null,
+    executed_at: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    kind: "send_email",
+    outcome: null,
+    outcome_detail: null,
+    params: { subject: "hello" },
+    scope: null,
+    seq: 0,
+    ...overrides,
+  };
+}
+
+export function proposal(overrides: Partial<Proposal>): Proposal {
+  return {
+    actions: [proposalAction({})],
+    consumer: "gmail-purge",
+    created_at: "2026-01-01T00:00:00Z",
+    decided_at: null,
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    producing_run_id: null,
+    rejection_reason: null,
+    state: "pending",
+    summary: "Purge old promotional emails",
+    title: "Purge 42 promotional emails",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    ...overrides,
+  };
+}
+
+export function grant(overrides: Partial<Grant>): Grant {
+  return {
+    granted_at: "2026-01-01T00:00:00Z",
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    kind: "send_email",
+    scope: null,
+    ...overrides,
+  };
+}
+
+export function grantSuggestion(
+  overrides: Partial<GrantSuggestion>,
+): GrantSuggestion {
+  return {
+    approved: 0,
+    edited: 0,
+    kind: "send_email",
+    last_rejection: null,
+    rejected: 0,
+    scope: null,
+    seen: 0,
+    ...overrides,
+  };
+}
+
+export function panel(overrides: Partial<Panel>): Panel {
+  return {
+    columns: [],
+    created_at: "2026-01-01T00:00:00Z",
+    facets: { domain: "finance" },
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    name: "finance",
+    position: 0,
+    query: null,
+    render_kind: "table",
+    updated_at: "2026-01-01T00:00:00Z",
+    vega_lite_spec: null,
+    version: 1,
+    window_days: null,
+    ...overrides,
+  };
+}
+
+export function artifact(overrides: Partial<Artifact>): Artifact {
+  return {
+    created_at: "2026-01-01T00:00:00Z",
+    html: "<p>hello</p>",
+    id: "018f0000-0000-7000-8000-0000000003aa",
+    title: "Untitled artifact",
+    version: 1,
+    ...overrides,
+  };
+}
+
+export const emptyTriageReport: BucketTriageReport = {
+  active: [],
+  duplicates: [],
+  purchase: { buy_now: [], missing_price_context: [], stale_watches: [] },
+  stale: [],
+  under_specified: [],
+};
+
+export function transcriptDecision(
+  overrides: Partial<TranscriptDecision>,
+): TranscriptDecision {
+  return {
+    attempts: 1,
+    channel: "PyConf",
+    last_error: "transcript unavailable",
+    title: "Captionless talk",
+    transcript_status: "needs_review",
+    video_id: "v1",
+    ...overrides,
+  };
+}
+
+export function notification(overrides: Partial<Notification>): Notification {
+  return {
+    action_kind: "message",
+    body: "call the dentist",
+    created_at: "2026-01-01T00:00:00Z",
+    id: "018f0000-0000-7000-8000-0000000000f1",
+    source_label: "call the dentist",
+    trigger_id: "018f0000-0000-7000-8000-0000000000aa",
+    ...overrides,
+  };
+}

@@ -7,9 +7,9 @@ import {
 } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError } from "../host/error";
 import {
-  FakeApi,
+  FakeHost,
   input,
   navigateTo,
   renderApp,
@@ -20,8 +20,8 @@ afterEach(cleanup);
 
 describe("Triggers panel", () => {
   test("keeps the creation form collapsed until Add reminder is chosen", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -34,11 +34,11 @@ describe("Triggers panel", () => {
   });
 
   test("lists existing reminders", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [trigger({ payload: "water the plants" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -48,8 +48,8 @@ describe("Triggers panel", () => {
   });
 
   test("creating a one-off reminder posts the right body", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
@@ -65,9 +65,9 @@ describe("Triggers panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
 
     await waitFor(() => {
-      expect(api.createTriggerCalls).toHaveLength(1);
+      expect(host.triggers.createTriggerCalls).toHaveLength(1);
     });
-    const body = api.createTriggerCalls[0];
+    const body = host.triggers.createTriggerCalls[0];
     expect(body.payload).toBe("stretch");
     expect(body.recurrence).toBe("once");
     expect(body.action_kind).toBe("message");
@@ -79,8 +79,8 @@ describe("Triggers panel", () => {
   });
 
   test("does not create a one-off reminder in the past", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
@@ -98,15 +98,15 @@ describe("Triggers panel", () => {
     // The `min` guard blocks submission natively; the JS check is a backstop.
     // Either way, no past reminder is ever posted.
     await Promise.resolve();
-    expect(api.createTriggerCalls).toHaveLength(0);
+    expect(host.triggers.createTriggerCalls).toHaveLength(0);
     expect(
       screen.queryByLabelText("Reminder: too late"),
     ).not.toBeInTheDocument();
   });
 
   test("the reminder time input forbids past instants via min", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
@@ -123,13 +123,13 @@ describe("Triggers panel", () => {
   });
 
   test("deleting a reminder calls the API with its version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({ id: "trig-1", payload: "renew passport", version: 3 }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -137,7 +137,7 @@ describe("Triggers panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
-      expect(api.deleteTriggerCalls).toEqual([
+      expect(host.triggers.deleteTriggerCalls).toEqual([
         { triggerId: "trig-1", version: 3 },
       ]);
     });
@@ -147,14 +147,14 @@ describe("Triggers panel", () => {
     // The row on screen still holds the pre-fire version; the server bumped it
     // when the trigger fired. Delete must not dead-end on a bare 409 — it should
     // refetch the current version and retry so the reminder actually goes away.
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({ id: "trig-1", payload: "renew passport", version: 1 }),
       ],
     });
-    api.serverTriggerVersions = { "trig-1": 2 };
-    renderApp(api);
+    host.triggers.serverTriggerVersions = { "trig-1": 2 };
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -162,7 +162,7 @@ describe("Triggers panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
-      expect(api.deleteTriggerCalls).toEqual([
+      expect(host.triggers.deleteTriggerCalls).toEqual([
         { triggerId: "trig-1", version: 1 },
         { triggerId: "trig-1", version: 2 },
       ]);
@@ -174,7 +174,7 @@ describe("Triggers panel", () => {
   });
 
   test("clicking Edit pre-fills the form with the reminder's values", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -189,7 +189,7 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -215,7 +215,7 @@ describe("Triggers panel", () => {
   });
 
   test("editing a one-off reminder pre-fills its fire time in local form", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -225,7 +225,7 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -240,7 +240,7 @@ describe("Triggers panel", () => {
   });
 
   test("saving an edit PUTs the new definition with the observed version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -253,7 +253,7 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -265,16 +265,16 @@ describe("Triggers panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
 
     await waitFor(() => {
-      expect(api.updateTriggerCalls).toHaveLength(1);
+      expect(host.triggers.updateTriggerCalls).toHaveLength(1);
     });
-    const call = api.updateTriggerCalls[0];
+    const call = host.triggers.updateTriggerCalls[0];
     expect(call.triggerId).toBe("trig-1");
     expect(call.body.version).toBe(3);
     expect(call.body.payload).toBe("water the garden");
     expect(call.body.recurrence).toBe("daily");
     expect(call.body.time_of_day).toBe("09:00");
     expect(call.body.timezone).toBe("UTC");
-    expect(api.createTriggerCalls).toHaveLength(0);
+    expect(host.triggers.createTriggerCalls).toHaveLength(0);
     // The form leaves edit mode and collapses once the save lands.
     expect(
       await screen.findByRole("button", { name: "Add reminder" }),
@@ -289,7 +289,7 @@ describe("Triggers panel", () => {
     // Same race as delete: the row on screen holds the pre-fire version. The
     // save must refetch the current version and retry once instead of
     // dead-ending on a bare 409.
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -301,8 +301,8 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    api.serverTriggerVersions = { "trig-1": 2 };
-    renderApp(api);
+    host.triggers.serverTriggerVersions = { "trig-1": 2 };
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -314,10 +314,10 @@ describe("Triggers panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
 
     await waitFor(() => {
-      expect(api.updateTriggerCalls).toHaveLength(2);
+      expect(host.triggers.updateTriggerCalls).toHaveLength(2);
     });
-    expect(api.updateTriggerCalls[0].body.version).toBe(1);
-    expect(api.updateTriggerCalls[1].body.version).toBe(2);
+    expect(host.triggers.updateTriggerCalls[0].body.version).toBe(1);
+    expect(host.triggers.updateTriggerCalls[1].body.version).toBe(2);
     expect(
       await screen.findByLabelText("Reminder: water the garden"),
     ).toBeInTheDocument();
@@ -329,7 +329,7 @@ describe("Triggers panel", () => {
     // someone (another tab, the agent) genuinely edited it. Auto-resubmitting
     // would silently overwrite that edit (docs/principles.md); the save must
     // stop, show the conflict, and refresh the list instead.
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -342,9 +342,11 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    api.serverTriggerVersions = { "trig-1": 2 };
-    api.serverTriggerEdits = { "trig-1": { payload: "water the cactus" } };
-    renderApp(api);
+    host.triggers.serverTriggerVersions = { "trig-1": 2 };
+    host.triggers.serverTriggerEdits = {
+      "trig-1": { payload: "water the cactus" },
+    };
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -358,7 +360,7 @@ describe("Triggers panel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "changed elsewhere",
     );
-    expect(api.updateTriggerCalls).toHaveLength(1);
+    expect(host.triggers.updateTriggerCalls).toHaveLength(1);
     // The list now shows the concurrent edit; the user's draft stays in the form.
     expect(
       await screen.findByLabelText("Reminder: water the cactus"),
@@ -371,16 +373,16 @@ describe("Triggers panel", () => {
     // fresh version and lands.
     fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
     await waitFor(() => {
-      expect(api.updateTriggerCalls).toHaveLength(2);
+      expect(host.triggers.updateTriggerCalls).toHaveLength(2);
     });
-    expect(api.updateTriggerCalls[1].body.version).toBe(2);
+    expect(host.triggers.updateTriggerCalls[1].body.version).toBe(2);
     expect(
       await screen.findByLabelText("Reminder: water the garden"),
     ).toBeInTheDocument();
   });
 
   test("a failed edit retry reports its own error, not the original 409", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -392,8 +394,11 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    api.updateTriggerRejections = [new ApiError(409), new ApiError(422)];
-    renderApp(api);
+    host.triggers.updateTriggerRejections = [
+      new ApiError(409),
+      new ApiError(422),
+    ];
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -405,7 +410,7 @@ describe("Triggers panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
 
     await waitFor(() => {
-      expect(api.updateTriggerCalls).toHaveLength(2);
+      expect(host.triggers.updateTriggerCalls).toHaveLength(2);
     });
     const alert = await screen.findByRole("alert");
     // The 422 from the retry is what actually stopped the save; parroting the
@@ -415,14 +420,17 @@ describe("Triggers panel", () => {
   });
 
   test("a failed delete retry reports its own error, not the original 409", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({ id: "trig-1", payload: "renew passport", version: 1 }),
       ],
     });
-    api.deleteTriggerRejections = [new ApiError(409), new ApiError(500)];
-    renderApp(api);
+    host.triggers.deleteTriggerRejections = [
+      new ApiError(409),
+      new ApiError(500),
+    ];
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -430,7 +438,7 @@ describe("Triggers panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
-      expect(api.deleteTriggerCalls).toHaveLength(2);
+      expect(host.triggers.deleteTriggerCalls).toHaveLength(2);
     });
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(new ApiError(500).message);
@@ -438,7 +446,7 @@ describe("Triggers panel", () => {
   });
 
   test("editing another reminder clears the previous one's inactive-branch fields", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -457,7 +465,7 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -476,7 +484,7 @@ describe("Triggers panel", () => {
   });
 
   test("editing another reminder resets the recurring fields to defaults", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -495,7 +503,7 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -521,7 +529,7 @@ describe("Triggers panel", () => {
   test("saving an untouched one-off edit preserves the seconds of fire_at", async () => {
     // Agent-created triggers carry seconds; the pre-filled datetime-local stamp
     // must not truncate them, or an untouched save shifts the instant.
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [
         trigger({
@@ -531,7 +539,7 @@ describe("Triggers panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -540,9 +548,9 @@ describe("Triggers panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
 
     await waitFor(() => {
-      expect(api.updateTriggerCalls).toHaveLength(1);
+      expect(host.triggers.updateTriggerCalls).toHaveLength(1);
     });
-    const fireAt = api.updateTriggerCalls[0].body.fire_at;
+    const fireAt = host.triggers.updateTriggerCalls[0].body.fire_at;
     expect(fireAt).not.toBeNull();
     expect(new Date(fireAt ?? "").getTime()).toBe(
       new Date("2099-01-01T15:00:42Z").getTime(),
@@ -550,8 +558,8 @@ describe("Triggers panel", () => {
   });
 
   test("creating a reminder collapses the form", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
@@ -570,7 +578,7 @@ describe("Triggers panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
 
     await waitFor(() => {
-      expect(api.createTriggerCalls).toHaveLength(1);
+      expect(host.triggers.createTriggerCalls).toHaveLength(1);
     });
     expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
     expect(
@@ -579,11 +587,11 @@ describe("Triggers panel", () => {
   });
 
   test("cancelling an edit resets the form without saving", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       triggers: [trigger({ id: "trig-1", payload: "water the plants" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
@@ -601,13 +609,13 @@ describe("Triggers panel", () => {
     expect(
       screen.queryByRole("button", { name: "Cancel" }),
     ).not.toBeInTheDocument();
-    expect(api.updateTriggerCalls).toHaveLength(0);
-    expect(api.createTriggerCalls).toHaveLength(0);
+    expect(host.triggers.updateTriggerCalls).toHaveLength(0);
+    expect(host.triggers.createTriggerCalls).toHaveLength(0);
   });
 
   test("the reminder action help text distinguishes the two kinds", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(

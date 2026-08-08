@@ -15,14 +15,14 @@ import {
   segmentedPanelId,
   segmentedTabId,
 } from "../components/segmented-control";
-import { ApiError } from "../api";
 import type {
+  BucketHost,
   BucketItem,
   BucketItemType,
   BucketTriageReport,
   DedupAdvisory,
-  TetherApi,
-} from "../api";
+} from "../host/bucket";
+import { ApiError } from "../host/error";
 import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -125,7 +125,7 @@ function metadataLine(item: BucketItem): string | undefined {
 const ALL_BUCKET_VIEWS: BucketView[] = ["active", "history", "triage"];
 
 export function BucketPanel(props: {
-  api: TetherApi;
+  api: BucketHost;
   // Hides sub-views from the toggle and its initial selection (#250): the
   // Inbox page only ever wants Triage (the review-queue obligation), and
   // Browse only wants Active/History (look-things-up, not adjudication).

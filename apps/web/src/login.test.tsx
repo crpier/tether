@@ -1,14 +1,14 @@
 import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, input, renderApp } from "./testing/harness";
+import { FakeHost, input, renderApp } from "./testing/harness";
 
 afterEach(cleanup);
 
 describe("Login screen", () => {
   test("unauthenticated users log in before seeing chat", async () => {
-    const api = new FakeApi({ authenticated: false });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: false });
+    renderApp(host);
 
     expect(
       await screen.findByRole("heading", { name: "Sign in to Tether" }),
@@ -22,6 +22,6 @@ describe("Login screen", () => {
     expect(
       await screen.findByRole("heading", { name: "Tether chat" }),
     ).toBeInTheDocument();
-    expect(api.loginPassword).toBe("correct horse battery staple");
+    expect(host.auth.loginPassword).toBe("correct horse battery staple");
   });
 });

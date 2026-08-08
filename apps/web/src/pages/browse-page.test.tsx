@@ -1,14 +1,14 @@
 import { cleanup, fireEvent, screen, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, navigateTo, renderApp } from "../testing/harness";
+import { FakeHost, navigateTo, renderApp } from "../testing/harness";
 
 afterEach(cleanup);
 
 describe("Browse page", () => {
   test("opens on the memory corpus, not the review queue", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     await screen.findByRole("heading", { name: "Browse" });
 
@@ -21,8 +21,8 @@ describe("Browse page", () => {
   });
 
   test("switches between Bucket, Todos, Reminders and Panels tabs", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     await screen.findByRole("heading", { name: "Browse" });
 

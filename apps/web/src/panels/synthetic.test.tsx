@@ -3,7 +3,7 @@ import { fireEvent } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
-  FakeApi,
+  FakeHost,
   memory,
   navigateTo,
   panel,
@@ -14,8 +14,8 @@ afterEach(cleanup);
 
 describe("Synthetic panels", () => {
   test("an empty list explains panels and opens a Chat starter", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
@@ -30,7 +30,7 @@ describe("Synthetic panels", () => {
 
   test("renders a saved panel's results as a table with facet columns", async () => {
     const finance = panel({ columns: ["due"], name: "finance" });
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       panelResults: {
         [finance.id]: {
@@ -47,7 +47,7 @@ describe("Synthetic panels", () => {
       },
       panels: [finance],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
@@ -61,8 +61,8 @@ describe("Synthetic panels", () => {
 
   test("an empty panel says so instead of showing a bare table", async () => {
     const empty = panel({ name: "travel" });
-    const api = new FakeApi({ authenticated: true, panels: [empty] });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true, panels: [empty] });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
@@ -74,7 +74,7 @@ describe("Synthetic panels", () => {
 
   test("caps are reported as showing N of M", async () => {
     const broad = panel({ name: "everything-finance" });
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       panelResults: {
         [broad.id]: {
@@ -84,7 +84,7 @@ describe("Synthetic panels", () => {
       },
       panels: [broad],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
@@ -98,7 +98,7 @@ describe("Synthetic panels", () => {
       render_kind: "vega-lite",
       vega_lite_spec: "{not valid json",
     });
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       panelResults: {
         [chart.id]: {
@@ -108,7 +108,7 @@ describe("Synthetic panels", () => {
       },
       panels: [chart],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
@@ -123,8 +123,8 @@ describe("Synthetic panels", () => {
 
   test("deleting a panel calls the API with its version and removes it", async () => {
     const doomed = panel({ name: "old-panel", version: 3 });
-    const api = new FakeApi({ authenticated: true, panels: [doomed] });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true, panels: [doomed] });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
@@ -134,7 +134,7 @@ describe("Synthetic panels", () => {
     );
 
     await waitFor(() => {
-      expect(api.deletePanelCalls).toEqual([
+      expect(host.panels.deletePanelCalls).toEqual([
         { panelId: doomed.id, version: 3 },
       ]);
     });

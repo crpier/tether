@@ -9,7 +9,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { formatDate } from "../lib/format";
 import {
-  FakeApi,
+  FakeHost,
   input,
   memory,
   navigateTo,
@@ -32,7 +32,7 @@ async function openCorpus(): Promise<HTMLElement> {
 
 describe("Memories panel (Browse corpus)", () => {
   test("lists tethered memories with edit and reject but no tether", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -43,7 +43,7 @@ describe("Memories panel (Browse corpus)", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
 
     const panel = await openCorpus();
     const row = await within(panel).findByLabelText("Memory: Trusted fact");
@@ -60,7 +60,7 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("editing a memory saves the new content at the observed version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -71,7 +71,7 @@ describe("Memories panel (Browse corpus)", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
@@ -81,7 +81,7 @@ describe("Memories panel (Browse corpus)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(api.editMemoryCalls).toEqual([
+      expect(host.memories.editMemoryCalls).toEqual([
         { content: "Window seats", memoryId: "mem-1", version: 2 },
       ]);
     });
@@ -92,13 +92,13 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("cancelling an edit restores the row without a request", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({ content: "Aisle seats", id: "mem-1", state: "tethered" }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
@@ -112,11 +112,11 @@ describe("Memories panel (Browse corpus)", () => {
       await screen.findByLabelText("Memory: Aisle seats"),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Memory content")).not.toBeInTheDocument();
-    expect(api.editMemoryCalls).toHaveLength(0);
+    expect(host.memories.editMemoryCalls).toHaveLength(0);
   });
 
   test("an edit 409 with an unchanged basis retries with the fresh version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -130,8 +130,8 @@ describe("Memories panel (Browse corpus)", () => {
     // The version moved (e.g. a concurrent edit from another tab landed
     // first) but the content basis this edit was formulated against is
     // intact, so the retry is safe.
-    api.serverMemoryVersions = { "mem-1": 2 };
-    renderApp(api);
+    host.memories.serverMemoryVersions = { "mem-1": 2 };
+    renderApp(host);
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
@@ -142,7 +142,7 @@ describe("Memories panel (Browse corpus)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(api.editMemoryCalls).toEqual([
+      expect(host.memories.editMemoryCalls).toEqual([
         { content: "Window seats", memoryId: "mem-1", version: 1 },
         { content: "Window seats", memoryId: "mem-1", version: 2 },
       ]);
@@ -154,7 +154,7 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("an edit 409 with concurrently changed content re-arms the editor instead of clobbering", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -165,9 +165,11 @@ describe("Memories panel (Browse corpus)", () => {
         }),
       ],
     });
-    api.serverMemoryVersions = { "mem-1": 2 };
-    api.serverMemoryEdits = { "mem-1": { content: "Emergency exit seats" } };
-    renderApp(api);
+    host.memories.serverMemoryVersions = { "mem-1": 2 };
+    host.memories.serverMemoryEdits = {
+      "mem-1": { content: "Emergency exit seats" },
+    };
+    renderApp(host);
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
@@ -180,7 +182,7 @@ describe("Memories panel (Browse corpus)", () => {
     // No blind retry: one call went out, the editor stays open with the
     // draft, and the conflict is reported.
     await waitFor(() => {
-      expect(api.editMemoryCalls).toHaveLength(1);
+      expect(host.memories.editMemoryCalls).toHaveLength(1);
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "changed while you were editing",
@@ -191,7 +193,7 @@ describe("Memories panel (Browse corpus)", () => {
     // A deliberate second save wins against the fresh version.
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      expect(api.editMemoryCalls).toEqual([
+      expect(host.memories.editMemoryCalls).toEqual([
         { content: "Window seats", memoryId: "mem-1", version: 1 },
         { content: "Window seats", memoryId: "mem-1", version: 2 },
       ]);
@@ -202,7 +204,7 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("rejecting a tethered memory calls the API with its version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -213,14 +215,14 @@ describe("Memories panel (Browse corpus)", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     const panel = await openCorpus();
 
     const row = await within(panel).findByLabelText("Memory: Aisle seats");
     fireEvent.click(within(row).getByRole("button", { name: /^Reject/ }));
 
     await waitFor(() => {
-      expect(api.rejectMemoryCalls).toEqual([
+      expect(host.memories.rejectMemoryCalls).toEqual([
         { memoryId: "mem-1", version: 3 },
       ]);
     });
@@ -232,7 +234,7 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("typing a corpus search lists matches from the search endpoint", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -249,7 +251,7 @@ describe("Memories panel (Browse corpus)", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
 
     const panel = await openCorpus();
     await screen.findByLabelText("Memory: Allergic to peanuts");
@@ -258,7 +260,7 @@ describe("Memories panel (Browse corpus)", () => {
     });
 
     await waitFor(() => {
-      expect(api.searchMemoriesCalls).toContain("aisle");
+      expect(host.memories.searchMemoriesCalls).toContain("aisle");
     });
     expect(
       await screen.findByLabelText("Memory: Prefers aisle seats"),
@@ -269,7 +271,7 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("corpus search keystrokes are debounced into one request per pause", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({
@@ -280,7 +282,7 @@ describe("Memories panel (Browse corpus)", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
 
     const panel = await openCorpus();
     await screen.findByLabelText("Memory: Prefers aisle seats");
@@ -290,35 +292,35 @@ describe("Memories panel (Browse corpus)", () => {
     fireEvent.input(field, { target: { value: "a" } });
     fireEvent.input(field, { target: { value: "ai" } });
     fireEvent.input(field, { target: { value: "aisle" } });
-    expect(api.searchMemoriesCalls).toEqual([]);
+    expect(host.memories.searchMemoriesCalls).toEqual([]);
     await vi.advanceTimersByTimeAsync(150);
     vi.useRealTimers();
 
     await waitFor(() => {
-      expect(api.searchMemoriesCalls).toEqual(["aisle"]);
+      expect(host.memories.searchMemoriesCalls).toEqual(["aisle"]);
     });
   });
 
   test("a memories invalidate frame refetches the corpus", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({ content: "Old fact", state: "tethered", id: "mem-1" }),
       ],
     });
-    const bus = renderApp(api);
+    const bus = renderApp(host);
 
     await openCorpus();
     await screen.findByLabelText("Memory: Old fact");
-    const before = api.listMemoriesCalls;
-    api.storedMemories = [
-      ...api.storedMemories,
+    const before = host.memories.listMemoriesCalls;
+    host.memories.storedMemories = [
+      ...host.memories.storedMemories,
       memory({ content: "Captured by the agent", state: "tethered" }),
     ];
     bus.emit({ keys: ["memories", "review-queue"], type: "invalidate" });
 
     await waitFor(() => {
-      expect(api.listMemoriesCalls).toBeGreaterThan(before);
+      expect(host.memories.listMemoriesCalls).toBeGreaterThan(before);
     });
     expect(
       await screen.findByLabelText("Memory: Captured by the agent"),
@@ -326,8 +328,8 @@ describe("Memories panel (Browse corpus)", () => {
   });
 
   test("an empty corpus names the view it belongs to", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     const panel = await openCorpus();
     expect(

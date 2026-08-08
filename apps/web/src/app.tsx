@@ -6,8 +6,7 @@ import {
 } from "@tanstack/solid-query";
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 
-import { createRestApi } from "./api";
-import type { TetherApi } from "./api";
+import { createRestHost, type WebHost } from "./host";
 import type { AppContextValue } from "./app-context";
 import { AppContextProvider } from "./app-context";
 import { createBrowserChatBus } from "./chat-bus";
@@ -31,7 +30,7 @@ import { SettingsPage } from "./pages/settings-page";
 import { Shell } from "./shell";
 
 export interface AppDependencies {
-  api?: TetherApi;
+  host?: WebHost;
   createChatBus?: CreateChatBus;
 }
 
@@ -87,8 +86,8 @@ function ConnectedApp(props: Required<AppDependencies>) {
   });
 
   const value: AppContextValue = {
-    api: props.api,
     bus,
+    host: props.host,
     chatFrame,
     connection,
   };
@@ -109,7 +108,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
 
 function AppBody(props: Required<AppDependencies>) {
   const sessionQuery = createQuery(() => ({
-    queryFn: () => props.api.getSession(),
+    queryFn: () => props.host.auth.getSession(),
     queryKey: queryKeys.session,
   }));
 
@@ -120,7 +119,7 @@ function AppBody(props: Required<AppDependencies>) {
     >
       {(session) => (
         <Show
-          fallback={<LoginScreen api={props.api} />}
+          fallback={<LoginScreen auth={props.host.auth} />}
           when={session().authenticated}
         >
           <ConnectedApp {...props} />
@@ -132,8 +131,8 @@ function AppBody(props: Required<AppDependencies>) {
 
 export function App(props: AppDependencies = {}) {
   const dependencies: Required<AppDependencies> = {
-    api: props.api ?? createRestApi(),
     createChatBus: props.createChatBus ?? createBrowserChatBus,
+    host: props.host ?? createRestHost(),
   };
   const queryClient = makeQueryClient();
 

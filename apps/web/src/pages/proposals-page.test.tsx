@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
-  FakeApi,
+  FakeHost,
   grant,
   grantSuggestion,
   navigateTo,
@@ -20,13 +20,13 @@ afterEach(cleanup);
 
 describe("Proposals page", () => {
   test("lists pending proposals master-detail and shows the selected detail", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       proposals: [
         proposal({ id: "prop-1", title: "Purge 42 promotional emails" }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
@@ -51,11 +51,11 @@ describe("Proposals page", () => {
   });
 
   test("approving a proposal from the detail pane calls the API", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       proposals: [proposal({ id: "prop-1", title: "Purge emails" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
@@ -73,18 +73,18 @@ describe("Proposals page", () => {
     fireEvent.click(within(detail!).getByRole("button", { name: /^Approve/ }));
 
     await waitFor(() => {
-      expect(api.approveProposalCalls).toEqual([
+      expect(host.proposals.approveProposalCalls).toEqual([
         { deselectedActionIds: [], proposalId: "prop-1", version: 1 },
       ]);
     });
   });
 
   test("switching to Grants shows active grants", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       grants: [grant({ id: "grant-1", kind: "send_email" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
@@ -96,8 +96,8 @@ describe("Proposals page", () => {
   });
 
   test("view switcher exposes tabs and selected panel state", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
@@ -129,8 +129,8 @@ describe("Proposals page", () => {
         title: `Decision ${index.toString().padStart(2, "0")}`,
       }),
     );
-    const api = new FakeApi({ authenticated: true, proposals: decided });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true, proposals: decided });
+    renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
@@ -167,11 +167,11 @@ describe("Proposals page", () => {
         seen: index + 1,
       }),
     );
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       grantSuggestions: suggestions,
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 

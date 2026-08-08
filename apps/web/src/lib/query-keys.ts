@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/solid-query";
 
-import type { ProposalState } from "../api";
+import type { ProposalState } from "../host/proposals";
 
 export const queryKeys = {
   // The "bucket-items" prefix matches the host's InvalidateEvent key, so the

@@ -1,7 +1,7 @@
 import { createQuery } from "@tanstack/solid-query";
 import { For, Match, Show, Switch } from "solid-js";
 
-import type { TetherApi } from "../api";
+import type { YouTubeHost } from "../host/youtube";
 import { formatDateTime, formatSyncTimestamp } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -15,7 +15,7 @@ function formatUntil(iso: string): string {
   return formatDateTime(when);
 }
 
-export function YouTubeSyncPanel(props: { api: TetherApi }) {
+export function YouTubeSyncPanel(props: { api: YouTubeHost }) {
   const statusQuery = createQuery(() => ({
     queryFn: () => props.api.getYouTubeSyncStatus(),
     queryKey: queryKeys.youtube,

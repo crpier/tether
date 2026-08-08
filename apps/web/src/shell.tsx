@@ -3,7 +3,7 @@ import { createQuery } from "@tanstack/solid-query";
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { useAppContext } from "./app-context";
+import { useHost } from "./app-context";
 import { cx } from "./lib/cva";
 import { queryKeys } from "./lib/query-keys";
 
@@ -19,26 +19,30 @@ interface NavItem {
 // every kind awaiting adjudication: loose-memory review, bucket triage
 // findings, due recall prompts, and undismissed fired-reminder notifications.
 function useBadgeCounts() {
-  const { api } = useAppContext();
+  const bucket = useHost("bucket");
+  const memories = useHost("memories");
+  const notifications = useHost("notifications");
+  const proposals = useHost("proposals");
+  const recall = useHost("recall");
 
   const proposalsQuery = createQuery(() => ({
-    queryFn: () => api.listProposals("pending"),
+    queryFn: () => proposals.listProposals("pending"),
     queryKey: queryKeys.proposalsState("pending"),
   }));
   const looseMemoriesQuery = createQuery(() => ({
-    queryFn: () => api.listMemories("loose"),
+    queryFn: () => memories.listMemories("loose"),
     queryKey: queryKeys.memoriesState("loose"),
   }));
   const bucketTriageQuery = createQuery(() => ({
-    queryFn: () => api.getBucketTriage(),
+    queryFn: () => bucket.getBucketTriage(),
     queryKey: queryKeys.bucketItemsView("triage"),
   }));
   const recallQuery = createQuery(() => ({
-    queryFn: () => api.listDueRecallPrompts(),
+    queryFn: () => recall.listDueRecallPrompts(),
     queryKey: queryKeys.recall,
   }));
   const notificationsQuery = createQuery(() => ({
-    queryFn: () => api.listNotifications(),
+    queryFn: () => notifications.listNotifications(),
     queryKey: queryKeys.notifications,
   }));
 

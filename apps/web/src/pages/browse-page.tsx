@@ -1,6 +1,6 @@
 import { Match, Switch, createSignal } from "solid-js";
 
-import { useAppContext } from "../app-context";
+import { useHost } from "../app-context";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -19,7 +19,11 @@ type BrowseView = "memories" | "bucket" | "todos" | "reminders" | "panels";
 // here is awaiting adjudication, so a page-level segmented control between
 // the existing panel components is enough room.
 export function BrowsePage() {
-  const { api } = useAppContext();
+  const bucket = useHost("bucket");
+  const memories = useHost("memories");
+  const panels = useHost("panels");
+  const todos = useHost("todos");
+  const triggers = useHost("triggers");
   const [view, setView] = createSignal<BrowseView>("memories");
 
   return (
@@ -57,7 +61,7 @@ export function BrowsePage() {
               role="tabpanel"
             >
               {/* Review lives on the Inbox page; Browse only opens on Corpus. */}
-              <MemoriesPanel api={api} initialView="corpus" />
+              <MemoriesPanel api={memories} initialView="corpus" />
             </div>
           </Match>
           <Match when={view() === "bucket"}>
@@ -66,7 +70,7 @@ export function BrowsePage() {
               id={segmentedPanelId("browse-view", "bucket")}
               role="tabpanel"
             >
-              <BucketPanel api={api} hiddenViews={["triage"]} />
+              <BucketPanel api={bucket} hiddenViews={["triage"]} />
             </div>
           </Match>
           <Match when={view() === "todos"}>
@@ -75,7 +79,7 @@ export function BrowsePage() {
               id={segmentedPanelId("browse-view", "todos")}
               role="tabpanel"
             >
-              <TodosPanel api={api} />
+              <TodosPanel api={todos} />
             </div>
           </Match>
           <Match when={view() === "reminders"}>
@@ -84,7 +88,7 @@ export function BrowsePage() {
               id={segmentedPanelId("browse-view", "reminders")}
               role="tabpanel"
             >
-              <TriggersPanel api={api} />
+              <TriggersPanel api={triggers} />
             </div>
           </Match>
           <Match when={view() === "panels"}>
@@ -93,7 +97,7 @@ export function BrowsePage() {
               id={segmentedPanelId("browse-view", "panels")}
               role="tabpanel"
             >
-              <SyntheticPanels api={api} />
+              <SyntheticPanels api={panels} />
             </div>
           </Match>
         </Switch>

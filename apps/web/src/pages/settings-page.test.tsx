@@ -1,14 +1,14 @@
 import { cleanup, fireEvent, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, navigateTo, renderApp } from "../testing/harness";
+import { FakeHost, navigateTo, renderApp } from "../testing/harness";
 
 afterEach(cleanup);
 
 describe("Settings page", () => {
   test("shows YouTube sync status, push toggle and logout", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
     await screen.findByRole("heading", { name: "Settings" });
 
@@ -22,8 +22,8 @@ describe("Settings page", () => {
   });
 
   test("shows the server-owned model provider connection", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
 
     const provider = await screen.findByRole("region", {
@@ -37,22 +37,22 @@ describe("Settings page", () => {
   });
 
   test("starts device recovery and shows the OpenAI code", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.providerAuthStatus = {
+    const host = new FakeHost({ authenticated: true });
+    host.providerAuth.providerAuthStatus = {
       error: null,
       expires_in_seconds: null,
       state: "disconnected",
       user_code: null,
       verification_uri: null,
     };
-    api.nextProviderAuthStatus = {
+    host.providerAuth.nextProviderAuthStatus = {
       error: null,
       expires_in_seconds: 900,
       state: "authorizing",
       user_code: "ABCD-EFGH",
       verification_uri: "https://auth.openai.com/codex/device",
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Settings");
 
     fireEvent.click(
@@ -66,29 +66,29 @@ describe("Settings page", () => {
   });
 
   test("polls an active recovery until the server credential connects", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.providerAuthStatus = {
+    const host = new FakeHost({ authenticated: true });
+    host.providerAuth.providerAuthStatus = {
       error: null,
       expires_in_seconds: null,
       state: "disconnected",
       user_code: null,
       verification_uri: null,
     };
-    api.nextProviderAuthStatus = {
+    host.providerAuth.nextProviderAuthStatus = {
       error: null,
       expires_in_seconds: 900,
       state: "authorizing",
       user_code: "ABCD-EFGH",
       verification_uri: "https://auth.openai.com/codex/device",
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Settings");
     fireEvent.click(
       await screen.findByRole("button", { name: "Connect ChatGPT" }),
     );
     await screen.findByText("ABCD-EFGH");
 
-    api.providerAuthStatus = {
+    host.providerAuth.providerAuthStatus = {
       error: null,
       expires_in_seconds: null,
       state: "connected",
@@ -100,15 +100,15 @@ describe("Settings page", () => {
   });
 
   test("cancels an active provider recovery", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.providerAuthStatus = {
+    const host = new FakeHost({ authenticated: true });
+    host.providerAuth.providerAuthStatus = {
       error: null,
       expires_in_seconds: 900,
       state: "authorizing",
       user_code: "ABCD-EFGH",
       verification_uri: "https://auth.openai.com/codex/device",
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Settings");
 
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -116,19 +116,19 @@ describe("Settings page", () => {
     expect(
       await screen.findByRole("button", { name: "Connect ChatGPT" }),
     ).toBeInTheDocument();
-    expect(api.cancelProviderAuthCalls).toBe(1);
+    expect(host.providerAuth.cancelProviderAuthCalls).toBe(1);
   });
 
   test("logging out clears the session", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
     await screen.findByRole("heading", { name: "Settings" });
 
     fireEvent.click(await screen.findByRole("button", { name: "Log out" }));
 
     await waitFor(() => {
-      expect(api.authenticated).toBe(false);
+      expect(host.auth.authenticated).toBe(false);
     });
     expect(
       await screen.findByRole("heading", { name: "Sign in to Tether" }),

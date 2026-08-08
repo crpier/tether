@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/solid-query";
 import { Show, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 
-import type { TetherApi } from "./api";
+import type { AuthHost } from "./host/auth";
 import { queryKeys } from "./lib/query-keys";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,7 +11,7 @@ import {
   TextFieldLabel,
 } from "@/components/ui/text-field";
 
-export function LoginScreen(props: { api: TetherApi }) {
+export function LoginScreen(props: { auth: AuthHost }) {
   const queryClient = useQueryClient();
   const [password, setPassword] = createSignal("");
   const [error, setError] = createSignal<string | undefined>();
@@ -21,7 +21,7 @@ export function LoginScreen(props: { api: TetherApi }) {
     setSubmitting(true);
     setError(undefined);
     try {
-      await props.api.login(password());
+      await props.auth.login(password());
       setPassword("");
       await queryClient.invalidateQueries({ queryKey: queryKeys.session });
     } catch (caught) {
