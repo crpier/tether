@@ -146,7 +146,6 @@ export function ProposalsPage() {
     queryKey: queryKeys.proposalsState("pending"),
   }));
   const historyQuery = createQuery(() => ({
-    enabled: view() === "history",
     queryFn: () => api.listProposals(),
     queryKey: queryKeys.proposalsAll,
   }));
@@ -234,9 +233,9 @@ export function ProposalsPage() {
     void queryClient.refetchQueries({
       queryKey: queryKeys.proposalsState("pending"),
     });
-    if (view() === "history") {
-      void queryClient.refetchQueries({ queryKey: queryKeys.proposalsAll });
-    }
+    void queryClient.refetchQueries({
+      queryKey: queryKeys.proposalsAll,
+    });
   };
 
   const patchProposalCache = (fresh: Proposal) => {
