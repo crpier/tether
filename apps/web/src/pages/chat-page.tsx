@@ -185,6 +185,7 @@ function WorkingIndicator(props: { startedAt: number }) {
 
 function MessageRow(props: {
   row: TimelineRow;
+  transcriptItemNumber: number;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
 }) {
   return (
@@ -253,12 +254,13 @@ function MessageRow(props: {
           });
           return (
             <article
-              aria-label="Tether reasoning"
+              aria-label={`Tether reasoning for transcript item ${props.transcriptItemNumber.toString()}`}
               class="bg-muted/50 text-muted-foreground mr-auto max-w-[96%] rounded-lg px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%]"
             >
               <button
                 type="button"
                 aria-expanded={open()}
+                aria-label={`Thinking details for transcript item ${props.transcriptItemNumber.toString()}`}
                 class="flex w-full items-center gap-1 text-left"
                 onClick={() => {
                   setOpen((value) => !value);
@@ -392,8 +394,12 @@ function MessageRows(props: {
         }}
       >
         <For each={props.rows}>
-          {(row) => (
-            <MessageRow onOpenArtifact={props.onOpenArtifact} row={row} />
+          {(row, index) => (
+            <MessageRow
+              onOpenArtifact={props.onOpenArtifact}
+              row={row}
+              transcriptItemNumber={index() + 1}
+            />
           )}
         </For>
         <Show when={props.working && props.startedAt !== null}>
