@@ -446,10 +446,29 @@ function MessageRows(props: {
   );
 }
 
+interface QueuedPrompt {
+  id: number;
+  content: string;
+}
+
 export function ChatPage() {
   const { api, bus, chatFrame, connection } = useAppContext();
   const queryClient = useQueryClient();
   const [draft, setDraft] = createSignal("");
+  const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([]);
+  // Keep a dispatched prompt until the host accepts it with `user_message`.
+  // An earlier error returns it to the queue instead of silently losing it.
+  const [outboundPrompt, setOutboundPrompt] = createSignal<QueuedPrompt | null>(
+    null,
+  );
+  const [editingPromptId, setEditingPromptId] = createSignal<number | null>(
+    null,
+  );
+  const [editingPromptContent, setEditingPromptContent] = createSignal("");
+  // `abort_ack` can precede the generation task finishing. Wait for
+  // `agent_end` before sending again so the host never sees an overlap.
+  const [awaitingAgentEnd, setAwaitingAgentEnd] = createSignal(false);
+  let nextQueuedPromptId = 1;
   const [error, setError] = createSignal<string | undefined>();
   const [loadedSkillCount, setLoadedSkillCount] = createSignal<
     number | undefined
@@ -467,7 +486,8 @@ export function ChatPage() {
     null,
   );
   const generating = createMemo(() => turn().generating);
-  const canSend = createMemo(() => !generating() && draft().trim().length > 0);
+  const busy = createMemo(() => generating() || awaitingAgentEnd());
+  const canSend = createMemo(() => draft().trim().length > 0);
 
   const conversationsQuery = createQuery(() => ({
     queryFn: () => api.listConversations(),
@@ -610,6 +630,24 @@ export function ChatPage() {
     setMessagesRefresh((refresh) => refresh + 1);
   };
 
+  const dispatchPrompt = (prompt: QueuedPrompt, conversationId: string) => {
+    setAwaitingAgentEnd(false);
+    setInterrupted(false);
+    setOutboundPrompt(prompt);
+    setTurn(startTurn(prompt.content, Date.now()));
+    bus()?.sendPrompt(conversationId, prompt.content);
+  };
+
+  const dispatchNextQueuedPrompt = () => {
+    const id = conversationId();
+    const next = queuedPrompts().at(0);
+    if (id === undefined || next === undefined) {
+      return;
+    }
+    setQueuedPrompts((current) => current.slice(1));
+    dispatchPrompt(next, id);
+  };
+
   const handleFrame = (frame: ChatFrame) => {
     if (frame.type === "invalidate") {
       // The global handler (app.tsx) already refetches every named key; a
@@ -643,14 +681,27 @@ export function ChatPage() {
       return;
     }
     setTurn((current) => reduceFrame(current, frame, Date.now()));
+    if (frame.event === "user_message") {
+      setOutboundPrompt(null);
+    }
     if (frame.event === "abort_ack") {
       setInterrupted(true);
     }
     if (frame.event === "error") {
       setError(frame.detail ?? "Chat error");
+      const rejected = outboundPrompt();
+      if (rejected !== null) {
+        setQueuedPrompts((current) => [rejected, ...current]);
+        setOutboundPrompt(null);
+      }
     }
     if (frame.event === "agent_end" || frame.event === "error") {
       rehydrate();
+    }
+    if (frame.event === "agent_end") {
+      setOutboundPrompt(null);
+      setAwaitingAgentEnd(false);
+      dispatchNextQueuedPrompt();
     }
   };
 
@@ -659,7 +710,9 @@ export function ChatPage() {
   createEffect(() => {
     const frame = chatFrame();
     if (frame !== undefined) {
-      handleFrame(frame);
+      // Frame handling reads queue state; don't make those reads dependencies
+      // that replay the same frame whenever the queue changes.
+      untrack(() => handleFrame(frame));
     }
   });
 
@@ -671,9 +724,61 @@ export function ChatPage() {
     }
     setDraft("");
     setError(undefined);
-    setInterrupted(false);
-    setTurn(startTurn(content, Date.now()));
-    bus()?.sendPrompt(id, content);
+    const prompt = { content, id: nextQueuedPromptId };
+    nextQueuedPromptId += 1;
+    if (busy()) {
+      setQueuedPrompts((current) => [...current, prompt]);
+      return;
+    }
+    dispatchPrompt(prompt, id);
+  };
+
+  const editQueuedPrompt = (prompt: QueuedPrompt) => {
+    setEditingPromptId(prompt.id);
+    setEditingPromptContent(prompt.content);
+  };
+
+  const saveQueuedPrompt = (promptId: number) => {
+    const content = editingPromptContent().trim();
+    if (content.length === 0) {
+      return;
+    }
+    setQueuedPrompts((current) =>
+      current.map((prompt) =>
+        prompt.id === promptId ? { ...prompt, content } : prompt,
+      ),
+    );
+    setEditingPromptId(null);
+    setEditingPromptContent("");
+  };
+
+  const cancelQueuedPrompt = (promptId: number) => {
+    setQueuedPrompts((current) =>
+      current.filter((prompt) => prompt.id !== promptId),
+    );
+    if (editingPromptId() === promptId) {
+      setEditingPromptId(null);
+      setEditingPromptContent("");
+    }
+  };
+
+  const sendQueuedPromptNow = (promptId: number) => {
+    const id = conversationId();
+    if (id === undefined || awaitingAgentEnd()) {
+      return;
+    }
+    setQueuedPrompts((current) => {
+      const selected = current.find((prompt) => prompt.id === promptId);
+      return selected === undefined
+        ? current
+        : [selected, ...current.filter((prompt) => prompt.id !== promptId)];
+    });
+    if (!busy()) {
+      dispatchNextQueuedPrompt();
+      return;
+    }
+    setAwaitingAgentEnd(true);
+    bus()?.abort(id);
   };
 
   const handleVoiceTranscript = (transcript: string, mode: VoiceMode) => {
@@ -698,6 +803,12 @@ export function ChatPage() {
         }
         await api.clearConversation(id);
         setInterrupted(false);
+        setAwaitingAgentEnd(false);
+        setOutboundPrompt(null);
+        setQueuedPrompts([]);
+        setEditingPromptId(null);
+        setEditingPromptContent("");
+        setDraft("");
         setTurn(emptyTurn());
         setLoadedSkillCount(undefined);
         setAccumulated(new Map());
@@ -715,7 +826,8 @@ export function ChatPage() {
 
   const abort = () => {
     const id = conversationId();
-    if (id !== undefined) {
+    if (id !== undefined && !awaitingAgentEnd()) {
+      setAwaitingAgentEnd(true);
       bus()?.abort(id);
     }
   };
@@ -828,17 +940,119 @@ export function ChatPage() {
               <TextFieldLabel>Message</TextFieldLabel>
               <TextFieldTextArea onKeyDown={onMessageKeyDown} />
             </TextField>
+            <Show when={queuedPrompts().length > 0}>
+              <section
+                aria-label="Queued messages"
+                aria-live="polite"
+                class="bg-muted/40 space-y-2 rounded-lg border p-3"
+              >
+                <p class="text-muted-foreground text-xs font-medium">
+                  Queued messages
+                </p>
+                <For each={queuedPrompts()}>
+                  {(prompt, index) => (
+                    <article
+                      aria-label={`Queued message ${(index() + 1).toString()}`}
+                      class="bg-background space-y-2 rounded-md border px-3 py-2"
+                    >
+                      <Show
+                        fallback={
+                          <>
+                            <p class="whitespace-pre-wrap break-words text-sm">
+                              {prompt.content}
+                            </p>
+                            <div class="flex flex-wrap gap-2">
+                              <Button
+                                onClick={() => {
+                                  editQueuedPrompt(prompt);
+                                }}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                disabled={awaitingAgentEnd()}
+                                onClick={() => {
+                                  sendQueuedPromptNow(prompt.id);
+                                }}
+                                size="sm"
+                                type="button"
+                              >
+                                Send now
+                              </Button>
+                              <Button
+                                onClick={() => {
+                                  cancelQueuedPrompt(prompt.id);
+                                }}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                Cancel message
+                              </Button>
+                            </div>
+                          </>
+                        }
+                        when={editingPromptId() === prompt.id}
+                      >
+                        <label
+                          class="sr-only"
+                          for={`queued-prompt-${prompt.id.toString()}`}
+                        >
+                          Edit queued message {(index() + 1).toString()}
+                        </label>
+                        <textarea
+                          class="border-input min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                          id={`queued-prompt-${prompt.id.toString()}`}
+                          onInput={(event) => {
+                            setEditingPromptContent(event.currentTarget.value);
+                          }}
+                          value={editingPromptContent()}
+                        />
+                        <div class="flex flex-wrap gap-2">
+                          <Button
+                            disabled={
+                              editingPromptContent().trim().length === 0
+                            }
+                            onClick={() => {
+                              saveQueuedPrompt(prompt.id);
+                            }}
+                            size="sm"
+                            type="button"
+                          >
+                            Save changes
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              setEditingPromptId(null);
+                              setEditingPromptContent("");
+                            }}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            Keep unchanged
+                          </Button>
+                        </div>
+                      </Show>
+                    </article>
+                  )}
+                </For>
+              </section>
+            </Show>
             <VoiceComposerControls
-              disabled={generating()}
+              disabled={clearing()}
               onTranscript={handleVoiceTranscript}
               transcribe={(blob) => api.transcribeAudio(blob)}
             />
             <div class="flex justify-end gap-2">
               <Button disabled={!canSend()} type="submit">
-                Send
+                {busy() ? "Queue message" : "Send"}
               </Button>
               <Button
-                disabled={!generating()}
+                disabled={!generating() || awaitingAgentEnd()}
                 onClick={abort}
                 type="button"
                 variant="outline"
