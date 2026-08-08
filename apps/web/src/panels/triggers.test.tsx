@@ -69,6 +69,25 @@ describe("Triggers panel", () => {
     ).toBeInTheDocument();
   });
 
+  test("labels reminder select controls with concise accessible names", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
+
+    expect(screen.getByRole("combobox", { name: "Repeat" })).toHaveAttribute(
+      "name",
+      "recurrence",
+    );
+    expect(screen.getByRole("combobox", { name: "Action" })).toHaveAttribute(
+      "name",
+      "action_kind",
+    );
+  });
+
   test("creating a one-off reminder posts the right body", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
