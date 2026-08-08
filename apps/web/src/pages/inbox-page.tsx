@@ -1,5 +1,14 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 
 import { useHost } from "../app-context";
 import type { BucketTriageReport } from "../host/bucket";
@@ -130,6 +139,30 @@ function recallVerdict(proposal: EssayGradeProposal): string {
 // grouped by kind, master-detail. Adjudicating an item here is the one
 // clearing pass; the underlying vertical (Browse's Bucket tab, etc.) still
 // owns the full CRUD surface.
+function createMediaQuery(query: string, fallback: boolean) {
+  const [matches, setMatches] = createSignal(fallback);
+
+  onMount(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+    const media = window.matchMedia(query);
+    const update = () => {
+      setMatches(media.matches);
+    };
+    update();
+    media.addEventListener("change", update);
+    onCleanup(() => {
+      media.removeEventListener("change", update);
+    });
+  });
+
+  return matches;
+}
+
 export function InboxPage() {
   const bucket = useHost("bucket");
   const memories = useHost("memories");
@@ -139,6 +172,7 @@ export function InboxPage() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = createSignal<string | undefined>();
   const [error, setError] = createSignal<string | undefined>();
+  const isDesktop = createMediaQuery("(min-width: 1024px)", true);
 
   const looseQuery = createQuery(() => ({
     queryFn: () => memories.listMemories("loose"),
@@ -389,7 +423,7 @@ export function InboxPage() {
                     Select an item to review it.
                   </p>
                 }
-                when={selected()}
+                when={isDesktop() ? selected() : undefined}
               >
                 {(item) => (
                   <InboxDetail
@@ -402,7 +436,7 @@ export function InboxPage() {
                 )}
               </Show>
             </div>
-            <Show when={selected()}>
+            <Show when={!isDesktop() ? selected() : undefined}>
               {(item) => (
                 <div class="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-background p-4 lg:hidden">
                   <Button
