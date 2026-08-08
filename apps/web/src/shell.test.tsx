@@ -49,6 +49,20 @@ function badgeDigit(link: HTMLElement): string | null {
 }
 
 describe("Shell accessibility", () => {
+  test("unknown authenticated routes show a not-found state without redirecting", async () => {
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/not-a-real-route-autoresearch",
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Page not found" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/not-a-real-route-autoresearch");
+    expect(
+      screen.queryByRole("heading", { name: "Tether chat" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("authenticated pages share exactly one shell main landmark", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
