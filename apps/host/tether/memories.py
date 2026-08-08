@@ -475,7 +475,8 @@ class MemoryService:
         drifted index (an orphan a missed event left behind) can surface a
         candidate, but a loose or deleted Memory is dropped here and never
         reaches the assistant. Results keep the index's
-        relevance order; the SQLite round-trip preserves it, not recency.
+        relevance order after exact visible-substring matches, which are kept
+        first so punctuation-heavy receipt ids the user can see are never missed.
 
         `facets`, when supplied, is an exact-match AND filter applied at this
         same re-fetch stage: a Memory must carry every given key with exactly
@@ -497,22 +498,25 @@ class MemoryService:
                 normalised_query, limit=limit, logger=logger
             )
             span.set_attribute("memory.search.candidate_count", len(candidates))
-            if not candidates:
-                _debug(
-                    logger,
-                    "Memory Search completed",
-                    limit=limit,
-                    candidate_count=0,
-                    result_count=0,
-                )
-                return []
+            exact_memories = await self._substring_matches(
+                normalised_query, limit=limit, facets=facets, logger=logger
+            )
             rank = {
                 candidate.id: position for position, candidate in enumerate(candidates)
             }
-            memories = await self.hydrate_tethered(
+            semantic_memories = await self.hydrate_tethered(
                 list(rank), facets=facets, logger=logger
             )
-            memories.sort(key=lambda memory: rank[memory.id])
+            semantic_memories.sort(key=lambda memory: rank[memory.id])
+            memories: list[Memory[Fetched]] = []
+            seen: set[UUID7] = set()
+            for memory in [*exact_memories, *semantic_memories]:
+                if memory.id in seen:
+                    continue
+                memories.append(memory)
+                seen.add(memory.id)
+                if len(memories) >= limit:
+                    break
             span.set_attribute("memory.search.result_count", len(memories))
             _debug(
                 logger,
@@ -522,6 +526,37 @@ class MemoryService:
                 result_count=len(memories),
             )
             return memories
+
+    async def _substring_matches(
+        self,
+        query: str,
+        *,
+        limit: PositiveInt,
+        facets: Mapping[str, str] | None,
+        logger: Logger,
+    ) -> list[Memory[Fetched]]:
+        """Tethered Memories whose visible text contains every query term.
+
+        LanceDB's FTS parser can miss punctuation-heavy tokens like receipt ids;
+        this exact visible-substring arm makes Browse/Search complete for text
+        the user can already see in a Memory card.
+        """
+        terms = query.split()
+        _debug(
+            logger, "Searching Memories by visible substring", terms_count=len(terms)
+        )
+        statement = MemoryService.tethered_corpus().order_by(Memory.tethered_at.desc())
+        for term in terms:
+            statement = statement.where(Memory.content.like(f"%{term}%"))
+        async with self.database.transaction() as tx:
+            memories = await tx.fetch_all(statement)
+        if facets:
+            memories = [
+                memory
+                for memory in memories
+                if all(memory.facets.get(key) == value for key, value in facets.items())
+            ]
+        return memories[:limit]
 
     async def search_candidates(
         self, query: str, *, limit: int, logger: Logger
