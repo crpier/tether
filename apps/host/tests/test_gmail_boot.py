@@ -14,13 +14,15 @@ import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 
+import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from snekql.sqlite import Config, Database
-from snektest import assert_eq, test
+from snektest import assert_true, test
 from starlette.applications import Starlette
 
 from tether.gmail import GmailResponse, create_gmail_schema
+from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.memories import KnowledgeBaseService, MemoryService, create_memory_schema
 from tether.server import AppConfig, _wire_gmail
 from tether.todos import TodoService, create_todo_schema
@@ -59,7 +61,7 @@ class FakeGmailTransport:
         raise AssertionError(message)
 
 
-async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
+async def _wire(config: AppConfig) -> asyncio.Event:
     """Run `_wire_gmail` against a bare app/db, for the disabled-wiring assertions."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
@@ -67,6 +69,10 @@ async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
     await create_todo_schema(db)
     await create_gmail_schema(db)
     app = Starlette()
+    ingestion_lifecycle = IngestionLifecycle(
+        structlog.stdlib.get_logger("test.gmail_boot")
+    )
+    app.state.ingestion_lifecycle = ingestion_lifecycle
     tracer = trace.NoOpTracerProvider().get_tracer("test.gmail_boot")
     try:
         async with TemporaryDirectory() as kb_root:
@@ -76,7 +82,7 @@ async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
             )
             trigger_service = TriggerService(database=db, tracer=tracer)
             todo_service = TodoService(database=db, tracer=tracer)
-            return await _wire_gmail(
+            await _wire_gmail(
                 app,
                 config=config,
                 database=db,
@@ -85,6 +91,7 @@ async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
                 todo_service=todo_service,
                 kb_root=Path(kb_root),
             )
+            return ingestion_lifecycle.readiness("gmail")
     finally:
         await db.close()
 
@@ -92,15 +99,15 @@ async def _wire(config: AppConfig) -> list[asyncio.Task[None]]:
 @test()
 async def a_default_config_wires_no_background_task() -> None:
     """The gate's own defaults (disabled, no transport) wire nothing."""
-    tasks = await _wire(AppConfig(app_password="pw", session_secret="s"))
+    readiness = await _wire(AppConfig(app_password="pw", session_secret="s"))
 
-    assert_eq(tasks, [])
+    assert_true(readiness.is_set())
 
 
 @test()
 async def a_configured_transport_without_the_enabled_flag_wires_nothing() -> None:
     """A transport alone, without the explicit enable flag, still wires nothing."""
-    tasks = await _wire(
+    readiness = await _wire(
         AppConfig(
             app_password="pw",
             session_secret="s",
@@ -109,13 +116,13 @@ async def a_configured_transport_without_the_enabled_flag_wires_nothing() -> Non
         )
     )
 
-    assert_eq(tasks, [])
+    assert_true(readiness.is_set())
 
 
 @test()
 async def the_enabled_flag_without_a_transport_wires_nothing() -> None:
     """The enable flag alone, without a configured transport, still wires nothing."""
-    tasks = await _wire(
+    readiness = await _wire(
         AppConfig(
             app_password="pw",
             session_secret="s",
@@ -124,4 +131,4 @@ async def the_enabled_flag_without_a_transport_wires_nothing() -> None:
         )
     )
 
-    assert_eq(tasks, [])
+    assert_true(readiness.is_set())
