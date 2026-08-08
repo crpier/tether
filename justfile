@@ -106,6 +106,11 @@ pi-auth:
     echo "Launching pi against $dir. Run e.g. /login openai-codex, then exit."
     PI_CODING_AGENT_DIR="$dir" apps/agent/node_modules/.bin/pi
 
+# production exploratory/fixer autoloop (safe defaults: issue creation on, fixer/merge/deploy off)
+autoloop:
+    pnpm -C apps/agent exec playwright install chromium
+    TETHER_AUTOLOOP_CWD={{justfile_directory()}} TETHER_AUTOLOOP_PI={{justfile_directory()}}/apps/agent/node_modules/.bin/pi pnpm -C apps/agent exec tsx scripts/autoloop.ts
+
 # one-time YouTube OAuth bootstrap (caches a token, prints recent liked titles)
 # set TETHER_YOUTUBE_OAUTH_NO_BROWSER=1 to print the URL instead of opening a browser
 # --group youtube ensures the optional Google client libraries are installed first
