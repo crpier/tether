@@ -114,7 +114,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
 
 @test()
 def health_connect_query_schema_is_typed_and_bounded() -> None:
-    """The generated query tool offers every record type and a fixed limit."""
+    """The generated query tool offers every record type and a large fixed limit."""
     document = build_tool_schema_document()
     tools = {tool["name"]: tool for tool in document["tools"]}
     query_schema = cast("dict[str, Any]", tools["query_health_connect"]["schema"])
@@ -123,7 +123,7 @@ def health_connect_query_schema_is_typed_and_bounded() -> None:
     assert_eq(record_type_schema["enum"][0], "active_calories_burned")
     assert_in("weight", record_type_schema["enum"])
     assert_eq(query_schema["properties"]["limit"]["default"], 5)
-    assert_eq(query_schema["properties"]["limit"]["maximum"], 10)
+    assert_eq(query_schema["properties"]["limit"]["maximum"], 1_000)
     assert_in("individual", cast("str", query_schema["description"]).lower())
     summary_schema = cast("dict[str, Any]", tools["summarize_health_connect"]["schema"])
     assert_eq(summary_schema["required"], ["after", "before"])

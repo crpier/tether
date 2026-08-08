@@ -12,7 +12,7 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 const query_health_connectParameters = Type.Object({
   after: Type.Optional(Type.String({ format: "date-time" })),
   before: Type.Optional(Type.String({ format: "date-time" })),
-  limit: Type.Optional(Type.Integer({ default: 5, maximum: 10, minimum: 1 })),
+  limit: Type.Optional(Type.Integer({ default: 5, maximum: 1000, minimum: 1 })),
   record_type: StringEnum([
     "active_calories_burned",
     "basal_body_temperature",
@@ -69,9 +69,9 @@ export const query_health_connectTool: ToolDefinition<
   name: "query_health_connect",
   label: "QueryHealthConnect",
   description:
-    "Inspect a few individual Health Connect records; use summary for overviews.",
+    "Inspect individual Health Connect records; use summary for overviews.",
   promptSnippet:
-    "Inspect a few individual Health Connect records; use summary for overviews.",
+    "Inspect individual Health Connect records; use summary for overviews.",
   parameters: query_health_connectParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(
