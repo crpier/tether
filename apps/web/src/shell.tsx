@@ -115,16 +115,24 @@ function DesktopSidebar(props: { items: NavItem[] }) {
         <For each={props.items}>
           {(item) => {
             const active = createMemo(() => location.pathname === item.path);
+            const badgeCount = createMemo(() => item.badge?.() ?? 0);
+            const navLabel = createMemo(() =>
+              badgeCount() > 0
+                ? `${item.label} ${badgeCount().toString()}`
+                : item.label,
+            );
             return (
               <A
+                aria-label={navLabel()}
                 class={cx(
-                  "flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm font-medium",
+                  "group relative flex min-h-11 items-center gap-2 rounded-md px-2 text-left text-sm font-medium",
                   active()
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
                     : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
                 end={item.path === "/"}
                 href={item.path}
+                title={item.label}
               >
                 <span
                   aria-hidden="true"
@@ -135,8 +143,16 @@ function DesktopSidebar(props: { items: NavItem[] }) {
                 <Show when={!collapsed()}>
                   <span class="truncate">{item.label}</span>
                 </Show>
-                <Show when={!collapsed() && item.badge}>
-                  {(badge) => <NavBadge count={badge()()} />}
+                <Show when={collapsed()}>
+                  <span
+                    aria-hidden="true"
+                    class="bg-popover text-popover-foreground pointer-events-none absolute left-full z-50 ml-2 hidden rounded-md border px-2 py-1 text-xs shadow-sm group-focus-visible:block group-hover:block"
+                  >
+                    {item.label}
+                  </span>
+                </Show>
+                <Show when={!collapsed() && badgeCount() > 0}>
+                  <NavBadge count={badgeCount()} />
                 </Show>
               </A>
             );
@@ -160,7 +176,7 @@ function MobileBottomTabs(props: { items: NavItem[] }) {
           return (
             <A
               class={cx(
-                "relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium",
+                "relative flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
                 active()
                   ? "text-sidebar-accent-foreground"
                   : "text-sidebar-foreground/70",

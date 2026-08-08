@@ -23,7 +23,7 @@ describe("Triggers panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
     expect(
@@ -40,7 +40,7 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     expect(
       await screen.findByLabelText("Reminder: water the plants"),
@@ -51,7 +51,7 @@ describe("Triggers panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Add reminder" }),
     );
@@ -82,7 +82,7 @@ describe("Triggers panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Add reminder" }),
     );
@@ -108,7 +108,7 @@ describe("Triggers panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Add reminder" }),
     );
@@ -131,10 +131,10 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: renew passport");
-    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
       expect(api.deleteTriggerCalls).toEqual([
@@ -156,10 +156,10 @@ describe("Triggers panel", () => {
     api.serverTriggerVersions = { "trig-1": 2 };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: renew passport");
-    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
       expect(api.deleteTriggerCalls).toEqual([
@@ -191,10 +191,10 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: summarise inbox");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
 
     expect(input(screen.getByLabelText("Reminder")).value).toBe(
       "summarise inbox",
@@ -227,10 +227,10 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: stretch");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
 
     const field = input(screen.getByLabelText("Date and time"));
     // The datetime-local stamp is in local time; it must denote the same instant.
@@ -255,10 +255,10 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(input(screen.getByLabelText("Reminder")), {
       target: { value: "water the garden" },
     });
@@ -304,10 +304,10 @@ describe("Triggers panel", () => {
     api.serverTriggerVersions = { "trig-1": 2 };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(input(screen.getByLabelText("Reminder")), {
       target: { value: "water the garden" },
     });
@@ -346,10 +346,10 @@ describe("Triggers panel", () => {
     api.serverTriggerEdits = { "trig-1": { payload: "water the cactus" } };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(input(screen.getByLabelText("Reminder")), {
       target: { value: "water the garden" },
     });
@@ -395,10 +395,10 @@ describe("Triggers panel", () => {
     api.updateTriggerRejections = [new ApiError(409), new ApiError(422)];
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(input(screen.getByLabelText("Reminder")), {
       target: { value: "water the garden" },
     });
@@ -424,10 +424,10 @@ describe("Triggers panel", () => {
     api.deleteTriggerRejections = [new ApiError(409), new ApiError(500)];
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: renew passport");
-    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
       expect(api.deleteTriggerCalls).toHaveLength(2);
@@ -459,15 +459,15 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     // Open the one-off first so its fire time lands in the form, then switch
     // to editing the weekly one. Flipping Repeat to "once" mid-edit must show
     // an empty date field, not the leftover from the other reminder.
     const onceRow = await screen.findByLabelText("Reminder: stretch");
-    fireEvent.click(within(onceRow).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(onceRow).getByRole("button", { name: /^Edit/ }));
     const weeklyRow = screen.getByLabelText("Reminder: review week");
-    fireEvent.click(within(weeklyRow).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(weeklyRow).getByRole("button", { name: /^Edit/ }));
 
     fireEvent.change(screen.getByDisplayValue("Weekly"), {
       target: { value: "once" },
@@ -497,15 +497,15 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     // Mirror image of the previous test: open the weekly one first, then the
     // one-off. Flipping Repeat to "daily" mid-edit must show the defaults, not
     // the weekly reminder's time/zone.
     const weeklyRow = await screen.findByLabelText("Reminder: review week");
-    fireEvent.click(within(weeklyRow).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(weeklyRow).getByRole("button", { name: /^Edit/ }));
     const onceRow = screen.getByLabelText("Reminder: stretch");
-    fireEvent.click(within(onceRow).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(onceRow).getByRole("button", { name: /^Edit/ }));
 
     fireEvent.change(screen.getByDisplayValue("Once"), {
       target: { value: "daily" },
@@ -533,10 +533,10 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: stretch");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save reminder" }));
 
     await waitFor(() => {
@@ -553,7 +553,7 @@ describe("Triggers panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Add reminder" }),
     );
@@ -585,10 +585,10 @@ describe("Triggers panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
 
     const row = await screen.findByLabelText("Reminder: water the plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(input(screen.getByLabelText("Reminder")), {
       target: { value: "changed my mind" },
     });
@@ -609,7 +609,7 @@ describe("Triggers panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Add reminder" }),
     );

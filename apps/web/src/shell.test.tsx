@@ -1,7 +1,19 @@
-import { cleanup, screen, waitFor, within } from "@solidjs/testing-library";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeApi, memory, proposal, renderApp } from "./testing/harness";
+import {
+  FakeApi,
+  memory,
+  navigateTo,
+  proposal,
+  renderApp,
+} from "./testing/harness";
 
 afterEach(cleanup);
 
@@ -16,6 +28,55 @@ function badgeDigit(link: HTMLElement): string | null {
   const match = /(\d+)$/.exec(link.textContent);
   return match ? match[1] : null;
 }
+
+describe("Shell accessibility", () => {
+  test("authenticated pages share exactly one shell main landmark", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    const headings = {
+      Browse: "Browse",
+      Chat: "Tether chat",
+      Inbox: "Inbox",
+      Proposals: "Proposals",
+      Settings: "Settings",
+    } as const;
+
+    for (const label of [
+      "Chat",
+      "Proposals",
+      "Inbox",
+      "Browse",
+      "Settings",
+    ] as const) {
+      await navigateTo(label);
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: headings[label],
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getAllByRole("main")).toHaveLength(1);
+    }
+  });
+
+  test("collapsed desktop navigation keeps full link names and titles", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+    const nav = await mainNav();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Collapse sidebar" }),
+    );
+
+    for (const label of ["Chat", "Proposals", "Inbox", "Browse", "Settings"]) {
+      const link = within(nav).getByRole("link", {
+        name: new RegExp(`^${label}`),
+      });
+      expect(link).toHaveAttribute("title", label);
+    }
+  });
+});
 
 describe("Shell nav badges", () => {
   test("no badge renders when a page has nothing pending", async () => {

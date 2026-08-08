@@ -66,11 +66,11 @@ test("phone width: every Browse tab stays fully readable", async ({
     .getByRole("link", { name: /^Browse/ })
     .click();
 
-  const browseViews = page.getByRole("group", { name: "Browse view" });
+  const browseViews = page.getByRole("tablist", { name: "Browse view" });
   await browseViews.waitFor({ state: "visible" });
   for (const label of ["Memories", "Bucket", "Todos", "Reminders", "Panels"]) {
     const tabBox = await boundingBox(
-      browseViews.getByRole("button", { name: label }),
+      browseViews.getByRole("tab", { name: label }),
     );
     expect(tabBox.x).toBeGreaterThanOrEqual(0);
     expect(tabBox.x + tabBox.width).toBeLessThanOrEqual(PHONE.width + 1);
@@ -78,6 +78,35 @@ test("phone width: every Browse tab stays fully readable", async ({
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(PHONE.width);
+});
+
+test("phone width: primary navigation and tabs are 44px touch targets", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await login();
+
+  const bottomNav = page.getByRole("navigation", {
+    name: "Main navigation (compact)",
+  });
+  for (const label of ["Chat", "Proposals", "Inbox", "Browse", "Settings"]) {
+    expect(
+      (
+        await boundingBox(
+          bottomNav.getByRole("link", { name: new RegExp(`^${label}`) }),
+        )
+      ).height,
+    ).toBeGreaterThanOrEqual(44);
+  }
+
+  await bottomNav.getByRole("link", { name: /^Browse/ }).click();
+  const browseViews = page.getByRole("tablist", { name: "Browse view" });
+  for (const label of ["Memories", "Bucket", "Todos", "Reminders", "Panels"]) {
+    expect(
+      (await boundingBox(browseViews.getByRole("tab", { name: label }))).height,
+    ).toBeGreaterThanOrEqual(44);
+  }
 });
 
 test("desktop width: left sidebar visible, bottom tabs hidden", async ({

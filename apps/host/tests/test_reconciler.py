@@ -383,7 +383,8 @@ async def reconcile_forever_runs_passes_until_cancelled() -> None:
         h.reconciler.reconcile_forever(interval_seconds=0.001, logger=_logger())
     )
     for _ in range(1000):  # bounded wait so a broken loop fails fast, never hangs
-        if h.index.optimize_calls >= 1:
+        marker = await h.meta.fetch(logger=_logger())
+        if h.index.optimize_calls >= 1 and marker is not None:
             break
         await asyncio.sleep(0.001)
     _ = task.cancel()

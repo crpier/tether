@@ -298,7 +298,10 @@ export function InboxPage() {
   const isEmpty = createMemo(() => items().length === 0);
 
   return (
-    <main aria-labelledby="inbox-title" class="flex min-h-full flex-1 flex-col">
+    <section
+      aria-labelledby="inbox-title"
+      class="flex min-h-full flex-1 flex-col"
+    >
       <header class="bg-card border-b px-4 py-3 sm:px-5">
         <h1 id="inbox-title" class="text-lg font-semibold tracking-tight">
           Inbox
@@ -425,7 +428,7 @@ export function InboxPage() {
           </div>
         </Show>
       </div>
-    </main>
+    </section>
   );
 }
 

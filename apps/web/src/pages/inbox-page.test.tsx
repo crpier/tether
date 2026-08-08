@@ -69,7 +69,7 @@ describe("Inbox page", () => {
       detail = screen.getAllByLabelText("Inbox item: Prefers aisle seats")[0];
       expect(detail).toBeInTheDocument();
     });
-    fireEvent.click(within(detail!).getByRole("button", { name: "Tether" }));
+    fireEvent.click(within(detail!).getByRole("button", { name: /^Tether/ }));
 
     await waitFor(() => {
       expect(api.tetherMemoryCalls).toEqual([

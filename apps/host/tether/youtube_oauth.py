@@ -714,7 +714,10 @@ class CaptionsTranscriptProvider(TranscriptProvider):
     guard is late-bound). Unbound (e.g. in tests), `charge` is a no-op.
     """
 
-    source: str = "youtube_captions"
+    @property
+    def source(self) -> str:
+        """The provenance tag for transcripts fetched through YouTube captions."""
+        return "youtube_captions"
 
     def __init__(
         self,
@@ -816,9 +819,7 @@ def bind_captions_daily_quota(
     (`supadata,library`) omits it, and the library/Supadata legs never spend this
     budget at all.
     """
-    for leaf in find_transcript_provider_leaves(
-        provider, source=CaptionsTranscriptProvider.source
-    ):
+    for leaf in find_transcript_provider_leaves(provider, source="youtube_captions"):
         if isinstance(leaf, CaptionsTranscriptProvider):
             leaf.charge = charge
 

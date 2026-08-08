@@ -23,7 +23,7 @@ describe("Todos panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: call the dentist");
     expect(row).toHaveTextContent("call the dentist");
@@ -44,7 +44,7 @@ describe("Todos panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: bring the book");
     expect(row).toHaveTextContent("waiting");
@@ -59,10 +59,10 @@ describe("Todos panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: water plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
       expect(api.setTodoStatusCalls).toEqual([
@@ -83,10 +83,10 @@ describe("Todos panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: old task");
-    fireEvent.click(within(row).getByRole("button", { name: "Abandon" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Abandon/ }));
 
     await waitFor(() => {
       expect(api.setTodoStatusCalls).toEqual([
@@ -103,10 +103,10 @@ describe("Todos panel", () => {
     api.serverTodoVersions = { "todo-1": 2 };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     const row = await screen.findByLabelText("Todo: water plants");
-    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
       expect(api.setTodoStatusCalls).toEqual([
@@ -121,7 +121,7 @@ describe("Todos panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     await screen.findByRole("heading", { name: "Todos" });
     expect(screen.getByText("Nothing to do right now")).toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("Todos panel", () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Todos" }));
 
     await screen.findByRole("heading", { name: "Todos" });
     await waitFor(() => {

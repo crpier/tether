@@ -27,7 +27,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
     expect(
@@ -53,7 +53,7 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     const row = await screen.findByLabelText("Bucket item: Dune");
     expect(row).toHaveTextContent("Dune");
@@ -75,7 +75,7 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     expect(await screen.findByLabelText("Bucket item: Dune")).toHaveTextContent(
       "Year: 2021",
@@ -86,7 +86,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -121,7 +121,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.change(await screen.findByLabelText("Type"), {
@@ -150,7 +150,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.change(await screen.findByLabelText("Type"), {
@@ -179,7 +179,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -200,7 +200,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.change(await screen.findByLabelText("Type"), {
@@ -229,7 +229,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -254,7 +254,7 @@ describe("Bucket panel", () => {
     api.addBucketItemRejections = [new ApiError(500)];
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -278,7 +278,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -300,7 +300,7 @@ describe("Bucket panel", () => {
     };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -336,7 +336,7 @@ describe("Bucket panel", () => {
     };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
@@ -362,10 +362,10 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     const row = await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
       expect(api.completeBucketItemCalls).toEqual([
@@ -390,10 +390,10 @@ describe("Bucket panel", () => {
     api.serverBucketItemVersions = { "item-1": 2 };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     const row = await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
       expect(api.completeBucketItemCalls).toEqual([
@@ -414,10 +414,10 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     const row = await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
       expect(api.deleteBucketItemCalls).toEqual([
@@ -439,10 +439,10 @@ describe("Bucket panel", () => {
     api.serverBucketItemVersions = { "item-1": 2 };
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     const row = await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
       expect(api.deleteBucketItemCalls).toEqual([
@@ -464,10 +464,10 @@ describe("Bucket panel", () => {
     api.completeBucketItemRejections = [new ApiError(409), new ApiError(500)];
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     const row = await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
       expect(api.completeBucketItemCalls).toHaveLength(2);
@@ -487,7 +487,7 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     await screen.findByLabelText("Bucket item: Dune");
     fireEvent.input(input(screen.getByLabelText("Search")), {
@@ -512,7 +512,7 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     await screen.findByLabelText("Bucket item: Blade Runner");
 
     vi.useFakeTimers();
@@ -539,7 +539,7 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     await screen.findByLabelText("Bucket item: Dune");
 
     // Register a search cache entry, then clear the term so it goes stale.
@@ -553,7 +553,7 @@ describe("Bucket panel", () => {
       target: { value: "" },
     });
     const row = await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.click(within(row).getByRole("button", { name: "Complete" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
       expect(
@@ -586,10 +586,10 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     await screen.findByLabelText("Bucket item: Still active");
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
 
     const completedRow = await screen.findByLabelText(
       "Bucket item: Watched long ago",
@@ -602,10 +602,10 @@ describe("Bucket panel", () => {
     expect(deletedRow).toHaveTextContent("deleted");
     // History is read-only: no lifecycle actions on terminal rows.
     expect(
-      within(completedRow).queryByRole("button", { name: "Complete" }),
+      within(completedRow).queryByRole("button", { name: /^Complete/ }),
     ).not.toBeInTheDocument();
     expect(
-      within(completedRow).queryByRole("button", { name: "Delete" }),
+      within(completedRow).queryByRole("button", { name: /^Delete/ }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByLabelText("Bucket item: Still active"),
@@ -627,8 +627,8 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
-    fireEvent.click(await screen.findByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
 
     expect(await screen.findByLabelText("Bucket item: Dune")).toHaveTextContent(
       "Year: 2021",
@@ -661,10 +661,10 @@ describe("Bucket panel", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     await screen.findByRole("heading", { name: "Bucket" });
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
 
     await screen.findByLabelText("Bucket item: Newest completed");
     const rows = screen.getAllByLabelText(/^Bucket item: /);
@@ -679,7 +679,7 @@ describe("Bucket panel", () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     await screen.findByRole("heading", { name: "Bucket" });
     await waitFor(() => {
