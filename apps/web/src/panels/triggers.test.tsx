@@ -47,6 +47,28 @@ describe("Triggers panel", () => {
     ).toBeInTheDocument();
   });
 
+  test("omits the next time for completed one-off reminders", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      triggers: [
+        trigger({
+          next_fire_at: "2026-01-08T14:11:24Z",
+          payload: "test trigger",
+          recurrence: "once",
+          status: "completed",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+
+    const row = await screen.findByLabelText("Reminder: test trigger");
+    expect(row).toHaveTextContent("once · completed");
+    expect(row).not.toHaveTextContent("next");
+    expect(row).not.toHaveTextContent("01/08/2026");
+  });
+
   test("labels reminder row actions with the reminder text", async () => {
     const host = new FakeHost({
       authenticated: true,

@@ -443,7 +443,9 @@ export function TriggersPanel(props: { api: TriggersHost }) {
             >
               <span class="font-medium">{trigger.payload}</span>
               <span class="text-muted-foreground text-xs">{` · ${trigger.recurrence} · ${trigger.status}`}</span>
-              <span class="text-muted-foreground text-xs">{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
+              <Show when={trigger.status !== "completed"}>
+                <span class="text-muted-foreground text-xs">{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
+              </Show>
               <Button
                 aria-label={reminderActionLabel("Edit", trigger)}
                 class="ml-auto"
