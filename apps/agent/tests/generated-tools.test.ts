@@ -73,6 +73,7 @@ describe("generated tool extension", () => {
       "list_unlabeled_ebooks",
       "health_connect_inventory",
       "query_health_connect",
+      "summarize_health_connect",
       "propose",
       "list_proposals",
     ]);

@@ -7,6 +7,7 @@ import contextlib
 import os
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from json import dumps
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
@@ -56,12 +57,24 @@ from tether.pi_runtime import (
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
 _LOCALTIME_PATH = Path("/etc/localtime")
+_TOOL_RESULT_FRAME_LIMIT_BYTES = 64 * 1_024
+"""Maximum settled tool result retained in the browser-facing transcript."""
 _ZONEINFO_MARKER = "zoneinfo/"
 
 _logger = structlog.stdlib.get_logger("tether.chat_ws")
 """Operational chat diagnostics that exclude user and skill contents."""
 
 type InboundType = Literal["prompt", "abort"]
+
+
+def _compact_tool_result(tool_result: dict[str, Any]) -> dict[str, Any]:
+    """Replace oversized tool data before it can block transcript delivery."""
+    result_size_bytes = len(
+        dumps(tool_result, ensure_ascii=False, separators=(",", ":")).encode()
+    )
+    if result_size_bytes <= _TOOL_RESULT_FRAME_LIMIT_BYTES:
+        return tool_result
+    return {"original_size_bytes": result_size_bytes, "truncated": True}
 
 
 def local_timezone_name(now: datetime) -> str:
@@ -247,6 +260,7 @@ async def _settle_tool_end(
     pending_tool_args: dict[str, dict[str, Any]],
 ) -> None:
     """Persist tool completion envelopes and forward tool-end events."""
+    transcript_result = _compact_tool_result(settled.result)
     if settled.tool_call_id is not None and settled.tool_name is not None:
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
@@ -256,7 +270,7 @@ async def _settle_tool_end(
                 role="tool",
                 tool_args=pending_tool_args.pop(settled.tool_call_id, {}),
                 tool_name=settled.tool_name,
-                tool_result=settled.result,
+                tool_result=transcript_result,
             )
         )
     await websocket.send_json(
@@ -264,7 +278,7 @@ async def _settle_tool_end(
             conversation_id=conversation_id,
             tool_name=settled.tool_name,
             tool_id=settled.tool_call_id,
-            tool_result=settled.result,
+            tool_result=transcript_result,
         ).wire()
     )
 

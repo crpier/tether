@@ -86,6 +86,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "list_unlabeled_ebooks",
             "health_connect_inventory",
             "query_health_connect",
+            "summarize_health_connect",
             "propose",
             "list_proposals",
         },
@@ -121,8 +122,12 @@ def health_connect_query_schema_is_typed_and_bounded() -> None:
 
     assert_eq(record_type_schema["enum"][0], "active_calories_burned")
     assert_in("weight", record_type_schema["enum"])
-    assert_eq(query_schema["properties"]["limit"]["default"], 20)
-    assert_eq(query_schema["properties"]["limit"]["maximum"], 100)
+    assert_eq(query_schema["properties"]["limit"]["default"], 5)
+    assert_eq(query_schema["properties"]["limit"]["maximum"], 10)
+    assert_in("individual", cast("str", query_schema["description"]).lower())
+    summary_schema = cast("dict[str, Any]", tools["summarize_health_connect"]["schema"])
+    assert_eq(summary_schema["required"], ["after", "before"])
+    assert_in("overview", cast("str", summary_schema["description"]).lower())
 
 
 @test()

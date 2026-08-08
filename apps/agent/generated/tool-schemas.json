@@ -1588,7 +1588,7 @@
       "name": "query_health_connect",
       "params_model": "QueryHealthConnectParams",
       "schema": {
-        "description": "Read current Health Connect records in an optional aware UTC time window.",
+        "description": "Inspect a few individual Health Connect records; use summary for overviews.",
         "properties": {
           "after": {
             "anyOf": [
@@ -1617,8 +1617,8 @@
             "title": "Before"
           },
           "limit": {
-            "default": 20,
-            "maximum": 100,
+            "default": 5,
+            "maximum": 10,
             "minimum": 1,
             "title": "Limit",
             "type": "integer"
@@ -1673,6 +1673,29 @@
         },
         "required": ["record_type"],
         "title": "QueryHealthConnectParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/summarize_health_connect",
+      "name": "summarize_health_connect",
+      "params_model": "SummarizeHealthConnectParams",
+      "schema": {
+        "description": "Use compact Health Connect aggregates for overview and trend requests.",
+        "properties": {
+          "after": {
+            "format": "date-time",
+            "title": "After",
+            "type": "string"
+          },
+          "before": {
+            "format": "date-time",
+            "title": "Before",
+            "type": "string"
+          }
+        },
+        "required": ["after", "before"],
+        "title": "SummarizeHealthConnectParams",
         "type": "object"
       }
     },

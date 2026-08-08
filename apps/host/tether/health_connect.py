@@ -129,7 +129,15 @@ _GENERIC_RECORD_TYPES: tuple[HealthRecordType, ...] = tuple(
 )
 RecordStatus = Literal["baseline", "changes", "initial"]
 GENERIC_RECORD_CONTRACT_VERSION = 3
-_TOOL_NESTED_LIMIT = 1_000
+_SUMMARY_NUMERIC_SERIES_PER_TYPE = 8
+"""Maximum generic measurement series returned for one summarized type."""
+
+_SUMMARY_IGNORED_NUMERIC_FIELDS = frozenset(
+    {"end_time", "start_time", "time", "zone_offset", "zone_offset_seconds"}
+)
+"""Generic payload fields that encode instants rather than measurements."""
+
+_TOOL_NESTED_LIMIT = 50
 """Maximum nested samples/details returned by one agent tool call."""
 
 
@@ -775,6 +783,73 @@ class HealthConnectInventoryEntry(BaseModel):
     record_type: HealthRecordType
 
 
+class HealthConnectExerciseSummary(BaseModel):
+    """Compact exercise-session measurements in a requested time window."""
+
+    exercise_type_counts: dict[str, int]
+    record_count: int
+    total_duration_minutes: float
+
+
+class HealthConnectHeartRateSummary(BaseModel):
+    """Compact heart-rate measurements in a requested time window."""
+
+    average_bpm: float | None
+    maximum_bpm: int | None
+    minimum_bpm: int | None
+    record_count: int
+    sample_count: int
+
+
+class HealthConnectNumericSummary(BaseModel):
+    """Compact descriptive values for one generic numeric payload path."""
+
+    average: float
+    latest: float
+    maximum: float
+    minimum: float
+    path: str
+    sample_count: int
+
+
+class HealthConnectOtherRecordSummary(BaseModel):
+    """Compact measurements for one generic Health Connect record type."""
+
+    earliest_start: AwareDatetime | None
+    latest_end: AwareDatetime | None
+    numeric_values: list[HealthConnectNumericSummary]
+    record_count: int
+    record_type: HealthRecordType
+
+
+class HealthConnectSleepSummary(BaseModel):
+    """Compact sleep-session measurements in a requested time window."""
+
+    average_duration_minutes: float | None
+    record_count: int
+    stage_duration_minutes: dict[str, float]
+    total_duration_minutes: float
+
+
+class HealthConnectStepsSummary(BaseModel):
+    """Compact step measurements in a requested time window."""
+
+    record_count: int
+    total_count: int
+
+
+class HealthConnectSummaryRead(BaseModel):
+    """Bounded aggregate Health Connect metrics intended for agent overviews."""
+
+    after: AwareDatetime
+    before: AwareDatetime
+    exercise: HealthConnectExerciseSummary
+    heart_rate: HealthConnectHeartRateSummary
+    other_record_types: list[HealthConnectOtherRecordSummary]
+    sleep: HealthConnectSleepSummary
+    steps: HealthConnectStepsSummary
+
+
 class HealthConnectOriginRead(BaseModel):
     """Writing application and device provenance returned with a record."""
 
@@ -921,6 +996,39 @@ def _datetime_from_millis(value: int | None) -> datetime | None:
 def _millis_from_datetime(value: datetime) -> int:
     """Convert a validated aware tool-boundary instant to epoch milliseconds."""
     return int(value.timestamp() * 1_000)
+
+
+def _duration_minutes(start_time: int | None, end_time: int | None) -> float:
+    """Return a non-negative interval duration in minutes."""
+    if start_time is None or end_time is None:
+        return 0.0
+    return max(0.0, (end_time - start_time) / 60_000)
+
+
+def _numeric_payload_values(
+    value: object, *, path: str = ""
+) -> list[tuple[str, float]]:
+    """Flatten numeric measurements while unifying array indexes by path."""
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, int | float):
+        leaf_name = path.rsplit(".", maxsplit=1)[-1].removesuffix("[]")
+        if leaf_name in _SUMMARY_IGNORED_NUMERIC_FIELDS:
+            return []
+        return [(path, float(value))]
+    if isinstance(value, dict):
+        flattened: list[tuple[str, float]] = []
+        payload_fields = cast("dict[str, object]", value)
+        for key, child in sorted(payload_fields.items()):
+            child_path = f"{path}.{key}" if path else key
+            flattened.extend(_numeric_payload_values(child, path=child_path))
+        return flattened
+    if isinstance(value, list):
+        flattened = []
+        for child in cast("list[object]", value):
+            flattened.extend(_numeric_payload_values(child, path=f"{path}[]"))
+        return flattened
+    return []
 
 
 def _latest_bound(latest_end: int | None, latest_start: int | None) -> int | None:
@@ -1077,6 +1185,218 @@ class HealthConnectService:
                 )
             )
         return sorted(entries, key=lambda entry: entry.record_type)
+
+    async def summarize_current(
+        self, *, after: datetime, before: datetime
+    ) -> HealthConnectSummaryRead:
+        """Aggregate current records that overlap one bounded time window."""
+        after_millis = _millis_from_datetime(after)
+        before_millis = _millis_from_datetime(before)
+        async with self.database.transaction() as transaction:
+            exercise_rows = await transaction.fetch_all(
+                select(HcExerciseSessionCurrent)
+                .where(
+                    HcExerciseSessionCurrent.end_time.gte(after_millis)
+                    | (
+                        HcExerciseSessionCurrent.end_time.is_null()
+                        & HcExerciseSessionCurrent.start_time.gte(after_millis)
+                    )
+                )
+                .where(HcExerciseSessionCurrent.start_time.lte(before_millis))
+            )
+            heart_rate_rows = await transaction.fetch_all(
+                select(HcHeartRateRecordCurrent)
+                .where(
+                    HcHeartRateRecordCurrent.end_time.gte(after_millis)
+                    | (
+                        HcHeartRateRecordCurrent.end_time.is_null()
+                        & HcHeartRateRecordCurrent.start_time.gte(after_millis)
+                    )
+                )
+                .where(HcHeartRateRecordCurrent.start_time.lte(before_millis))
+            )
+            heart_rate_version_ids = [row.version_id for row in heart_rate_rows]
+            if heart_rate_version_ids:
+                heart_rate_sample_count, total_bpm = await transaction.fetch_one(
+                    select(
+                        HcHeartRateSample.beats_per_minute.count(),
+                        HcHeartRateSample.beats_per_minute.sum(),
+                    ).where(HcHeartRateSample.version_id.in_(*heart_rate_version_ids))
+                )
+                minimum_bpm, maximum_bpm = await transaction.fetch_one(
+                    select(
+                        HcHeartRateSample.beats_per_minute.min(),
+                        HcHeartRateSample.beats_per_minute.max(),
+                    ).where(HcHeartRateSample.version_id.in_(*heart_rate_version_ids))
+                )
+            else:
+                heart_rate_sample_count = 0
+                total_bpm = None
+                minimum_bpm = None
+                maximum_bpm = None
+            sleep_rows = await transaction.fetch_all(
+                select(HcSleepSessionCurrent)
+                .where(
+                    HcSleepSessionCurrent.end_time.gte(after_millis)
+                    | (
+                        HcSleepSessionCurrent.end_time.is_null()
+                        & HcSleepSessionCurrent.start_time.gte(after_millis)
+                    )
+                )
+                .where(HcSleepSessionCurrent.start_time.lte(before_millis))
+            )
+            sleep_version_ids = [row.version_id for row in sleep_rows]
+            sleep_stages = (
+                await transaction.fetch_all(
+                    select(HcSleepStage).where(
+                        HcSleepStage.version_id.in_(*sleep_version_ids)
+                    )
+                )
+                if sleep_version_ids
+                else []
+            )
+            step_rows = await transaction.fetch_all(
+                select(HcStepIntervalCurrent)
+                .where(
+                    HcStepIntervalCurrent.end_time.gte(after_millis)
+                    | (
+                        HcStepIntervalCurrent.end_time.is_null()
+                        & HcStepIntervalCurrent.start_time.gte(after_millis)
+                    )
+                )
+                .where(HcStepIntervalCurrent.start_time.lte(before_millis))
+            )
+            generic_rows = await transaction.fetch_all(
+                select(HcGenericRecordCurrent)
+                .where(
+                    HcGenericRecordCurrent.end_time.gte(after_millis)
+                    | (
+                        HcGenericRecordCurrent.end_time.is_null()
+                        & HcGenericRecordCurrent.start_time.gte(after_millis)
+                    )
+                )
+                .where(HcGenericRecordCurrent.start_time.lte(before_millis))
+                .order_by(
+                    HcGenericRecordCurrent.start_time.asc(),
+                    HcGenericRecordCurrent.version_id.asc(),
+                )
+            )
+
+        sleep_durations = [
+            _duration_minutes(row.start_time, row.end_time) for row in sleep_rows
+        ]
+        stage_duration_minutes: dict[str, float] = {}
+        for stage in sleep_stages:
+            stage_key = str(stage.stage)
+            stage_duration_minutes[stage_key] = round(
+                stage_duration_minutes.get(stage_key, 0.0)
+                + _duration_minutes(stage.start_time, stage.end_time),
+                2,
+            )
+        exercise_type_counts: dict[str, int] = {}
+        for row in exercise_rows:
+            if row.exercise_type is None:
+                continue
+            exercise_type = str(row.exercise_type)
+            exercise_type_counts[exercise_type] = (
+                exercise_type_counts.get(exercise_type, 0) + 1
+            )
+        generic_by_type: dict[str, list[HcGenericRecordCurrent[Fetched]]] = {}
+        for row in generic_rows:
+            generic_by_type.setdefault(row.record_type, []).append(row)
+        other_record_types: list[HealthConnectOtherRecordSummary] = []
+        for record_type, rows in sorted(generic_by_type.items()):
+            numeric_by_path: dict[str, list[float]] = {}
+            for row in rows:
+                for path, numeric_value in _numeric_payload_values(
+                    json.loads(row.payload_json or "{}")
+                ):
+                    numeric_by_path.setdefault(path, []).append(numeric_value)
+            numeric_values = [
+                HealthConnectNumericSummary(
+                    average=round(sum(values) / len(values), 4),
+                    latest=values[-1],
+                    maximum=max(values),
+                    minimum=min(values),
+                    path=path,
+                    sample_count=len(values),
+                )
+                for path, values in sorted(numeric_by_path.items())[
+                    :_SUMMARY_NUMERIC_SERIES_PER_TYPE
+                ]
+            ]
+            other_record_types.append(
+                HealthConnectOtherRecordSummary(
+                    earliest_start=_datetime_from_millis(
+                        min(
+                            row.start_time for row in rows if row.start_time is not None
+                        )
+                    )
+                    if any(row.start_time is not None for row in rows)
+                    else None,
+                    latest_end=_datetime_from_millis(
+                        _latest_bound(
+                            max(
+                                (
+                                    row.end_time
+                                    for row in rows
+                                    if row.end_time is not None
+                                ),
+                                default=None,
+                            ),
+                            max(
+                                (
+                                    row.start_time
+                                    for row in rows
+                                    if row.start_time is not None
+                                ),
+                                default=None,
+                            ),
+                        )
+                    ),
+                    numeric_values=numeric_values,
+                    record_count=len(rows),
+                    record_type=cast("HealthRecordType", record_type),
+                )
+            )
+        total_sleep_minutes = round(sum(sleep_durations), 2)
+        return HealthConnectSummaryRead(
+            after=after,
+            before=before,
+            exercise=HealthConnectExerciseSummary(
+                exercise_type_counts=exercise_type_counts,
+                record_count=len(exercise_rows),
+                total_duration_minutes=round(
+                    sum(
+                        _duration_minutes(row.start_time, row.end_time)
+                        for row in exercise_rows
+                    ),
+                    2,
+                ),
+            ),
+            heart_rate=HealthConnectHeartRateSummary(
+                average_bpm=round(total_bpm / heart_rate_sample_count, 2)
+                if total_bpm is not None and heart_rate_sample_count > 0
+                else None,
+                maximum_bpm=maximum_bpm,
+                minimum_bpm=minimum_bpm,
+                record_count=len(heart_rate_rows),
+                sample_count=heart_rate_sample_count,
+            ),
+            other_record_types=other_record_types,
+            sleep=HealthConnectSleepSummary(
+                average_duration_minutes=round(total_sleep_minutes / len(sleep_rows), 2)
+                if sleep_rows
+                else None,
+                record_count=len(sleep_rows),
+                stage_duration_minutes=stage_duration_minutes,
+                total_duration_minutes=total_sleep_minutes,
+            ),
+            steps=HealthConnectStepsSummary(
+                record_count=len(step_rows),
+                total_count=sum(row.count or 0 for row in step_rows),
+            ),
+        )
 
     async def query_current_steps(
         self,

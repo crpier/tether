@@ -769,6 +769,7 @@ export default function inspectTools(pi) {
             "set_purchase_decision",
             "set_todo_status",
             "start_recall",
+            "summarize_health_connect",
             "tether",
             "triage_report",
             "update_artifact",

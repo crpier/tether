@@ -1294,6 +1294,55 @@ def websocket_tool_frames_carry_args_and_result() -> None:
 
 
 @test()
+def websocket_compacts_oversized_tool_results_before_chat_completion() -> None:
+    """Live transcript frames stay bounded when an agent tool returns huge data."""
+    fake_runtime = FakeRuntime(
+        [
+            ToolStarted(
+                args={"record_type": "heart_rate"},
+                tool_call_id="call-health",
+                tool_name="query_health_connect",
+            ),
+            ToolSettled(
+                result={"records": ["x" * 70_000]},
+                tool_call_id="call-health",
+                tool_name="query_health_connect",
+            ),
+            MessageSettled(reasoning="", text="Your summary is ready."),
+            AgentEnded(),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        frames: list[dict[str, Any]] = []
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Summarize my health",
+                }
+            )
+            while True:
+                frame = cast("dict[str, Any]", websocket.receive_json())
+                frames.append(frame)
+                if frame.get("event") == "agent_end":
+                    break
+
+    tool_result = next(
+        frame["tool_result"] for frame in frames if frame.get("event") == "tool_end"
+    )
+    assert_eq(tool_result["truncated"], True)
+    assert_true(tool_result["original_size_bytes"] > 65_536)
+    assert_eq(frames[-1]["event"], "agent_end")
+
+
+@test()
 def clearing_a_conversation_empties_the_transcript() -> None:
     """DELETE on the messages route drops history and rotates the pi session."""
     fake_runtime = FakeRuntime(

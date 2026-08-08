@@ -55,6 +55,7 @@ import { registerMatchEbookFilenameTool } from "./match_ebook_filename.js";
 import { registerListUnlabeledEbooksTool } from "./list_unlabeled_ebooks.js";
 import { registerHealthConnectInventoryTool } from "./health_connect_inventory.js";
 import { registerQueryHealthConnectTool } from "./query_health_connect.js";
+import { registerSummarizeHealthConnectTool } from "./summarize_health_connect.js";
 import { registerProposeTool } from "./propose.js";
 import { registerListProposalsTool } from "./list_proposals.js";
 
@@ -112,6 +113,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerListUnlabeledEbooksTool(pi);
   registerHealthConnectInventoryTool(pi);
   registerQueryHealthConnectTool(pi);
+  registerSummarizeHealthConnectTool(pi);
   registerProposeTool(pi);
   registerListProposalsTool(pi);
 }
