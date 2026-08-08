@@ -72,11 +72,9 @@ export function createBusHarness(): {
 // the worker, so a route left over from a previous test would otherwise leak
 // into the next render. Reset to the root path (pure chat, the home page)
 // before every render unless the caller wants to land somewhere else.
-// Both the desktop sidebar and the mobile bottom tabs render the same five
-// nav destinations (#250) — jsdom has no layout, so both are always present
-// regardless of "hidden lg:flex"/"lg:hidden". Tests navigate through the
-// desktop sidebar ("Main navigation"), which is unambiguous by accessible
-// name, rather than reaching for whichever nav happens to render first.
+// The shell hides the inactive responsive nav from accessibility; jsdom has no
+// layout, so it falls back to the desktop sidebar unless tests mock
+// matchMedia.
 export async function navigateTo(
   label: "Chat" | "Proposals" | "Inbox" | "Browse" | "Settings",
 ): Promise<void> {
