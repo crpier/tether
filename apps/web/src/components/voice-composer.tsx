@@ -50,7 +50,6 @@ function adaptMediaRecorder(
 }
 
 export function VoiceComposerControls(props: {
-  disabled: boolean;
   onTranscript: (transcript: string, mode: VoiceMode) => void;
   transcribe: (blob: Blob) => Promise<string>;
 }) {
@@ -123,7 +122,6 @@ export function VoiceComposerControls(props: {
                   ? "Stop recording"
                   : "Record and review"
               }
-              disabled={props.disabled}
               onClick={() => {
                 if (recordingMode() === "review") {
                   recorder.stop();
@@ -152,7 +150,6 @@ export function VoiceComposerControls(props: {
                   ? "Stop recording"
                   : "Record and send"
               }
-              disabled={props.disabled}
               onClick={() => {
                 if (recordingMode() === "auto-send") {
                   recorder.stop();
