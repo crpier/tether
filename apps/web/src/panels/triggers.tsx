@@ -325,9 +325,12 @@ export function TriggersPanel(props: { api: TriggersHost }) {
             <TextFieldLabel>Reminder</TextFieldLabel>
             <TextFieldInput name="payload" />
           </TextField>
-          <label class="grid gap-1">
-            <span class={fieldLabelClass}>Repeat</span>
+          <div class="grid gap-1">
+            <span class={fieldLabelClass} id="reminder-recurrence-label">
+              Repeat
+            </span>
             <select
+              aria-labelledby="reminder-recurrence-label"
               class={selectClass}
               name="recurrence"
               onChange={(event) => {
@@ -339,10 +342,13 @@ export function TriggersPanel(props: { api: TriggersHost }) {
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
             </select>
-          </label>
-          <label class="grid gap-1">
-            <span class={fieldLabelClass}>Action</span>
+          </div>
+          <div class="grid gap-1">
+            <span class={fieldLabelClass} id="reminder-action-kind-label">
+              Action
+            </span>
             <select
+              aria-labelledby="reminder-action-kind-label"
               class={selectClass}
               name="action_kind"
               onChange={(event) => {
@@ -358,7 +364,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
                 ? "The agent runs your text when it fires; its answer arrives as a notification."
                 : "Your text is delivered verbatim as a notification when it fires."}
             </span>
-          </label>
+          </div>
           <Show when={recurrence() === "once"}>
             <TextField onChange={setFireAt} value={fireAt()}>
               <TextFieldLabel>Date and time</TextFieldLabel>
@@ -381,9 +387,12 @@ export function TriggersPanel(props: { api: TriggersHost }) {
             </TextField>
           </Show>
           <Show when={recurrence() === "weekly"}>
-            <label class="grid gap-1">
-              <span class={fieldLabelClass}>Day of week</span>
+            <div class="grid gap-1">
+              <span class={fieldLabelClass} id="reminder-weekday-label">
+                Day of week
+              </span>
               <select
+                aria-labelledby="reminder-weekday-label"
                 class={selectClass}
                 name="weekday"
                 onChange={(event) => {
@@ -395,7 +404,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
                   {(day, index) => <option value={index()}>{day}</option>}
                 </For>
               </select>
-            </label>
+            </div>
           </Show>
           <div class="flex gap-2">
             <Button type="submit">
