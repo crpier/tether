@@ -16,6 +16,7 @@ test("settings reports the server-owned model provider", async ({
   await expect(provider).toContainText(
     /Connected|Not connected|Status unavailable/u,
   );
+  await expect(provider).not.toContainText("ChatGPT");
 });
 
 test("unknown routes show not found without redirecting", async ({

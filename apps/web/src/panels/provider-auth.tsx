@@ -13,6 +13,8 @@ import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
 
+const providerName = "OpenAI Codex";
+
 function statusLabel(state: ProviderAuthStatus["state"]): string {
   if (state === "connected") {
     return "Connected";
@@ -63,7 +65,7 @@ export function ProviderAuthPanel(props: { api: ProviderAuthHost }) {
           {(status) => (
             <div class="space-y-3 text-sm">
               <div>
-                <p class="font-medium">OpenAI Codex</p>
+                <p class="font-medium">{providerName}</p>
                 <p class="text-muted-foreground">
                   {statusLabel(status().state)}
                 </p>
@@ -86,8 +88,8 @@ export function ProviderAuthPanel(props: { api: ProviderAuthHost }) {
                     }
                   >
                     {status().state === "connected"
-                      ? "Reconnect ChatGPT"
-                      : "Connect ChatGPT"}
+                      ? `Reconnect ${providerName}`
+                      : `Connect ${providerName}`}
                   </Button>
                 }
                 when={status().state === "authorizing"}
