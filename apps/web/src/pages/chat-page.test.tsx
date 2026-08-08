@@ -150,6 +150,49 @@ describe("Chat view", () => {
     expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
   });
 
+  test("marks an unfinished persisted turn as recoverable instead of fresh-session-ready", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({ content: "please investigate", role: "user", seq: 1 }),
+        message({ content: "checking tools", role: "reasoning", seq: 2 }),
+        message({
+          content: "search",
+          role: "tool",
+          seq: 3,
+          tool_name: "search",
+        }),
+      ],
+    });
+    host.chat.storedConversation = {
+      ...conversation,
+      latest_activity: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      session_gap_seconds: 300,
+    };
+    renderApp(host);
+
+    expect(await screen.findByText("please investigate")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Previous turn did not finish. Send a new message to recover.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Next message starts a fresh session"),
+    ).not.toBeInTheDocument();
+  });
+
+  test("hides Stop when no generation is active", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+
+    await screen.findByLabelText("Message");
+
+    expect(
+      screen.queryByRole("button", { name: "Stop" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("sends prompts and renders streamed assistant deltas", async () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);

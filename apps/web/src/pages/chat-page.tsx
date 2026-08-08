@@ -507,6 +507,7 @@ export function ChatPage() {
     error,
     generating,
     handleFrame,
+    historyIncomplete,
     historyReady,
     loadOlderMessages,
     loadedSkillCount,
@@ -650,7 +651,14 @@ export function ChatPage() {
             stopped={stopped()}
             working={working()}
           />
-          <Show when={startsFreshSession() && !generating()}>
+          <Show when={historyIncomplete() && !generating()}>
+            <p class="text-muted-foreground text-xs" role="status">
+              Previous turn did not finish. Send a new message to recover.
+            </p>
+          </Show>
+          <Show
+            when={startsFreshSession() && !generating() && !historyIncomplete()}
+          >
             <p
               class="text-muted-foreground text-xs"
               title="The assistant's working context resets after a few minutes idle; chat history stays."
@@ -787,14 +795,16 @@ export function ChatPage() {
               <Button disabled={!canSend()} type="submit">
                 {busy() ? "Queue message" : "Send"}
               </Button>
-              <Button
-                disabled={!generating() || awaitingAgentEnd()}
-                onClick={abort}
-                type="button"
-                variant="outline"
-              >
-                Stop
-              </Button>
+              <Show when={generating()}>
+                <Button
+                  disabled={awaitingAgentEnd()}
+                  onClick={abort}
+                  type="button"
+                  variant="outline"
+                >
+                  Stop
+                </Button>
+              </Show>
             </div>
           </form>
         </Show>

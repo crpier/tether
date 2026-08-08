@@ -66,6 +66,16 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const startedAt = createMemo(() => turn().startedAt);
   const stopped = createMemo(() => turn().stopped || interrupted());
   const working = createMemo(() => isAwaitingFirstToken(turn()));
+  const historyIncomplete = createMemo(() => {
+    const messages = Array.from(accumulated().values());
+    if (messages.length === 0) {
+      return false;
+    }
+    const latest = messages.reduce((left, right) =>
+      left.seq > right.seq ? left : right,
+    );
+    return latest.role === "reasoning" || latest.role === "tool";
+  });
   const storedMessages = createMemo<StoredMessage[]>(() =>
     Array.from(accumulated().values())
       .sort((left, right) => left.seq - right.seq)
@@ -317,6 +327,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     error,
     generating,
     handleFrame,
+    historyIncomplete,
     historyReady,
     loadOlderMessages,
     loadedSkillCount,
