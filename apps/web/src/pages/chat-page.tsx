@@ -15,24 +15,11 @@ import {
 import type { JSX } from "solid-js";
 
 import { useAppContext } from "../app-context";
-import type { Conversation, Message, TetherApi } from "../api";
-import type { ChatFrame } from "../chat-bus";
+import type { Conversation, TetherApi } from "../api";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
-import {
-  deriveRows,
-  emptyTurn,
-  isAwaitingFirstToken,
-  reduceFrame,
-  stabilizeRows,
-  startTurn,
-} from "../chat-timeline";
+import { createLiveChatTurn } from "../live-chat-turn";
+import type { ChatRole, TimelineRow } from "../live-chat-turn";
 import { willStartFreshSession } from "../session-freshness";
-import type {
-  ChatRole,
-  LiveTurn,
-  StoredMessage,
-  TimelineRow,
-} from "../chat-timeline";
 import { ArtifactOverlay } from "../components/artifact-viewer";
 import { MessageContent } from "../components/message-content";
 import { VoiceComposerControls } from "../components/voice-composer";
@@ -72,10 +59,6 @@ function bubbleClass(role: ChatRole): string {
 
 const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
-
-// Default transcript page size: the latest N messages load up front, older
-// ones page in on demand as the user scrolls up (see `loadOlderMessages`).
-const MESSAGES_PAGE_SIZE = 30;
 
 function ModelSelector(props: { api: TetherApi; conversation: Conversation }) {
   const queryClient = useQueryClient();
@@ -335,6 +318,7 @@ function MessageRows(props: {
   working: boolean;
   startedAt: number | null;
   stopped: boolean;
+  historyReady: boolean;
   // Triggers a fetch of the next-older page; a no-op if one is already in
   // flight or history is exhausted. Returns whether a fetch actually started,
   // so the caller only arms its scroll-position restore when rows are really
@@ -389,7 +373,7 @@ function MessageRows(props: {
         ref={(element) => {
           viewport = element;
         }}
-        aria-label="Chat transcript"
+        aria-label={props.historyReady ? "Chat transcript" : undefined}
         class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-4 shadow-sm"
         onScroll={() => {
           updatePinned();
@@ -447,11 +431,6 @@ function MessageRows(props: {
   );
 }
 
-interface QueuedPrompt {
-  id: number;
-  content: string;
-}
-
 export function ChatPage() {
   const { api, bus, chatFrame, connection } = useAppContext();
   const queryClient = useQueryClient();
@@ -459,37 +438,13 @@ export function ChatPage() {
   const promptParam = searchParams.prompt;
   const starterPrompt = typeof promptParam === "string" ? promptParam : "";
   const [draft, setDraft] = createSignal(starterPrompt);
-  const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([]);
-  // Keep a dispatched prompt until the host accepts it with `user_message`.
-  // An earlier error returns it to the queue instead of silently losing it.
-  const [outboundPrompt, setOutboundPrompt] = createSignal<QueuedPrompt | null>(
-    null,
-  );
   const [editingPromptId, setEditingPromptId] = createSignal<number | null>(
     null,
   );
   const [editingPromptContent, setEditingPromptContent] = createSignal("");
-  // `abort_ack` can precede the generation task finishing. Wait for
-  // `agent_end` before sending again so the host never sees an overlap.
-  const [awaitingAgentEnd, setAwaitingAgentEnd] = createSignal(false);
-  let nextQueuedPromptId = 1;
-  const [error, setError] = createSignal<string | undefined>();
-  const [loadedSkillCount, setLoadedSkillCount] = createSignal<
-    number | undefined
-  >();
-  const [turn, setTurn] = createSignal<LiveTurn>(emptyTurn());
-  const [messagesRefresh, setMessagesRefresh] = createSignal(0);
-  // Survives the live turn being retired by settled history, so the "stopped"
-  // marker stays on the (now persisted) partial reply instead of flashing away.
-  const [interrupted, setInterrupted] = createSignal(false);
-  // Signal-driven overlay (#188, no router): set by an artifact card's Open
-  // click, cleared to `null` on close. `null` both hides the overlay and
-  // (via ArtifactOverlay's own effect) tears down its iframe.
   const [openArtifact, setOpenArtifact] = createSignal<ArtifactPointer | null>(
     null,
   );
-  const generating = createMemo(() => turn().generating);
-  const busy = createMemo(() => generating() || awaitingAgentEnd());
   const canSend = createMemo(() => draft().trim().length > 0);
 
   const conversationsQuery = createQuery(() => ({
@@ -520,268 +475,84 @@ export function ChatPage() {
     );
   });
 
-  const [accumulated, setAccumulated] = createSignal<Map<number, Message>>(
-    new Map(),
-  );
-  const [hasMoreHistory, setHasMoreHistory] = createSignal(false);
-  const [loadingOlder, setLoadingOlder] = createSignal(false);
-
-  const messagesQuery = createQuery(() => ({
-    enabled: conversationId() !== undefined,
-    queryFn: async () => {
-      const id = conversationId();
-      return id === undefined
-        ? []
-        : api.listMessages(id, { limit: MESSAGES_PAGE_SIZE });
+  const liveTurn = createLiveChatTurn({
+    conversationId,
+    history: {
+      listMessages: (id, options) => api.listMessages(id, options),
+      settled: () => {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.conversations,
+        });
+        void queryClient.invalidateQueries({ queryKey: ["messages"] });
+      },
     },
-    queryKey: [
-      ...queryKeys.messages(conversationId() ?? "pending"),
-      messagesRefresh(),
-    ] as const,
-  }));
-
-  createEffect((previousId: string | undefined) => {
-    const id = conversationId();
-    if (id !== previousId) {
-      setAccumulated(new Map());
-      setHasMoreHistory(false);
-      setLoadedSkillCount(undefined);
-    }
-    return id;
-  }, undefined);
-
-  createEffect(() => {
-    const page = messagesQuery.data;
-    if (page === undefined) {
-      return;
-    }
-    setAccumulated((current) => {
-      const merged = new Map(current);
-      for (const message of page) {
-        merged.set(message.seq, message);
-      }
-      return merged;
-    });
-    setHasMoreHistory(page.length === MESSAGES_PAGE_SIZE);
+    transport: {
+      abort: (id) => {
+        bus()?.abort(id);
+      },
+      sendPrompt: (id, content) => {
+        bus()?.sendPrompt(id, content);
+      },
+    },
   });
+  const {
+    abort,
+    awaitingAgentEnd,
+    busy,
+    cancelQueuedPrompt: removeQueuedPrompt,
+    dismissError,
+    editQueuedPrompt: savePromptEdit,
+    error,
+    generating,
+    handleFrame,
+    historyReady,
+    loadOlderMessages,
+    loadedSkillCount,
+    queuedPrompts,
+    rows,
+    sendPrompt: sendLivePrompt,
+    sendQueuedPromptNow,
+    startedAt,
+    stopped,
+    working,
+  } = liveTurn;
 
-  const storedMessages = createMemo<StoredMessage[]>(() =>
-    Array.from(accumulated().values())
-      .sort((left, right) => left.seq - right.seq)
-      .map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        toolName: message.tool_name,
-        toolArgs: message.tool_args,
-        toolResult: message.tool_result,
-      })),
-  );
-  const rows = createMemo<TimelineRow[]>(
-    (previous) => stabilizeRows(previous, deriveRows(storedMessages(), turn())),
-    [],
-  );
-  const working = createMemo(() => isAwaitingFirstToken(turn()));
-
-  createEffect(() => {
-    const stored = messagesQuery.data;
-    if (stored === undefined) {
-      return;
-    }
-    untrack(() => {
-      if (!turn().generating) {
-        setTurn(emptyTurn());
-      }
-    });
-  });
-
-  const loadOlderMessages = (): boolean => {
-    const id = conversationId();
-    if (id === undefined || loadingOlder() || !hasMoreHistory()) {
-      return false;
-    }
-    const seqs = Array.from(accumulated().keys());
-    if (seqs.length === 0) {
-      return false;
-    }
-    const oldestSeq = Math.min(...seqs);
-    setLoadingOlder(true);
-    void (async () => {
-      try {
-        const page = await api.listMessages(id, {
-          limit: MESSAGES_PAGE_SIZE,
-          beforeSeq: oldestSeq,
-        });
-        setAccumulated((current) => {
-          const merged = new Map(current);
-          for (const message of page) {
-            merged.set(message.seq, message);
-          }
-          return merged;
-        });
-        setHasMoreHistory(page.length === MESSAGES_PAGE_SIZE);
-      } finally {
-        setLoadingOlder(false);
-      }
-    })();
-    return true;
-  };
-
-  const rehydrate = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
-    void queryClient.invalidateQueries({ queryKey: ["messages"] });
-    setMessagesRefresh((refresh) => refresh + 1);
-  };
-
-  const dispatchPrompt = (prompt: QueuedPrompt, conversationId: string) => {
-    setAwaitingAgentEnd(false);
-    setInterrupted(false);
-    setOutboundPrompt(prompt);
-    setTurn(startTurn(prompt.content, Date.now()));
-    bus()?.sendPrompt(conversationId, prompt.content);
-  };
-
-  const dispatchNextQueuedPrompt = () => {
-    const id = conversationId();
-    const next = queuedPrompts().at(0);
-    if (id === undefined || next === undefined) {
-      return;
-    }
-    setQueuedPrompts((current) => current.slice(1));
-    dispatchPrompt(next, id);
-  };
-
-  const handleFrame = (frame: ChatFrame) => {
-    if (frame.type === "invalidate") {
-      // The global handler (app.tsx) already refetches every named key; a
-      // "messages" invalidate additionally needs this page's own refresh
-      // token bumped, changing the query key so settled history is
-      // guaranteed a fresh fetch rather than relying on an already-active
-      // query picking up a bare `refetchQueries`.
-      if (frame.keys.includes("messages")) {
-        setMessagesRefresh((refresh) => refresh + 1);
-      }
-      return;
-    }
-    if (frame.type !== "chat") {
-      return;
-    }
-    const currentConversationId = conversationId();
-    if (
-      frame.conversation_id !== undefined &&
-      currentConversationId !== undefined &&
-      frame.conversation_id !== currentConversationId
-    ) {
-      return;
-    }
-    if (
-      frame.event === "skill_status" &&
-      typeof frame.loaded_count === "number" &&
-      Number.isInteger(frame.loaded_count) &&
-      frame.loaded_count >= 0
-    ) {
-      setLoadedSkillCount(frame.loaded_count);
-      return;
-    }
-    setTurn((current) => reduceFrame(current, frame, Date.now()));
-    if (frame.event === "user_message") {
-      setOutboundPrompt(null);
-    }
-    if (frame.event === "abort_ack") {
-      setInterrupted(true);
-    }
-    if (frame.event === "error") {
-      setError(frame.detail ?? "Chat error");
-      const rejected = outboundPrompt();
-      if (rejected !== null) {
-        setQueuedPrompts((current) => [rejected, ...current]);
-        setOutboundPrompt(null);
-      }
-    }
-    if (frame.event === "agent_end" || frame.event === "error") {
-      rehydrate();
-    }
-    if (frame.event === "agent_end") {
-      setOutboundPrompt(null);
-      setAwaitingAgentEnd(false);
-      dispatchNextQueuedPrompt();
-    }
-  };
-
-  // The bus disconnect callback lives above the router (app.tsx); this page
-  // only reacts to the frames the bus hands it while mounted.
   createEffect(() => {
     const frame = chatFrame();
     if (frame !== undefined) {
-      // Frame handling reads queue state; don't make those reads dependencies
-      // that replay the same frame whenever the queue changes.
       untrack(() => handleFrame(frame));
     }
   });
 
   const sendPrompt = (overrideContent?: string) => {
     const content = (overrideContent ?? draft()).trim();
-    const id = conversationId();
-    if (content.length === 0 || id === undefined) {
+    if (content.length === 0 || conversationId() === undefined) {
       return;
     }
     setDraft("");
-    setError(undefined);
-    const prompt = { content, id: nextQueuedPromptId };
-    nextQueuedPromptId += 1;
-    if (busy()) {
-      setQueuedPrompts((current) => [...current, prompt]);
-      return;
-    }
-    dispatchPrompt(prompt, id);
+    sendLivePrompt(content);
   };
 
-  const editQueuedPrompt = (prompt: QueuedPrompt) => {
+  const beginEditingQueuedPrompt = (prompt: {
+    id: number;
+    content: string;
+  }) => {
     setEditingPromptId(prompt.id);
     setEditingPromptContent(prompt.content);
   };
 
   const saveQueuedPrompt = (promptId: number) => {
-    const content = editingPromptContent().trim();
-    if (content.length === 0) {
-      return;
-    }
-    setQueuedPrompts((current) =>
-      current.map((prompt) =>
-        prompt.id === promptId ? { ...prompt, content } : prompt,
-      ),
-    );
+    savePromptEdit(promptId, editingPromptContent());
     setEditingPromptId(null);
     setEditingPromptContent("");
   };
 
   const cancelQueuedPrompt = (promptId: number) => {
-    setQueuedPrompts((current) =>
-      current.filter((prompt) => prompt.id !== promptId),
-    );
+    removeQueuedPrompt(promptId);
     if (editingPromptId() === promptId) {
       setEditingPromptId(null);
       setEditingPromptContent("");
     }
-  };
-
-  const sendQueuedPromptNow = (promptId: number) => {
-    const id = conversationId();
-    if (id === undefined || awaitingAgentEnd()) {
-      return;
-    }
-    setQueuedPrompts((current) => {
-      const selected = current.find((prompt) => prompt.id === promptId);
-      return selected === undefined
-        ? current
-        : [selected, ...current.filter((prompt) => prompt.id !== promptId)];
-    });
-    if (!busy()) {
-      dispatchNextQueuedPrompt();
-      return;
-    }
-    setAwaitingAgentEnd(true);
-    bus()?.abort(id);
   };
 
   const handleVoiceTranscript = (transcript: string, mode: VoiceMode) => {
@@ -790,14 +561,6 @@ export function ChatPage() {
       return;
     }
     sendPrompt(transcript);
-  };
-
-  const abort = () => {
-    const id = conversationId();
-    if (id !== undefined && !awaitingAgentEnd()) {
-      setAwaitingAgentEnd(true);
-      bus()?.abort(id);
-    }
   };
 
   const onSubmit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
@@ -863,7 +626,7 @@ export function ChatPage() {
                 aria-label="Dismiss error"
                 class="shrink-0 opacity-70 hover:opacity-100"
                 onClick={() => {
-                  setError(undefined);
+                  dismissError();
                 }}
                 type="button"
               >
@@ -877,11 +640,12 @@ export function ChatPage() {
           when={!conversationsQuery.isLoading && conversation() !== undefined}
         >
           <MessageRows
+            historyReady={historyReady()}
             onNearTop={loadOlderMessages}
             onOpenArtifact={setOpenArtifact}
             rows={rows()}
-            startedAt={turn().startedAt}
-            stopped={turn().stopped || interrupted()}
+            startedAt={startedAt()}
+            stopped={stopped()}
             working={working()}
           />
           <Show when={startsFreshSession() && !generating()}>
@@ -935,7 +699,7 @@ export function ChatPage() {
                             <div class="flex flex-wrap gap-2">
                               <Button
                                 onClick={() => {
-                                  editQueuedPrompt(prompt);
+                                  beginEditingQueuedPrompt(prompt);
                                 }}
                                 size="sm"
                                 type="button"
