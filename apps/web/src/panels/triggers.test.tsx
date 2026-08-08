@@ -47,6 +47,28 @@ describe("Triggers panel", () => {
     ).toBeInTheDocument();
   });
 
+  test("labels reminder row actions with the reminder text", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      triggers: [trigger({ payload: "renew passport" })],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+
+    const row = await screen.findByLabelText("Reminder: renew passport");
+    expect(
+      within(row).getByRole("button", {
+        name: "Edit reminder: renew passport",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByRole("button", {
+        name: "Delete reminder: renew passport",
+      }),
+    ).toBeInTheDocument();
+  });
+
   test("creating a one-off reminder posts the right body", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);

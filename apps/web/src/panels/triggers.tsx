@@ -37,6 +37,13 @@ function formatFireTime(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
 }
 
+function reminderActionLabel(
+  action: "Edit" | "Delete",
+  trigger: Trigger,
+): string {
+  return `${action} reminder: ${trigger.payload}`;
+}
+
 // A `datetime-local` value is a local (not UTC) stamp, so the `min` guard and
 // the edit pre-fill have to be built from local components rather than
 // `toISOString()`. Seconds are included (with a matching `step` on the input)
@@ -429,6 +436,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
               <span class="text-muted-foreground text-xs">{` · ${trigger.recurrence} · ${trigger.status}`}</span>
               <span class="text-muted-foreground text-xs">{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
               <Button
+                aria-label={reminderActionLabel("Edit", trigger)}
                 class="ml-auto"
                 onClick={() => {
                   startEdit(trigger);
@@ -440,6 +448,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
                 Edit
               </Button>
               <Button
+                aria-label={reminderActionLabel("Delete", trigger)}
                 onClick={() => {
                   remove(trigger.id, trigger.version);
                 }}

@@ -69,7 +69,7 @@ test("edits a reminder and shows the updated row", async ({ page, login }) => {
   await createOneOffReminder(page, reminders, label);
 
   const row = page.locator(`li[aria-label="Reminder: ${label}"]`);
-  await row.getByRole("button", { name: "Edit" }).click();
+  await row.getByRole("button", { name: `Edit reminder: ${label}` }).click();
 
   // The form is pre-filled with the reminder; change its message and push the
   // fire time out another hour, then save.
