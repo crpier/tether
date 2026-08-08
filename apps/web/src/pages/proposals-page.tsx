@@ -1,5 +1,15 @@
+import { useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  untrack,
+} from "solid-js";
 
 import { useHost } from "../app-context";
 import type {
@@ -27,8 +37,33 @@ import {
 type ProposalsView = "queue" | "history" | "grants";
 type HistoryStateFilter =
   "all" | "approved" | "executing" | "executed" | "failed" | "rejected";
+type SearchValue = string | string[] | undefined;
 
 const PAGE_SIZE = 25;
+
+function singleSearchValue(value: SearchValue): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parseQueryView(value: SearchValue): ProposalsView | undefined {
+  const raw = singleSearchValue(value);
+  return raw === "queue" || raw === "history" || raw === "grants"
+    ? raw
+    : undefined;
+}
+
+function parseQueryPage(value: SearchValue): number | undefined {
+  const raw = singleSearchValue(value);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : undefined;
+}
+
+function pageParam(page: number): string | undefined {
+  return page > 1 ? page.toString() : undefined;
+}
 
 function pageCount(total: number): number {
   return Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -118,7 +153,10 @@ function sameProposalBasis(a: Proposal, b: Proposal): boolean {
 export function ProposalsPage() {
   const api = useHost("proposals");
   const queryClient = useQueryClient();
-  const [view, setView] = createSignal<ProposalsView>("queue");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialView = parseQueryView(searchParams.tab) ?? "queue";
+  const initialPage = parseQueryPage(searchParams.page) ?? 1;
+  const [view, setView] = createSignal<ProposalsView>(initialView);
   const [selectedId, setSelectedId] = createSignal<string | undefined>();
   // Action ids unticked per proposal, keyed by proposal id, before approval.
   const [deselections, setDeselections] = createSignal<
@@ -135,9 +173,13 @@ export function ProposalsPage() {
   const [historySearch, setHistorySearch] = createSignal("");
   const [historyState, setHistoryState] =
     createSignal<HistoryStateFilter>("all");
-  const [historyPage, setHistoryPage] = createSignal(1);
+  const [historyPage, setHistoryPage] = createSignal(
+    initialView === "history" ? initialPage : 1,
+  );
   const [grantSearch, setGrantSearch] = createSignal("");
-  const [grantPage, setGrantPage] = createSignal(1);
+  const [grantPage, setGrantPage] = createSignal(
+    initialView === "grants" ? initialPage : 1,
+  );
   const [suggestionSearch, setSuggestionSearch] = createSignal("");
   const [suggestionPage, setSuggestionPage] = createSignal(1);
 
@@ -222,6 +264,59 @@ export function ProposalsPage() {
   const selected = createMemo(() =>
     queueItems().find((item) => item.id === selectedId()),
   );
+
+  createEffect(() => {
+    const nextView = parseQueryView(searchParams.tab) ?? "queue";
+    const nextPage = parseQueryPage(searchParams.page) ?? 1;
+    untrack(() => {
+      setView(nextView);
+      if (nextView === "history") {
+        setHistoryPage(nextPage);
+      }
+      if (nextView === "grants") {
+        setGrantPage(nextPage);
+      }
+    });
+  });
+
+  createEffect(() => {
+    if (historyQuery.data === undefined) {
+      return;
+    }
+    const safePage = boundedPage(historyPage(), filteredHistoryItems().length);
+    if (safePage !== historyPage()) {
+      setHistoryPage(safePage);
+    }
+  });
+
+  createEffect(() => {
+    if (grantsQuery.data === undefined) {
+      return;
+    }
+    const safePage = boundedPage(grantPage(), filteredGrants().length);
+    if (safePage !== grantPage()) {
+      setGrantPage(safePage);
+    }
+  });
+
+  createEffect(() => {
+    const nextTab = view() === "queue" ? undefined : view();
+    const nextPage =
+      view() === "history"
+        ? pageParam(historyPage())
+        : view() === "grants"
+          ? pageParam(grantPage())
+          : undefined;
+    if (
+      singleSearchValue(searchParams.tab) !== nextTab ||
+      singleSearchValue(searchParams.page) !== nextPage
+    ) {
+      setSearchParams(
+        { page: nextPage, tab: nextTab },
+        { replace: true, scroll: false },
+      );
+    }
+  });
 
   const refresh = () => {
     void queryClient.invalidateQueries({
