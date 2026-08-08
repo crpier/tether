@@ -17,7 +17,7 @@ import type { Notification } from "../host/notifications";
 import type { DuePrompt, EssayGradeProposal, RecallHost } from "../host/recall";
 import { ApiError } from "../host/error";
 import type { TranscriptDecision } from "../host/youtube";
-import { formatDate, formatSyncTimestamp } from "../lib/format";
+import { formatDate, formatDateTime, formatSyncTimestamp } from "../lib/format";
 import { queryKeys } from "../lib/query-keys";
 import { cx } from "../lib/cva";
 import { Badge } from "@/components/ui/badge";
@@ -612,9 +612,12 @@ function InboxDetail(props: {
           {(entry) => (
             <div class="space-y-3">
               <p class="text-sm">{entry().notification.body}</p>
-              <p class="text-muted-foreground text-xs">
-                {formatSyncTimestamp(entry().notification.created_at)}
-              </p>
+              <div class="text-muted-foreground space-y-1 text-xs">
+                <p>
+                  {`Fired: ${formatDateTime(new Date(entry().notification.created_at))}`}
+                </p>
+                <p>{`ID: ${entry().notification.id}`}</p>
+              </div>
               <Button
                 onClick={() => {
                   props.dismissNotification(entry().notification.id);

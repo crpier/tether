@@ -298,6 +298,46 @@ describe("Inbox page", () => {
     ).toBeInTheDocument();
   });
 
+  test("fired reminder detail includes exact fired identity", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.notifications.storedNotifications = [
+      notification({
+        body: "Call the dentist",
+        created_at: "2026-01-01T00:00:00Z",
+        id: "notif-1",
+      }),
+      notification({
+        body: "Call the dentist",
+        created_at: "2026-01-01T00:00:00Z",
+        id: "notif-2",
+      }),
+    ];
+    renderApp(host);
+    await navigateTo("Inbox");
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Fired reminder: Call the dentist.*notif-1/,
+      }),
+    );
+    const firstDetail = await screen.findByLabelText(
+      "Inbox item: Call the dentist",
+    );
+    expect(within(firstDetail).getByText(/ID: notif-1/)).toBeInTheDocument();
+    expect(
+      within(firstDetail).getByText(/Fired: .*01\/01\/2026/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Fired reminder: Call the dentist.*notif-2/,
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/ID: notif-2/)).toBeInTheDocument();
+    });
+  });
+
   test("dismissing a fired reminder removes it from the inbox", async () => {
     const host = new FakeHost({ authenticated: true });
     host.notifications.storedNotifications = [
