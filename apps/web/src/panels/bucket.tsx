@@ -484,7 +484,7 @@ export function BucketPanel(props: {
             </Show>
             <div class="mt-3">
               <TextField onChange={onSearchInput} value={search()}>
-                <TextFieldLabel>Search</TextFieldLabel>
+                <TextFieldLabel>Search bucket items</TextFieldLabel>
                 <TextFieldInput name="search" type="search" />
               </TextField>
             </div>

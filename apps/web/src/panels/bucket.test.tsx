@@ -58,6 +58,20 @@ describe("Bucket panel", () => {
     );
   });
 
+  test("names the active item search field with bucket scope", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
+
+    expect(
+      await screen.findByRole("searchbox", { name: "Search bucket items" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("searchbox", { name: "Search" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("lists active items with type, intent context and created date", async () => {
     const host = new FakeHost({
       authenticated: true,
@@ -514,7 +528,7 @@ describe("Bucket panel", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     await screen.findByLabelText("Bucket item: Dune");
-    fireEvent.input(input(screen.getByLabelText("Search")), {
+    fireEvent.input(input(screen.getByLabelText("Search bucket items")), {
       target: { value: "Blade" },
     });
 
@@ -540,7 +554,7 @@ describe("Bucket panel", () => {
     await screen.findByLabelText("Bucket item: Blade Runner");
 
     vi.useFakeTimers();
-    const field = input(screen.getByLabelText("Search"));
+    const field = input(screen.getByLabelText("Search bucket items"));
     fireEvent.input(field, { target: { value: "B" } });
     fireEvent.input(field, { target: { value: "Bl" } });
     fireEvent.input(field, { target: { value: "Blade" } });
@@ -567,13 +581,13 @@ describe("Bucket panel", () => {
     await screen.findByLabelText("Bucket item: Dune");
 
     // Register a search cache entry, then clear the term so it goes stale.
-    fireEvent.input(input(screen.getByLabelText("Search")), {
+    fireEvent.input(input(screen.getByLabelText("Search bucket items")), {
       target: { value: "Blade" },
     });
     await waitFor(() => {
       expect(host.bucket.searchBucketItemsCalls).toEqual(["Blade"]);
     });
-    fireEvent.input(input(screen.getByLabelText("Search")), {
+    fireEvent.input(input(screen.getByLabelText("Search bucket items")), {
       target: { value: "" },
     });
     const row = await screen.findByLabelText("Bucket item: Dune");
