@@ -117,7 +117,7 @@ describe("Todos panel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  test("an empty list reads as nothing to do", async () => {
+  test("an empty list explains todos and opens a focused Chat starter", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
@@ -125,6 +125,15 @@ describe("Todos panel", () => {
 
     await screen.findByRole("heading", { name: "Todos" });
     expect(screen.getByText("Nothing to do right now")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Todos are single actions created through Chat/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Create in Chat" }));
+    await screen.findByRole("heading", { name: "Tether chat" });
+    const composer = await screen.findByLabelText("Message");
+    expect(composer).toHaveValue("Create a todo: ");
+    expect(composer).toHaveFocus();
   });
 
   test("a todos invalidate frame refetches the list", async () => {

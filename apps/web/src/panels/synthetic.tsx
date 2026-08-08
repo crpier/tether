@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 
@@ -225,11 +226,33 @@ export function SyntheticPanels(props: { api: TetherApi }) {
     queryKey: queryKeys.panels,
   }));
 
-  // No saved panels renders nothing at all: the panel column belongs to the
-  // dedicated panels until the user actually saves a Synthetic one.
   return (
-    <For each={panelsQuery.data ?? []}>
-      {(panel) => <SyntheticPanelCard api={props.api} panel={panel} />}
-    </For>
+    <Switch>
+      <Match when={panelsQuery.isPending}>
+        <section aria-label="Panels" class={panelClass}>
+          <p class="text-muted-foreground text-sm">Loading…</p>
+        </section>
+      </Match>
+      <Match when={(panelsQuery.data?.length ?? 0) === 0}>
+        <section aria-label="Panels" class={panelClass}>
+          <h2 class="text-sm font-semibold">No panels yet</h2>
+          <p class="text-muted-foreground mt-2 text-sm">
+            Panels are saved views over your memories, filtered by facets and
+            shown as a table or chart.
+          </p>
+          <A
+            class="text-primary mt-2 inline-block text-sm font-medium underline-offset-4 hover:underline"
+            href={`/?prompt=${encodeURIComponent("Create a panel for: ")}`}
+          >
+            Create in Chat
+          </A>
+        </section>
+      </Match>
+      <Match when={true}>
+        <For each={panelsQuery.data ?? []}>
+          {(panel) => <SyntheticPanelCard api={props.api} panel={panel} />}
+        </For>
+      </Match>
+    </Switch>
   );
 }

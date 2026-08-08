@@ -93,6 +93,7 @@ export function TriggersPanel(props: { api: TetherApi }) {
   const [timeOfDay, setTimeOfDay] = createSignal("09:00");
   const [timezone, setTimezone] = createSignal(browserTimezone());
   const [weekday, setWeekday] = createSignal(0);
+  const [formOpen, setFormOpen] = createSignal(false);
   const [error, setError] = createSignal<string | undefined>();
   // The trigger being edited, as observed at click time: its version is the
   // optimistic-concurrency token and its definition is the basis a 409 retry
@@ -105,6 +106,7 @@ export function TriggersPanel(props: { api: TetherApi }) {
   };
 
   const resetForm = () => {
+    setFormOpen(false);
     setEditing(undefined);
     setPayload("");
     setFireAt("");
@@ -120,6 +122,7 @@ export function TriggersPanel(props: { api: TetherApi }) {
     // one-off date after editing a recurring reminder) never carry leftovers
     // from a previous edit that resurface on a mid-edit Repeat flip.
     resetForm();
+    setFormOpen(true);
     setEditing(trigger);
     setPayload(trigger.payload);
     setRecurrence(trigger.recurrence);
@@ -297,100 +300,123 @@ export function TriggersPanel(props: { api: TetherApi }) {
   return (
     <section aria-label="Reminders" class={panelClass}>
       <h2 class="mb-3 text-sm font-semibold">Reminders</h2>
-      <form class="space-y-3" onSubmit={onSubmit}>
-        <TextField onChange={setPayload} value={payload()}>
-          <TextFieldLabel>Reminder</TextFieldLabel>
-          <TextFieldInput name="payload" />
-        </TextField>
-        <label class="grid gap-1">
-          <span class={fieldLabelClass}>Repeat</span>
-          <select
-            class={selectClass}
-            name="recurrence"
-            onChange={(event) => {
-              setRecurrence(event.currentTarget.value as TriggerRecurrence);
+      <Show
+        fallback={
+          <Button
+            onClick={() => {
+              setFormOpen(true);
             }}
-            value={recurrence()}
+            type="button"
           >
-            <option value="once">Once</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-          </select>
-        </label>
-        <label class="grid gap-1">
-          <span class={fieldLabelClass}>Action</span>
-          <select
-            class={selectClass}
-            name="action_kind"
-            onChange={(event) => {
-              setActionKind(event.currentTarget.value as TriggerActionKind);
-            }}
-            value={actionKind()}
-          >
-            <option value="message">Notify me with this text</option>
-            <option value="prompt">Run this as an agent prompt</option>
-          </select>
-          <span class="text-muted-foreground text-xs">
-            {actionKind() === "prompt"
-              ? "The agent runs your text when it fires; its answer arrives as a notification."
-              : "Your text is delivered verbatim as a notification when it fires."}
-          </span>
-        </label>
-        <Show when={recurrence() === "once"}>
-          <TextField onChange={setFireAt} value={fireAt()}>
-            <TextFieldLabel>Date and time</TextFieldLabel>
-            <TextFieldInput
-              min={localDateTimeStamp(new Date())}
-              name="fire_at"
-              step={1}
-              type="datetime-local"
-            />
+            Add reminder
+          </Button>
+        }
+        when={formOpen()}
+      >
+        <form class="space-y-3" onSubmit={onSubmit}>
+          <TextField onChange={setPayload} value={payload()}>
+            <TextFieldLabel>Reminder</TextFieldLabel>
+            <TextFieldInput name="payload" />
           </TextField>
-        </Show>
-        <Show when={recurrence() !== "once"}>
-          <TextField onChange={setTimeOfDay} value={timeOfDay()}>
-            <TextFieldLabel>Time of day</TextFieldLabel>
-            <TextFieldInput name="time_of_day" type="time" />
-          </TextField>
-          <TextField onChange={setTimezone} value={timezone()}>
-            <TextFieldLabel>Time zone</TextFieldLabel>
-            <TextFieldInput name="timezone" />
-          </TextField>
-        </Show>
-        <Show when={recurrence() === "weekly"}>
           <label class="grid gap-1">
-            <span class={fieldLabelClass}>Day of week</span>
+            <span class={fieldLabelClass}>Repeat</span>
             <select
               class={selectClass}
-              name="weekday"
+              name="recurrence"
               onChange={(event) => {
-                setWeekday(Number(event.currentTarget.value));
+                setRecurrence(event.currentTarget.value as TriggerRecurrence);
               }}
-              value={weekday()}
+              value={recurrence()}
             >
-              <For each={WEEKDAYS}>
-                {(day, index) => <option value={index()}>{day}</option>}
-              </For>
+              <option value="once">Once</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
             </select>
           </label>
-        </Show>
-        <div class="flex gap-2">
-          <Button type="submit">
-            {editing() === undefined ? "Add reminder" : "Save reminder"}
-          </Button>
-          <Show when={editing()}>
-            <Button onClick={resetForm} type="button" variant="ghost">
-              Cancel
-            </Button>
+          <label class="grid gap-1">
+            <span class={fieldLabelClass}>Action</span>
+            <select
+              class={selectClass}
+              name="action_kind"
+              onChange={(event) => {
+                setActionKind(event.currentTarget.value as TriggerActionKind);
+              }}
+              value={actionKind()}
+            >
+              <option value="message">Notify me with this text</option>
+              <option value="prompt">Run this as an agent prompt</option>
+            </select>
+            <span class="text-muted-foreground text-xs">
+              {actionKind() === "prompt"
+                ? "The agent runs your text when it fires; its answer arrives as a notification."
+                : "Your text is delivered verbatim as a notification when it fires."}
+            </span>
+          </label>
+          <Show when={recurrence() === "once"}>
+            <TextField onChange={setFireAt} value={fireAt()}>
+              <TextFieldLabel>Date and time</TextFieldLabel>
+              <TextFieldInput
+                min={localDateTimeStamp(new Date())}
+                name="fire_at"
+                step={1}
+                type="datetime-local"
+              />
+            </TextField>
           </Show>
-        </div>
-      </form>
+          <Show when={recurrence() !== "once"}>
+            <TextField onChange={setTimeOfDay} value={timeOfDay()}>
+              <TextFieldLabel>Time of day</TextFieldLabel>
+              <TextFieldInput name="time_of_day" type="time" />
+            </TextField>
+            <TextField onChange={setTimezone} value={timezone()}>
+              <TextFieldLabel>Time zone</TextFieldLabel>
+              <TextFieldInput name="timezone" />
+            </TextField>
+          </Show>
+          <Show when={recurrence() === "weekly"}>
+            <label class="grid gap-1">
+              <span class={fieldLabelClass}>Day of week</span>
+              <select
+                class={selectClass}
+                name="weekday"
+                onChange={(event) => {
+                  setWeekday(Number(event.currentTarget.value));
+                }}
+                value={weekday()}
+              >
+                <For each={WEEKDAYS}>
+                  {(day, index) => <option value={index()}>{day}</option>}
+                </For>
+              </select>
+            </label>
+          </Show>
+          <div class="flex gap-2">
+            <Button type="submit">
+              {editing() === undefined ? "Add reminder" : "Save reminder"}
+            </Button>
+            <Show when={editing()}>
+              <Button onClick={resetForm} type="button" variant="ghost">
+                Cancel
+              </Button>
+            </Show>
+          </div>
+        </form>
+      </Show>
       <Show when={error()}>
         {(message) => (
           <p class="text-destructive mt-2 text-sm" role="alert">
             {message()}
           </p>
         )}
+      </Show>
+      <Show
+        when={
+          !triggersQuery.isPending && (triggersQuery.data?.length ?? 0) === 0
+        }
+      >
+        <p class="text-muted-foreground mt-3 text-sm">
+          Reminders deliver text or run an agent prompt at a time you choose.
+        </p>
       </Show>
       <ul class="mt-3 space-y-2">
         <For each={triggersQuery.data ?? []}>

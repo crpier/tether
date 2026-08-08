@@ -13,19 +13,19 @@ import {
 afterEach(cleanup);
 
 describe("Synthetic panels", () => {
-  test("renders nothing when no panels are saved", async () => {
+  test("an empty list explains panels and opens a Chat starter", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Panels" })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      );
-    });
-    expect(screen.queryByLabelText(/^Panel:/)).not.toBeInTheDocument();
+    await screen.findByText(/Panels are saved views over your memories/);
+    fireEvent.click(screen.getByRole("link", { name: "Create in Chat" }));
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+    const composer = await screen.findByLabelText("Message");
+    expect(composer).toHaveValue("Create a panel for: ");
+    expect(composer).toHaveFocus();
   });
 
   test("renders a saved panel's results as a table with facet columns", async () => {

@@ -108,6 +108,15 @@ function duplicateLine(duplicate: BucketItem): string {
   return `${duplicate.title} · ${duplicate.state}${when}`;
 }
 
+function metadataLine(item: BucketItem): string | undefined {
+  const field = ITEM_TYPE_FIELDS[item.item_type].optional;
+  const value = item.data[field.key];
+  if (typeof value !== "string" && typeof value !== "number") {
+    return undefined;
+  }
+  return `${field.label}: ${value.toString()}`;
+}
+
 const ALL_BUCKET_VIEWS: BucketView[] = ["active", "history", "triage"];
 
 export function BucketPanel(props: {
@@ -127,6 +136,7 @@ export function BucketPanel(props: {
     availableViews()[0] ?? "active",
   );
   const [itemType, setItemType] = createSignal<BucketItemType>("movie");
+  const [formOpen, setFormOpen] = createSignal(false);
   const [primaryValue, setPrimaryValue] = createSignal("");
   const [optionalValue, setOptionalValue] = createSignal("");
   const [intentContext, setIntentContext] = createSignal("");
@@ -253,6 +263,7 @@ export function BucketPanel(props: {
         setPrimaryValue("");
         setOptionalValue("");
         setIntentContext("");
+        setFormOpen(false);
         if (added.dedup.severity !== "none") {
           setAdvisory(added.dedup);
         }
@@ -370,42 +381,68 @@ export function BucketPanel(props: {
       </div>
       <Switch>
         <Match when={view() === "active"}>
-          <form class="space-y-3" onSubmit={onSubmit}>
-            <label class="grid gap-1">
-              <span class={fieldLabelClass}>Type</span>
-              <select
-                class={selectClass}
-                name="item_type"
-                onChange={(event) => {
-                  setItemType(event.currentTarget.value as BucketItemType);
-                  setPrimaryValue("");
-                  setOptionalValue("");
+          <Show
+            fallback={
+              <Button
+                onClick={() => {
+                  setFormOpen(true);
                 }}
-                value={itemType()}
+                type="button"
               >
-                <For each={ITEM_TYPES}>
-                  {(candidate) => (
-                    <option value={candidate}>
-                      {ITEM_TYPE_FIELDS[candidate].label}
-                    </option>
-                  )}
-                </For>
-              </select>
-            </label>
-            <TextField onChange={setPrimaryValue} value={primaryValue()}>
-              <TextFieldLabel>{fields().primary.label}</TextFieldLabel>
-              <TextFieldInput name="primary" />
-            </TextField>
-            <TextField onChange={setOptionalValue} value={optionalValue()}>
-              <TextFieldLabel>{fields().optional.label}</TextFieldLabel>
-              <TextFieldInput name="optional" />
-            </TextField>
-            <TextField onChange={setIntentContext} value={intentContext()}>
-              <TextFieldLabel>Reason</TextFieldLabel>
-              <TextFieldInput name="intent_context" />
-            </TextField>
-            <Button type="submit">Add item</Button>
-          </form>
+                Add item
+              </Button>
+            }
+            when={formOpen()}
+          >
+            <form class="space-y-3" onSubmit={onSubmit}>
+              <label class="grid gap-1">
+                <span class={fieldLabelClass}>Type</span>
+                <select
+                  class={selectClass}
+                  name="item_type"
+                  onChange={(event) => {
+                    setItemType(event.currentTarget.value as BucketItemType);
+                    setPrimaryValue("");
+                    setOptionalValue("");
+                  }}
+                  value={itemType()}
+                >
+                  <For each={ITEM_TYPES}>
+                    {(candidate) => (
+                      <option value={candidate}>
+                        {ITEM_TYPE_FIELDS[candidate].label}
+                      </option>
+                    )}
+                  </For>
+                </select>
+              </label>
+              <TextField onChange={setPrimaryValue} value={primaryValue()}>
+                <TextFieldLabel>{fields().primary.label}</TextFieldLabel>
+                <TextFieldInput name="primary" />
+              </TextField>
+              <TextField onChange={setOptionalValue} value={optionalValue()}>
+                <TextFieldLabel>{fields().optional.label}</TextFieldLabel>
+                <TextFieldInput name="optional" />
+              </TextField>
+              <TextField onChange={setIntentContext} value={intentContext()}>
+                <TextFieldLabel>Reason</TextFieldLabel>
+                <TextFieldInput name="intent_context" />
+              </TextField>
+              <div class="flex gap-2">
+                <Button type="submit">Add item</Button>
+                <Button
+                  onClick={() => {
+                    setFormOpen(false);
+                    setError(undefined);
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </Show>
           <Show when={advisory()}>
             {(dedup) => (
               <div
@@ -446,11 +483,20 @@ export function BucketPanel(props: {
           </div>
           <Show
             fallback={
-              <p class="text-muted-foreground mt-3 text-sm">
-                {searchTerm().length > 0
-                  ? "No matches"
-                  : "Nothing in the bucket yet"}
-              </p>
+              <Show
+                fallback={
+                  <div class="mt-3 space-y-1">
+                    <p class="text-sm font-medium">Nothing in the bucket yet</p>
+                    <p class="text-muted-foreground text-sm">
+                      Bucket items are things you intend to consume or visit,
+                      such as books, movies, and places.
+                    </p>
+                  </div>
+                }
+                when={searchTerm().length > 0}
+              >
+                <p class="text-muted-foreground mt-3 text-sm">No matches</p>
+              </Show>
             }
             when={listedItems().length > 0}
           >
@@ -489,6 +535,13 @@ export function BucketPanel(props: {
                         Delete
                       </Button>
                     </div>
+                    <Show when={metadataLine(item)}>
+                      {(metadata) => (
+                        <p class="text-muted-foreground mt-0.5 text-xs">
+                          {metadata()}
+                        </p>
+                      )}
+                    </Show>
                     <p class="text-muted-foreground mt-0.5 text-xs italic">
                       {item.intent_context || "no reason noted"}
                     </p>
@@ -537,6 +590,11 @@ function HistoryRow(props: { item: BucketItem }) {
           {` · ${props.item.state} ${terminalDate(props.item) ?? ""}`}
         </span>
       </div>
+      <Show when={metadataLine(props.item)}>
+        {(metadata) => (
+          <p class="text-muted-foreground mt-0.5 text-xs">{metadata()}</p>
+        )}
+      </Show>
       <p class="text-muted-foreground mt-0.5 text-xs italic">
         {props.item.intent_context || "no reason noted"}
       </p>
