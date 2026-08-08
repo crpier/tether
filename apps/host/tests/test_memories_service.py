@@ -31,7 +31,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
-from pydantic import PositiveInt
+from pydantic import UUID7, PositiveInt
 from snekql.sqlite import Config, Database, Fetched, delete, select, update
 from snektest import (
     assert_eq,
@@ -64,13 +64,28 @@ from tether.memories import (
     create_memory_schema,
 )
 from tether.reconciler import SearchReconciler
-from tether.search_index import SearchDocument, SearchIndex
+from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
 
 
 def noop_tracer() -> Tracer:
     """A tracer that emits nowhere, for tests that don't assert on spans."""
     return trace.NoOpTracerProvider().get_tracer("test.memory_service")
+
+
+class EmptyMemorySearcher:
+    """Search seam stub that simulates an index miss while accepting writes."""
+
+    async def candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> list[SearchCandidate]:
+        return []
+
+    async def index_memory(self, memory: Memory[Fetched], *, logger: Logger) -> None:
+        pass
+
+    async def deindex_memory(self, memory_id: UUID7, *, logger: Logger) -> None:
+        pass
 
 
 class LoggedMemoryService:
@@ -241,6 +256,24 @@ class SearchableHarness:
     index: SearchIndex
     embedder: FakeEmbedder
     logger: Logger
+
+
+@fixture
+async def lexical_fallback_memory_service() -> AsyncGenerator[LoggedMemoryService]:
+    """A MemoryService whose search index deliberately misses every query."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_memory_schema(db)
+    async with TemporaryDirectory() as kb_root:
+        yield LoggedMemoryService(
+            MemoryService(
+                database=db,
+                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
+                tracer=noop_tracer(),
+                searcher=EmptyMemorySearcher(),
+            ),
+            logger=structlog.stdlib.get_logger("test.memory_service.lexical"),
+        )
+    await db.close()
 
 
 @fixture
@@ -588,6 +621,32 @@ async def search_ranks_the_more_relevant_memory_first() -> None:
     found = [hit.id for hit in await service.search("penicillin prescription")]
 
     assert_eq(found[0], relevant.id)
+
+
+@test()
+async def search_matches_visible_receipt_id_substrings() -> None:
+    """Exact visible substrings like receipt ids match their Memory text."""
+    service = (await load_fixture(searchable_memory_service())).service
+    memory = await capture_tethered_memory(
+        service, "Submitted reimbursement receipt #A-742 for review"
+    )
+
+    found = [hit.id for hit in await service.search("A-742")]
+
+    assert_eq(found, [memory.id])
+
+
+@test()
+async def search_falls_back_to_visible_substring_when_the_index_misses() -> None:
+    """Receipt-id substrings still match if hybrid retrieval misses them."""
+    service = await load_fixture(lexical_fallback_memory_service())
+    memory = await capture_tethered_memory(
+        service, "Submitted reimbursement receipt #A-742 for review"
+    )
+
+    found = [hit.id for hit in await service.search("A-742")]
+
+    assert_eq(found, [memory.id])
 
 
 @test()
