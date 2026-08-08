@@ -398,6 +398,7 @@ export function InboxPage() {
                                   ? "bg-accent"
                                   : "hover:bg-accent/50",
                               )}
+                              aria-label={itemAccessibleName(item)}
                               data-id={item.id}
                               onClick={() => {
                                 setSelectedId(item.id);
@@ -480,6 +481,13 @@ function itemTitle(item: InboxItem): string {
     case "transcript-decision":
       return item.decision.title;
   }
+}
+
+function itemAccessibleName(item: InboxItem): string | undefined {
+  if (item.kind !== "notification") {
+    return undefined;
+  }
+  return `Fired reminder: ${item.notification.body} — fired ${formatSyncTimestamp(item.notification.created_at)} — id ${item.notification.id}`;
 }
 
 function InboxDetail(props: {

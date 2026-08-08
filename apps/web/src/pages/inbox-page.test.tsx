@@ -275,6 +275,29 @@ describe("Inbox page", () => {
     });
   });
 
+  test("fired reminder rows have distinct accessible names", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.notifications.storedNotifications = [
+      notification({ body: "Call the dentist", id: "notif-1" }),
+      notification({ body: "Call the dentist", id: "notif-2" }),
+    ];
+    renderApp(host);
+    await navigateTo("Inbox");
+
+    await screen.findByText("Fired reminder (2)");
+
+    expect(
+      screen.getByRole("button", {
+        name: /Fired reminder: Call the dentist.*notif-1/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Fired reminder: Call the dentist.*notif-2/,
+      }),
+    ).toBeInTheDocument();
+  });
+
   test("dismissing a fired reminder removes it from the inbox", async () => {
     const host = new FakeHost({ authenticated: true });
     host.notifications.storedNotifications = [
@@ -285,7 +308,9 @@ describe("Inbox page", () => {
     await screen.findByRole("heading", { name: "Inbox" });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Call the dentist" }),
+      await screen.findByRole("button", {
+        name: /Fired reminder: Call the dentist.*notif-1/,
+      }),
     );
     await waitFor(() => {
       expect(
