@@ -18,6 +18,24 @@ interface BrowserState {
 
 const maxLogEntries = 100;
 
+export function browserControlAccessibleName(control: {
+  ariaLabel: string;
+  innerText: string;
+  labelledByText: string;
+  labelText: string;
+  placeholder: string;
+}): string {
+  return (
+    control.ariaLabel ||
+    control.labelledByText ||
+    control.labelText ||
+    control.placeholder ||
+    control.innerText
+  )
+    .trim()
+    .slice(0, 120);
+}
+
 export function browserControlText(control: {
   innerText: string;
   type: string;
@@ -145,14 +163,34 @@ async function snapshot(page: Page): Promise<string> {
         elements.slice(0, 80).map((element, index) => {
           const htmlElement = element as HTMLElement;
           const input = element as HTMLInputElement;
+          const labelledByText = (
+            htmlElement.getAttribute("aria-labelledby") ?? ""
+          )
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((id) => document.getElementById(id)?.textContent ?? "")
+            .join(" ");
+          const labels =
+            element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement ||
+            element instanceof HTMLButtonElement
+              ? element.labels
+              : null;
+          const labelElements = labels === null ? [] : Array.from(labels);
+          const labelText = labelElements
+            .map((label) => label.textContent)
+            .join(" ");
           return {
             index,
-            ariaLabel: htmlElement.getAttribute("aria-label"),
+            ariaLabel: htmlElement.getAttribute("aria-label") ?? "",
+            innerText: htmlElement.innerText || "",
+            labelledByText,
+            labelText,
             name: input.name || undefined,
-            placeholder: input.placeholder || undefined,
+            placeholder: input.placeholder || "",
             role: htmlElement.getAttribute("role"),
             tag: htmlElement.tagName.toLowerCase(),
-            innerText: htmlElement.innerText || "",
             type: input.type || "",
             value: input.value || "",
           };
@@ -162,10 +200,13 @@ async function snapshot(page: Page): Promise<string> {
   ]);
 
   const controls = rawControls.map((control) => ({
-    ...control,
-    innerText: undefined,
+    accessibleName: browserControlAccessibleName(control),
+    index: control.index,
+    name: control.name,
+    role: control.role,
+    tag: control.tag,
     text: browserControlText(control),
-    value: undefined,
+    type: control.type,
   }));
 
   return JSON.stringify(
@@ -289,6 +330,7 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
       consumeBrowserAction(state);
       const page = await ensurePage(state);
       await fillField(page, params.field, params.value);
+      await page.waitForTimeout(300);
       return {
         content: [{ type: "text", text: await snapshot(page) }],
         details: {},

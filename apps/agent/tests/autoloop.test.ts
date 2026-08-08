@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  browserControlAccessibleName,
   browserControlText,
   isAllowedBrowserUrl,
 } from "../src/autoloop-browser-extension.js";
@@ -46,6 +47,18 @@ describe("browser tool safety", () => {
     expect(
       browserControlText({ innerText: "", type: "password", value: "secret" }),
     ).toBe("[redacted]");
+  });
+
+  test("reports associated label text as the accessible name", () => {
+    expect(
+      browserControlAccessibleName({
+        ariaLabel: "",
+        innerText: "",
+        labelledByText: "",
+        labelText: "Message",
+        placeholder: "",
+      }),
+    ).toBe("Message");
   });
 
   test("allows navigation only within the production origin", () => {
@@ -229,6 +242,7 @@ describe("buildExplorerPrompt", () => {
     expect(prompt).toContain("- destructive account deletion");
     expect(prompt).toContain("At most 8 browser actions");
     expect(prompt).toContain("confirm it with a fresh browser_snapshot");
+    expect(prompt).toContain("Use each control's accessibleName");
   });
 });
 

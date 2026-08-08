@@ -200,6 +200,7 @@ Use the browser tools for real exploratory testing:
 
 At most ${String(options.maxActions)} browser actions this run. Prefer broad, shallow exploration over repeating one flow.
 Before reporting a possibly transient loading or empty-state problem, confirm it with a fresh browser_snapshot.
+Use each control's accessibleName, not the raw HTML name or aria-label attribute, when evaluating labels.
 If login is required and TETHER_AUTOLOOP_APP_PASSWORD is set, use browser_fill_secret so the password is not printed.
 Do not perform destructive actions. Do not spam external services.
 

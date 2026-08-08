@@ -49,7 +49,7 @@ async function main(): Promise<void> {
 
   process.on("SIGINT", () => {
     stopController.abort();
-    process.stdout.write("\n[autoloop] stopping after current cycle\n");
+    process.stdout.write("\n[autoloop] stopping\n");
   });
   process.on("SIGTERM", () => {
     stopController.abort();
@@ -59,7 +59,11 @@ async function main(): Promise<void> {
     process.stdout.write(
       `\n[autoloop] explorer cycle ${new Date().toISOString()}\n`,
     );
-    const result = await runExplorerOnce(config);
+    const result = await runExplorerOnce(config).catch((error: unknown) => {
+      if (stopController.signal.aborted) return undefined;
+      throw error;
+    });
+    if (result === undefined) break;
     if (result.finding === undefined) {
       process.stdout.write("\n[autoloop] no finding\n");
       await abortableDelay(loopDelayMs, stopController.signal);
