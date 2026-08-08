@@ -355,6 +355,175 @@ describe("Chat view", () => {
     expect(screen.getByText("Hello")).toBeInTheDocument();
   });
 
+  test("sending during generation visibly queues the message", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.input(messageBox, { target: { value: "Follow up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+
+    expect(bus.sent).toEqual([
+      { content: "First", conversationId: conversation.id, type: "prompt" },
+    ]);
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(within(queue).getByText("Follow up")).toBeInTheDocument();
+    expect(messageBox.value).toBe("");
+  });
+
+  test("queued messages are sent in order as turns finish", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+
+    for (const content of ["First", "Second", "Third"]) {
+      fireEvent.input(messageBox, { target: { value: content } });
+      fireEvent.keyDown(messageBox, { key: "Enter" });
+    }
+    expect(bus.sent).toEqual([
+      { content: "First", conversationId: conversation.id, type: "prompt" },
+    ]);
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "agent_end",
+      type: "chat",
+    });
+    expect(bus.sent.at(-1)).toEqual({
+      content: "Second",
+      conversationId: conversation.id,
+      type: "prompt",
+    });
+    expect(screen.queryByText("Second")).toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "agent_end",
+      type: "chat",
+    });
+    expect(bus.sent.at(-1)).toEqual({
+      content: "Third",
+      conversationId: conversation.id,
+      type: "prompt",
+    });
+    expect(
+      screen.queryByRole("region", { name: "Queued messages" }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("queued messages can be edited and cancelled", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+
+    fireEvent.input(messageBox, { target: { value: "First" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+    fireEvent.input(messageBox, { target: { value: "Needs editing" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+
+    const queuedMessage = screen.getByRole("article", {
+      name: "Queued message 1",
+    });
+    fireEvent.click(
+      within(queuedMessage).getByRole("button", { name: "Edit" }),
+    );
+    const editor = textarea(
+      within(queuedMessage).getByRole("textbox", {
+        name: "Edit queued message 1",
+      }),
+    );
+    fireEvent.input(editor, { target: { value: "Edited follow up" } });
+    fireEvent.click(
+      within(queuedMessage).getByRole("button", { name: "Save changes" }),
+    );
+    expect(screen.getByText("Edited follow up")).toBeInTheDocument();
+
+    fireEvent.click(
+      within(
+        screen.getByRole("article", { name: "Queued message 1" }),
+      ).getByRole("button", { name: "Cancel message" }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Queued messages" }),
+    ).not.toBeInTheDocument();
+    expect(bus.sent).toHaveLength(1);
+  });
+
+  test("Send now stops the active turn before sending the chosen message", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+
+    for (const content of ["First", "Second", "Urgent correction"]) {
+      fireEvent.input(messageBox, { target: { value: content } });
+      fireEvent.keyDown(messageBox, { key: "Enter" });
+    }
+    const urgent = screen.getByRole("article", { name: "Queued message 2" });
+    fireEvent.click(within(urgent).getByRole("button", { name: "Send now" }));
+
+    expect(bus.sent.at(-1)).toEqual({
+      conversationId: conversation.id,
+      type: "abort",
+    });
+    expect(
+      within(
+        screen.getByRole("article", { name: "Queued message 1" }),
+      ).getByText("Urgent correction"),
+    ).toBeInTheDocument();
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "abort_ack",
+      type: "chat",
+    });
+    expect(bus.sent.at(-1)?.type).toBe("abort");
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "agent_end",
+      type: "chat",
+    });
+    expect(bus.sent.at(-1)).toEqual({
+      content: "Urgent correction",
+      conversationId: conversation.id,
+      type: "prompt",
+    });
+    expect(screen.getByText("Second")).toBeInTheDocument();
+  });
+
+  test("a prompt rejected before acceptance remains queued for retry", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "Do not lose this" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+
+    bus.emit({
+      conversation_id: conversation.id,
+      detail: "generation already running",
+      event: "error",
+      type: "chat",
+    });
+
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(within(queue).getByText("Do not lose this")).toBeInTheDocument();
+    fireEvent.click(within(queue).getByRole("button", { name: "Send now" }));
+    expect(bus.sent).toEqual([
+      {
+        content: "Do not lose this",
+        conversationId: conversation.id,
+        type: "prompt",
+      },
+      {
+        content: "Do not lose this",
+        conversationId: conversation.id,
+        type: "prompt",
+      },
+    ]);
+  });
+
   test("Shift+Enter inserts a newline instead of sending", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
@@ -449,6 +618,29 @@ describe("Chat view", () => {
     await waitFor(() => {
       expect(screen.queryByText("old topic")).not.toBeInTheDocument();
     });
+  });
+
+  test("New chat discards queued messages", async () => {
+    const api = new FakeApi({ authenticated: true });
+    const bus = renderApp(api);
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "First" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+    fireEvent.input(messageBox, { target: { value: "Queued" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+    expect(
+      screen.getByRole("region", { name: "Queued messages" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => {
+      expect(api.clearConversationCalls).toBe(1);
+    });
+    expect(
+      screen.queryByRole("region", { name: "Queued messages" }),
+    ).not.toBeInTheDocument();
+    expect(bus.sent.at(-1)?.type).toBe("abort");
   });
 
   test("invalidate frames refetch named query keys", async () => {
@@ -704,6 +896,28 @@ describe("Chat view", () => {
         ]);
       });
       expect(await screen.findByText("call the dentist")).toBeInTheDocument();
+    });
+
+    test("auto-send queues a transcript while a turn is generating", async () => {
+      stubVoiceRecording();
+      const api = new FakeApi({ authenticated: true });
+      api.nextTranscript = "voice follow up";
+      const bus = renderApp(api);
+      const messageBox = textarea(await screen.findByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "First" } });
+      fireEvent.keyDown(messageBox, { key: "Enter" });
+
+      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
+      await screen.findByText("Recording…");
+      latestFakeRecorder().stop();
+
+      const queue = await screen.findByRole("region", {
+        name: "Queued messages",
+      });
+      expect(within(queue).getByText("voice follow up")).toBeInTheDocument();
+      expect(bus.sent).toEqual([
+        { content: "First", conversationId: conversation.id, type: "prompt" },
+      ]);
     });
 
     test("a failed transcription keeps the clip with retry/discard, entering nothing into chat", async () => {

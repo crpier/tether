@@ -10,7 +10,14 @@ from typing import Any, cast
 from uuid import UUID
 
 from snekql.sqlite import update
-from snektest import assert_eq, assert_in, assert_len, assert_true, test
+from snektest import (
+    assert_eq,
+    assert_in,
+    assert_isinstance,
+    assert_len,
+    assert_true,
+    test,
+)
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -1062,6 +1069,38 @@ def websocket_bucket_write_publishes_invalidation() -> None:
 
     assert_eq(response.status_code, 201)
     assert_eq(frame, {"type": "invalidate", "keys": ["bucket-items"]})
+
+
+@test()
+def websocket_rejects_overlapping_prompts() -> None:
+    """One conversation never runs two agent generations concurrently."""
+    fake_runtime = BlockingRuntime()
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        app = assert_isinstance(client.app, Starlette)
+        app.state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "First",
+                }
+            )
+            _ = websocket.receive_json()
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Overlapping",
+                }
+            )
+            frame = websocket.receive_json()
+
+    assert_eq(frame["event"], "error")
+    assert_eq(frame["detail"], "generation already running")
 
 
 @test()
