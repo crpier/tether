@@ -15,7 +15,26 @@ import {
   renderApp,
 } from "./testing/harness";
 
-afterEach(cleanup);
+const noop = () => undefined;
+const originalMatchMedia = window.matchMedia;
+
+afterEach(() => {
+  cleanup();
+  window.matchMedia = originalMatchMedia;
+});
+
+function installMatchMedia(matches: boolean) {
+  window.matchMedia = (query: string): MediaQueryList => ({
+    addEventListener: noop,
+    addListener: noop,
+    dispatchEvent: () => false,
+    matches,
+    media: query,
+    onchange: null,
+    removeEventListener: noop,
+    removeListener: noop,
+  });
+}
 
 async function mainNav(): Promise<HTMLElement> {
   return screen.findByRole("navigation", { name: "Main navigation" });
@@ -74,6 +93,45 @@ describe("Shell accessibility", () => {
         name: new RegExp(`^${label}`),
       });
       expect(link).toHaveAttribute("title", label);
+    }
+  });
+
+  test("only the active responsive nav is exposed", async () => {
+    const labels = ["Chat", "Proposals", "Inbox", "Browse", "Settings"];
+
+    installMatchMedia(true);
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/settings",
+    });
+    expect(
+      await screen.findByRole("navigation", { name: "Main navigation" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", { name: "Main navigation (compact)" }),
+    ).not.toBeInTheDocument();
+    for (const label of labels) {
+      expect(
+        screen.getAllByRole("link", { name: new RegExp(`^${label}`) }),
+      ).toHaveLength(1);
+    }
+
+    cleanup();
+    installMatchMedia(false);
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/browse",
+    });
+    expect(
+      screen.queryByRole("navigation", { name: "Main navigation" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("navigation", {
+        name: "Main navigation (compact)",
+      }),
+    ).toBeInTheDocument();
+    for (const label of labels) {
+      expect(
+        screen.getAllByRole("link", { name: new RegExp(`^${label}`) }),
+      ).toHaveLength(1);
     }
   });
 });

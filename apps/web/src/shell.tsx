@@ -1,6 +1,13 @@
 import { A, useLocation } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
-import { For, Show, createMemo, createSignal } from "solid-js";
+import {
+  For,
+  Show,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import type { JSX } from "solid-js";
 
 import { useHost } from "./app-context";
@@ -68,6 +75,39 @@ function useBadgeCounts() {
   return { inboxCount, proposalsCount };
 }
 
+function createMediaQuery(query: string, fallback: boolean) {
+  const initialMatches = () => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return fallback;
+    }
+    return window.matchMedia(query).matches;
+  };
+  const [matches, setMatches] = createSignal(initialMatches());
+
+  onMount(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+    const media = window.matchMedia(query);
+    const update = () => {
+      setMatches(media.matches);
+    };
+    update();
+    media.addEventListener("change", update);
+    onCleanup(() => {
+      media.removeEventListener("change", update);
+    });
+  });
+
+  return matches;
+}
+
 function NavBadge(props: { count: number }) {
   return (
     <Show when={props.count > 0}>
@@ -89,7 +129,7 @@ function useNavItems(): NavItem[] {
   ];
 }
 
-function DesktopSidebar(props: { items: NavItem[] }) {
+function DesktopSidebar(props: { active: boolean; items: NavItem[] }) {
   const [collapsed, setCollapsed] = createSignal(false);
   const location = useLocation();
 
@@ -99,6 +139,7 @@ function DesktopSidebar(props: { items: NavItem[] }) {
         "border-sidebar-border bg-sidebar text-sidebar-foreground hidden shrink-0 flex-col border-r transition-[width] duration-150 lg:flex",
         collapsed() ? "w-14" : "w-56",
       )}
+      hidden={!props.active}
     >
       <div class="flex items-center justify-between px-3 py-3">
         <Show when={!collapsed()}>
@@ -167,12 +208,13 @@ function DesktopSidebar(props: { items: NavItem[] }) {
   );
 }
 
-function MobileBottomTabs(props: { items: NavItem[] }) {
+function MobileBottomTabs(props: { active: boolean; items: NavItem[] }) {
   const location = useLocation();
   return (
     <nav
       aria-label="Main navigation (compact)"
       class="border-sidebar-border bg-sidebar text-sidebar-foreground fixed inset-x-0 bottom-0 z-40 flex border-t lg:hidden"
+      hidden={!props.active}
     >
       <For each={props.items}>
         {(item) => {
@@ -208,14 +250,15 @@ function MobileBottomTabs(props: { items: NavItem[] }) {
 
 export function Shell(props: { children?: JSX.Element }) {
   const items = useNavItems();
+  const isDesktop = createMediaQuery("(min-width: 1024px)", true);
 
   return (
     <div class="flex h-dvh w-dvw overflow-hidden">
-      <DesktopSidebar items={items} />
+      <DesktopSidebar active={isDesktop()} items={items} />
       <main class="flex min-w-0 flex-1 flex-col overflow-y-auto pb-16 lg:pb-0">
         {props.children}
       </main>
-      <MobileBottomTabs items={items} />
+      <MobileBottomTabs active={!isDesktop()} items={items} />
     </div>
   );
 }
