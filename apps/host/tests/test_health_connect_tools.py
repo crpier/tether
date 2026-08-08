@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snektest import assert_eq, test
+from snektest import assert_eq, assert_true, test
 
 from tests.surfaces import call_tool, login, surface_client
 
@@ -137,6 +137,87 @@ def inventory_includes_populated_expanded_record_types() -> None:
 
 
 @test()
+def agent_can_summarize_typed_health_metrics_without_raw_records() -> None:
+    """Overview reads return compact aggregate measurements for the time window."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        ingest_representative_telemetry(client)
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-16T00:00:00Z",
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(
+        envelope["result"],
+        {
+            "after": "2023-11-14T00:00:00Z",
+            "before": "2023-11-16T00:00:00Z",
+            "exercise": {
+                "exercise_type_counts": {"56": 1},
+                "record_count": 1,
+                "total_duration_minutes": 60.0,
+            },
+            "heart_rate": {
+                "average_bpm": 62.0,
+                "maximum_bpm": 63,
+                "minimum_bpm": 61,
+                "record_count": 1,
+                "sample_count": 2,
+            },
+            "other_record_types": [],
+            "sleep": {
+                "average_duration_minutes": 480.0,
+                "record_count": 1,
+                "stage_duration_minutes": {"4": 60.0},
+                "total_duration_minutes": 480.0,
+            },
+            "steps": {"record_count": 1, "total_count": 1234},
+        },
+    )
+
+
+@test()
+def summary_compacts_generic_numeric_measurements() -> None:
+    """Generic payload values become small named series instead of raw records."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        ingest_weight_telemetry(client)
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-16T00:00:00Z",
+        )
+
+    assert_eq(
+        envelope["result"]["other_record_types"],
+        [
+            {
+                "earliest_start": "2023-11-14T22:13:20Z",
+                "latest_end": "2023-11-14T22:13:20Z",
+                "numeric_values": [
+                    {
+                        "average": 70.5,
+                        "latest": 70.5,
+                        "maximum": 70.5,
+                        "minimum": 70.5,
+                        "path": "weight.kilograms",
+                        "sample_count": 1,
+                    }
+                ],
+                "record_count": 1,
+                "record_type": "weight",
+            }
+        ],
+    )
+
+
+@test()
 def agent_can_query_current_steps_within_an_aware_time_window() -> None:
     """A bounded query returns the current interval and its writing origin."""
     with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
@@ -199,11 +280,26 @@ def query_rejects_a_reversed_time_window() -> None:
 
 
 @test()
+def summary_rejects_an_unbounded_time_window() -> None:
+    """Overview aggregation cannot scan more than 31 days at once."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2024-01-01T00:00:00Z",
+            before="2024-02-02T00:00:00Z",
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "invalid_input")
+
+
+@test()
 def query_rejects_an_unbounded_record_limit() -> None:
     """The tool cannot return more than its fixed maximum parent records."""
     with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
         envelope = call_tool(
-            client, "query_health_connect", record_type="steps", limit=101
+            client, "query_health_connect", record_type="steps", limit=11
         )
 
     assert_eq(envelope["success"], False)
@@ -227,6 +323,28 @@ def agent_can_read_heart_rate_samples_from_current_records() -> None:
             {"beats_per_minute": 63, "time": "2023-11-14T22:13:22Z"},
         ],
     )
+
+
+@test()
+def raw_query_caps_nested_heart_rate_samples() -> None:
+    """A raw record query cannot return an unbounded sample stream."""
+    changed_batch = json.loads(FIXTURE_PATH.read_text())
+    changed_batch["request_id"] = "many-samples-page-request"
+    changed_batch["records"]["heart_rate"][0]["samples"] = [
+        {"beats_per_minute": 60 + index % 5, "time": 1700000001000 + index}
+        for index in range(51)
+    ]
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        ingest_representative_telemetry(client)
+        response = client.post(BATCH_PATH, json=changed_batch)
+        assert_eq(response.status_code, 200)
+
+        envelope = call_tool(client, "query_health_connect", record_type="heart_rate")
+
+    heart_rate = envelope["result"][0]["data"]
+    assert_eq(len(heart_rate["samples"]), 50)
+    assert_eq(heart_rate["samples_truncated"], True)
 
 
 @test()
@@ -269,6 +387,52 @@ def agent_can_read_exercise_sessions_with_nested_details() -> None:
     assert_eq(exercise["laps"][0]["length_meters"], 1000.5)
     assert_eq(exercise["route"][0]["latitude"], 40.1)
     assert_eq(exercise["route"][0]["time"], "2023-11-14T22:13:21Z")
+
+
+@test()
+def raw_query_replaces_oversized_record_data_with_metadata() -> None:
+    """One reflected payload cannot inject an unbounded result into agent context."""
+    changed_batch = {
+        "contract_version": 3,
+        "installation_id": "scale-installation",
+        "record_types": ["weight"],
+        "request_id": "large-weight-page-request",
+        "mode": "baseline",
+        "expected_token": "weight-token",
+        "next_token": "weight-token",
+        "records": {
+            "weight": [
+                {
+                    "metadata": {
+                        "id": "weight-1",
+                        "data_origin_package": "com.example.scale",
+                        "last_modified_time": 1700000000200,
+                        "client_record_id": None,
+                        "client_record_version": None,
+                        "device": None,
+                        "recording_method": 2,
+                    },
+                    "start_time": 1700000000000,
+                    "end_time": None,
+                    "start_zone_offset_seconds": 0,
+                    "end_zone_offset_seconds": None,
+                    "payload": {"raw": "x" * 5_000, "time": 1700000000000},
+                }
+            ]
+        },
+        "deletions": [],
+    }
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        ingest_weight_telemetry(client)
+        response = client.post(BATCH_PATH, json=changed_batch)
+        assert_eq(response.status_code, 200)
+
+        envelope = call_tool(client, "query_health_connect", record_type="weight")
+
+    record_data = envelope["result"][0]["data"]
+    assert_eq(record_data["truncated"], True)
+    assert_true(record_data["original_size_bytes"] > 4_096)
 
 
 @test()
