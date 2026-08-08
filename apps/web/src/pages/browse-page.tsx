@@ -1,7 +1,11 @@
 import { Match, Switch, createSignal } from "solid-js";
 
 import { useAppContext } from "../app-context";
-import { SegmentedControl } from "../components/segmented-control";
+import {
+  SegmentedControl,
+  segmentedPanelId,
+  segmentedTabId,
+} from "../components/segmented-control";
 import { BucketPanel } from "../panels/bucket";
 import { MemoriesPanel } from "../panels/memories";
 import { SyntheticPanels } from "../panels/synthetic";
@@ -19,7 +23,7 @@ export function BrowsePage() {
   const [view, setView] = createSignal<BrowseView>("memories");
 
   return (
-    <main
+    <section
       aria-labelledby="browse-title"
       class="flex min-h-full flex-1 flex-col"
     >
@@ -32,6 +36,7 @@ export function BrowsePage() {
         </h1>
         <SegmentedControl
           aria-label="Browse view"
+          id="browse-view"
           onChange={setView}
           options={[
             { label: "Memories", value: "memories" },
@@ -46,23 +51,53 @@ export function BrowsePage() {
       <div class="mx-auto w-full max-w-3xl flex-1 space-y-4 p-4 sm:p-5">
         <Switch>
           <Match when={view() === "memories"}>
-            {/* Review lives on the Inbox page; Browse only opens on Corpus. */}
-            <MemoriesPanel api={api} initialView="corpus" />
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "memories")}
+              id={segmentedPanelId("browse-view", "memories")}
+              role="tabpanel"
+            >
+              {/* Review lives on the Inbox page; Browse only opens on Corpus. */}
+              <MemoriesPanel api={api} initialView="corpus" />
+            </div>
           </Match>
           <Match when={view() === "bucket"}>
-            <BucketPanel api={api} hiddenViews={["triage"]} />
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "bucket")}
+              id={segmentedPanelId("browse-view", "bucket")}
+              role="tabpanel"
+            >
+              <BucketPanel api={api} hiddenViews={["triage"]} />
+            </div>
           </Match>
           <Match when={view() === "todos"}>
-            <TodosPanel api={api} />
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "todos")}
+              id={segmentedPanelId("browse-view", "todos")}
+              role="tabpanel"
+            >
+              <TodosPanel api={api} />
+            </div>
           </Match>
           <Match when={view() === "reminders"}>
-            <TriggersPanel api={api} />
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "reminders")}
+              id={segmentedPanelId("browse-view", "reminders")}
+              role="tabpanel"
+            >
+              <TriggersPanel api={api} />
+            </div>
           </Match>
           <Match when={view() === "panels"}>
-            <SyntheticPanels api={api} />
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "panels")}
+              id={segmentedPanelId("browse-view", "panels")}
+              role="tabpanel"
+            >
+              <SyntheticPanels api={api} />
+            </div>
           </Match>
         </Switch>
       </div>
-    </main>
+    </section>
   );
 }

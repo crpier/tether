@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   FakeApi,
   grant,
+  grantSuggestion,
   navigateTo,
   proposal,
   renderApp,
@@ -69,7 +70,7 @@ describe("Proposals page", () => {
       detail = screen.getAllByLabelText("Proposal: Purge emails")[0];
       expect(detail).toBeInTheDocument();
     });
-    fireEvent.click(within(detail!).getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(detail!).getByRole("button", { name: /^Approve/ }));
 
     await waitFor(() => {
       expect(api.approveProposalCalls).toEqual([
@@ -87,10 +88,54 @@ describe("Proposals page", () => {
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Grants" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Grants" }));
 
     expect(
       await screen.findByLabelText("Grant: send_email"),
     ).toBeInTheDocument();
+  });
+
+  test("view switcher exposes tabs and selected panel state", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    const tabs = screen.getByRole("tablist", { name: "Proposals view" });
+    expect(within(tabs).getByRole("tab", { name: "Queue" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    fireEvent.keyDown(within(tabs).getByRole("tab", { name: "Queue" }), {
+      key: "ArrowRight",
+    });
+
+    expect(within(tabs).getByRole("tab", { name: "Decided" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("tabpanel", { name: "Decided" }),
+    ).toBeInTheDocument();
+  });
+
+  test("repeated grant actions include suggestion context in the accessible name", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      grantSuggestions: [
+        grantSuggestion({ kind: "send_email", scope: "newsletter" }),
+      ],
+    });
+    renderApp(api);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Grants" }));
+
+    const grantButton = await screen.findByRole("button", {
+      name: "Grant send_email (newsletter)",
+    });
+    expect(grantButton).toHaveTextContent("Grant");
   });
 });

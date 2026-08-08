@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { FakeApi, navigateTo, renderApp } from "../testing/harness";
@@ -26,12 +26,15 @@ describe("Browse page", () => {
     await navigateTo("Browse");
     await screen.findByRole("heading", { name: "Browse" });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
+    const tabs = screen.getByRole("tablist", { name: "Browse view" });
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Todos" }));
     expect(
       await screen.findByRole("region", { name: "Todos" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Todos" })).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Reminders" }));
     expect(
       await screen.findByRole("region", { name: "Reminders" }),
     ).toBeInTheDocument();

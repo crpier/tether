@@ -4,7 +4,11 @@ import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 import { useAppContext } from "../app-context";
 import { ApiError } from "../api";
 import type { GrantSuggestion, Proposal, ProposalAction } from "../api";
-import { SegmentedControl } from "../components/segmented-control";
+import {
+  SegmentedControl,
+  segmentedPanelId,
+  segmentedTabId,
+} from "../components/segmented-control";
 import { formatDateTime } from "../lib/format";
 import { queryKeys } from "../lib/query-keys";
 import { cx } from "../lib/cva";
@@ -369,7 +373,7 @@ export function ProposalsPage() {
   };
 
   return (
-    <main
+    <section
       aria-labelledby="proposals-title"
       class="flex min-h-full flex-1 flex-col"
     >
@@ -382,6 +386,7 @@ export function ProposalsPage() {
         </h1>
         <SegmentedControl
           aria-label="Proposals view"
+          id="proposals-view"
           onChange={setView}
           options={[
             { label: "Queue", value: "queue" },
@@ -401,240 +406,156 @@ export function ProposalsPage() {
         </Show>
         <Switch>
           <Match when={view() === "queue"}>
-            <Show
-              fallback={
-                <p class="text-muted-foreground text-sm">
-                  No pending proposals
-                </p>
-              }
-              when={queueItems().length > 0}
+            <div
+              aria-labelledby={segmentedTabId("proposals-view", "queue")}
+              id={segmentedPanelId("proposals-view", "queue")}
+              role="tabpanel"
             >
-              <div class="flex min-h-0 flex-1 gap-4 lg:h-[calc(100vh-9rem)]">
-                <ul class="w-full shrink-0 overflow-y-auto rounded-xl border lg:w-80">
-                  <For each={queueItems()}>
-                    {(item) => (
-                      <li>
-                        <button
-                          aria-current={selectedId() === item.id}
-                          class={cx(
-                            "flex w-full flex-col gap-1 border-b px-3 py-2.5 text-left text-sm last:border-0",
-                            selectedId() === item.id
-                              ? "bg-accent"
-                              : "hover:bg-accent/50",
-                          )}
-                          data-id={item.id}
-                          onClick={() => {
-                            setSelectedId(item.id);
-                          }}
-                          type="button"
-                        >
-                          <span class="truncate font-medium">{item.title}</span>
-                          <span class="text-muted-foreground truncate text-xs">
-                            {`${item.consumer} · ${item.actions.length.toString()} action${item.actions.length === 1 ? "" : "s"}`}
-                          </span>
-                        </button>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-                <div class="hidden min-w-0 flex-1 overflow-y-auto lg:block">
-                  <Show
-                    fallback={
-                      <p class="text-muted-foreground text-sm">
-                        Select a proposal to review it.
-                      </p>
-                    }
-                    when={selected()}
-                  >
-                    {(item) => (
-                      <ProposalDetail
-                        confirmReject={confirmReject}
-                        deselectedIds={deselections()[item().id] ?? []}
-                        dismissOffer={dismissOffer}
-                        item={item()}
-                        onApprove={approve}
-                        onCancelReject={cancelReject}
-                        onReject={startReject}
-                        onToggleAction={toggleDeselected}
-                        rejectReason={rejectReason()}
-                        rejecting={rejecting()?.id === item().id}
-                        revocationOffers={revocationOffers()[item().id] ?? []}
-                        revokeOffered={revokeOffered}
-                        setRejectReason={setRejectReason}
-                      />
-                    )}
-                  </Show>
-                </div>
-                {/* Narrow-width drill-in: the detail pane replaces the list
-                    entirely once a proposal is selected, and a Back control
-                    returns to the list. */}
-                <Show when={selected()}>
-                  {(item) => (
-                    <div class="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-background p-4 lg:hidden">
-                      <Button
-                        class="mb-3 self-start"
-                        onClick={() => {
-                          setSelectedId(undefined);
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        ← Back to queue
-                      </Button>
-                      <ProposalDetail
-                        confirmReject={confirmReject}
-                        deselectedIds={deselections()[item().id] ?? []}
-                        dismissOffer={dismissOffer}
-                        item={item()}
-                        onApprove={approve}
-                        onCancelReject={cancelReject}
-                        onReject={startReject}
-                        onToggleAction={toggleDeselected}
-                        rejectReason={rejectReason()}
-                        rejecting={rejecting()?.id === item().id}
-                        revocationOffers={revocationOffers()[item().id] ?? []}
-                        revokeOffered={revokeOffered}
-                        setRejectReason={setRejectReason}
-                      />
-                    </div>
-                  )}
-                </Show>
-              </div>
-            </Show>
-          </Match>
-          <Match when={view() === "history"}>
-            <Show
-              fallback={
-                <p class="text-muted-foreground text-sm">
-                  No decided proposals yet
-                </p>
-              }
-              when={historyItems().length > 0}
-            >
-              <ul class="space-y-2">
-                <For each={historyItems()}>
-                  {(item) => (
-                    <li
-                      aria-label={`Proposal: ${item.title}`}
-                      class="bg-muted rounded-md border px-3 py-2 text-sm"
-                      data-id={item.id}
-                    >
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="font-medium">{item.title}</span>
-                        <span class="text-muted-foreground text-xs">
-                          {item.state}
-                        </span>
-                      </div>
-                      <p class="text-muted-foreground text-xs">
-                        {item.decided_at
-                          ? formatWhen(item.decided_at)
-                          : "not decided"}
-                      </p>
-                      <Show when={item.rejection_reason}>
-                        {(reason) => (
-                          <p class="text-muted-foreground text-xs">
-                            {`Reason: ${reason()}`}
-                          </p>
-                        )}
-                      </Show>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </Show>
-          </Match>
-          <Match when={view() === "grants"}>
-            <div>
-              <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-                Active grants
-              </h2>
               <Show
                 fallback={
-                  <p class="text-muted-foreground mt-2 text-sm">
-                    No active grants
+                  <p class="text-muted-foreground text-sm">
+                    No pending proposals
                   </p>
                 }
-                when={(grantsQuery.data ?? []).length > 0}
+                when={queueItems().length > 0}
               >
-                <ul class="mt-2 space-y-2">
-                  <For each={grantsQuery.data ?? []}>
-                    {(g) => (
-                      <li
-                        aria-label={grantLabel(g.kind, g.scope)}
-                        class="bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
-                        data-id={g.id}
-                      >
-                        <span class="flex-1">
-                          <span class="font-medium">{g.kind}</span>
-                          <Show when={g.scope}>
-                            {(scope) => (
-                              <span class="text-muted-foreground">
-                                {` · ${scope()}`}
-                              </span>
+                <div class="flex min-h-0 flex-1 gap-4 lg:h-[calc(100vh-9rem)]">
+                  <ul class="w-full shrink-0 overflow-y-auto rounded-xl border lg:w-80">
+                    <For each={queueItems()}>
+                      {(item) => (
+                        <li>
+                          <button
+                            aria-current={selectedId() === item.id}
+                            class={cx(
+                              "flex w-full flex-col gap-1 border-b px-3 py-2.5 text-left text-sm last:border-0",
+                              selectedId() === item.id
+                                ? "bg-accent"
+                                : "hover:bg-accent/50",
                             )}
-                          </Show>
-                          <span class="text-muted-foreground block text-xs">
-                            {`granted ${formatWhen(g.granted_at)}`}
-                          </span>
-                        </span>
+                            data-id={item.id}
+                            onClick={() => {
+                              setSelectedId(item.id);
+                            }}
+                            type="button"
+                          >
+                            <span class="truncate font-medium">
+                              {item.title}
+                            </span>
+                            <span class="text-muted-foreground truncate text-xs">
+                              {`${item.consumer} · ${item.actions.length.toString()} action${item.actions.length === 1 ? "" : "s"}`}
+                            </span>
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <div class="hidden min-w-0 flex-1 overflow-y-auto lg:block">
+                    <Show
+                      fallback={
+                        <p class="text-muted-foreground text-sm">
+                          Select a proposal to review it.
+                        </p>
+                      }
+                      when={selected()}
+                    >
+                      {(item) => (
+                        <ProposalDetail
+                          confirmReject={confirmReject}
+                          deselectedIds={deselections()[item().id] ?? []}
+                          dismissOffer={dismissOffer}
+                          item={item()}
+                          onApprove={approve}
+                          onCancelReject={cancelReject}
+                          onReject={startReject}
+                          onToggleAction={toggleDeselected}
+                          rejectReason={rejectReason()}
+                          rejecting={rejecting()?.id === item().id}
+                          revocationOffers={revocationOffers()[item().id] ?? []}
+                          revokeOffered={revokeOffered}
+                          setRejectReason={setRejectReason}
+                        />
+                      )}
+                    </Show>
+                  </div>
+                  {/* Narrow-width drill-in: the detail pane replaces the list
+                    entirely once a proposal is selected, and a Back control
+                    returns to the list. */}
+                  <Show when={selected()}>
+                    {(item) => (
+                      <div class="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-background p-4 lg:hidden">
                         <Button
+                          class="mb-3 self-start"
                           onClick={() => {
-                            revoke(g.id);
+                            setSelectedId(undefined);
                           }}
                           size="sm"
                           type="button"
                           variant="ghost"
                         >
-                          Revoke
+                          ← Back to queue
                         </Button>
-                      </li>
+                        <ProposalDetail
+                          confirmReject={confirmReject}
+                          deselectedIds={deselections()[item().id] ?? []}
+                          dismissOffer={dismissOffer}
+                          item={item()}
+                          onApprove={approve}
+                          onCancelReject={cancelReject}
+                          onReject={startReject}
+                          onToggleAction={toggleDeselected}
+                          rejectReason={rejectReason()}
+                          rejecting={rejecting()?.id === item().id}
+                          revocationOffers={revocationOffers()[item().id] ?? []}
+                          revokeOffered={revokeOffered}
+                          setRejectReason={setRejectReason}
+                        />
+                      </div>
                     )}
-                  </For>
-                </ul>
+                  </Show>
+                </div>
               </Show>
             </div>
-            <div class="mt-4">
-              <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-                Suggestions
-              </h2>
+          </Match>
+          <Match when={view() === "history"}>
+            <div
+              aria-labelledby={segmentedTabId("proposals-view", "history")}
+              id={segmentedPanelId("proposals-view", "history")}
+              role="tabpanel"
+            >
               <Show
                 fallback={
-                  <p class="text-muted-foreground mt-2 text-sm">
-                    No suggestions yet
+                  <p class="text-muted-foreground text-sm">
+                    No decided proposals yet
                   </p>
                 }
-                when={(suggestionsQuery.data ?? []).length > 0}
+                when={historyItems().length > 0}
               >
-                <ul class="mt-2 space-y-2">
-                  <For each={suggestionsQuery.data ?? []}>
-                    {(s) => (
+                <ul class="space-y-2">
+                  <For each={historyItems()}>
+                    {(item) => (
                       <li
-                        aria-label={suggestionLabel(s.kind, s.scope)}
-                        class="bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                        aria-label={`Proposal: ${item.title}`}
+                        class="bg-muted rounded-md border px-3 py-2 text-sm"
+                        data-id={item.id}
                       >
-                        <span class="flex-1">
-                          <span class="font-medium">{s.kind}</span>
-                          <Show when={s.scope}>
-                            {(scope) => (
-                              <span class="text-muted-foreground">
-                                {` · ${scope()}`}
-                              </span>
-                            )}
-                          </Show>
-                          <span class="text-muted-foreground block text-xs">
-                            {`seen ${s.seen.toString()} · approved ${s.approved.toString()} · rejected ${s.rejected.toString()} · edited ${s.edited.toString()}`}
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="font-medium">{item.title}</span>
+                          <span class="text-muted-foreground text-xs">
+                            {item.state}
                           </span>
-                        </span>
-                        <Button
-                          onClick={() => {
-                            grantFromSuggestion(s);
-                          }}
-                          size="sm"
-                          type="button"
-                        >
-                          Grant
-                        </Button>
+                        </div>
+                        <p class="text-muted-foreground text-xs">
+                          {item.decided_at
+                            ? formatWhen(item.decided_at)
+                            : "not decided"}
+                        </p>
+                        <Show when={item.rejection_reason}>
+                          {(reason) => (
+                            <p class="text-muted-foreground text-xs">
+                              {`Reason: ${reason()}`}
+                            </p>
+                          )}
+                        </Show>
                       </li>
                     )}
                   </For>
@@ -642,9 +563,115 @@ export function ProposalsPage() {
               </Show>
             </div>
           </Match>
+          <Match when={view() === "grants"}>
+            <div
+              aria-labelledby={segmentedTabId("proposals-view", "grants")}
+              id={segmentedPanelId("proposals-view", "grants")}
+              role="tabpanel"
+            >
+              <div>
+                <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                  Active grants
+                </h2>
+                <Show
+                  fallback={
+                    <p class="text-muted-foreground mt-2 text-sm">
+                      No active grants
+                    </p>
+                  }
+                  when={(grantsQuery.data ?? []).length > 0}
+                >
+                  <ul class="mt-2 space-y-2">
+                    <For each={grantsQuery.data ?? []}>
+                      {(g) => (
+                        <li
+                          aria-label={grantLabel(g.kind, g.scope)}
+                          class="bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                          data-id={g.id}
+                        >
+                          <span class="flex-1">
+                            <span class="font-medium">{g.kind}</span>
+                            <Show when={g.scope}>
+                              {(scope) => (
+                                <span class="text-muted-foreground">
+                                  {` · ${scope()}`}
+                                </span>
+                              )}
+                            </Show>
+                            <span class="text-muted-foreground block text-xs">
+                              {`granted ${formatWhen(g.granted_at)}`}
+                            </span>
+                          </span>
+                          <Button
+                            aria-label={`Revoke ${grantLabel(g.kind, g.scope)}`}
+                            onClick={() => {
+                              revoke(g.id);
+                            }}
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            Revoke
+                          </Button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              </div>
+              <div class="mt-4">
+                <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                  Suggestions
+                </h2>
+                <Show
+                  fallback={
+                    <p class="text-muted-foreground mt-2 text-sm">
+                      No suggestions yet
+                    </p>
+                  }
+                  when={(suggestionsQuery.data ?? []).length > 0}
+                >
+                  <ul class="mt-2 space-y-2">
+                    <For each={suggestionsQuery.data ?? []}>
+                      {(s) => (
+                        <li
+                          aria-label={suggestionLabel(s.kind, s.scope)}
+                          class="bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                        >
+                          <span class="flex-1">
+                            <span class="font-medium">{s.kind}</span>
+                            <Show when={s.scope}>
+                              {(scope) => (
+                                <span class="text-muted-foreground">
+                                  {` · ${scope()}`}
+                                </span>
+                              )}
+                            </Show>
+                            <span class="text-muted-foreground block text-xs">
+                              {`seen ${s.seen.toString()} · approved ${s.approved.toString()} · rejected ${s.rejected.toString()} · edited ${s.edited.toString()}`}
+                            </span>
+                          </span>
+                          <Button
+                            aria-label={`Grant ${s.kind}${s.scope === null ? "" : ` (${s.scope})`}`}
+                            onClick={() => {
+                              grantFromSuggestion(s);
+                            }}
+                            size="sm"
+                            type="button"
+                          >
+                            Grant
+                          </Button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              </div>
+            </div>
+          </Match>
         </Switch>
       </div>
-    </main>
+    </section>
   );
 }
 
@@ -710,6 +737,7 @@ function ProposalDetail(props: {
       </div>
       <div class="flex flex-wrap items-center gap-2 border-t pt-3">
         <Button
+          aria-label={`Approve proposal ${props.item.title}`}
           onClick={() => {
             props.onApprove(props.item);
           }}
@@ -719,6 +747,7 @@ function ProposalDetail(props: {
           Approve
         </Button>
         <Button
+          aria-label={`Reject proposal ${props.item.title}`}
           onClick={() => {
             props.onReject(props.item);
           }}

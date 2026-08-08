@@ -818,7 +818,10 @@ export function ChatPage() {
   };
 
   return (
-    <main aria-labelledby="chat-title" class="flex min-h-full flex-1 flex-col">
+    <section
+      aria-labelledby="chat-title"
+      class="flex min-h-full flex-1 flex-col"
+    >
       <header class="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5">
         <h1
           id="chat-title"
@@ -1037,6 +1040,6 @@ export function ChatPage() {
           setOpenArtifact(null);
         }}
       />
-    </main>
+    </section>
   );
 }

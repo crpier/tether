@@ -49,13 +49,13 @@ describe("Memories panel (Browse corpus)", () => {
     const row = await within(panel).findByLabelText("Memory: Trusted fact");
     expect(row).toHaveTextContent(formatDate(new Date("2026-01-06T00:00:00Z")));
     expect(
-      within(row).getByRole("button", { name: "Edit" }),
+      within(row).getByRole("button", { name: /^Edit/ }),
     ).toBeInTheDocument();
     expect(
-      within(row).getByRole("button", { name: "Reject" }),
+      within(row).getByRole("button", { name: /^Reject/ }),
     ).toBeInTheDocument();
     expect(
-      within(row).queryByRole("button", { name: "Tether" }),
+      within(row).queryByRole("button", { name: /^Tether/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -75,7 +75,7 @@ describe("Memories panel (Browse corpus)", () => {
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     const editor = textarea(screen.getByLabelText("Memory content"));
     fireEvent.input(editor, { target: { value: "Window seats" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -102,7 +102,7 @@ describe("Memories panel (Browse corpus)", () => {
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
       target: { value: "Window seats" },
     });
@@ -135,7 +135,7 @@ describe("Memories panel (Browse corpus)", () => {
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
       target: { value: "Window seats" },
     });
@@ -171,7 +171,7 @@ describe("Memories panel (Browse corpus)", () => {
     await openCorpus();
 
     const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
     fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
       target: { value: "Window seats" },
     });
@@ -217,7 +217,7 @@ describe("Memories panel (Browse corpus)", () => {
     const panel = await openCorpus();
 
     const row = await within(panel).findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: "Reject" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Reject/ }));
 
     await waitFor(() => {
       expect(api.rejectMemoryCalls).toEqual([

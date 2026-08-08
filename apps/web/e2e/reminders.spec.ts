@@ -44,7 +44,7 @@ async function openReminders(page: Parameters<typeof createOneOffReminder>[0]) {
     .getByRole("link", { name: /^Browse/ })
     .click();
   await page.getByRole("heading", { name: "Browse" }).waitFor();
-  await page.getByRole("button", { name: "Reminders" }).click();
+  await page.getByRole("tab", { name: "Reminders" }).click();
   await page.locator('section[aria-label="Reminders"]').waitFor();
 }
 

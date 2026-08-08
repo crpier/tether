@@ -173,6 +173,7 @@ function TodoRow(props: {
           {props.variant}
         </Badge>
         <Button
+          aria-label={`Complete Todo: ${props.todo.action}`}
           class="ml-auto"
           onClick={() => {
             props.onAct(props.todo, "completed");
@@ -184,6 +185,7 @@ function TodoRow(props: {
           Complete
         </Button>
         <Button
+          aria-label={`Abandon Todo: ${props.todo.action}`}
           onClick={() => {
             props.onAct(props.todo, "abandoned");
           }}

@@ -438,7 +438,7 @@ describe("Chat view", () => {
       name: "Queued message 1",
     });
     fireEvent.click(
-      within(queuedMessage).getByRole("button", { name: "Edit" }),
+      within(queuedMessage).getByRole("button", { name: /^Edit/ }),
     );
     const editor = textarea(
       within(queuedMessage).getByRole("textbox", {

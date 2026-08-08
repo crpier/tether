@@ -165,7 +165,9 @@ def post_transcript_when_provider_blocked_is_503() -> None:
     """A provider IP-block surfaces as 503 (retry later), not an unhandled 500."""
 
     class BlockedProvider(TranscriptProvider):
-        source: str = "fake"
+        @property
+        def source(self) -> str:
+            return "fake"
 
         async def fetch(
             self,
@@ -464,7 +466,9 @@ def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
     """
 
     class ExhaustedProvider(TranscriptProvider):
-        source: str = "fake"
+        @property
+        def source(self) -> str:
+            return "fake"
 
         async def fetch(
             self,

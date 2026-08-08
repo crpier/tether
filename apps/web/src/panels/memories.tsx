@@ -10,6 +10,11 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
+import {
+  SegmentedControl,
+  segmentedPanelId,
+  segmentedTabId,
+} from "../components/segmented-control";
 import { ApiError } from "../api";
 import type { Memory, MemoryState, TetherApi } from "../api";
 import { formatDate as formatDateOnly } from "../lib/format";
@@ -398,6 +403,7 @@ export function MemoriesPanel(props: {
           </span>
           <Show when={item.state === "loose"}>
             <Button
+              aria-label={`Tether ${memoryLabel(item.content)}`}
               class="ml-auto"
               onClick={() => {
                 act(item, "tether");
@@ -410,6 +416,7 @@ export function MemoriesPanel(props: {
             </Button>
           </Show>
           <Button
+            aria-label={`Edit ${memoryLabel(item.content)}`}
             class={item.state === "loose" ? "" : "ml-auto"}
             onClick={() => {
               startEdit(item);
@@ -421,6 +428,7 @@ export function MemoriesPanel(props: {
             Edit
           </Button>
           <Button
+            aria-label={`Reject ${memoryLabel(item.content)}`}
             onClick={() => {
               act(item, "reject");
             }}
@@ -440,66 +448,71 @@ export function MemoriesPanel(props: {
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Memories</h2>
         <Show when={!fixedView}>
-          <div class="flex gap-1" role="group" aria-label="Memories view">
-            <For each={["review", "corpus"] as const}>
-              {(candidate) => (
-                <Button
-                  aria-pressed={view() === candidate}
-                  onClick={() => {
-                    setView(candidate);
-                  }}
-                  size="sm"
-                  type="button"
-                  variant={view() === candidate ? "secondary" : "ghost"}
-                >
-                  {candidate === "review" ? "Review" : "Corpus"}
-                </Button>
-              )}
-            </For>
-          </div>
+          <SegmentedControl
+            aria-label="Memories view"
+            id="memories-view"
+            onChange={setView}
+            options={[
+              { label: "Review", value: "review" },
+              { label: "Corpus", value: "corpus" },
+            ]}
+            value={view()}
+          />
         </Show>
       </div>
       <Switch>
         <Match when={view() === "review"}>
-          <form class="space-y-3" onSubmit={onCaptureSubmit}>
-            <TextField onChange={setCaptureContent} value={captureContent()}>
-              <TextFieldLabel>Capture</TextFieldLabel>
-              <TextFieldInput name="capture" />
-            </TextField>
-            <Button type="submit">Capture memory</Button>
-          </form>
-          <Show
-            fallback={
-              <p class="text-muted-foreground mt-3 text-sm">
-                Review queue is clear
-              </p>
-            }
-            when={(looseQuery.data ?? []).length > 0}
+          <div
+            aria-labelledby={segmentedTabId("memories-view", "review")}
+            id={segmentedPanelId("memories-view", "review")}
+            role={fixedView ? undefined : "tabpanel"}
           >
-            <ul class="mt-3 space-y-2">
-              <For each={looseQuery.data ?? []}>{memoryRow}</For>
-            </ul>
-          </Show>
+            <form class="space-y-3" onSubmit={onCaptureSubmit}>
+              <TextField onChange={setCaptureContent} value={captureContent()}>
+                <TextFieldLabel>Capture</TextFieldLabel>
+                <TextFieldInput name="capture" />
+              </TextField>
+              <Button type="submit">Capture memory</Button>
+            </form>
+            <Show
+              fallback={
+                <p class="text-muted-foreground mt-3 text-sm">
+                  Review queue is clear
+                </p>
+              }
+              when={(looseQuery.data ?? []).length > 0}
+            >
+              <ul class="mt-3 space-y-2">
+                <For each={looseQuery.data ?? []}>{memoryRow}</For>
+              </ul>
+            </Show>
+          </div>
         </Match>
         <Match when={view() === "corpus"}>
-          <TextField onChange={onSearchInput} value={search()}>
-            <TextFieldLabel>Search memories</TextFieldLabel>
-            <TextFieldInput name="search" type="search" />
-          </TextField>
-          <Show
-            fallback={
-              <p class="text-muted-foreground mt-3 text-sm">
-                {searchTerm().length > 0
-                  ? "No matches"
-                  : "No tethered memories yet"}
-              </p>
-            }
-            when={corpusItems().length > 0}
+          <div
+            aria-labelledby={segmentedTabId("memories-view", "corpus")}
+            id={segmentedPanelId("memories-view", "corpus")}
+            role={fixedView ? undefined : "tabpanel"}
           >
-            <ul class="mt-3 space-y-2">
-              <For each={corpusItems()}>{memoryRow}</For>
-            </ul>
-          </Show>
+            <TextField onChange={onSearchInput} value={search()}>
+              <TextFieldLabel>Search memories</TextFieldLabel>
+              <TextFieldInput name="search" type="search" />
+            </TextField>
+            <Show
+              fallback={
+                <p class="text-muted-foreground mt-3 text-sm">
+                  {searchTerm().length > 0
+                    ? "No matches"
+                    : "No tethered memories yet"}
+                </p>
+              }
+              when={corpusItems().length > 0}
+            >
+              <ul class="mt-3 space-y-2">
+                <For each={corpusItems()}>{memoryRow}</For>
+              </ul>
+            </Show>
+          </div>
         </Match>
       </Switch>
       <Show when={error()}>

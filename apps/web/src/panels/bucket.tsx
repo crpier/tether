@@ -10,6 +10,11 @@ import {
 } from "solid-js";
 import type { JSX } from "solid-js";
 
+import {
+  SegmentedControl,
+  segmentedPanelId,
+  segmentedTabId,
+} from "../components/segmented-control";
 import { ApiError } from "../api";
 import type {
   BucketItem,
@@ -356,214 +361,230 @@ export function BucketPanel(props: {
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Bucket</h2>
         <Show when={availableViews().length > 1}>
-          <div class="flex gap-1" role="group" aria-label="Bucket view">
-            <For each={availableViews()}>
-              {(candidate) => (
-                <Button
-                  aria-pressed={view() === candidate}
-                  onClick={() => {
-                    setView(candidate);
-                  }}
-                  size="sm"
-                  type="button"
-                  variant={view() === candidate ? "secondary" : "ghost"}
-                >
-                  {candidate === "active"
-                    ? "Active"
-                    : candidate === "history"
-                      ? "History"
-                      : "Triage"}
-                </Button>
-              )}
-            </For>
-          </div>
+          <SegmentedControl
+            aria-label="Bucket view"
+            id="bucket-view"
+            onChange={setView}
+            options={availableViews().map((candidate) => ({
+              label:
+                candidate === "active"
+                  ? "Active"
+                  : candidate === "history"
+                    ? "History"
+                    : "Triage",
+              value: candidate,
+            }))}
+            value={view()}
+          />
         </Show>
       </div>
       <Switch>
         <Match when={view() === "active"}>
-          <Show
-            fallback={
-              <Button
-                onClick={() => {
-                  setFormOpen(true);
-                }}
-                type="button"
-              >
-                Add item
-              </Button>
-            }
-            when={formOpen()}
+          <div
+            aria-labelledby={segmentedTabId("bucket-view", "active")}
+            id={segmentedPanelId("bucket-view", "active")}
+            role="tabpanel"
           >
-            <form class="space-y-3" onSubmit={onSubmit}>
-              <label class="grid gap-1">
-                <span class={fieldLabelClass}>Type</span>
-                <select
-                  class={selectClass}
-                  name="item_type"
-                  onChange={(event) => {
-                    setItemType(event.currentTarget.value as BucketItemType);
-                    setPrimaryValue("");
-                    setOptionalValue("");
-                  }}
-                  value={itemType()}
-                >
-                  <For each={ITEM_TYPES}>
-                    {(candidate) => (
-                      <option value={candidate}>
-                        {ITEM_TYPE_FIELDS[candidate].label}
-                      </option>
-                    )}
-                  </For>
-                </select>
-              </label>
-              <TextField onChange={setPrimaryValue} value={primaryValue()}>
-                <TextFieldLabel>{fields().primary.label}</TextFieldLabel>
-                <TextFieldInput name="primary" />
-              </TextField>
-              <TextField onChange={setOptionalValue} value={optionalValue()}>
-                <TextFieldLabel>{fields().optional.label}</TextFieldLabel>
-                <TextFieldInput name="optional" />
-              </TextField>
-              <TextField onChange={setIntentContext} value={intentContext()}>
-                <TextFieldLabel>Reason</TextFieldLabel>
-                <TextFieldInput name="intent_context" />
-              </TextField>
-              <div class="flex gap-2">
-                <Button type="submit">Add item</Button>
+            <Show
+              fallback={
                 <Button
                   onClick={() => {
-                    setFormOpen(false);
-                    setError(undefined);
+                    setFormOpen(true);
                   }}
                   type="button"
-                  variant="ghost"
                 >
-                  Cancel
+                  Add item
                 </Button>
-              </div>
-            </form>
-          </Show>
-          <Show when={advisory()}>
-            {(dedup) => (
-              <div
-                aria-label="Duplicate advisory"
-                class="bg-muted mt-3 rounded-md border px-3 py-2 text-sm"
-                role="status"
-              >
-                <div class="flex items-start gap-2">
-                  <p class="flex-1">
-                    {dedup().severity === "warn"
-                      ? "Added, but it duplicates an active item:"
-                      : "Added — you've had this before:"}
-                  </p>
-                  <button
-                    aria-label="Dismiss advisory"
-                    class="shrink-0 opacity-70 hover:opacity-100"
+              }
+              when={formOpen()}
+            >
+              <form class="space-y-3" onSubmit={onSubmit}>
+                <label class="grid gap-1">
+                  <span class={fieldLabelClass}>Type</span>
+                  <select
+                    class={selectClass}
+                    name="item_type"
+                    onChange={(event) => {
+                      setItemType(event.currentTarget.value as BucketItemType);
+                      setPrimaryValue("");
+                      setOptionalValue("");
+                    }}
+                    value={itemType()}
+                  >
+                    <For each={ITEM_TYPES}>
+                      {(candidate) => (
+                        <option value={candidate}>
+                          {ITEM_TYPE_FIELDS[candidate].label}
+                        </option>
+                      )}
+                    </For>
+                  </select>
+                </label>
+                <TextField onChange={setPrimaryValue} value={primaryValue()}>
+                  <TextFieldLabel>{fields().primary.label}</TextFieldLabel>
+                  <TextFieldInput name="primary" />
+                </TextField>
+                <TextField onChange={setOptionalValue} value={optionalValue()}>
+                  <TextFieldLabel>{fields().optional.label}</TextFieldLabel>
+                  <TextFieldInput name="optional" />
+                </TextField>
+                <TextField onChange={setIntentContext} value={intentContext()}>
+                  <TextFieldLabel>Reason</TextFieldLabel>
+                  <TextFieldInput name="intent_context" />
+                </TextField>
+                <div class="flex gap-2">
+                  <Button type="submit">Add item</Button>
+                  <Button
                     onClick={() => {
-                      setAdvisory(undefined);
+                      setFormOpen(false);
+                      setError(undefined);
                     }}
                     type="button"
+                    variant="ghost"
                   >
-                    ✕
-                  </button>
+                    Cancel
+                  </Button>
                 </div>
-                <ul class="text-muted-foreground mt-1 space-y-0.5 text-xs">
-                  <For each={dedup().duplicates}>
-                    {(duplicate) => <li>{duplicateLine(duplicate)}</li>}
-                  </For>
-                </ul>
-              </div>
-            )}
-          </Show>
-          <div class="mt-3">
-            <TextField onChange={onSearchInput} value={search()}>
-              <TextFieldLabel>Search</TextFieldLabel>
-              <TextFieldInput name="search" type="search" />
-            </TextField>
-          </div>
-          <Show
-            fallback={
-              <Show
-                fallback={
-                  <div class="mt-3 space-y-1">
-                    <p class="text-sm font-medium">Nothing in the bucket yet</p>
-                    <p class="text-muted-foreground text-sm">
-                      Bucket items are things you intend to consume or visit,
-                      such as books, movies, and places.
+              </form>
+            </Show>
+            <Show when={advisory()}>
+              {(dedup) => (
+                <div
+                  aria-label="Duplicate advisory"
+                  class="bg-muted mt-3 rounded-md border px-3 py-2 text-sm"
+                  role="status"
+                >
+                  <div class="flex items-start gap-2">
+                    <p class="flex-1">
+                      {dedup().severity === "warn"
+                        ? "Added, but it duplicates an active item:"
+                        : "Added — you've had this before:"}
                     </p>
+                    <button
+                      aria-label="Dismiss advisory"
+                      class="shrink-0 opacity-70 hover:opacity-100"
+                      onClick={() => {
+                        setAdvisory(undefined);
+                      }}
+                      type="button"
+                    >
+                      ✕
+                    </button>
                   </div>
-                }
-                when={searchTerm().length > 0}
-              >
-                <p class="text-muted-foreground mt-3 text-sm">No matches</p>
-              </Show>
-            }
-            when={listedItems().length > 0}
-          >
-            <ul class="mt-3 space-y-2">
-              <For each={listedItems()}>
-                {(item) => (
-                  <li
-                    aria-label={`Bucket item: ${item.title}`}
-                    class="bg-muted rounded-md border px-3 py-2 text-sm"
-                  >
-                    <div class="flex flex-wrap items-center gap-1">
-                      <span class="font-medium">{item.title}</span>
-                      <Badge variant="secondary">{item.item_type}</Badge>
-                      <span class="text-muted-foreground text-xs">
-                        {` · added ${formatDate(item.created_at)}`}
-                      </span>
-                      <Button
-                        class="ml-auto"
-                        onClick={() => {
-                          act(item, "complete");
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Complete
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          act(item, "delete");
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Delete
-                      </Button>
+                  <ul class="text-muted-foreground mt-1 space-y-0.5 text-xs">
+                    <For each={dedup().duplicates}>
+                      {(duplicate) => <li>{duplicateLine(duplicate)}</li>}
+                    </For>
+                  </ul>
+                </div>
+              )}
+            </Show>
+            <div class="mt-3">
+              <TextField onChange={onSearchInput} value={search()}>
+                <TextFieldLabel>Search</TextFieldLabel>
+                <TextFieldInput name="search" type="search" />
+              </TextField>
+            </div>
+            <Show
+              fallback={
+                <Show
+                  fallback={
+                    <div class="mt-3 space-y-1">
+                      <p class="text-sm font-medium">
+                        Nothing in the bucket yet
+                      </p>
+                      <p class="text-muted-foreground text-sm">
+                        Bucket items are things you intend to consume or visit,
+                        such as books, movies, and places.
+                      </p>
                     </div>
-                    <Show when={metadataLine(item)}>
-                      {(metadata) => (
-                        <p class="text-muted-foreground mt-0.5 text-xs">
-                          {metadata()}
-                        </p>
-                      )}
-                    </Show>
-                    <p class="text-muted-foreground mt-0.5 text-xs italic">
-                      {item.intent_context || "no reason noted"}
-                    </p>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
+                  }
+                  when={searchTerm().length > 0}
+                >
+                  <p class="text-muted-foreground mt-3 text-sm">No matches</p>
+                </Show>
+              }
+              when={listedItems().length > 0}
+            >
+              <ul class="mt-3 space-y-2">
+                <For each={listedItems()}>
+                  {(item) => (
+                    <li
+                      aria-label={`Bucket item: ${item.title}`}
+                      class="bg-muted rounded-md border px-3 py-2 text-sm"
+                    >
+                      <div class="flex flex-wrap items-center gap-1">
+                        <span class="font-medium">{item.title}</span>
+                        <Badge variant="secondary">{item.item_type}</Badge>
+                        <span class="text-muted-foreground text-xs">
+                          {` · added ${formatDate(item.created_at)}`}
+                        </span>
+                        <Button
+                          aria-label={`Complete Bucket item: ${item.title}`}
+                          class="ml-auto"
+                          onClick={() => {
+                            act(item, "complete");
+                          }}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Complete
+                        </Button>
+                        <Button
+                          aria-label={`Delete Bucket item: ${item.title}`}
+                          onClick={() => {
+                            act(item, "delete");
+                          }}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                      <Show when={metadataLine(item)}>
+                        {(metadata) => (
+                          <p class="text-muted-foreground mt-0.5 text-xs">
+                            {metadata()}
+                          </p>
+                        )}
+                      </Show>
+                      <p class="text-muted-foreground mt-0.5 text-xs italic">
+                        {item.intent_context || "no reason noted"}
+                      </p>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </div>
         </Match>
         <Match when={view() === "history"}>
-          <BucketHistory
-            completed={completedQuery.data ?? []}
-            deleted={deletedQuery.data ?? []}
-          />
+          <div
+            aria-labelledby={segmentedTabId("bucket-view", "history")}
+            id={segmentedPanelId("bucket-view", "history")}
+            role="tabpanel"
+          >
+            <BucketHistory
+              completed={completedQuery.data ?? []}
+              deleted={deletedQuery.data ?? []}
+            />
+          </div>
         </Match>
         <Match when={view() === "triage"}>
-          <Show
-            fallback={<p class="text-muted-foreground text-sm">Loading…</p>}
-            when={triageQuery.data}
+          <div
+            aria-labelledby={segmentedTabId("bucket-view", "triage")}
+            id={segmentedPanelId("bucket-view", "triage")}
+            role="tabpanel"
           >
-            {(report) => <BucketTriage report={report()} />}
-          </Show>
+            <Show
+              fallback={<p class="text-muted-foreground text-sm">Loading…</p>}
+              when={triageQuery.data}
+            >
+              {(report) => <BucketTriage report={report()} />}
+            </Show>
+          </div>
         </Match>
       </Switch>
       <Show when={error()}>

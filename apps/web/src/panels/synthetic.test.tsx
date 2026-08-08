@@ -17,7 +17,7 @@ describe("Synthetic panels", () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
     await screen.findByText(/Panels are saved views over your memories/);
     fireEvent.click(screen.getByRole("link", { name: "Create in Chat" }));
@@ -49,7 +49,7 @@ describe("Synthetic panels", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: finance");
     expect(await within(card).findByText("rent is 900")).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe("Synthetic panels", () => {
     const api = new FakeApi({ authenticated: true, panels: [empty] });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: travel");
     expect(
@@ -86,7 +86,7 @@ describe("Synthetic panels", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: everything-finance");
     expect(await within(card).findByText("Showing 2 of 5")).toBeInTheDocument();
@@ -110,7 +110,7 @@ describe("Synthetic panels", () => {
     });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: spend");
     await waitFor(() => {
@@ -126,7 +126,7 @@ describe("Synthetic panels", () => {
     const api = new FakeApi({ authenticated: true, panels: [doomed] });
     renderApp(api);
     await navigateTo("Browse");
-    fireEvent.click(await screen.findByRole("button", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Panels" }));
 
     const card = await screen.findByLabelText("Panel: old-panel");
     fireEvent.click(

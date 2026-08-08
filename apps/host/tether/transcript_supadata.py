@@ -432,7 +432,10 @@ class SupadataTranscriptProvider(TranscriptProvider):
     use cap, separate from the YouTube daily-unit budget.
     """
 
-    source: str = _SOURCE
+    @property
+    def source(self) -> str:
+        """The provenance tag for transcripts fetched through Supadata."""
+        return _SOURCE
 
     def __init__(
         self,

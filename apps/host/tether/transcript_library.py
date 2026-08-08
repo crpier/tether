@@ -279,7 +279,10 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
     (and the latch) start fresh every pass.
     """
 
-    source: str = _SOURCE
+    @property
+    def source(self) -> str:
+        """The provenance tag for transcripts fetched through the free library."""
+        return _SOURCE
 
     def __init__(
         self,

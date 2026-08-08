@@ -33,7 +33,6 @@ class _ConversationFrame(_WireFrame):
 
     type: Literal["chat"] = "chat"
     conversation_id: UUID
-    event: str
 
 
 class UserMessageFrame(_ConversationFrame):
@@ -60,6 +59,7 @@ class StreamUpdateFrame(_ConversationFrame):
 
     delta: Any
     content_index: int | None
+    event: str
 
 
 class MessageEndFrame(_ConversationFrame):

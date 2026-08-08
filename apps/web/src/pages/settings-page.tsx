@@ -33,7 +33,7 @@ export function SettingsPage() {
   };
 
   return (
-    <main
+    <section
       aria-labelledby="settings-title"
       class="flex min-h-full flex-1 flex-col"
     >
@@ -58,6 +58,6 @@ export function SettingsPage() {
           </Button>
         </section>
       </div>
-    </main>
+    </section>
   );
 }

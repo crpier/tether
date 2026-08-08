@@ -345,8 +345,10 @@ class TranscriptProvider(Protocol):
     unavailable still reaches review. Leaf providers ignore it.
     """
 
-    source: str
-    """The provenance tag this provider stamps onto the transcripts it produces."""
+    @property
+    def source(self) -> str:
+        """The provenance tag this provider stamps onto the transcripts it produces."""
+        ...
 
     async def fetch(
         self,
@@ -367,7 +369,10 @@ class NullTranscriptProvider(TranscriptProvider):
     worker never runs (the wiring only starts it for a real provider).
     """
 
-    source: str = "null"
+    @property
+    def source(self) -> str:
+        """The provenance tag for the null provider."""
+        return "null"
 
     async def fetch(
         self,
