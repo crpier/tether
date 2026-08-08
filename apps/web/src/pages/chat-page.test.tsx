@@ -363,9 +363,36 @@ describe("Chat view", () => {
       type: "chat",
     });
 
-    const reasoning = await screen.findByLabelText("Tether reasoning");
+    const reasoning = await screen.findByLabelText(/Tether reasoning/);
     expect(within(reasoning).getByText("pondering")).toBeInTheDocument();
     expect(screen.getByText("the answer")).toBeInTheDocument();
+  });
+
+  test("gives each thinking disclosure a distinct accessible name", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({ content: "first prompt", role: "user", seq: 1 }),
+        message({ content: "first chain", role: "reasoning", seq: 2 }),
+        message({ content: "first answer", role: "assistant", seq: 3 }),
+        message({ content: "second chain", role: "reasoning", seq: 4 }),
+      ],
+    });
+    renderApp(host);
+
+    const first = await screen.findByRole("button", {
+      name: "Thinking details for transcript item 2",
+    });
+    const second = screen.getByRole("button", {
+      name: "Thinking details for transcript item 4",
+    });
+
+    expect(first).toHaveAccessibleName(
+      "Thinking details for transcript item 2",
+    );
+    expect(second).toHaveAccessibleName(
+      "Thinking details for transcript item 4",
+    );
   });
 
   test("error frames show a dismissible banner", async () => {
