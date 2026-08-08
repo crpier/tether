@@ -399,10 +399,13 @@ export function BucketPanel(props: {
               when={formOpen()}
             >
               <form class="space-y-3" onSubmit={onSubmit}>
-                <label class="grid gap-1">
-                  <span class={fieldLabelClass}>Type</span>
+                <div class="grid gap-1">
+                  <label class={fieldLabelClass} for="bucket-item-type">
+                    Type
+                  </label>
                   <select
                     class={selectClass}
+                    id="bucket-item-type"
                     name="item_type"
                     onChange={(event) => {
                       setItemType(event.currentTarget.value as BucketItemType);
@@ -419,7 +422,7 @@ export function BucketPanel(props: {
                       )}
                     </For>
                   </select>
-                </label>
+                </div>
                 <TextField onChange={setPrimaryValue} value={primaryValue()}>
                   <TextFieldLabel>{fields().primary.label}</TextFieldLabel>
                   <TextFieldInput name="primary" />

@@ -39,6 +39,25 @@ describe("Bucket panel", () => {
     expect(await screen.findByLabelText("Title")).toBeInTheDocument();
   });
 
+  test("names the item type select from its label only", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
+
+    const typeSelect = await screen.findByRole("combobox", { name: "Type" });
+    expect(typeSelect).toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", {
+        name: "TypeBookMoviePlacePurchaseTravel",
+      }),
+    ).not.toBeInTheDocument();
+    expect((typeSelect as HTMLSelectElement).labels[0].textContent).toBe(
+      "Type",
+    );
+  });
+
   test("lists active items with type, intent context and created date", async () => {
     const host = new FakeHost({
       authenticated: true,
