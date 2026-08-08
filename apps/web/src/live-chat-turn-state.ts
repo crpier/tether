@@ -1,7 +1,6 @@
-// Normalization seam: turn raw pi chat frames into an ordered, typed timeline
-// for the current in-flight turn. The UI renders from these rows instead of
-// parsing wire payloads, so transport and rendering can change independently.
-// Mirrors t3code's session-logic seam, scoped to Tether's single live turn.
+// Internal live-turn state: normalize raw pi frames into the ordered transcript
+// exposed by createLiveChatTurn. Callers and tests cross that public interface;
+// this file is implementation so transport and rendering can change freely.
 
 import type { ChatFrame } from "./chat-bus";
 
