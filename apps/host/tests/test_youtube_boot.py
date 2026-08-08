@@ -19,6 +19,7 @@ from snektest import assert_false, assert_true, fixture, load_fixture, test
 from starlette.applications import Starlette
 
 from tether.events import EventHub
+from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.server import AppConfig, _wire_youtube
 from tether.youtube import (
     InMemoryYouTubeApi,
@@ -56,12 +57,14 @@ class BlockingLikedApi(InMemoryYouTubeApi):
 @fixture
 async def wired_app(
     api: InMemoryYouTubeApi,
-) -> AsyncGenerator[tuple[Starlette, list[asyncio.Task[None]]]]:
+) -> AsyncGenerator[tuple[Starlette, IngestionLifecycle]]:
     """Run `_wire_youtube` over a fresh in-memory DB with the given upstream."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
     app = Starlette()
     app.state.logger = structlog.stdlib.get_logger("test.youtube_boot")
+    ingestion_lifecycle = IngestionLifecycle(app.state.logger)
+    app.state.ingestion_lifecycle = ingestion_lifecycle
     app.state.telemetry = types.SimpleNamespace(tracer=trace.get_tracer("test"))
     config = AppConfig(
         app_password="test-app-password",
@@ -69,13 +72,12 @@ async def wired_app(
         database_path=Path(":memory:"),
         youtube_api=api,
     )
-    tasks = await asyncio.wait_for(
+    await asyncio.wait_for(
         _wire_youtube(app, config=config, database=db, event_publisher=EventHub()),
         timeout=1.0,
     )
-    yield app, tasks
-    for task in tasks:
-        _ = task.cancel()
+    yield app, ingestion_lifecycle
+    await ingestion_lifecycle.stop()
     await db.close()
 
 

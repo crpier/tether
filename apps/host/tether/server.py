@@ -73,6 +73,11 @@ from tether.health_connect import (
 )
 from tether.health_connect_telemetry import HealthConnectTelemetry
 from tether.health_connect_tools import internal_health_connect_tool_routes
+from tether.ingestion_lifecycle import (
+    CallbackIngestionWorker,
+    IngestionBootOutcome,
+    IngestionLifecycle,
+)
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
@@ -594,16 +599,15 @@ async def _wire_youtube(
     database: Database,
     event_publisher: EventHub,
     transcript_search: TranscriptSearchService | None = None,
-) -> list[asyncio.Task[None]]:
+) -> None:
     """Wire the YouTube service + likes/transcript background workers onto state.
 
     All three share one budgeted client over the configured upstream `YouTubeApi`
     (the in-memory fake when none is configured); the likes sync owns liked-list
     traffic, the transcript worker drains transcripts through the
     `TranscriptProvider`, and the service reads only the local ingested corpus.
-    Each worker runs an idempotent boot pass plus a periodic loop only when its
-    real upstream is configured (a likes client / a transcript provider); the
-    returned tasks are those loops. Otherwise no background traffic runs.
+    Each worker is activated only when its real upstream is configured; the
+    shared Ingestion lifecycle owns deferred boot, readiness, and cancellation.
     """
     logger = cast("Logger", app.state.logger)
     tracer = cast("Telemetry", app.state.telemetry).tracer
@@ -659,78 +663,61 @@ async def _wire_youtube(
         event_publisher=event_publisher,
     )
     app.state.transcript_sync = transcript_sync
-    return _start_youtube_workers(
-        app, config=config, logger=logger, sync=sync, transcript_sync=transcript_sync
+    (
+        app.state.youtube_boot_done,
+        app.state.transcript_boot_done,
+    ) = _activate_youtube_workers(
+        config=config,
+        ingestion_lifecycle=cast("IngestionLifecycle", app.state.ingestion_lifecycle),
+        logger=logger,
+        sync=sync,
+        transcript_sync=transcript_sync,
     )
 
 
-def _start_youtube_workers(
-    app: Starlette,
+def _activate_youtube_workers(
     *,
     config: AppConfig,
+    ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     sync: YouTubeSyncService,
     transcript_sync: TranscriptSyncService,
-) -> list[asyncio.Task[None]]:
-    """Launch the likes + transcript boot passes and periodic loops off the critical
-    path, and return the loop tasks.
-
-    Boot passes run off the startup critical path so the lifespan completes and
-    uvicorn binds its port immediately; a slow first sync no longer hangs startup.
-    Each worker's `<...>_boot_done` barrier is set once its boot pass finishes (or is
-    skipped), so a readiness probe and boot-mirror tests can await it. Each worker
-    starts only when its real upstream is configured (a likes client / a transcript
-    provider); otherwise its barrier is released immediately and no loop runs.
-    """
-    tasks: list[asyncio.Task[None]] = []
-    youtube_boot_done = asyncio.Event()
-    app.state.youtube_boot_done = youtube_boot_done
-    transcript_boot_done = asyncio.Event()
-    app.state.transcript_boot_done = transcript_boot_done
-
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """Adapt YouTube's two source policies to the shared lifecycle owner."""
+    likes_worker: CallbackIngestionWorker | None = None
     if config.youtube_api is not None and config.youtube_sync_enabled:
 
-        async def _run_likes_sync() -> None:
-            # Non-eager boot pass: only syncs if the gate window has elapsed, so
-            # repeated dev restarts don't each re-spend the day's budget. Boot
-            # failures are logged, not fatal, and still release the barrier.
-            try:
-                _ = await sync.maybe_sync(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("YouTube likes boot sync failed")
-            finally:
-                youtube_boot_done.set()
+        async def _boot_likes() -> IngestionBootOutcome:
+            _ = await sync.maybe_sync(logger=logger)
+            return IngestionBootOutcome.REPEAT
+
+        async def _repeat_likes() -> None:
             await sync.sync_forever(
                 interval_seconds=config.youtube_sync_interval_seconds, logger=logger
             )
 
-        tasks.append(asyncio.create_task(_run_likes_sync()))
-    else:
-        youtube_boot_done.set()
+        likes_worker = CallbackIngestionWorker(_boot_likes, _repeat_likes)
+    youtube_boot_done = ingestion_lifecycle.activate("youtube-likes", likes_worker)
 
+    transcript_worker: CallbackIngestionWorker | None = None
     if config.transcript_provider is not None and config.transcript_sync_enabled:
 
-        async def _run_transcript_sync() -> None:
-            try:
-                _ = await transcript_sync.sync(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("YouTube transcript boot sync failed")
-            finally:
-                transcript_boot_done.set()
+        async def _boot_transcripts() -> IngestionBootOutcome:
+            _ = await transcript_sync.sync(logger=logger)
+            return IngestionBootOutcome.REPEAT
+
+        async def _repeat_transcripts() -> None:
             await transcript_sync.sync_forever(
                 interval_seconds=config.transcript_sync_interval_seconds,
                 logger=logger,
             )
 
-        tasks.append(asyncio.create_task(_run_transcript_sync()))
-    else:
-        transcript_boot_done.set()
-
-    return tasks
+        transcript_worker = CallbackIngestionWorker(
+            _boot_transcripts, _repeat_transcripts
+        )
+    return youtube_boot_done, ingestion_lifecycle.activate(
+        "youtube-transcripts", transcript_worker
+    )
 
 
 async def _wire_readwise(
@@ -739,21 +726,12 @@ async def _wire_readwise(
     config: AppConfig,
     database: Database,
     memory_service: MemoryService,
-) -> list[asyncio.Task[None]]:
-    """Wire the Readwise ingestion gate + its background worker onto state.
-
-    A no-op returning no tasks unless the gate is enabled and an API key is set —
-    the default install never calls Readwise. When enabled, the token is checked
-    off the startup critical path inside the worker task (a non-204 auth response
-    logs a warning and disables the worker for the run); a valid token runs an
-    idempotent boot pass and then the periodic export loop. The returned tasks
-    join the lifespan's cancelled-on-shutdown background tasks.
-    """
-    readwise_boot_done = asyncio.Event()
-    app.state.readwise_boot_done = readwise_boot_done
+) -> None:
+    """Compose the optional Readwise export adapter into Ingestion lifecycle."""
+    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.readwise_sync_enabled or not config.readwise_api_key:
-        readwise_boot_done.set()
-        return []
+        app.state.readwise_boot_done = ingestion_lifecycle.activate("readwise")
+        return
     logger = cast("Logger", app.state.logger)
     client = ReadwiseClient(transport=HttpReadwiseTransport(config.readwise_api_key))
     sync = ReadwiseSyncService(
@@ -761,23 +739,21 @@ async def _wire_readwise(
     )
     app.state.readwise_sync = sync
 
-    async def _run_readwise_sync() -> None:
-        try:
-            if not await client.verify_token(logger=logger):
-                logger.warning("Readwise token invalid; ingestion gate disabled")
-                return
-            _ = await sync.sync(logger=logger)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Readwise boot sync failed")
-        finally:
-            readwise_boot_done.set()
+    async def _boot_readwise() -> IngestionBootOutcome:
+        if not await client.verify_token(logger=logger):
+            logger.warning("Readwise token invalid; ingestion gate disabled")
+            return IngestionBootOutcome.STOP
+        _ = await sync.sync(logger=logger)
+        return IngestionBootOutcome.REPEAT
+
+    async def _repeat_readwise() -> None:
         await sync.sync_forever(
             interval_seconds=config.readwise_sync_interval_seconds, logger=logger
         )
 
-    return [asyncio.create_task(_run_readwise_sync())]
+    app.state.readwise_boot_done = ingestion_lifecycle.activate(
+        "readwise", CallbackIngestionWorker(_boot_readwise, _repeat_readwise)
+    )
 
 
 async def _wire_reader(
@@ -786,17 +762,12 @@ async def _wire_reader(
     config: AppConfig,
     database: Database,
     memory_service: MemoryService,
-) -> list[asyncio.Task[None]]:
-    """Wire the Readwise Reader v3 progress rider + its worker onto state.
-
-    A no-op returning no tasks unless the rider is enabled and the shared
-    `readwise_api_key` is set — the default install never polls Reader. When
-    enabled, the worker runs an idempotent boot pass (off the startup critical
-    path) and then the periodic list-poll loop; the returned task joins the
-    lifespan's cancelled-on-shutdown background tasks.
-    """
+) -> None:
+    """Compose the optional Reader progress adapter into Ingestion lifecycle."""
+    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.readwise_reader_sync_enabled or not config.readwise_api_key:
-        return []
+        _ = ingestion_lifecycle.activate("readwise-reader")
+        return
     logger = cast("Logger", app.state.logger)
     sync = ReaderSyncService(
         database=database,
@@ -805,19 +776,19 @@ async def _wire_reader(
     )
     app.state.reader_sync = sync
 
-    async def _run_reader_sync() -> None:
-        try:
-            _ = await sync.sync(logger=logger)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Readwise Reader boot sync failed")
+    async def _boot_reader() -> IngestionBootOutcome:
+        _ = await sync.sync(logger=logger)
+        return IngestionBootOutcome.REPEAT
+
+    async def _repeat_reader() -> None:
         await sync.sync_forever(
             interval_seconds=config.readwise_reader_sync_interval_seconds,
             logger=logger,
         )
 
-    return [asyncio.create_task(_run_reader_sync())]
+    _ = ingestion_lifecycle.activate(
+        "readwise-reader", CallbackIngestionWorker(_boot_reader, _repeat_reader)
+    )
 
 
 async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring dependency
@@ -829,19 +800,17 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
     trigger_service: TriggerService,
     todo_service: TodoService,
     kb_root: Path,
-) -> list[asyncio.Task[None]]:
+) -> None:
     """Wire the Gmail ingestion gate + its background worker onto state.
 
-    A no-op returning no tasks unless the gate is enabled and a Gmail
-    transport is configured (a cached OAuth token exists) — the default
-    install never reads mail. When active, batches of eligible messages are
-    triaged through an ephemeral pi run (the same mechanism Recall and
-    scheduled prompts use); the worker runs an idempotent boot pass (off the
-    startup critical path) and then the periodic poll loop, and the returned
-    task joins the lifespan's cancelled-on-shutdown background tasks.
+    The adapter stays inactive unless the gate is enabled and a Gmail transport
+    is configured. When active, batches of eligible messages are triaged through
+    an ephemeral pi run; the shared lifecycle defers boot and owns the poll task.
     """
+    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.gmail_sync_enabled or config.gmail_transport is None:
-        return []
+        _ = ingestion_lifecycle.activate("gmail")
+        return
     logger = cast("Logger", app.state.logger)
     model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
     triage_runner = EphemeralPiPromptRunner(
@@ -864,18 +833,18 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
     )
     app.state.gmail_sync = sync
 
-    async def _run_gmail_sync() -> None:
-        try:
-            _ = await sync.sync(logger=logger)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Gmail boot sync failed")
+    async def _boot_gmail() -> IngestionBootOutcome:
+        _ = await sync.sync(logger=logger)
+        return IngestionBootOutcome.REPEAT
+
+    async def _repeat_gmail() -> None:
         await sync.sync_forever(
             interval_seconds=config.gmail_sync_interval_seconds, logger=logger
         )
 
-    return [asyncio.create_task(_run_gmail_sync())]
+    _ = ingestion_lifecycle.activate(
+        "gmail", CallbackIngestionWorker(_boot_gmail, _repeat_gmail)
+    )
 
 
 async def _wire_gmail_purge(
@@ -885,20 +854,17 @@ async def _wire_gmail_purge(
     database: Database,
     proposal_service: ProposalService,
     kb_root: Path,
-) -> list[asyncio.Task[None]]:
+) -> None:
     """Wire the Gmail backlog-purge sweep + its background worker onto state.
 
-    A no-op returning no tasks unless the sweep is explicitly enabled
-    (`TETHER_GMAIL_PURGE_ENABLED`) *and* a Gmail transport is configured — the
-    sweep proposes consequential mailbox writes, so it is opt-in on top of the
-    read-only ingestion gate. When active, each chunk of backlog is triaged
-    through an ephemeral pi run (the `gmail_purge` run kind) and folded into one
-    Proposal; the worker runs an idempotent boot pass (off the startup critical
-    path) then the periodic loop, and the returned task joins the lifespan's
-    cancelled-on-shutdown background tasks.
+    The adapter stays inactive unless the sweep and Gmail transport are both
+    configured. Each active backlog chunk is triaged through an ephemeral pi run
+    and folded into one Proposal; the shared lifecycle owns boot and repetition.
     """
+    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.gmail_purge_enabled or config.gmail_transport is None:
-        return []
+        _ = ingestion_lifecycle.activate("gmail-purge")
+        return
     logger = cast("Logger", app.state.logger)
     model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
     triage_runner = EphemeralPiPromptRunner(
@@ -919,33 +885,36 @@ async def _wire_gmail_purge(
     )
     app.state.gmail_purge_sweep = sweep
 
-    async def _run_gmail_purge() -> None:
-        try:
-            _ = await sweep.sweep(logger=logger)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Gmail purge boot sweep failed")
+    async def _boot_gmail_purge() -> IngestionBootOutcome:
+        _ = await sweep.sweep(logger=logger)
+        return IngestionBootOutcome.REPEAT
+
+    async def _repeat_gmail_purge() -> None:
         await sweep.sync_forever(
             interval_seconds=config.gmail_purge_interval_seconds, logger=logger
         )
 
-    return [asyncio.create_task(_run_gmail_purge())]
+    _ = ingestion_lifecycle.activate(
+        "gmail-purge",
+        CallbackIngestionWorker(_boot_gmail_purge, _repeat_gmail_purge),
+    )
 
 
 async def _wire_ebook_stats(
-    app: Starlette, *, config: AppConfig, database: Database
-) -> list[asyncio.Task[None]]:
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+) -> None:
     """Wire the KOReader statistics-file ingestion worker onto state.
 
-    A no-op returning no tasks unless `ebook_statistics_db_path` is set — the
-    default install never touches a stats file. When configured, the worker
-    runs an idempotent boot pass (off the startup critical path) and then the
-    periodic stat-check loop; the returned task joins the lifespan's
-    cancelled-on-shutdown background tasks.
+    The adapter stays inactive unless `ebook_statistics_db_path` is set. When
+    configured, the shared lifecycle owns its deferred boot and stat-check loop.
     """
+    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.ebook_statistics_db_path:
-        return []
+        _ = ingestion_lifecycle.activate("ebook-statistics")
+        return
     logger = cast("Logger", app.state.logger)
     sync = EbookStatsSyncService(
         database=database,
@@ -953,19 +922,66 @@ async def _wire_ebook_stats(
     )
     app.state.ebook_stats_sync = sync
 
-    async def _run_ebook_stats_sync() -> None:
-        try:
-            _ = await sync.sync(logger=logger)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Ebook statistics boot sync failed")
+    async def _boot_ebook_stats() -> IngestionBootOutcome:
+        _ = await sync.sync(logger=logger)
+        return IngestionBootOutcome.REPEAT
+
+    async def _repeat_ebook_stats() -> None:
         await sync.sync_forever(
             interval_seconds=config.ebook_statistics_sync_interval_seconds,
             logger=logger,
         )
 
-    return [asyncio.create_task(_run_ebook_stats_sync())]
+    _ = ingestion_lifecycle.activate(
+        "ebook-statistics",
+        CallbackIngestionWorker(_boot_ebook_stats, _repeat_ebook_stats),
+    )
+
+
+async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domain
+    app: Starlette,
+    *,
+    config: AppConfig,
+    database: Database,
+    event_publisher: EventHub,
+    kb_root: Path,
+    memory_service: MemoryService,
+    proposal_service: ProposalService,
+    todo_service: TodoService,
+    transcript_search: TranscriptSearchService | None,
+    trigger_service: TriggerService,
+) -> None:
+    """Compose every optional source adapter into one lifecycle owner."""
+    await _wire_youtube(
+        app,
+        config=config,
+        database=database,
+        event_publisher=event_publisher,
+        transcript_search=transcript_search,
+    )
+    await _wire_readwise(
+        app, config=config, database=database, memory_service=memory_service
+    )
+    await _wire_reader(
+        app, config=config, database=database, memory_service=memory_service
+    )
+    await _wire_gmail(
+        app,
+        config=config,
+        database=database,
+        memory_service=memory_service,
+        trigger_service=trigger_service,
+        todo_service=todo_service,
+        kb_root=kb_root,
+    )
+    await _wire_gmail_purge(
+        app,
+        config=config,
+        database=database,
+        proposal_service=proposal_service,
+        kb_root=kb_root,
+    )
+    await _wire_ebook_stats(app, config=config, database=database)
 
 
 def _ephemeral_pi_config(
@@ -1502,8 +1518,12 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
         """Build the Memory service for the app lifetime and close it after."""
         app_logger = configure_logging(config.logging_level, log_file=config.log_file)
         telemetry = configure_telemetry(telemetry_settings)
-        app.state.logger = app_logger
-        app.state.telemetry = telemetry
+        ingestion_lifecycle = IngestionLifecycle(app_logger)
+        (
+            app.state.logger,
+            app.state.telemetry,
+            app.state.ingestion_lifecycle,
+        ) = (app_logger, telemetry, ingestion_lifecycle)
         configured_kb_root = Path(config.kb_root)
         await AsyncPath(configured_kb_root).mkdir(parents=True, exist_ok=True)
         async with _open_databases(config) as (db, telemetry_db):
@@ -1586,13 +1606,6 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 event_hub=event_hub,
                 tracer=telemetry.tracer,
             )
-            youtube_tasks = await _wire_youtube(
-                app,
-                config=config,
-                database=db,
-                event_publisher=event_hub,
-                transcript_search=transcript_searcher,
-            )
             app.state.recall_service = _build_recall_service(
                 app,
                 config=config,
@@ -1671,38 +1684,22 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                     logger=app_logger,
                 )
             )
-            # The YouTube ingestion sync loop and the Readwise ingestion gate
-            # (each empty unless its upstream is configured) join the
-            # cancelled-on-shutdown background tasks.
-            background_tasks.extend(
-                youtube_tasks
-                + await _wire_readwise(
-                    app, config=config, database=db, memory_service=memory_service
-                )
-                + await _wire_reader(
-                    app, config=config, database=db, memory_service=memory_service
-                )
-                + await _wire_gmail(
-                    app,
-                    config=config,
-                    database=db,
-                    memory_service=memory_service,
-                    trigger_service=trigger_service,
-                    todo_service=todo_service,
-                    kb_root=configured_kb_root,
-                )
-                + await _wire_gmail_purge(
-                    app,
-                    config=config,
-                    database=db,
-                    proposal_service=app.state.proposal_service,
-                    kb_root=configured_kb_root,
-                )
-                + await _wire_ebook_stats(app, config=config, database=db)
+            await _wire_ingestion_gates(
+                app,
+                config=config,
+                database=db,
+                event_publisher=event_hub,
+                kb_root=configured_kb_root,
+                memory_service=memory_service,
+                proposal_service=app.state.proposal_service,
+                todo_service=todo_service,
+                transcript_search=transcript_searcher,
+                trigger_service=trigger_service,
             )
             try:
                 yield
             finally:
+                await ingestion_lifecycle.stop()
                 await _shutdown_background_tasks(background_tasks, logger=app_logger)
                 await _shutdown_agent_runtime_services(
                     provider_auth_service=provider_auth_service,
