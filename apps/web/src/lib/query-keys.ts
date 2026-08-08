@@ -35,6 +35,7 @@ export const queryKeys = {
   proposalsState: (state: ProposalState) => ["proposals", state] as const,
   // The unfiltered list, for the decided-proposals history view.
   proposalsAll: ["proposals", "all"] as const,
+  providerAuth: ["provider-auth"] as const,
   proposal: (proposalId: string) =>
     ["proposals", "detail", proposalId] as const,
   grants: ["proposals", "grants"] as const,

@@ -12,7 +12,6 @@ This is the **fast local iteration loop**. Use it for day-to-day work.
 ```sh
 just install      # uv sync + pnpm install for web and agent (one time / on dep changes)
 just bootstrap    # one time: write .env with generated secrets + create the pi-agent dir
-just pi-auth      # one time: log in to your model provider (writes pi auth.json)
 just dev          # host (auto-reload) + web (Vite HMR) together; Ctrl-C stops both
 ```
 
@@ -37,9 +36,12 @@ What you get:
 touch an existing `.env`. It also creates `~/.local/share/tether/pi-agent`
 (override with `TETHER_PI_AGENT_DIR`), the directory that holds pi's `auth.json`.
 
-`just pi-auth` launches `pi` against that directory; run `/login openai-codex`
-(or `/login opencode-go`) and exit. Chat and scheduled-prompt triggers need
-this — without it, `just validate-env` warns and turns will fail at runtime.
+After starting `just dev`, log in and open **Settings → Model provider**. Select
+**Connect ChatGPT**, open the displayed OpenAI link, and enter the device code.
+Tether runs pi's OAuth flow and owns the resulting `auth.json`; pi refreshes it
+automatically. `just pi-auth` remains a terminal fallback for providers not yet
+supported by the web recovery flow (for example `/login opencode-go`). Chat and
+scheduled-prompt triggers need provider auth — without it, turns fail at runtime.
 
 YouTube ingestion is optional; see [deployment.md](./deployment.md#youtube-ingestion)
 and `.env.example`. Locally, `just youtube-auth` runs the browser OAuth flow and

@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 
 import { useAppContext } from "../app-context";
 import { queryKeys } from "../lib/query-keys";
+import { ProviderAuthPanel } from "../panels/provider-auth";
 import { PushControl } from "../panels/push";
 import { YouTubeSyncPanel } from "../panels/youtube";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ export function SettingsPage() {
         </h1>
       </header>
       <div class="mx-auto w-full max-w-xl flex-1 space-y-4 p-4 sm:p-5">
+        <ProviderAuthPanel api={api} />
         <YouTubeSyncPanel api={api} />
         <PushControl api={api} />
         <section class="bg-card text-card-foreground rounded-xl border p-4 shadow-sm">

@@ -21,6 +21,7 @@ from tether.notifications import notification_routes
 from tether.openapi import build_openapi
 from tether.panel_routes import panel_routes
 from tether.proposal_routes import proposal_routes
+from tether.provider_auth_routes import provider_auth_routes
 from tether.push import push_routes
 from tether.recall_routes import recall_routes
 from tether.routes import routes
@@ -61,6 +62,7 @@ def public_api_routes() -> list[Route]:
         *ebook_routes,
         *stt_routes,
         *proposal_routes,
+        *provider_auth_routes,
     ]
 
 
