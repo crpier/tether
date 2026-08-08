@@ -120,6 +120,29 @@ describe("Proposals page", () => {
     ).toBeInTheDocument();
   });
 
+  test("preloads decided proposals count from the all-proposals query", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          id: "decision-1",
+          state: "approved",
+          title: "Already approved",
+          decided_at: "2026-01-01T00:00:00Z",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Decided proposals (1)" }),
+    ).toBeInTheDocument();
+  });
+
   test("large decided history is counted, paged, searchable, and preserved", async () => {
     const decided = Array.from({ length: 40 }, (_, index) =>
       proposal({
