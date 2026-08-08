@@ -23,6 +23,22 @@ afterEach(() => {
 });
 
 describe("Bucket panel", () => {
+  test("keeps the creation form collapsed until Add item is chosen", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+
+    expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Bucket items are things you intend to consume or visit/,
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    expect(await screen.findByLabelText("Title")).toBeInTheDocument();
+  });
+
   test("lists active items with type, intent context and created date", async () => {
     const api = new FakeApi({
       authenticated: true,
@@ -46,11 +62,32 @@ describe("Bucket panel", () => {
     expect(row).toHaveTextContent(formatDate(new Date("2026-01-05T00:00:00Z")));
   });
 
+  test("shows type-specific metadata on active item cards", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      bucketItems: [
+        bucketItem({
+          data: { title: "Dune", year: 2021 },
+          item_type: "movie",
+          title: "Dune",
+        }),
+      ],
+    });
+    renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+
+    expect(await screen.findByLabelText("Bucket item: Dune")).toHaveTextContent(
+      "Year: 2021",
+    );
+  });
+
   test("adding a movie posts the typed payload with its intent context", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Dune" },
@@ -73,9 +110,11 @@ describe("Bucket panel", () => {
     expect(
       await screen.findByLabelText("Bucket item: Dune"),
     ).toBeInTheDocument();
-    // The form resets once the add lands.
-    expect(input(screen.getByLabelText("Title")).value).toBe("");
-    expect(input(screen.getByLabelText("Reason")).value).toBe("");
+    // The form collapses once the add lands.
+    expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add item" }),
+    ).toBeInTheDocument();
   });
 
   test("switching the item type swaps the payload fields", async () => {
@@ -83,6 +122,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.change(await screen.findByLabelText("Type"), {
       target: { value: "place" },
@@ -111,6 +151,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.change(await screen.findByLabelText("Type"), {
       target: { value: "travel" },
@@ -139,6 +180,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Arrival" },
@@ -159,6 +201,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.change(await screen.findByLabelText("Type"), {
       target: { value: "book" },
@@ -187,6 +230,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Dune" },
@@ -211,6 +255,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Dune" },
@@ -234,6 +279,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Dune" },
@@ -255,6 +301,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Dune" },
@@ -290,6 +337,7 @@ describe("Bucket panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
 
     fireEvent.input(input(await screen.findByLabelText("Title")), {
       target: { value: "Dune" },
@@ -562,6 +610,29 @@ describe("Bucket panel", () => {
     expect(
       screen.queryByLabelText("Bucket item: Still active"),
     ).not.toBeInTheDocument();
+  });
+
+  test("shows type-specific metadata in history", async () => {
+    const api = new FakeApi({
+      authenticated: true,
+      bucketItems: [
+        bucketItem({
+          completed_at: "2026-02-01T00:00:00Z",
+          data: { title: "Dune", year: 2021 },
+          item_type: "movie",
+          state: "completed",
+          title: "Dune",
+        }),
+      ],
+    });
+    renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
+
+    expect(await screen.findByLabelText("Bucket item: Dune")).toHaveTextContent(
+      "Year: 2021",
+    );
   });
 
   test("history interleaves completed and deleted by terminal date, newest first", async () => {

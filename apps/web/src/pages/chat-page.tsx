@@ -1,3 +1,4 @@
+import { useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import {
   For,
@@ -454,7 +455,10 @@ interface QueuedPrompt {
 export function ChatPage() {
   const { api, bus, chatFrame, connection } = useAppContext();
   const queryClient = useQueryClient();
-  const [draft, setDraft] = createSignal("");
+  const [searchParams] = useSearchParams();
+  const promptParam = searchParams.prompt;
+  const starterPrompt = typeof promptParam === "string" ? promptParam : "";
+  const [draft, setDraft] = createSignal(starterPrompt);
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([]);
   // Keep a dispatched prompt until the host accepts it with `user_message`.
   // An earlier error returns it to the queue instead of silently losing it.
@@ -893,7 +897,16 @@ export function ChatPage() {
             </Show>
             <TextField onChange={setDraft} value={draft()}>
               <TextFieldLabel>Message</TextFieldLabel>
-              <TextFieldTextArea onKeyDown={onMessageKeyDown} />
+              <TextFieldTextArea
+                onKeyDown={onMessageKeyDown}
+                ref={(element) => {
+                  if (starterPrompt.length > 0) {
+                    queueMicrotask(() => {
+                      element.focus();
+                    });
+                  }
+                }}
+              />
             </TextField>
             <Show when={queuedPrompts().length > 0}>
               <section

@@ -55,6 +55,31 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
 
+test("phone width: every Browse tab stays fully readable", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await login();
+  await page
+    .getByRole("navigation", { name: "Main navigation (compact)" })
+    .getByRole("link", { name: /^Browse/ })
+    .click();
+
+  const browseViews = page.getByRole("group", { name: "Browse view" });
+  await browseViews.waitFor({ state: "visible" });
+  for (const label of ["Memories", "Bucket", "Todos", "Reminders", "Panels"]) {
+    const tabBox = await boundingBox(
+      browseViews.getByRole("button", { name: label }),
+    );
+    expect(tabBox.x).toBeGreaterThanOrEqual(0);
+    expect(tabBox.x + tabBox.width).toBeLessThanOrEqual(PHONE.width + 1);
+  }
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(PHONE.width);
+});
+
 test("desktop width: left sidebar visible, bottom tabs hidden", async ({
   page,
   login,

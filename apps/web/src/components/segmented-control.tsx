@@ -17,6 +17,7 @@ export function SegmentedControl<Value extends string>(props: {
         {(option) => (
           <Button
             aria-pressed={props.value === option.value}
+            class="px-2 sm:px-3"
             onClick={() => {
               props.onChange(option.value);
             }}

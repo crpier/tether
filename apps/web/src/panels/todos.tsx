@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Show, createMemo, createSignal } from "solid-js";
 
@@ -105,7 +106,18 @@ export function TodosPanel(props: { api: TetherApi }) {
       </div>
       <Show
         fallback={
-          <p class="text-muted-foreground text-sm">Nothing to do right now</p>
+          <div class="space-y-2">
+            <p class="text-sm font-medium">Nothing to do right now</p>
+            <p class="text-muted-foreground text-sm">
+              Todos are single actions created through Chat.
+            </p>
+            <A
+              class="text-primary text-sm font-medium underline-offset-4 hover:underline"
+              href={`/?prompt=${encodeURIComponent("Create a todo: ")}`}
+            >
+              Create in Chat
+            </A>
+          </div>
         }
         when={!isEmpty()}
       >

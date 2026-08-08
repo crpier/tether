@@ -19,6 +19,20 @@ import {
 afterEach(cleanup);
 
 describe("Triggers panel", () => {
+  test("keeps the creation form collapsed until Add reminder is chosen", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+
+    expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/Reminders deliver text or run an agent prompt/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
+    expect(await screen.findByLabelText("Reminder")).toBeInTheDocument();
+  });
+
   test("lists existing reminders", async () => {
     const api = new FakeApi({
       authenticated: true,
@@ -38,6 +52,9 @@ describe("Triggers panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
 
     fireEvent.input(input(await screen.findByLabelText("Reminder")), {
       target: { value: "stretch" },
@@ -66,6 +83,9 @@ describe("Triggers panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
 
     fireEvent.input(input(await screen.findByLabelText("Reminder")), {
       target: { value: "too late" },
@@ -89,6 +109,9 @@ describe("Triggers panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
 
     const field = input(await screen.findByLabelText("Date and time"));
     const min = field.getAttribute("min");
@@ -252,11 +275,11 @@ describe("Triggers panel", () => {
     expect(call.body.time_of_day).toBe("09:00");
     expect(call.body.timezone).toBe("UTC");
     expect(api.createTriggerCalls).toHaveLength(0);
-    // The form leaves edit mode and resets once the save lands.
+    // The form leaves edit mode and collapses once the save lands.
     expect(
       await screen.findByRole("button", { name: "Add reminder" }),
     ).toBeInTheDocument();
-    expect(input(screen.getByLabelText("Reminder")).value).toBe("");
+    expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
     expect(
       await screen.findByLabelText("Reminder: water the garden"),
     ).toBeInTheDocument();
@@ -526,11 +549,14 @@ describe("Triggers panel", () => {
     );
   });
 
-  test("creating a reminder resets the whole form, like a saved edit", async () => {
+  test("creating a reminder collapses the form", async () => {
     const api = new FakeApi({ authenticated: true });
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
 
     fireEvent.input(input(await screen.findByLabelText("Reminder")), {
       target: { value: "weekly review" },
@@ -546,8 +572,10 @@ describe("Triggers panel", () => {
     await waitFor(() => {
       expect(api.createTriggerCalls).toHaveLength(1);
     });
-    expect(input(screen.getByLabelText("Reminder")).value).toBe("");
-    expect(screen.getByDisplayValue("Once")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add reminder" }),
+    ).toBeInTheDocument();
   });
 
   test("cancelling an edit resets the form without saving", async () => {
@@ -569,7 +597,7 @@ describe("Triggers panel", () => {
     expect(
       screen.getByRole("button", { name: "Add reminder" }),
     ).toBeInTheDocument();
-    expect(input(screen.getByLabelText("Reminder")).value).toBe("");
+    expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Cancel" }),
     ).not.toBeInTheDocument();
@@ -582,6 +610,9 @@ describe("Triggers panel", () => {
     renderApp(api);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("button", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
 
     await screen.findByLabelText("Reminder");
     expect(

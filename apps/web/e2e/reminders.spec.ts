@@ -20,6 +20,7 @@ async function createOneOffReminder(
   reminders: Locator,
   label: string,
 ): Promise<void> {
+  await reminders.getByRole("button", { name: "Add reminder" }).click();
   await reminders.locator('input[name="payload"]').fill(label);
 
   // Recurrence defaults to "once"; select it explicitly so the test does not
