@@ -410,11 +410,9 @@ export function TriggersPanel(props: { api: TriggersHost }) {
             <Button type="submit">
               {editing() === undefined ? "Add reminder" : "Save reminder"}
             </Button>
-            <Show when={editing()}>
-              <Button onClick={resetForm} type="button" variant="ghost">
-                Cancel
-              </Button>
-            </Show>
+            <Button onClick={resetForm} type="button" variant="ghost">
+              Cancel
+            </Button>
           </div>
         </form>
       </Show>

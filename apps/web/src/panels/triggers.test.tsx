@@ -33,6 +33,27 @@ describe("Triggers panel", () => {
     expect(await screen.findByLabelText("Reminder")).toBeInTheDocument();
   });
 
+  test("cancels reminder creation without submitting", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
+    fireEvent.input(input(await screen.findByLabelText("Reminder")), {
+      target: { value: "discard me" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByLabelText("Reminder")).not.toBeInTheDocument();
+    expect(host.triggers.createTriggerCalls).toHaveLength(0);
+    expect(
+      screen.getByRole("button", { name: "Add reminder" }),
+    ).toBeInTheDocument();
+  });
+
   test("lists existing reminders", async () => {
     const host = new FakeHost({
       authenticated: true,
