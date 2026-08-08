@@ -18,6 +18,22 @@ test("settings reports the server-owned model provider", async ({
   );
 });
 
+test("unknown routes show not found without redirecting", async ({
+  page,
+  login,
+}) => {
+  await login();
+  await page.goto("/not-a-real-route-autoresearch", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Page not found" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/not-a-real-route-autoresearch$/u);
+  await expect(page.locator("#chat-title")).toBeHidden();
+});
+
 test("logs in and lands on pure chat, with the nav present", async ({
   page,
   login,

@@ -1,4 +1,4 @@
-import { Navigate, Route, Router } from "@solidjs/router";
+import { Route, Router } from "@solidjs/router";
 import {
   QueryClientProvider,
   createQuery,
@@ -25,6 +25,7 @@ import { LoginScreen } from "./login";
 import { BrowsePage } from "./pages/browse-page";
 import { ChatPage } from "./pages/chat-page";
 import { InboxPage } from "./pages/inbox-page";
+import { NotFoundPage } from "./pages/not-found-page";
 import { ProposalsPage } from "./pages/proposals-page";
 import { SettingsPage } from "./pages/settings-page";
 import { Shell } from "./shell";
@@ -100,7 +101,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowsePage} path="/browse" />
         <Route component={SettingsPage} path="/settings" />
-        <Route component={() => <Navigate href="/" />} path="*404" />
+        <Route component={NotFoundPage} path="*404" />
       </Router>
     </AppContextProvider>
   );
