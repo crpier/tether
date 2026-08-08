@@ -1,6 +1,7 @@
 # Tether — single-service deploy. Same file runs locally (over http://localhost)
-# and on the VM (behind Tailscale HTTPS, which terminates TLS outside compose and
-# proxies to the published port). Copy `.env.example` to `.env` and fill secrets
+# and on the VM (behind public Tailscale Funnel HTTPS, which terminates TLS
+# outside compose and proxies to the published port). Copy `.env.example` to
+# `.env` and fill secrets
 # before `docker compose up`.
 #
 # Image resolution: `image:` names the published GHCR tag (`just deploy` pushes
@@ -35,8 +36,8 @@ services:
       # and OpenCode Go API-key credentials.
       PI_CODING_AGENT_DIR: /pi-agent
     # Bind to loopback only: locally that's all you need, and on the VM Tailscale
-    # `serve` (running on the host, outside compose) reverse-proxies to it — the
-    # app is never published on the VM's public interface.
+    # Funnel (running on the host, outside compose) reverse-proxies to it. The
+    # VM's public interface remains closed; Funnel exposes HTTPS, not this port.
     ports:
       - "127.0.0.1:${TETHER_HOST_PORT:-8000}:8000"
     volumes:

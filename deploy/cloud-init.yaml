@@ -83,9 +83,9 @@ runcmd:
   # --- Tailscale ---------------------------------------------------------
   - curl -fsSL https://tailscale.com/install.sh | sh
   - tailscale up --authkey=CHANGEME_TAILSCALE_AUTHKEY --ssh
-  # HTTPS termination (tailscale serve) and MagicDNS/HTTPS-cert enablement are
-  # tailnet-admin-console + one-off-command steps, not idempotent cloud-init
-  # material — see docs/deployment.md#provision-the-box.
+  # Public HTTPS termination (Tailscale Funnel) and MagicDNS/HTTPS enablement
+  # are tailnet-admin-console + one-off-command steps, not idempotent cloud-init
+  # material. Funnel exposes no SSH port; see docs/deployment.md#provision-the-box.
 
   # --- SSH hardening: restart after the drop-in above lands ------------
   - systemctl restart ssh

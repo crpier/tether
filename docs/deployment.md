@@ -5,8 +5,9 @@ everything the host needs at runtime: Python (uv) for the host process, Node for
 the `pi` agent subprocess, the agent's installed deps, and the built SPA. The
 host serves the SPA, the REST `/api`, and the `/ws` WebSocket on one port.
 
-The same `compose.yaml` runs **locally over HTTP** and **on a VM behind Tailscale
-HTTPS** — only the environment differs.
+The same `compose.yaml` runs **locally over HTTP** and **on a VM behind public
+Tailscale Funnel HTTPS** — only the environment differs. SSH remains available
+only through the tailnet.
 
 > **Developing, not deploying?** Don't iterate through `docker compose
 > up --build` — it rebuilds the whole image on every change. Use the native
@@ -116,14 +117,19 @@ and package-public bootstrap are covered under [First deploy](#3-first-deploy).
   [tailnet admin console](https://login.tailscale.com/admin/dns), enable
   **MagicDNS** and **HTTPS Certificates**.
 - SSH in as `tether@<box-ip>` (or the tailnet name once Tailscale is up) and
-  terminate HTTPS at the machine's `*.ts.net` name, proxying to the host:
+  expose the loopback-bound host at the machine's public `*.ts.net` HTTPS name:
   ```sh
-  sudo tailscale serve --bg 8000
+  sudo tailscale funnel --bg 8000
+  sudo tailscale funnel status
   ```
-  This gives a real, browser-trusted cert with no domain to own and no certbot.
-  `serve` (not `funnel`) keeps the app tailnet-private — only your own tailnet
-  devices reach it. Revoke the one-shot auth key and delete any local rendered
-  cloud-init copy after provisioning succeeds.
+  The first command may open Tailscale's approval page to add the required
+  `funnel` node attribute. Funnel terminates browser-trusted HTTPS and proxies
+  to `127.0.0.1:8000`; no domain, certbot, or public-IP firewall rule is needed.
+  It exposes this HTTPS service only. Tailnet SSH remains private, and the
+  Hetzner firewall must continue to have no public inbound rules. Funnel is
+  currently beta and bandwidth-limited, acceptable for Tether's single-user web
+  traffic and telemetry sync. Revoke the one-shot auth key and delete any local
+  rendered cloud-init copy after provisioning succeeds.
 
 ### 2. Assemble secrets on the box
 
@@ -153,9 +159,12 @@ Fill in `.env` (see the template's comments for detail on each var):
 `TETHER_STT_API_KEY`, `TETHER_DEFAULT_MODEL` / `TETHER_MODEL_ALLOWLIST`.
 Generate `TETHER_API_TOKEN` independently and enter the same value in the
 phone/watch capture settings; it is the static bearer credential for those
-non-browser clients. Leave
-`TETHER_SECURE_COOKIES=true` (the template's default — the VM is only ever
-reached over Tailscale HTTPS).
+non-browser clients. Because Funnel makes HTTPS internet-accessible, these
+three auth values—not tailnet membership—are the application security boundary.
+Generate long, independent random values and keep them in 1Password. The bearer
+token currently authenticates any `/api/*` route, not only telemetry ingestion;
+rotate it if the phone or token is compromised. Leave `TETHER_SECURE_COOKIES=true`
+(the template's default) because production is always reached over HTTPS.
 
 Do not copy a workstation's rotating pi credentials onto the VM. The server is
 the sole credential authority: after the first deploy, log into Tether, open
@@ -191,13 +200,47 @@ the VM's anonymous pull. Images contain code, not runtime secrets.
 
 - `restart: unless-stopped` plus Docker-enabled-at-boot (cloud-init) keeps the
   host running across reboots and crashes.
-- Open `https://<box>.<tailnet>.ts.net` from a tailnet device, log in, and use
-  **Settings → Model provider → Connect ChatGPT** before the first chat turn.
-  The SPA and OAuth recovery stay behind Tailscale HTTPS and Tether's session
-  authentication.
+- Open `https://<box>.<tailnet>.ts.net`, log in, and use **Settings → Model
+  provider → Connect ChatGPT** before the first chat turn. The SPA shell,
+  `/docs`, and `/openapi.json` are publicly reachable; `/api/*` data routes use
+  the signed session cookie or bearer token, and `/ws` requires the signed
+  session cookie.
 
 If this is a fresh box (not yet holding real data), see
 [Migrating from local](#migrating-from-local) next.
+
+### 4. Verify public HTTPS and private SSH
+
+Test from a phone with Tailscale disconnected. The origin is unchanged when
+switching from Serve to Funnel, so an already configured capture app needs no
+URL migration:
+
+```sh
+origin=https://<box>.<tailnet>.ts.net
+curl -i "$origin/api/memories?state=loose"  # expect HTTP 401
+# Authenticated Health Connect seam: expect HTTP 200.
+curl -i -H "Authorization: Bearer $TETHER_API_TOKEN" \
+  "$origin/api/telemetry/health-connect/sync-state?installation_id=funnel-smoke&record_types=steps"
+```
+
+Then trigger Health Connect sync and confirm its success in the Android app.
+Verify the ingress and SSH independently:
+
+```sh
+ssh tether@tether 'sudo tailscale funnel status'
+ssh tether@tether true
+```
+
+The Funnel status must say `Funnel on`; SSH must work over the tailnet. Do not
+add a public TCP 22 firewall rule. To make HTTPS tailnet-private again without
+changing its origin or the Compose service:
+
+```sh
+ssh tether@tether 'sudo tailscale serve --bg 8000'
+```
+
+The most recently configured mode owns HTTPS port 443; confirm rollback with
+`sudo tailscale serve status` (`tailnet only`).
 
 ## Update flow
 
