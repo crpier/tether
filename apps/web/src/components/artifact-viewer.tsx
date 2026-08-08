@@ -7,7 +7,7 @@ import {
   onCleanup,
 } from "solid-js";
 
-import type { TetherApi } from "../api";
+import type { ArtifactsHost } from "../host/artifacts";
 import type { ArtifactPointer } from "./widgets/artifact-widget";
 
 // The CSP injected into every artifact's srcdoc document (#188, ADR 0011).
@@ -57,7 +57,7 @@ const loadingState: ViewerState = { status: "loading" };
 // relayed payload is opaque JSON; only a bare, non-array object is forwarded,
 // matching the fence-JSON discipline used elsewhere in the widget vocabulary.
 export function ArtifactOverlay(props: {
-  api: TetherApi;
+  api: ArtifactsHost;
   artifact: ArtifactPointer | null;
   onClose: () => void;
 }) {

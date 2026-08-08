@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
-  FakeApi,
+  FakeHost,
   bucketItem,
   duePrompt,
   memory,
@@ -22,8 +22,8 @@ afterEach(cleanup);
 
 describe("Inbox page", () => {
   test("inbox zero reads as clear", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Inbox");
     await screen.findByRole("heading", { name: "Inbox" });
 
@@ -33,13 +33,15 @@ describe("Inbox page", () => {
   });
 
   test("groups items by kind with a per-group count", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       duePrompts: [duePrompt({ question: "What is TCP?" })],
       memories: [memory({ content: "Prefers aisle seats" })],
     });
-    api.storedNotifications = [notification({ body: "Call the dentist" })];
-    renderApp(api);
+    host.notifications.storedNotifications = [
+      notification({ body: "Call the dentist" }),
+    ];
+    renderApp(host);
     await navigateTo("Inbox");
     await screen.findByRole("heading", { name: "Inbox" });
 
@@ -51,13 +53,13 @@ describe("Inbox page", () => {
   });
 
   test("selecting a memory review item tethers it from the detail pane", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [
         memory({ content: "Prefers aisle seats", id: "mem-1", version: 4 }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
     await screen.findByRole("heading", { name: "Inbox" });
 
@@ -72,18 +74,18 @@ describe("Inbox page", () => {
     fireEvent.click(within(detail!).getByRole("button", { name: /^Tether/ }));
 
     await waitFor(() => {
-      expect(api.tetherMemoryCalls).toEqual([
+      expect(host.memories.tetherMemoryCalls).toEqual([
         { memoryId: "mem-1", version: 4 },
       ]);
     });
   });
 
   test("bucket triage advisories surface their reason in the detail pane", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [],
     });
-    api.triageReport = {
+    host.bucket.triageReport = {
       active: [],
       duplicates: [],
       purchase: { buy_now: [], missing_price_context: [], stale_watches: [] },
@@ -95,7 +97,7 @@ describe("Inbox page", () => {
         },
       ],
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
     await screen.findByRole("heading", { name: "Inbox" });
 
@@ -116,8 +118,8 @@ describe("Inbox page", () => {
       item_type: "purchase",
       title: "Aeropress",
     });
-    const api = new FakeApi({ authenticated: true, bucketItems: [purchase] });
-    api.triageReport = {
+    const host = new FakeHost({ authenticated: true, bucketItems: [purchase] });
+    host.bucket.triageReport = {
       active: [purchase],
       duplicates: [],
       purchase: {
@@ -128,7 +130,7 @@ describe("Inbox page", () => {
       stale: [],
       under_specified: [],
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
 
     fireEvent.click(await screen.findByRole("button", { name: "Aeropress" }));
@@ -141,7 +143,7 @@ describe("Inbox page", () => {
   });
 
   test("transcript failures ask for a decision with source context", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       transcriptDecisions: [
         transcriptDecision({
@@ -151,7 +153,7 @@ describe("Inbox page", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
 
     expect(
@@ -173,11 +175,11 @@ describe("Inbox page", () => {
   });
 
   test("keeping a transcript attempt reopens acquisition and clears the item", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       transcriptDecisions: [transcriptDecision({ video_id: "video-1" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
     fireEvent.click(
       await screen.findByRole("button", { name: "Captionless talk" }),
@@ -188,7 +190,7 @@ describe("Inbox page", () => {
     );
 
     await waitFor(() => {
-      expect(api.keepTryingTranscriptCalls).toEqual(["video-1"]);
+      expect(host.youtube.keepTryingTranscriptCalls).toEqual(["video-1"]);
       expect(
         screen.queryByText("Transcript decision (1)"),
       ).not.toBeInTheDocument();
@@ -196,11 +198,11 @@ describe("Inbox page", () => {
   });
 
   test("giving up settles transcript absence and clears the item", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       transcriptDecisions: [transcriptDecision({ video_id: "video-1" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
     fireEvent.click(
       await screen.findByRole("button", { name: "Captionless talk" }),
@@ -211,7 +213,7 @@ describe("Inbox page", () => {
     );
 
     await waitFor(() => {
-      expect(api.giveUpTranscriptCalls).toEqual(["video-1"]);
+      expect(host.youtube.giveUpTranscriptCalls).toEqual(["video-1"]);
       expect(
         screen.queryByText("Transcript decision (1)"),
       ).not.toBeInTheDocument();
@@ -219,7 +221,7 @@ describe("Inbox page", () => {
   });
 
   test("answering a multiple-choice recall prompt submits the selected index", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       duePrompts: [
         duePrompt({
@@ -229,7 +231,7 @@ describe("Inbox page", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
     await screen.findByRole("heading", { name: "Inbox" });
 
@@ -246,20 +248,20 @@ describe("Inbox page", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "One thread" })[0]);
 
     await waitFor(() => {
-      expect(api.answerCalls).toHaveLength(1);
+      expect(host.recall.answerCalls).toHaveLength(1);
     });
-    expect(api.answerCalls[0]).toMatchObject({
+    expect(host.recall.answerCalls[0]).toMatchObject({
       promptId: "prompt-1",
       selected_index: 0,
     });
   });
 
   test("dismissing a fired reminder removes it from the inbox", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.storedNotifications = [
+    const host = new FakeHost({ authenticated: true });
+    host.notifications.storedNotifications = [
       notification({ body: "Call the dentist", id: "notif-1" }),
     ];
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Inbox");
     await screen.findByRole("heading", { name: "Inbox" });
 
@@ -274,7 +276,7 @@ describe("Inbox page", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Dismiss" })[0]);
 
     await waitFor(() => {
-      expect(api.dismissNotificationCalls).toEqual(["notif-1"]);
+      expect(host.notifications.dismissNotificationCalls).toEqual(["notif-1"]);
     });
   });
 });

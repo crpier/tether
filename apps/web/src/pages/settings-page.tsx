@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/solid-query";
 import { createSignal } from "solid-js";
 
-import { useAppContext } from "../app-context";
+import { useHost } from "../app-context";
 import { queryKeys } from "../lib/query-keys";
 import { ProviderAuthPanel } from "../panels/provider-auth";
 import { PushControl } from "../panels/push";
@@ -13,7 +13,10 @@ import { Button } from "@/components/ui/button";
 // single-page sidebar; it earns a page of its own precisely because it is
 // visited seldom.
 export function SettingsPage() {
-  const { api } = useAppContext();
+  const auth = useHost("auth");
+  const providerAuth = useHost("providerAuth");
+  const push = useHost("push");
+  const youtube = useHost("youtube");
   const queryClient = useQueryClient();
   const [loggingOut, setLoggingOut] = createSignal(false);
 
@@ -24,7 +27,7 @@ export function SettingsPage() {
     void (async () => {
       setLoggingOut(true);
       try {
-        await api.logout();
+        await auth.logout();
         await queryClient.invalidateQueries({ queryKey: queryKeys.session });
       } finally {
         setLoggingOut(false);
@@ -43,9 +46,9 @@ export function SettingsPage() {
         </h1>
       </header>
       <div class="mx-auto w-full max-w-xl flex-1 space-y-4 p-4 sm:p-5">
-        <ProviderAuthPanel api={api} />
-        <YouTubeSyncPanel api={api} />
-        <PushControl api={api} />
+        <ProviderAuthPanel api={providerAuth} />
+        <YouTubeSyncPanel api={youtube} />
+        <PushControl api={push} />
         <section class="bg-card text-card-foreground rounded-xl border p-4 shadow-sm">
           <h2 class="mb-3 text-sm font-semibold">Account</h2>
           <Button

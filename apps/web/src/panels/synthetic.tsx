@@ -2,7 +2,8 @@ import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 
-import type { Memory, Panel, TetherApi } from "../api";
+import type { Memory } from "../host/memories";
+import type { Panel, PanelsHost } from "../host/panels";
 import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -126,7 +127,7 @@ function ResultsTable(props: {
   );
 }
 
-function SyntheticPanelCard(props: { api: TetherApi; panel: Panel }) {
+function SyntheticPanelCard(props: { api: PanelsHost; panel: Panel }) {
   const queryClient = useQueryClient();
   const [error, setError] = createSignal<string | undefined>();
   const resultsQuery = createQuery(() => ({
@@ -220,7 +221,7 @@ function SyntheticPanelCard(props: { api: TetherApi; panel: Panel }) {
   );
 }
 
-export function SyntheticPanels(props: { api: TetherApi }) {
+export function SyntheticPanels(props: { api: PanelsHost }) {
   const panelsQuery = createQuery(() => ({
     queryFn: () => props.api.listPanels(),
     queryKey: queryKeys.panels,

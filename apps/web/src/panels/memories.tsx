@@ -15,8 +15,8 @@ import {
   segmentedPanelId,
   segmentedTabId,
 } from "../components/segmented-control";
-import { ApiError } from "../api";
-import type { Memory, MemoryState, TetherApi } from "../api";
+import type { MemoriesHost, Memory, MemoryState } from "../host/memories";
+import { ApiError } from "../host/error";
 import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -66,7 +66,7 @@ function formatDate(value: string): string {
 }
 
 export function MemoriesPanel(props: {
-  api: TetherApi;
+  api: MemoriesHost;
   // Restricts which sub-view is shown and hides the toggle entirely when set
   // (#250): the Inbox page only ever wants the review queue, and the Browse
   // page only ever wants the corpus, so callers pin the view rather than

@@ -2,14 +2,14 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Show, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { ApiError } from "../api";
 import type {
   CreateTrigger,
-  TetherApi,
+  TriggersHost,
   Trigger,
   TriggerActionKind,
   TriggerRecurrence,
-} from "../api";
+} from "../host/triggers";
+import { ApiError } from "../host/error";
 import { formatDateTime } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -78,7 +78,7 @@ const WEEKDAYS = [
   "Sunday",
 ];
 
-export function TriggersPanel(props: { api: TetherApi }) {
+export function TriggersPanel(props: { api: TriggersHost }) {
   const queryClient = useQueryClient();
   const triggersQuery = createQuery(() => ({
     queryFn: () => props.api.listTriggers(),

@@ -1,7 +1,7 @@
 import { createRoot } from "solid-js";
 import { describe, expect, test, vi } from "vitest";
 
-import type { Message } from "./api";
+import type { Message } from "./host/chat";
 import type { ChatFrame } from "./chat-bus";
 import { createLiveChatTurn } from "./live-chat-turn";
 

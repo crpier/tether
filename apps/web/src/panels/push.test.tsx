@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { FakeApi, navigateTo, renderApp } from "../testing/harness";
+import { FakeHost, navigateTo, renderApp } from "../testing/harness";
 
 afterEach(() => {
   cleanup();
@@ -68,8 +68,8 @@ describe("Push panel", () => {
       permission: "default",
       requestPermission: "granted",
     });
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
 
     fireEvent.click(
@@ -77,7 +77,7 @@ describe("Push panel", () => {
     );
 
     await waitFor(() => {
-      expect(api.subscribeCalls).toEqual([
+      expect(host.push.subscribeCalls).toEqual([
         {
           auth: "BAUG",
           endpoint: "https://push.example/real",
@@ -90,8 +90,8 @@ describe("Push panel", () => {
 
   test("granted permission registers a real browser subscription", async () => {
     const browser = installPushBrowser();
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
 
     fireEvent.click(
@@ -99,7 +99,7 @@ describe("Push panel", () => {
     );
 
     await waitFor(() => {
-      expect(api.subscribeCalls).toEqual([
+      expect(host.push.subscribeCalls).toEqual([
         {
           auth: "BAUG",
           endpoint: "https://push.example/real",
@@ -120,8 +120,8 @@ describe("Push panel", () => {
 
   test("denied permission shows browser-settings recovery guidance", async () => {
     installPushBrowser({ permission: "denied" });
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
 
     expect(
@@ -136,8 +136,8 @@ describe("Push panel", () => {
   });
 
   test("unsupported browsers show a dedicated state", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
 
     expect(
@@ -150,8 +150,8 @@ describe("Push panel", () => {
 
   test("subscription failures are shown inline", async () => {
     installPushBrowser({ subscribeError: new Error("subscription failed") });
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Settings");
 
     fireEvent.click(

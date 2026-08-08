@@ -2,8 +2,8 @@ import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Show, createMemo, createSignal } from "solid-js";
 
-import { ApiError } from "../api";
-import type { TetherApi, Todo, TodoStatus } from "../api";
+import type { TodosHost, Todo, TodoStatus } from "../host/todos";
+import { ApiError } from "../host/error";
 import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -29,7 +29,7 @@ function waitingDetail(todo: Todo): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
-export function TodosPanel(props: { api: TetherApi }) {
+export function TodosPanel(props: { api: TodosHost }) {
   const queryClient = useQueryClient();
   const [error, setError] = createSignal<string | undefined>();
 

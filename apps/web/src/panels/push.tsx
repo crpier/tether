@@ -1,7 +1,7 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { Show, createSignal } from "solid-js";
 
-import type { TetherApi } from "../api";
+import type { PushHost } from "../host/push";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,7 @@ async function currentSubscription(): Promise<PushSubscription | null> {
 }
 
 async function subscribeBrowser(
-  api: TetherApi,
+  api: PushHost,
 ): Promise<NotificationPermission> {
   if (!pushSupported()) {
     throw new Error("Push notifications are not supported in this browser.");
@@ -95,7 +95,7 @@ async function subscribeBrowser(
   return "granted";
 }
 
-async function unsubscribeBrowser(api: TetherApi): Promise<void> {
+async function unsubscribeBrowser(api: PushHost): Promise<void> {
   const subscription = await currentSubscription();
   if (subscription === null) {
     return;
@@ -104,7 +104,7 @@ async function unsubscribeBrowser(api: TetherApi): Promise<void> {
   await api.unsubscribePush(subscription.endpoint);
 }
 
-export function PushControl(props: { api: TetherApi }) {
+export function PushControl(props: { api: PushHost }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = createSignal(false);
   const [permission, setPermission] = createSignal<PushPermission>(

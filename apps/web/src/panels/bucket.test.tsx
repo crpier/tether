@@ -7,10 +7,10 @@ import {
 } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError } from "../host/error";
 import { formatDate } from "../lib/format";
 import {
-  FakeApi,
+  FakeHost,
   bucketItem,
   input,
   navigateTo,
@@ -24,8 +24,8 @@ afterEach(() => {
 
 describe("Bucket panel", () => {
   test("keeps the creation form collapsed until Add item is chosen", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -40,7 +40,7 @@ describe("Bucket panel", () => {
   });
 
   test("lists active items with type, intent context and created date", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({
@@ -51,7 +51,7 @@ describe("Bucket panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -63,7 +63,7 @@ describe("Bucket panel", () => {
   });
 
   test("shows type-specific metadata on active item cards", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({
@@ -73,7 +73,7 @@ describe("Bucket panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -83,8 +83,8 @@ describe("Bucket panel", () => {
   });
 
   test("adding a movie posts the typed payload with its intent context", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -101,9 +101,9 @@ describe("Bucket panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add item" }));
 
     await waitFor(() => {
-      expect(api.addBucketItemCalls).toHaveLength(1);
+      expect(host.bucket.addBucketItemCalls).toHaveLength(1);
     });
-    const body = api.addBucketItemCalls[0];
+    const body = host.bucket.addBucketItemCalls[0];
     expect(body.item_type).toBe("movie");
     expect(body.data).toEqual({ title: "Dune", year: 2021 });
     expect(body.intent_context).toBe("a friend raved");
@@ -118,8 +118,8 @@ describe("Bucket panel", () => {
   });
 
   test("switching the item type swaps the payload fields", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -139,16 +139,16 @@ describe("Bucket panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add item" }));
 
     await waitFor(() => {
-      expect(api.addBucketItemCalls).toHaveLength(1);
+      expect(host.bucket.addBucketItemCalls).toHaveLength(1);
     });
-    const body = api.addBucketItemCalls[0];
+    const body = host.bucket.addBucketItemCalls[0];
     expect(body.item_type).toBe("place");
     expect(body.data).toEqual({ location: "Portugal", name: "Lisbon" });
   });
 
   test("adding a travel item posts destination and season", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -168,16 +168,16 @@ describe("Bucket panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add item" }));
 
     await waitFor(() => {
-      expect(api.addBucketItemCalls).toHaveLength(1);
+      expect(host.bucket.addBucketItemCalls).toHaveLength(1);
     });
-    const body = api.addBucketItemCalls[0];
+    const body = host.bucket.addBucketItemCalls[0];
     expect(body.item_type).toBe("travel");
     expect(body.data).toEqual({ destination: "Japan", season: "spring" });
   });
 
   test("an optional field left blank is omitted from the payload", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -191,14 +191,16 @@ describe("Bucket panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add item" }));
 
     await waitFor(() => {
-      expect(api.addBucketItemCalls).toHaveLength(1);
+      expect(host.bucket.addBucketItemCalls).toHaveLength(1);
     });
-    expect(api.addBucketItemCalls[0].data).toEqual({ title: "Arrival" });
+    expect(host.bucket.addBucketItemCalls[0].data).toEqual({
+      title: "Arrival",
+    });
   });
 
   test("adding a book posts title and author", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -218,16 +220,16 @@ describe("Bucket panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add item" }));
 
     await waitFor(() => {
-      expect(api.addBucketItemCalls).toHaveLength(1);
+      expect(host.bucket.addBucketItemCalls).toHaveLength(1);
     });
-    const body = api.addBucketItemCalls[0];
+    const body = host.bucket.addBucketItemCalls[0];
     expect(body.item_type).toBe("book");
     expect(body.data).toEqual({ author: "Frank Herbert", title: "Dune" });
   });
 
   test("a non-numeric year is rejected before any request", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -246,13 +248,13 @@ describe("Bucket panel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Year must be a whole number",
     );
-    expect(api.addBucketItemCalls).toHaveLength(0);
+    expect(host.bucket.addBucketItemCalls).toHaveLength(0);
   });
 
   test("a failed add surfaces the error and keeps the form filled", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.addBucketItemRejections = [new ApiError(500)];
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    host.bucket.addBucketItemRejections = [new ApiError(500)];
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -268,15 +270,15 @@ describe("Bucket panel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       new ApiError(500).message,
     );
-    expect(api.addBucketItemCalls).toHaveLength(1);
+    expect(host.bucket.addBucketItemCalls).toHaveLength(1);
     // The form keeps its values so the user can retry.
     expect(input(screen.getByLabelText("Title")).value).toBe("Dune");
     expect(input(screen.getByLabelText("Reason")).value).toBe("a friend raved");
   });
 
   test("a blank reason is rejected before any request", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -289,16 +291,16 @@ describe("Bucket panel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Add a reason so future-you knows why",
     );
-    expect(api.addBucketItemCalls).toHaveLength(0);
+    expect(host.bucket.addBucketItemCalls).toHaveLength(0);
   });
 
   test("a warn dedup advisory is shown but the add still lands", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.nextDedup = {
+    const host = new FakeHost({ authenticated: true });
+    host.bucket.nextDedup = {
       duplicates: [bucketItem({ id: "dup-1", state: "active", title: "Dune" })],
       severity: "warn",
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -318,12 +320,12 @@ describe("Bucket panel", () => {
       "Added, but it duplicates an active item",
     );
     expect(advisory).toHaveTextContent("Dune");
-    expect(api.addBucketItemCalls).toHaveLength(1);
+    expect(host.bucket.addBucketItemCalls).toHaveLength(1);
   });
 
   test("an inform dedup advisory names the terminal duplicate's state", async () => {
-    const api = new FakeApi({ authenticated: true });
-    api.nextDedup = {
+    const host = new FakeHost({ authenticated: true });
+    host.bucket.nextDedup = {
       duplicates: [
         bucketItem({
           completed_at: "2022-03-01T00:00:00Z",
@@ -334,7 +336,7 @@ describe("Bucket panel", () => {
       ],
       severity: "inform",
     };
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add item" }));
@@ -352,15 +354,15 @@ describe("Bucket panel", () => {
     });
     expect(advisory).toHaveTextContent("Added — you've had this before");
     expect(advisory).toHaveTextContent("completed");
-    expect(api.addBucketItemCalls).toHaveLength(1);
+    expect(host.bucket.addBucketItemCalls).toHaveLength(1);
   });
 
   test("completing an item calls the API with its version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [bucketItem({ id: "item-1", title: "Dune", version: 3 })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -368,7 +370,7 @@ describe("Bucket panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
-      expect(api.completeBucketItemCalls).toEqual([
+      expect(host.bucket.completeBucketItemCalls).toEqual([
         { bucketItemId: "item-1", version: 3 },
       ]);
     });
@@ -379,16 +381,16 @@ describe("Bucket panel", () => {
     });
     // The post-mutation refresh must not refetch the disabled empty-term
     // search query — the host rejects a blank search with a 400.
-    expect(api.searchBucketItemsCalls).not.toContain("");
+    expect(host.bucket.searchBucketItemsCalls).not.toContain("");
   });
 
   test("completing recovers from a stale-version 409 by refetching", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [bucketItem({ id: "item-1", title: "Dune", version: 1 })],
     });
-    api.serverBucketItemVersions = { "item-1": 2 };
-    renderApp(api);
+    host.bucket.serverBucketItemVersions = { "item-1": 2 };
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -396,7 +398,7 @@ describe("Bucket panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
-      expect(api.completeBucketItemCalls).toEqual([
+      expect(host.bucket.completeBucketItemCalls).toEqual([
         { bucketItemId: "item-1", version: 1 },
         { bucketItemId: "item-1", version: 2 },
       ]);
@@ -408,11 +410,11 @@ describe("Bucket panel", () => {
   });
 
   test("deleting an item calls the API with its version", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [bucketItem({ id: "item-1", title: "Dune", version: 2 })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -420,7 +422,7 @@ describe("Bucket panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
-      expect(api.deleteBucketItemCalls).toEqual([
+      expect(host.bucket.deleteBucketItemCalls).toEqual([
         { bucketItemId: "item-1", version: 2 },
       ]);
     });
@@ -432,12 +434,12 @@ describe("Bucket panel", () => {
   });
 
   test("deleting recovers from a stale-version 409 by refetching", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [bucketItem({ id: "item-1", title: "Dune", version: 1 })],
     });
-    api.serverBucketItemVersions = { "item-1": 2 };
-    renderApp(api);
+    host.bucket.serverBucketItemVersions = { "item-1": 2 };
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -445,7 +447,7 @@ describe("Bucket panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Delete/ }));
 
     await waitFor(() => {
-      expect(api.deleteBucketItemCalls).toEqual([
+      expect(host.bucket.deleteBucketItemCalls).toEqual([
         { bucketItemId: "item-1", version: 1 },
         { bucketItemId: "item-1", version: 2 },
       ]);
@@ -457,12 +459,15 @@ describe("Bucket panel", () => {
   });
 
   test("a failed complete retry reports its own error, not the original 409", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [bucketItem({ id: "item-1", title: "Dune", version: 1 })],
     });
-    api.completeBucketItemRejections = [new ApiError(409), new ApiError(500)];
-    renderApp(api);
+    host.bucket.completeBucketItemRejections = [
+      new ApiError(409),
+      new ApiError(500),
+    ];
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -470,7 +475,7 @@ describe("Bucket panel", () => {
     fireEvent.click(within(row).getByRole("button", { name: /^Complete/ }));
 
     await waitFor(() => {
-      expect(api.completeBucketItemCalls).toHaveLength(2);
+      expect(host.bucket.completeBucketItemCalls).toHaveLength(2);
     });
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(new ApiError(500).message);
@@ -478,14 +483,14 @@ describe("Bucket panel", () => {
   });
 
   test("typing a search query lists matches from the search endpoint", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({ id: "item-1", title: "Blade Runner" }),
         bucketItem({ id: "item-2", title: "Dune" }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -495,7 +500,7 @@ describe("Bucket panel", () => {
     });
 
     await waitFor(() => {
-      expect(api.searchBucketItemsCalls).toContain("Blade");
+      expect(host.bucket.searchBucketItemsCalls).toContain("Blade");
     });
     expect(
       await screen.findByLabelText("Bucket item: Blade Runner"),
@@ -506,11 +511,11 @@ describe("Bucket panel", () => {
   });
 
   test("keystrokes are debounced into one search request per pause", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [bucketItem({ id: "item-1", title: "Blade Runner" })],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     await screen.findByLabelText("Bucket item: Blade Runner");
@@ -520,24 +525,24 @@ describe("Bucket panel", () => {
     fireEvent.input(field, { target: { value: "B" } });
     fireEvent.input(field, { target: { value: "Bl" } });
     fireEvent.input(field, { target: { value: "Blade" } });
-    expect(api.searchBucketItemsCalls).toEqual([]);
+    expect(host.bucket.searchBucketItemsCalls).toEqual([]);
     await vi.advanceTimersByTimeAsync(150);
     vi.useRealTimers();
 
     await waitFor(() => {
-      expect(api.searchBucketItemsCalls).toEqual(["Blade"]);
+      expect(host.bucket.searchBucketItemsCalls).toEqual(["Blade"]);
     });
   });
 
   test("a mutation does not refetch stale cached search terms", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({ id: "item-1", title: "Blade Runner" }),
         bucketItem({ id: "item-2", title: "Dune", version: 1 }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     await screen.findByLabelText("Bucket item: Dune");
@@ -547,7 +552,7 @@ describe("Bucket panel", () => {
       target: { value: "Blade" },
     });
     await waitFor(() => {
-      expect(api.searchBucketItemsCalls).toEqual(["Blade"]);
+      expect(host.bucket.searchBucketItemsCalls).toEqual(["Blade"]);
     });
     fireEvent.input(input(screen.getByLabelText("Search")), {
       target: { value: "" },
@@ -562,11 +567,11 @@ describe("Bucket panel", () => {
     });
     // The post-mutation refresh only refetches what is on screen; the stale
     // "Blade" cache entry waits until it is looked at again.
-    expect(api.searchBucketItemsCalls).toEqual(["Blade"]);
+    expect(host.bucket.searchBucketItemsCalls).toEqual(["Blade"]);
   });
 
   test("the history view shows terminal items read-only", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({ id: "item-1", title: "Still active" }),
@@ -584,7 +589,7 @@ describe("Bucket panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -613,7 +618,7 @@ describe("Bucket panel", () => {
   });
 
   test("shows type-specific metadata in history", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({
@@ -625,7 +630,7 @@ describe("Bucket panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
     fireEvent.click(await screen.findByRole("tab", { name: "History" }));
@@ -636,7 +641,7 @@ describe("Bucket panel", () => {
   });
 
   test("history interleaves completed and deleted by terminal date, newest first", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       bucketItems: [
         bucketItem({
@@ -659,7 +664,7 @@ describe("Bucket panel", () => {
         }),
       ],
     });
-    renderApp(api);
+    renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
@@ -676,21 +681,23 @@ describe("Bucket panel", () => {
   });
 
   test("a bucket-items invalidate frame refetches the active list", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     await navigateTo("Browse");
     fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
 
     await screen.findByRole("heading", { name: "Bucket" });
     await waitFor(() => {
-      expect(api.listBucketItemsCalls).toBeGreaterThan(0);
+      expect(host.bucket.listBucketItemsCalls).toBeGreaterThan(0);
     });
-    const before = api.listBucketItemsCalls;
-    api.storedBucketItems = [bucketItem({ title: "Captured by the agent" })];
+    const before = host.bucket.listBucketItemsCalls;
+    host.bucket.storedBucketItems = [
+      bucketItem({ title: "Captured by the agent" }),
+    ];
     bus.emit({ keys: ["bucket-items"], type: "invalidate" });
 
     await waitFor(() => {
-      expect(api.listBucketItemsCalls).toBeGreaterThan(before);
+      expect(host.bucket.listBucketItemsCalls).toBeGreaterThan(before);
     });
     expect(
       await screen.findByLabelText("Bucket item: Captured by the agent"),

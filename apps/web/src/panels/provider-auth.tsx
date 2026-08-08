@@ -5,7 +5,10 @@ import {
 } from "@tanstack/solid-query";
 import { Match, Show, Switch } from "solid-js";
 
-import type { ProviderAuthStatus, TetherApi } from "../api";
+import type {
+  ProviderAuthHost,
+  ProviderAuthStatus,
+} from "../host/provider-auth";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -23,7 +26,7 @@ function statusLabel(state: ProviderAuthStatus["state"]): string {
   return "Not connected";
 }
 
-export function ProviderAuthPanel(props: { api: TetherApi }) {
+export function ProviderAuthPanel(props: { api: ProviderAuthHost }) {
   const queryClient = useQueryClient();
   const statusQuery = createQuery(() => ({
     queryFn: () => props.api.getProviderAuthStatus(),

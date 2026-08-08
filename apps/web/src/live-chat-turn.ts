@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
 
-import type { Message } from "./api";
+import type { Message } from "./host/chat";
 import type { ChatFrame } from "./chat-bus";
 import {
   deriveRows,

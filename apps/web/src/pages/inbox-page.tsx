@@ -1,16 +1,13 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 
-import { useAppContext } from "../app-context";
-import { ApiError } from "../api";
-import type {
-  BucketTriageReport,
-  DuePrompt,
-  EssayGradeProposal,
-  Memory,
-  Notification,
-  TranscriptDecision,
-} from "../api";
+import { useHost } from "../app-context";
+import type { BucketTriageReport } from "../host/bucket";
+import type { Memory } from "../host/memories";
+import type { Notification } from "../host/notifications";
+import type { DuePrompt, EssayGradeProposal, RecallHost } from "../host/recall";
+import { ApiError } from "../host/error";
+import type { TranscriptDecision } from "../host/youtube";
 import { formatDate, formatSyncTimestamp } from "../lib/format";
 import { queryKeys } from "../lib/query-keys";
 import { cx } from "../lib/cva";
@@ -134,29 +131,33 @@ function recallVerdict(proposal: EssayGradeProposal): string {
 // clearing pass; the underlying vertical (Browse's Bucket tab, etc.) still
 // owns the full CRUD surface.
 export function InboxPage() {
-  const { api } = useAppContext();
+  const bucket = useHost("bucket");
+  const memories = useHost("memories");
+  const notifications = useHost("notifications");
+  const recall = useHost("recall");
+  const youtube = useHost("youtube");
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = createSignal<string | undefined>();
   const [error, setError] = createSignal<string | undefined>();
 
   const looseQuery = createQuery(() => ({
-    queryFn: () => api.listMemories("loose"),
+    queryFn: () => memories.listMemories("loose"),
     queryKey: queryKeys.memoriesState("loose"),
   }));
   const triageQuery = createQuery(() => ({
-    queryFn: () => api.getBucketTriage(),
+    queryFn: () => bucket.getBucketTriage(),
     queryKey: queryKeys.bucketItemsView("triage"),
   }));
   const recallQuery = createQuery(() => ({
-    queryFn: () => api.listDueRecallPrompts(),
+    queryFn: () => recall.listDueRecallPrompts(),
     queryKey: queryKeys.recall,
   }));
   const notificationsQuery = createQuery(() => ({
-    queryFn: () => api.listNotifications(),
+    queryFn: () => notifications.listNotifications(),
     queryKey: queryKeys.notifications,
   }));
   const transcriptDecisionsQuery = createQuery(() => ({
-    queryFn: () => api.listTranscriptDecisions(),
+    queryFn: () => youtube.listTranscriptDecisions(),
     queryKey: queryKeys.youtubeTranscriptDecisions,
   }));
 
@@ -213,9 +214,9 @@ export function InboxPage() {
     void (async () => {
       try {
         if (action === "tether") {
-          await api.tetherMemory(item.id, item.version);
+          await memories.tetherMemory(item.id, item.version);
         } else {
-          await api.rejectMemory(item.id, item.version);
+          await memories.rejectMemory(item.id, item.version);
         }
         setSelectedId(undefined);
         memoriesRefresh();
@@ -238,7 +239,7 @@ export function InboxPage() {
 
   const dismissNotification = (notificationId: string) => {
     void (async () => {
-      await api.dismissNotification(notificationId);
+      await notifications.dismissNotification(notificationId);
       setSelectedId(undefined);
       void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
     })();
@@ -252,9 +253,9 @@ export function InboxPage() {
     void (async () => {
       try {
         if (action === "keep-trying") {
-          await api.keepTryingTranscript(decision.video_id);
+          await youtube.keepTryingTranscript(decision.video_id);
         } else {
-          await api.giveUpTranscript(decision.video_id);
+          await youtube.giveUpTranscript(decision.video_id);
         }
         setSelectedId(undefined);
         void queryClient.invalidateQueries({ queryKey: queryKeys.youtube });
@@ -282,7 +283,7 @@ export function InboxPage() {
     }
     void (async () => {
       try {
-        await api.captureMemory(content);
+        await memories.captureMemory(content);
         setCaptureContent("");
         memoriesRefresh();
       } catch (caught) {
@@ -392,10 +393,10 @@ export function InboxPage() {
               >
                 {(item) => (
                   <InboxDetail
-                    api={api}
                     dismissNotification={dismissNotification}
                     item={item()}
                     memoryAct={memoryAct}
+                    recall={recall}
                     transcriptDecisionAct={transcriptDecisionAct}
                   />
                 )}
@@ -416,10 +417,10 @@ export function InboxPage() {
                     ← Back to inbox
                   </Button>
                   <InboxDetail
-                    api={api}
                     dismissNotification={dismissNotification}
                     item={item()}
                     memoryAct={memoryAct}
+                    recall={recall}
                     transcriptDecisionAct={transcriptDecisionAct}
                   />
                 </div>
@@ -448,10 +449,10 @@ function itemTitle(item: InboxItem): string {
 }
 
 function InboxDetail(props: {
-  api: import("../api").TetherApi;
   dismissNotification: (notificationId: string) => void;
   item: InboxItem;
   memoryAct: (item: Memory, action: "tether" | "reject") => void;
+  recall: RecallHost;
   transcriptDecisionAct: (
     decision: TranscriptDecision,
     action: "keep-trying" | "give-up",
@@ -563,7 +564,7 @@ function InboxDetail(props: {
           )}
         </Match>
         <Match when={props.item.kind === "recall" && props.item}>
-          {(entry) => <RecallDetail api={props.api} due={entry().due} />}
+          {(entry) => <RecallDetail due={entry().due} recall={props.recall} />}
         </Match>
         <Match when={props.item.kind === "notification" && props.item}>
           {(entry) => (
@@ -589,10 +590,7 @@ function InboxDetail(props: {
   );
 }
 
-function RecallDetail(props: {
-  api: import("../api").TetherApi;
-  due: DuePrompt;
-}) {
+function RecallDetail(props: { due: DuePrompt; recall: RecallHost }) {
   const queryClient = useQueryClient();
   const [shownAt] = createSignal(Date.now());
   const [draft, setDraft] = createSignal("");
@@ -616,7 +614,7 @@ function RecallDetail(props: {
     void (async () => {
       setError(undefined);
       try {
-        const outcome = await props.api.answerRecallPrompt(
+        const outcome = await props.recall.answerRecallPrompt(
           props.due.prompt.id,
           {
             ...input,
@@ -642,7 +640,7 @@ function RecallDetail(props: {
       setError(undefined);
       try {
         setProposal(
-          await props.api.proposeEssayGrade(props.due.prompt.id, draft()),
+          await props.recall.proposeEssayGrade(props.due.prompt.id, draft()),
         );
       } catch (caught) {
         setProposal({

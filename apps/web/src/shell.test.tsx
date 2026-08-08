@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
-  FakeApi,
+  FakeHost,
   memory,
   navigateTo,
   proposal,
@@ -31,8 +31,8 @@ function badgeDigit(link: HTMLElement): string | null {
 
 describe("Shell accessibility", () => {
   test("authenticated pages share exactly one shell main landmark", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
 
     const headings = {
       Browse: "Browse",
@@ -61,8 +61,8 @@ describe("Shell accessibility", () => {
   });
 
   test("collapsed desktop navigation keeps full link names and titles", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     const nav = await mainNav();
 
     fireEvent.click(
@@ -80,12 +80,12 @@ describe("Shell accessibility", () => {
 
 describe("Shell nav badges", () => {
   test("no badge renders when a page has nothing pending", async () => {
-    const api = new FakeApi({ authenticated: true });
-    renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
     const nav = await mainNav();
 
     await waitFor(() => {
-      expect(api.listProposalsCalls.length).toBeGreaterThan(0);
+      expect(host.proposals.listProposalsCalls.length).toBeGreaterThan(0);
     });
     const proposalsLink = within(nav).getByRole("link", {
       name: /^Proposals/,
@@ -94,12 +94,12 @@ describe("Shell nav badges", () => {
   });
 
   test("badges reflect pending proposals and inbox items", async () => {
-    const api = new FakeApi({
+    const host = new FakeHost({
       authenticated: true,
       memories: [memory({ content: "Prefers aisle seats" })],
       proposals: [proposal({ id: "prop-1" })],
     });
-    renderApp(api);
+    renderApp(host);
     const nav = await mainNav();
 
     await waitFor(() => {
@@ -115,8 +115,8 @@ describe("Shell nav badges", () => {
   });
 
   test("a badge updates on a bus invalidate frame", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
     const nav = await mainNav();
 
     await waitFor(() => {
@@ -126,7 +126,7 @@ describe("Shell nav badges", () => {
       expect(badgeDigit(proposalsLink)).toBeNull();
     });
 
-    api.storedProposals = [proposal({ id: "prop-1" })];
+    host.proposals.storedProposals = [proposal({ id: "prop-1" })];
     bus.emit({ keys: ["proposals"], type: "invalidate" });
 
     await waitFor(() => {

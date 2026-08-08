@@ -1,9 +1,14 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 
-import { useAppContext } from "../app-context";
-import { ApiError } from "../api";
-import type { Grant, GrantSuggestion, Proposal, ProposalAction } from "../api";
+import { useHost } from "../app-context";
+import type {
+  Grant,
+  GrantSuggestion,
+  Proposal,
+  ProposalAction,
+} from "../host/proposals";
+import { ApiError } from "../host/error";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -111,7 +116,7 @@ function sameProposalBasis(a: Proposal, b: Proposal): boolean {
 }
 
 export function ProposalsPage() {
-  const { api } = useAppContext();
+  const api = useHost("proposals");
   const queryClient = useQueryClient();
   const [view, setView] = createSignal<ProposalsView>("queue");
   const [selectedId, setSelectedId] = createSignal<string | undefined>();
