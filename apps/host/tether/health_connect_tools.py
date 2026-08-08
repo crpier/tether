@@ -3,23 +3,16 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from json import dumps
-from typing import Any, Literal, Self, cast
+from typing import Literal, Self, cast
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from starlette.requests import Request
 from starlette.routing import Route
 
 from tether.capabilities import CapabilityOutcome, bind_params
-from tether.health_connect import (
-    HealthConnectRecordRead,
-    HealthConnectService,
-    HealthRecordType,
-)
+from tether.health_connect import HealthRecordType
+from tether.health_connect_telemetry import HealthConnectTelemetry
 from tether.tools import ToolSpec
-
-_HEALTH_RECORD_DATA_LIMIT_BYTES = 4 * 1_024
-"""Maximum raw data retained for one queried Health Connect record."""
 
 
 class HealthConnectInventoryParams(BaseModel):
@@ -77,25 +70,12 @@ class QueryHealthConnectParams(BaseModel):
         return self
 
 
-def _bounded_record_result(record: HealthConnectRecordRead) -> dict[str, Any]:
-    """Keep raw reflected data from injecting unbounded agent context."""
-    record_result = record.model_dump(mode="json")
-    record_data = cast("dict[str, object]", record_result["data"])
-    data_size_bytes = len(
-        dumps(record_data, ensure_ascii=False, separators=(",", ":")).encode()
-    )
-    if data_size_bytes > _HEALTH_RECORD_DATA_LIMIT_BYTES:
-        record_result["data"] = {
-            "original_size_bytes": data_size_bytes,
-            "truncated": True,
-        }
-    return record_result
-
-
 async def _health_connect_inventory(request: Request) -> CapabilityOutcome:
     """Read current projection metadata without exposing append-only history."""
-    service = cast("HealthConnectService", request.app.state.health_connect_service)
-    entries = await service.inventory()
+    telemetry = cast(
+        "HealthConnectTelemetry", request.app.state.health_connect_telemetry
+    )
+    entries = await telemetry.fetch_inventory()
     return CapabilityOutcome(
         result=[entry.model_dump(mode="json") for entry in entries]
     )
@@ -105,8 +85,10 @@ async def _summarize_health_connect(
     request: Request, params: SummarizeHealthConnectParams
 ) -> CapabilityOutcome:
     """Return compact current metrics for overview and trend requests."""
-    service = cast("HealthConnectService", request.app.state.health_connect_service)
-    summary = await service.summarize_current(
+    telemetry = cast(
+        "HealthConnectTelemetry", request.app.state.health_connect_telemetry
+    )
+    summary = await telemetry.fetch_summary(
         after=params.after, before=params.before, bucket=params.bucket
     )
     return CapabilityOutcome(result=summary.model_dump(mode="json"))
@@ -116,51 +98,16 @@ async def _query_health_connect(
     request: Request, params: QueryHealthConnectParams
 ) -> CapabilityOutcome:
     """Return bounded records from the latest non-tombstoned projections."""
-    service = cast("HealthConnectService", request.app.state.health_connect_service)
-    if params.record_type == "exercise":
-        records = await service.query_current_exercise(
-            after=params.after,
-            before=params.before,
-            limit=params.limit,
-        )
-    elif params.record_type == "heart_rate":
-        records = await service.query_current_heart_rates(
-            after=params.after,
-            before=params.before,
-            limit=params.limit,
-        )
-    elif params.record_type == "sleep":
-        records = await service.query_current_sleep(
-            after=params.after,
-            before=params.before,
-            limit=params.limit,
-        )
-    elif params.record_type == "steps":
-        records = await service.query_current_steps(
-            after=params.after,
-            before=params.before,
-            limit=params.limit,
-        )
-    else:
-        records = await service.query_current_generic(
-            record_type=params.record_type,
-            after=params.after,
-            before=params.before,
-            limit=params.limit,
-        )
-    total_matching_count = await service.count_current_records(
+    telemetry = cast(
+        "HealthConnectTelemetry", request.app.state.health_connect_telemetry
+    )
+    current = await telemetry.fetch_records(
         record_type=params.record_type,
         after=params.after,
         before=params.before,
+        limit=params.limit,
     )
-    return CapabilityOutcome(
-        result={
-            "records": [_bounded_record_result(record) for record in records],
-            "returned_count": len(records),
-            "total_matching_count": total_matching_count,
-            "truncated": total_matching_count > len(records),
-        }
-    )
+    return CapabilityOutcome(result=current.model_dump(mode="json"))
 
 
 HEALTH_CONNECT_TOOL_SPECS: tuple[ToolSpec, ...] = (

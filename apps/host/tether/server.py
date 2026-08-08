@@ -67,7 +67,11 @@ from tether.gmail_oauth import (
     HttpGmailTransport,
 )
 from tether.gmail_purge import GmailPurgeSweepService
-from tether.health_connect import HealthConnectService, create_health_connect_schema
+from tether.health_connect import (
+    HealthConnectIngestion,
+    create_health_connect_schema,
+)
+from tether.health_connect_telemetry import HealthConnectTelemetry
 from tether.health_connect_tools import internal_health_connect_tool_routes
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
@@ -1505,7 +1509,13 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
         async with _open_databases(config) as (db, telemetry_db):
             await _create_schemas(db)
             await create_health_connect_schema(telemetry_db)
-            app.state.health_connect_service = HealthConnectService(telemetry_db)
+            (
+                app.state.health_connect_ingestion,
+                app.state.health_connect_telemetry,
+            ) = (
+                HealthConnectIngestion(telemetry_db),
+                HealthConnectTelemetry(telemetry_db),
+            )
             _wire_web_search(app, config, db)
             model_catalog = (
                 AgentModelCatalog(
