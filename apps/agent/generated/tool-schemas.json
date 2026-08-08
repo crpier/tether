@@ -1588,7 +1588,7 @@
       "name": "query_health_connect",
       "params_model": "QueryHealthConnectParams",
       "schema": {
-        "description": "Inspect a few individual Health Connect records; use summary for overviews.",
+        "description": "Inspect individual Health Connect records; use summary for overviews.",
         "properties": {
           "after": {
             "anyOf": [
@@ -1618,7 +1618,7 @@
           },
           "limit": {
             "default": 5,
-            "maximum": 10,
+            "maximum": 1000,
             "minimum": 1,
             "title": "Limit",
             "type": "integer"

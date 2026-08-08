@@ -58,11 +58,11 @@ class SummarizeHealthConnectParams(BaseModel):
 
 
 class QueryHealthConnectParams(BaseModel):
-    """Inspect a few individual Health Connect records; use summary for overviews."""
+    """Inspect individual Health Connect records; use summary for overviews."""
 
     after: AwareDatetime | None = None
     before: AwareDatetime | None = None
-    limit: int = Field(default=5, ge=1, le=10)
+    limit: int = Field(default=5, ge=1, le=1_000)
     record_type: HealthRecordType
 
     @model_validator(mode="after")
