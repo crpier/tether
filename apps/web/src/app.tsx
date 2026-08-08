@@ -97,6 +97,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
     <AppContextProvider value={value}>
       <Router root={Shell}>
         <Route component={ChatPage} path="/" />
+        <Route component={ChatPage} path="/chat" />
         <Route component={ProposalsPage} path="/proposals" />
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowsePage} path="/browse" />

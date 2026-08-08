@@ -49,6 +49,19 @@ function badgeDigit(link: HTMLElement): string | null {
 }
 
 describe("Shell accessibility", () => {
+  test("/chat opens chat for authenticated users", async () => {
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/chat",
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Tether chat" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "Page not found" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("unknown authenticated routes show a not-found state without redirecting", async () => {
     renderApp(new FakeHost({ authenticated: true }), undefined, {
       path: "/not-a-real-route-autoresearch",
