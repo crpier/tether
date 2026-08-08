@@ -1,4 +1,4 @@
-import type { Locator } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures";
 
@@ -19,7 +19,67 @@ async function boundingBox(
 }
 
 const PHONE = { width: 390, height: 780 };
+const TABLET_BELOW_DESKTOP = { width: 1023, height: 844 };
 const DESKTOP = { width: 1280, height: 860 };
+
+const LONG_CONVERSATION_ID = "018f0000-0000-7000-8000-000000000307";
+
+function longMessage(seq: number, role: "assistant" | "user") {
+  return {
+    content: `Long mobile transcript message ${seq.toString()}: ${"Tether should keep the composer reachable while history scrolls independently. ".repeat(8)}`,
+    conversation_id: LONG_CONVERSATION_ID,
+    created_at: "2026-08-08T09:18:36Z",
+    id: `018f0000-0000-7000-8000-${seq.toString().padStart(12, "0")}`,
+    pi_message_id: null,
+    role,
+    seq,
+    tool_args: null,
+    tool_name: null,
+    tool_result: null,
+  };
+}
+
+async function serveLongChat(page: Page) {
+  const messages = Array.from({ length: 30 }, (_, index) =>
+    longMessage(index + 1, index % 2 === 0 ? "user" : "assistant"),
+  );
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      json: [
+        {
+          created_at: "2026-08-08T09:18:36Z",
+          id: LONG_CONVERSATION_ID,
+          latest_activity: "2026-08-08T09:18:36Z",
+          pi_session_id: null,
+          selected_model: "openai:gpt-4.1",
+          session_gap_seconds: 300,
+          title: null,
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/conversations/*/messages**", (route) =>
+    route.fulfill({ contentType: "application/json", json: messages }),
+  );
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      json: {
+        default_model: "openai:gpt-4.1",
+        models: [
+          {
+            display_name: "GPT 4.1",
+            id: "openai:gpt-4.1",
+            model_id: "gpt-4.1",
+            provider: "openai",
+            thinking_level: null,
+          },
+        ],
+      },
+    }),
+  );
+}
 
 test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   page,
@@ -54,6 +114,62 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   expect(modelSelector.y).toBeGreaterThan(chat.y);
   expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
+
+for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
+  test(`chat stays anchored and composeable at ${viewport.width.toString()}px`, async ({
+    page,
+    login,
+  }) => {
+    await page.setViewportSize(viewport);
+    await serveLongChat(page);
+    await login();
+
+    const transcript = page.locator('section[aria-label="Chat transcript"]');
+    await transcript.waitFor({ state: "visible" });
+    const composer = page.getByRole("textbox", { name: "Message" });
+    await expect(composer).toBeVisible();
+
+    const navTop = (
+      await boundingBox(
+        page.getByRole("navigation", { name: "Main navigation (compact)" }),
+      )
+    ).y;
+    const sendBox = await boundingBox(
+      page.getByRole("button", { exact: true, name: "Send" }),
+    );
+    expect(sendBox.y + sendBox.height).toBeLessThanOrEqual(navTop);
+
+    await expect
+      .poll(async () =>
+        transcript.evaluate(
+          (element) =>
+            element.scrollHeight - element.clientHeight - element.scrollTop,
+        ),
+      )
+      .toBeLessThanOrEqual(2);
+    const scroll = await transcript.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    }));
+    expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+    expect(
+      scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
+    ).toBeLessThanOrEqual(2);
+
+    const transcriptBox = await boundingBox(transcript);
+    const userBubble = await boundingBox(
+      transcript.locator('article[aria-label="You message"]').last(),
+    );
+    expect(userBubble.width).toBeGreaterThan(transcriptBox.width * 0.85);
+
+    expect(
+      await page.locator("main").evaluate((element) => element.scrollHeight),
+    ).toBeLessThanOrEqual(
+      await page.locator("main").evaluate((element) => element.clientHeight),
+    );
+  });
+}
 
 test("phone width: every Browse tab stays fully readable", async ({
   page,
