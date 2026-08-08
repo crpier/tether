@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Self, cast
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -139,6 +139,55 @@ _SUMMARY_IGNORED_NUMERIC_FIELDS = frozenset(
 
 _TOOL_NESTED_LIMIT = 50
 """Maximum nested samples/details returned by one agent tool call."""
+
+_DUPLICATE_STEP_SOURCE_WARNING = (
+    "Multiple step origins overlap; total_count uses the largest origin for this "
+    "day and raw_total_count is the simple sum."
+)
+"""Agent-facing warning for Health Connect's overlapping step sources."""
+
+_EXERCISE_TYPE_LABELS = {
+    56: "running",
+    79: "walking",
+}
+"""Health Connect exercise labels needed by agent summaries."""
+
+_SLEEP_STAGE_LABELS = {
+    1: "awake",
+    2: "sleeping",
+    3: "out_of_bed",
+    4: "light",
+    5: "deep",
+    6: "rem",
+    7: "awake_in_bed",
+}
+"""Health Connect sleep-stage labels needed by agent summaries."""
+
+
+def _exercise_type_label(exercise_type: int | None) -> str | None:
+    """Render Health Connect exercise enum values for agent-facing reads."""
+    if exercise_type is None:
+        return None
+    return _EXERCISE_TYPE_LABELS.get(exercise_type, f"unknown_{exercise_type}")
+
+
+def _sleep_stage_label(stage: int) -> str:
+    """Render Health Connect sleep-stage enum values for agent-facing reads."""
+    return _SLEEP_STAGE_LABELS.get(stage, f"unknown_{stage}")
+
+
+def _local_record_date(start_time: int | None, zone_offset_seconds: int | None) -> str:
+    """Bucket records by their captured local date when Health Connect provides it."""
+    if start_time is None:
+        return "unknown"
+    return (
+        (
+            datetime.fromtimestamp(start_time / 1000, UTC)
+            + timedelta(seconds=zone_offset_seconds or 0)
+        )
+        .date()
+        .isoformat()
+    )
 
 
 class HealthConnectSyncState[S = Pending](Model[S, "HealthConnectSyncState[Fetched]"]):
@@ -786,6 +835,7 @@ class HealthConnectInventoryEntry(BaseModel):
 class HealthConnectExerciseSummary(BaseModel):
     """Compact exercise-session measurements in a requested time window."""
 
+    exercise_type_code_counts: dict[str, int]
     exercise_type_counts: dict[str, int]
     record_count: int
     total_duration_minutes: float
@@ -827,13 +877,37 @@ class HealthConnectSleepSummary(BaseModel):
 
     average_duration_minutes: float | None
     record_count: int
+    stage_code_duration_minutes: dict[str, float]
     stage_duration_minutes: dict[str, float]
     total_duration_minutes: float
+
+
+class HealthConnectStepOriginSummary(BaseModel):
+    """Step totals from one writing origin."""
+
+    data_origin_package: str
+    record_count: int
+    total_count: int
+
+
+class HealthConnectDailyStepsSummary(BaseModel):
+    """Step totals for one captured local date."""
+
+    by_origin: list[HealthConnectStepOriginSummary]
+    date: str
+    duplicate_source_warning: str | None
+    raw_total_count: int
+    record_count: int
+    total_count: int
 
 
 class HealthConnectStepsSummary(BaseModel):
     """Compact step measurements in a requested time window."""
 
+    by_origin: list[HealthConnectStepOriginSummary]
+    daily: list[HealthConnectDailyStepsSummary]
+    duplicate_source_warning: str | None
+    raw_total_count: int
     record_count: int
     total_count: int
 
@@ -1037,6 +1111,80 @@ def _latest_bound(latest_end: int | None, latest_start: int | None) -> int | Non
     return max(bounds) if bounds else None
 
 
+def _step_origin_summaries(
+    rows: list[HcStepIntervalCurrent[Fetched]],
+    origins: dict[int, HcOrigin[Fetched]],
+) -> list[HealthConnectStepOriginSummary]:
+    """Group step intervals by writing app so duplicate sources are visible."""
+    totals: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        origin_package = (
+            origins[row.origin_id].data_origin_package
+            if row.origin_id is not None and row.origin_id in origins
+            else "unknown"
+        )
+        record_count, total_count = totals.get(origin_package, (0, 0))
+        totals[origin_package] = (record_count + 1, total_count + (row.count or 0))
+    return [
+        HealthConnectStepOriginSummary(
+            data_origin_package=origin_package,
+            record_count=record_count,
+            total_count=total_count,
+        )
+        for origin_package, (record_count, total_count) in sorted(totals.items())
+    ]
+
+
+def _step_duplicate_warning(
+    by_origin: list[HealthConnectStepOriginSummary],
+) -> str | None:
+    """Flag multi-origin step totals because Health Connect often mirrors sources."""
+    if len(by_origin) <= 1:
+        return None
+    return _DUPLICATE_STEP_SOURCE_WARNING
+
+
+def _recommended_step_total(by_origin: list[HealthConnectStepOriginSummary]) -> int:
+    """Prefer one step source over summing overlapping writers."""
+    return max((origin.total_count for origin in by_origin), default=0)
+
+
+def _summarize_step_rows(
+    rows: list[HcStepIntervalCurrent[Fetched]],
+    origins: dict[int, HcOrigin[Fetched]],
+    *,
+    include_daily: bool,
+) -> HealthConnectStepsSummary:
+    """Build source-aware step totals and optional local-day buckets."""
+    rows_by_date: dict[str, list[HcStepIntervalCurrent[Fetched]]] = {}
+    for row in rows:
+        rows_by_date.setdefault(
+            _local_record_date(row.start_time, row.start_zone_offset_seconds), []
+        ).append(row)
+    daily_summaries: list[HealthConnectDailyStepsSummary] = []
+    for local_date, date_rows in sorted(rows_by_date.items()):
+        by_origin = _step_origin_summaries(date_rows, origins)
+        daily_summaries.append(
+            HealthConnectDailyStepsSummary(
+                by_origin=by_origin,
+                date=local_date,
+                duplicate_source_warning=_step_duplicate_warning(by_origin),
+                raw_total_count=sum(row.count or 0 for row in date_rows),
+                record_count=len(date_rows),
+                total_count=_recommended_step_total(by_origin),
+            )
+        )
+    by_origin = _step_origin_summaries(rows, origins)
+    return HealthConnectStepsSummary(
+        by_origin=by_origin,
+        daily=daily_summaries if include_daily else [],
+        duplicate_source_warning=_step_duplicate_warning(by_origin),
+        raw_total_count=sum(row.count or 0 for row in rows),
+        record_count=len(rows),
+        total_count=sum(day.total_count for day in daily_summaries),
+    )
+
+
 async def _origin_id(transaction: Transaction, metadata: RecordMetadata) -> int:
     device = metadata.device
     origin_fields = {
@@ -1187,7 +1335,7 @@ class HealthConnectService:
         return sorted(entries, key=lambda entry: entry.record_type)
 
     async def summarize_current(
-        self, *, after: datetime, before: datetime
+        self, *, after: datetime, before: datetime, bucket: Literal["none", "day"]
     ) -> HealthConnectSummaryRead:
         """Aggregate current records that overlap one bounded time window."""
         after_millis = _millis_from_datetime(after)
@@ -1281,26 +1429,49 @@ class HealthConnectService:
                     HcGenericRecordCurrent.version_id.asc(),
                 )
             )
+            step_origin_ids = {
+                row.origin_id for row in step_rows if row.origin_id is not None
+            }
+            step_origins = (
+                await transaction.fetch_all(
+                    select(HcOrigin).where(HcOrigin.origin_id.in_(*step_origin_ids))
+                )
+                if step_origin_ids
+                else []
+            )
 
         sleep_durations = [
             _duration_minutes(row.start_time, row.end_time) for row in sleep_rows
         ]
+        stage_code_duration_minutes: dict[str, float] = {}
         stage_duration_minutes: dict[str, float] = {}
         for stage in sleep_stages:
             stage_key = str(stage.stage)
-            stage_duration_minutes[stage_key] = round(
-                stage_duration_minutes.get(stage_key, 0.0)
+            stage_code_duration_minutes[stage_key] = round(
+                stage_code_duration_minutes.get(stage_key, 0.0)
                 + _duration_minutes(stage.start_time, stage.end_time),
                 2,
             )
+            stage_label = _sleep_stage_label(stage.stage)
+            stage_duration_minutes[stage_label] = round(
+                stage_duration_minutes.get(stage_label, 0.0)
+                + _duration_minutes(stage.start_time, stage.end_time),
+                2,
+            )
+        exercise_type_code_counts: dict[str, int] = {}
         exercise_type_counts: dict[str, int] = {}
         for row in exercise_rows:
             if row.exercise_type is None:
                 continue
             exercise_type = str(row.exercise_type)
-            exercise_type_counts[exercise_type] = (
-                exercise_type_counts.get(exercise_type, 0) + 1
+            exercise_type_code_counts[exercise_type] = (
+                exercise_type_code_counts.get(exercise_type, 0) + 1
             )
+            exercise_type_label = _exercise_type_label(row.exercise_type)
+            if exercise_type_label is not None:
+                exercise_type_counts[exercise_type_label] = (
+                    exercise_type_counts.get(exercise_type_label, 0) + 1
+                )
         generic_by_type: dict[str, list[HcGenericRecordCurrent[Fetched]]] = {}
         for row in generic_rows:
             generic_by_type.setdefault(row.record_type, []).append(row)
@@ -1364,6 +1535,7 @@ class HealthConnectService:
             after=after,
             before=before,
             exercise=HealthConnectExerciseSummary(
+                exercise_type_code_counts=exercise_type_code_counts,
                 exercise_type_counts=exercise_type_counts,
                 record_count=len(exercise_rows),
                 total_duration_minutes=round(
@@ -1389,14 +1561,155 @@ class HealthConnectService:
                 if sleep_rows
                 else None,
                 record_count=len(sleep_rows),
+                stage_code_duration_minutes=stage_code_duration_minutes,
                 stage_duration_minutes=stage_duration_minutes,
                 total_duration_minutes=total_sleep_minutes,
             ),
-            steps=HealthConnectStepsSummary(
-                record_count=len(step_rows),
-                total_count=sum(row.count or 0 for row in step_rows),
+            steps=_summarize_step_rows(
+                step_rows,
+                {origin.origin_id: origin for origin in step_origins},
+                include_daily=bucket == "day",
             ),
         )
+
+    async def count_current_records(
+        self,
+        *,
+        record_type: HealthRecordType,
+        after: datetime | None,
+        before: datetime | None,
+    ) -> int:
+        """Count current records matching the same bounds as raw tool reads."""
+        if record_type == "exercise":
+            return await self._count_current_exercises(after=after, before=before)
+        if record_type == "heart_rate":
+            return await self._count_current_heart_rates(after=after, before=before)
+        if record_type == "sleep":
+            return await self._count_current_sleep(after=after, before=before)
+        if record_type == "steps":
+            return await self._count_current_steps(after=after, before=before)
+        return await self._count_current_generic(
+            record_type=record_type, after=after, before=before
+        )
+
+    async def _count_current_exercises(
+        self, *, after: datetime | None, before: datetime | None
+    ) -> int:
+        """Count exercise records matching raw-read bounds."""
+        query = select(HcExerciseSessionCurrent.version_id.count())
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcExerciseSessionCurrent.end_time.gte(after_millis)
+                | (
+                    HcExerciseSessionCurrent.end_time.is_null()
+                    & HcExerciseSessionCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcExerciseSessionCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one(query)
+
+    async def _count_current_generic(
+        self,
+        *,
+        record_type: HealthRecordType,
+        after: datetime | None,
+        before: datetime | None,
+    ) -> int:
+        """Count expanded generic records matching raw-read bounds."""
+        query = select(HcGenericRecordCurrent.version_id.count()).where(
+            HcGenericRecordCurrent.record_type.eq(record_type)
+        )
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcGenericRecordCurrent.end_time.gte(after_millis)
+                | (
+                    HcGenericRecordCurrent.end_time.is_null()
+                    & HcGenericRecordCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcGenericRecordCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one(query)
+
+    async def _count_current_heart_rates(
+        self, *, after: datetime | None, before: datetime | None
+    ) -> int:
+        """Count heart-rate records matching raw-read bounds."""
+        query = select(HcHeartRateRecordCurrent.version_id.count())
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcHeartRateRecordCurrent.end_time.gte(after_millis)
+                | (
+                    HcHeartRateRecordCurrent.end_time.is_null()
+                    & HcHeartRateRecordCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcHeartRateRecordCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one(query)
+
+    async def _count_current_sleep(
+        self, *, after: datetime | None, before: datetime | None
+    ) -> int:
+        """Count sleep records matching raw-read bounds."""
+        query = select(HcSleepSessionCurrent.version_id.count())
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcSleepSessionCurrent.end_time.gte(after_millis)
+                | (
+                    HcSleepSessionCurrent.end_time.is_null()
+                    & HcSleepSessionCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcSleepSessionCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one(query)
+
+    async def _count_current_steps(
+        self, *, after: datetime | None, before: datetime | None
+    ) -> int:
+        """Count step records matching raw-read bounds."""
+        query = select(HcStepIntervalCurrent.version_id.count())
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcStepIntervalCurrent.end_time.gte(after_millis)
+                | (
+                    HcStepIntervalCurrent.end_time.is_null()
+                    & HcStepIntervalCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcStepIntervalCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one(query)
 
     async def query_current_steps(
         self,
@@ -1621,6 +1934,7 @@ class HealthConnectService:
                         {
                             "end_time": _datetime_from_millis(stage.end_time),
                             "stage": stage.stage,
+                            "stage_label": _sleep_stage_label(stage.stage),
                             "start_time": _datetime_from_millis(stage.start_time),
                         }
                         for stage in stages[:_TOOL_NESTED_LIMIT]
@@ -1739,6 +2053,7 @@ class HealthConnectService:
             HealthConnectRecordRead(
                 data={
                     "exercise_type": row.exercise_type,
+                    "exercise_type_label": _exercise_type_label(row.exercise_type),
                     "laps": [
                         {
                             "end_time": _datetime_from_millis(lap.end_time),

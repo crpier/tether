@@ -1692,6 +1692,12 @@
             "format": "date-time",
             "title": "Before",
             "type": "string"
+          },
+          "bucket": {
+            "default": "none",
+            "enum": ["none", "day"],
+            "title": "Bucket",
+            "type": "string"
           }
         },
         "required": ["after", "before"],
