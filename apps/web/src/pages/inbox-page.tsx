@@ -10,7 +10,7 @@ import {
   onMount,
 } from "solid-js";
 
-import { useHost } from "../app-context";
+import { useHost, useInboxCaptureDraft } from "../app-context";
 import type { BucketTriageReport } from "../host/bucket";
 import type { Memory } from "../host/memories";
 import type { Notification } from "../host/notifications";
@@ -306,7 +306,10 @@ export function InboxPage() {
     })();
   };
 
-  const [captureContent, setCaptureContent] = createSignal("");
+  const {
+    inboxCaptureDraft: captureContent,
+    setInboxCaptureDraft: setCaptureContent,
+  } = useInboxCaptureDraft();
 
   const capture = () => {
     setError(undefined);

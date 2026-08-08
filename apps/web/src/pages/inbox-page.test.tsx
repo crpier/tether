@@ -11,6 +11,7 @@ import {
   FakeHost,
   bucketItem,
   duePrompt,
+  input,
   memory,
   navigateTo,
   notification,
@@ -30,6 +31,24 @@ describe("Inbox page", () => {
     expect(
       await screen.findByText("Nothing awaiting you — inbox zero."),
     ).toBeInTheDocument();
+  });
+
+  test("preserves an unsent capture draft across navigation", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Inbox");
+    await screen.findByRole("heading", { name: "Inbox" });
+
+    fireEvent.input(input(screen.getByLabelText("Capture")), {
+      target: { value: "Remember the umbrella" },
+    });
+    await navigateTo("Settings");
+    await screen.findByRole("heading", { name: "Settings" });
+    await navigateTo("Inbox");
+
+    expect(input(await screen.findByLabelText("Capture"))).toHaveValue(
+      "Remember the umbrella",
+    );
   });
 
   test("groups items by kind with a per-group count", async () => {
