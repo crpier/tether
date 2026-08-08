@@ -52,6 +52,27 @@ describe("Inbox page", () => {
     expect(screen.getByText("Fired reminder (1)")).toBeInTheDocument();
   });
 
+  test("selecting a memory review item exposes one accessible action row", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [
+        memory({ content: "Prefers aisle seats", id: "mem-1", version: 4 }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Inbox");
+    await screen.findByRole("heading", { name: "Inbox" });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Prefers aisle seats" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "Tether" })).toHaveLength(1);
+    });
+    expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
+  });
+
   test("selecting a memory review item tethers it from the detail pane", async () => {
     const host = new FakeHost({
       authenticated: true,
@@ -66,12 +87,10 @@ describe("Inbox page", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Prefers aisle seats" }),
     );
-    let detail: HTMLElement | undefined;
-    await waitFor(() => {
-      detail = screen.getAllByLabelText("Inbox item: Prefers aisle seats")[0];
-      expect(detail).toBeInTheDocument();
-    });
-    fireEvent.click(within(detail!).getByRole("button", { name: /^Tether/ }));
+    const detail = await screen.findByLabelText(
+      "Inbox item: Prefers aisle seats",
+    );
+    fireEvent.click(within(detail).getByRole("button", { name: /^Tether/ }));
 
     await waitFor(() => {
       expect(host.memories.tetherMemoryCalls).toEqual([
