@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -8,17 +8,23 @@ export interface ExplorerFinding {
   actual: string;
   evidence: string;
   expected: string;
+  fingerprint: string;
   kind: string;
   repro: string[];
   suggestedLabels: string[];
   title: string;
 }
 
+export interface ExplorerReport {
+  doNotTry: string[];
+  finding: ExplorerFinding | undefined;
+  notes: string[];
+}
+
 export interface ExplorerPromptOptions {
   doNotTry: string;
   maxActions: number;
   notes: string;
-  notesPath: string;
   productionUrl: string;
 }
 
@@ -62,6 +68,22 @@ export interface ExplorerRunResult {
 const resultStart = "AUTORESEARCH_RESULT_START";
 const resultEnd = "AUTORESEARCH_RESULT_END";
 
+export async function abortableDelay(
+  milliseconds: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolveDelay) => {
+    const done = (): void => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", done);
+      resolveDelay();
+    };
+    const timeout = setTimeout(done, milliseconds);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -94,6 +116,7 @@ function parseFindingPayload(value: unknown): ExplorerFinding | undefined {
     actual: readString(value, "actual"),
     evidence: readString(value, "evidence"),
     expected: readString(value, "expected"),
+    fingerprint: readString(value, "fingerprint"),
     kind: readString(value, "kind"),
     repro: readStringArray(value, "repro"),
     suggestedLabels: readStringArray(value, "suggestedLabels"),
@@ -101,15 +124,34 @@ function parseFindingPayload(value: unknown): ExplorerFinding | undefined {
   };
 }
 
-export function extractExplorerFinding(
-  text: string,
-): ExplorerFinding | undefined {
+function extractMarkedPayload(text: string): unknown {
   const start = text.lastIndexOf(resultStart);
   const end = text.lastIndexOf(resultEnd);
   if (start === -1 || end === -1 || end <= start) return undefined;
 
   const jsonText = text.slice(start + resultStart.length, end).trim();
-  return parseFindingPayload(JSON.parse(jsonText) as unknown);
+  return JSON.parse(jsonText) as unknown;
+}
+
+export function extractExplorerReport(text: string): ExplorerReport {
+  const payload = extractMarkedPayload(text);
+  if (!isRecord(payload)) {
+    throw new Error("explorer must return a marked JSON object");
+  }
+  const finding = isRecord(payload.finding)
+    ? parseFindingPayload({ ...payload.finding, found: true })
+    : undefined;
+  return {
+    doNotTry: readStringArray(payload, "doNotTry"),
+    finding,
+    notes: readStringArray(payload, "notes"),
+  };
+}
+
+export function extractExplorerFinding(
+  text: string,
+): ExplorerFinding | undefined {
+  return parseFindingPayload(extractMarkedPayload(text));
 }
 
 export function formatFindingIssueBody(
@@ -122,6 +164,7 @@ export function formatFindingIssueBody(
   return `Found by the Pi autoloop explorer against ${options.productionUrl}.
 
 Run: ${options.runId}
+Autoloop fingerprint: ${finding.fingerprint}
 
 ## Kind
 ${finding.kind}
@@ -156,11 +199,12 @@ Use the browser tools for real exploratory testing:
 - browser_fill_secret
 
 At most ${String(options.maxActions)} browser actions this run. Prefer broad, shallow exploration over repeating one flow.
+Before reporting a possibly transient loading or empty-state problem, confirm it with a fresh browser_snapshot.
 If login is required and TETHER_AUTOLOOP_APP_PASSWORD is set, use browser_fill_secret so the password is not printed.
 Do not perform destructive actions. Do not spam external services.
 
-Persistent notes file: ${options.notesPath}
-Read it, then update it with what you tried, what changed, and what future runs should avoid.
+You cannot access shell or file tools. The supervisor owns persistent state.
+Return only concise new coverage notes; do not restate existing entries.
 
 Existing notes:
 ${options.notes || "(none yet)"}
@@ -168,16 +212,18 @@ ${options.notes || "(none yet)"}
 Do not try:
 ${options.doNotTry || "(none yet)"}
 
+Never report an existing issue or a wording variant of anything under Do not try.
 If you find a bug, confusing UX, accessibility issue, or obvious improvement, stop and report exactly one finding.
-Finish with exactly one marked JSON object:
+Use a stable kebab-case fingerprint based on affected surface and failure, independent of wording.
+Finish with exactly one marked JSON object and no file edits:
 
 ${resultStart}
-{"found":true,"kind":"bug|ux|a11y|perf","title":"short title","evidence":"what you saw","repro":["step 1"],"expected":"expected behavior","actual":"actual behavior","suggestedLabels":["bug"]}
+{"finding":{"kind":"bug|ux|a11y|perf","fingerprint":"stable-kebab-case-id","title":"short title","evidence":"what you saw","repro":["step 1"],"expected":"expected behavior","actual":"actual behavior","suggestedLabels":["bug"]},"notes":["concise new coverage note"],"doNotTry":["concise new thing future runs should avoid"]}
 ${resultEnd}
 
-If no finding this run:
+If no finding this run, omit finding:
 ${resultStart}
-{"found":false}
+{"notes":["concise new coverage note"],"doNotTry":[]}
 ${resultEnd}
 `;
 }
@@ -206,6 +252,25 @@ export function renderPiJsonEvent(event: unknown): string | undefined {
     const toolName =
       typeof event.toolName === "string" ? event.toolName : "tool";
     const status = event.isError === true ? "error" : "ok";
+    if (event.isError === true && isRecord(event.result)) {
+      const content = event.result.content;
+      if (Array.isArray(content)) {
+        const details = content
+          .flatMap((item): string[] =>
+            isRecord(item) &&
+            item.type === "text" &&
+            typeof item.text === "string"
+              ? [item.text]
+              : [],
+          )
+          .join("\n")
+          .trim()
+          .slice(0, 500);
+        if (details.length > 0) {
+          return `\n[tool:${status}] ${toolName}: ${details}\n`;
+        }
+      }
+    }
     return `\n[tool:${status}] ${toolName}\n`;
   }
 
@@ -305,6 +370,31 @@ export async function runPiJson(options: PiRunOptions): Promise<string> {
   return assistantText;
 }
 
+export function mergeMarkdownEntries(
+  existing: string,
+  heading: string,
+  entries: string[],
+  limit = 100,
+): string {
+  const normalize = (entry: string): string =>
+    entry
+      .replace(/^\s*-\s*/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const existingEntries = existing
+    .split("\n")
+    .filter((line) => /^\s*-\s+/.test(line))
+    .map(normalize);
+  const unique = Array.from(
+    new Set(
+      [...existingEntries, ...entries.map(normalize)].filter(
+        (entry) => entry.length > 0,
+      ),
+    ),
+  ).slice(-limit);
+  return `${heading}\n${unique.map((entry) => `- ${entry}`).join("\n")}${unique.length > 0 ? "\n" : ""}`;
+}
+
 async function readTextOrDefault(
   path: string,
   fallback: string,
@@ -335,11 +425,86 @@ export async function ensureAutoloopFiles(
   );
 }
 
+export interface GitHubIssueSummary {
+  body: string;
+  url: string;
+}
+
+export function findOpenIssueByFingerprint(
+  issues: GitHubIssueSummary[],
+  fingerprint: string,
+): string | undefined {
+  const marker = `Autoloop fingerprint: ${fingerprint}`;
+  return issues.find((issue) => issue.body.includes(marker))?.url;
+}
+
+async function listOpenGitHubIssues(
+  config: Pick<AutoloopConfig, "ghCommand" | "cwd">,
+): Promise<GitHubIssueSummary[]> {
+  const child = spawn(
+    config.ghCommand,
+    [
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      "100",
+      "--json",
+      "body,url",
+    ],
+    {
+      cwd: config.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const exitCode = await new Promise<number | null>(
+    (resolveExit, rejectExit) => {
+      child.on("error", rejectExit);
+      child.on("close", resolveExit);
+    },
+  );
+  if (exitCode !== 0) {
+    throw new Error(
+      `gh issue list exited with ${String(exitCode)}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  const payload = JSON.parse(stdout) as unknown;
+  if (!Array.isArray(payload))
+    throw new Error("gh issue list returned invalid JSON");
+  return payload.flatMap((value): GitHubIssueSummary[] => {
+    if (
+      !isRecord(value) ||
+      typeof value.body !== "string" ||
+      typeof value.url !== "string"
+    ) {
+      return [];
+    }
+    return [{ body: value.body, url: value.url }];
+  });
+}
+
 export async function createGitHubIssue(
   finding: ExplorerFinding,
   body: string,
   config: Pick<AutoloopConfig, "ghCommand" | "issueLabels" | "cwd">,
 ): Promise<string> {
+  const existingUrl = findOpenIssueByFingerprint(
+    await listOpenGitHubIssues(config),
+    finding.fingerprint,
+  );
+  if (existingUrl !== undefined) return existingUrl;
+
   const tmpPath = join(tmpdir(), `tether-autoloop-${randomUUID()}.md`);
   await writeFile(tmpPath, body, "utf8");
 
@@ -374,12 +539,35 @@ export async function createGitHubIssue(
       child.on("close", resolveExit);
     },
   );
+  await unlink(tmpPath).catch(() => undefined);
   if (exitCode !== 0) {
     throw new Error(
       `gh issue create exited with ${String(exitCode)}${stderr ? `: ${stderr}` : ""}`,
     );
   }
   return stdout.trim();
+}
+
+export async function ensurePlaywrightBrowser(
+  executablePath: string,
+): Promise<void> {
+  try {
+    await access(executablePath);
+  } catch {
+    throw new Error(
+      "Playwright Chromium is missing; run: pnpm -C apps/agent exec playwright install chromium",
+    );
+  }
+}
+
+export function explorerPiArgs(browserExtensionPath: string): string[] {
+  return [
+    "--no-builtin-tools",
+    "--no-extensions",
+    "--no-skills",
+    "--extension",
+    browserExtensionPath,
+  ];
 }
 
 export async function runExplorerOnce(
@@ -393,8 +581,12 @@ export async function runExplorerOnce(
   const notes = await readTextOrDefault(config.notesPath, "");
   const doNotTry = await readTextOrDefault(config.doNotTryPath, "");
   const assistantText = await runPiJson({
-    args: ["--extension", config.browserExtensionPath],
+    args: explorerPiArgs(config.browserExtensionPath),
     cwd: config.cwd,
+    env: {
+      TETHER_AUTOLOOP_MAX_ACTIONS: String(config.explorerMaxActions),
+      TETHER_AUTOLOOP_PRODUCTION_URL: config.productionUrl,
+    },
     name: runId,
     onRender,
     piCommand: config.piCommand,
@@ -402,12 +594,22 @@ export async function runExplorerOnce(
       doNotTry,
       maxActions: config.explorerMaxActions,
       notes,
-      notesPath: config.notesPath,
       productionUrl: config.productionUrl,
     }),
     sessionDir: config.sessionDir,
   });
-  const finding = extractExplorerFinding(assistantText);
+  const report = extractExplorerReport(assistantText);
+  await writeFile(
+    config.notesPath,
+    mergeMarkdownEntries(notes, "# Explorer notes", report.notes),
+    "utf8",
+  );
+  let updatedDoNotTry = mergeMarkdownEntries(
+    doNotTry,
+    "# Do not try",
+    report.doNotTry,
+  );
+  const finding = report.finding;
   const issueUrl =
     finding !== undefined && config.autoCreateIssue
       ? await createGitHubIssue(
@@ -419,6 +621,13 @@ export async function runExplorerOnce(
           config,
         )
       : undefined;
+  if (finding !== undefined) {
+    const issueReference = issueUrl === undefined ? "" : ` (${issueUrl})`;
+    updatedDoNotTry = mergeMarkdownEntries(updatedDoNotTry, "# Do not try", [
+      `Known finding [${finding.fingerprint}]: ${finding.title}${issueReference}; do not report wording variants while unresolved.`,
+    ]);
+  }
+  await writeFile(config.doNotTryPath, updatedDoNotTry, "utf8");
   return { assistantText, finding, issueUrl, runId };
 }
 
@@ -447,7 +656,8 @@ export function autoloopConfigFromEnv(
       .filter((label) => label.length > 0),
     notesPath: resolve(root, "explorer-notes.md"),
     piCommand: env.TETHER_AUTOLOOP_PI ?? "pi",
-    productionUrl: env.TETHER_AUTOLOOP_PRODUCTION_URL ?? "https://tether",
+    productionUrl:
+      env.TETHER_AUTOLOOP_PRODUCTION_URL ?? "https://tether.tail2da0b1.ts.net",
     sessionDir: resolve(root, "pi-sessions"),
   };
 }

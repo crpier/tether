@@ -108,6 +108,7 @@ pi-auth:
 
 # production exploratory/fixer autoloop (safe defaults: issue creation on, fixer/merge/deploy off)
 autoloop:
+    pnpm -C apps/agent exec playwright install chromium
     TETHER_AUTOLOOP_CWD={{justfile_directory()}} TETHER_AUTOLOOP_PI={{justfile_directory()}}/apps/agent/node_modules/.bin/pi pnpm -C apps/agent exec tsx scripts/autoloop.ts
 
 # one-time YouTube OAuth bootstrap (caches a token, prints recent liked titles)

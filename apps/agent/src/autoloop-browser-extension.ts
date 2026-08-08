@@ -1,3 +1,6 @@
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import type { Browser, BrowserContext, ConsoleMessage, Page } from "playwright";
 import { chromium } from "playwright";
 import { Type } from "typebox";
@@ -5,6 +8,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 interface BrowserState {
+  actionCount: number;
   browser: Browser | undefined;
   consoleMessages: string[];
   context: BrowserContext | undefined;
@@ -14,8 +18,44 @@ interface BrowserState {
 
 const maxLogEntries = 100;
 
+export function browserControlText(control: {
+  innerText: string;
+  type: string;
+  value: string;
+}): string {
+  if (control.type === "password" && control.value.length > 0) {
+    return "[redacted]";
+  }
+  return (control.innerText || control.value).trim().slice(0, 120);
+}
+
+export function isAllowedBrowserUrl(
+  candidate: string,
+  target: string,
+): boolean {
+  try {
+    return new URL(candidate).origin === new URL(target).origin;
+  } catch {
+    return false;
+  }
+}
+
 function trimText(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}\n… truncated …`;
+}
+
+function consumeBrowserAction(state: BrowserState): void {
+  const limit = Number.parseInt(
+    process.env.TETHER_AUTOLOOP_MAX_ACTIONS ?? "12",
+    10,
+  );
+  if (!Number.isFinite(limit) || limit < 1) {
+    throw new Error("TETHER_AUTOLOOP_MAX_ACTIONS must be a positive integer");
+  }
+  if (state.actionCount >= limit) {
+    throw new Error(`browser action limit of ${String(limit)} reached`);
+  }
+  state.actionCount += 1;
 }
 
 function pushBounded(target: string[], value: string): void {
@@ -32,6 +72,17 @@ async function ensurePage(state: BrowserState): Promise<Page> {
   });
   state.context = await state.browser.newContext({
     viewport: { height: 900, width: 1440 },
+  });
+  const productionUrl = process.env.TETHER_AUTOLOOP_PRODUCTION_URL;
+  if (productionUrl === undefined) {
+    throw new Error("TETHER_AUTOLOOP_PRODUCTION_URL is required");
+  }
+  await state.context.route("**/*", async (route) => {
+    if (isAllowedBrowserUrl(route.request().url(), productionUrl)) {
+      await route.continue();
+    } else {
+      await route.abort("blockedbyclient");
+    }
   });
   state.page = await state.context.newPage();
 
@@ -60,7 +111,7 @@ async function fillField(
   page: Page,
   field: string,
   value: string,
-): Promise<string> {
+): Promise<void> {
   const candidates = [
     page.getByLabel(field).first(),
     page.getByPlaceholder(field).first(),
@@ -70,7 +121,7 @@ async function fillField(
   for (const locator of candidates) {
     try {
       await locator.fill(value, { timeout: 2_000 });
-      return await snapshot(page);
+      return;
     } catch (error: unknown) {
       lastError = error;
     }
@@ -81,7 +132,7 @@ async function fillField(
 }
 
 async function snapshot(page: Page): Promise<string> {
-  const [title, url, bodyText, controls] = await Promise.all([
+  const [title, url, bodyText, rawControls] = await Promise.all([
     page.title(),
     Promise.resolve(page.url()),
     page
@@ -101,15 +152,21 @@ async function snapshot(page: Page): Promise<string> {
             placeholder: input.placeholder || undefined,
             role: htmlElement.getAttribute("role"),
             tag: htmlElement.tagName.toLowerCase(),
-            text: (htmlElement.innerText || input.value || "")
-              .trim()
-              .slice(0, 120),
-            type: input.type || undefined,
+            innerText: htmlElement.innerText || "",
+            type: input.type || "",
+            value: input.value || "",
           };
         }),
       )
       .catch(() => []),
   ]);
+
+  const controls = rawControls.map((control) => ({
+    ...control,
+    innerText: undefined,
+    text: browserControlText(control),
+    value: undefined,
+  }));
 
   return JSON.stringify(
     {
@@ -125,6 +182,7 @@ async function snapshot(page: Page): Promise<string> {
 
 export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
   const state: BrowserState = {
+    actionCount: 0,
     browser: undefined,
     consoleMessages: [],
     context: undefined,
@@ -140,6 +198,13 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
       url: Type.String({ description: "URL to open" }),
     }),
     async execute(_toolCallId, params, signal) {
+      consumeBrowserAction(state);
+      const productionUrl = process.env.TETHER_AUTOLOOP_PRODUCTION_URL ?? "";
+      if (!isAllowedBrowserUrl(params.url, productionUrl)) {
+        throw new Error(
+          "browser_open only permits the configured production origin",
+        );
+      }
       const page = await ensurePage(state);
       await page.goto(params.url, {
         waitUntil: "domcontentloaded",
@@ -160,6 +225,7 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
       "Return the current page URL, title, visible text, and key controls.",
     parameters: Type.Object({}),
     async execute() {
+      consumeBrowserAction(state);
       const page = await ensurePage(state);
       return {
         content: [{ type: "text", text: await snapshot(page) }],
@@ -179,6 +245,7 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params) {
+      consumeBrowserAction(state);
       const page = await ensurePage(state);
       const candidates = [
         page.getByRole("button", { name: params.text }).first(),
@@ -193,6 +260,7 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
           await page
             .waitForLoadState("domcontentloaded", { timeout: 2_000 })
             .catch(() => undefined);
+          await page.waitForTimeout(200);
           return {
             content: [{ type: "text", text: await snapshot(page) }],
             details: {},
@@ -218,14 +286,11 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
       value: Type.String({ description: "Value to enter" }),
     }),
     async execute(_toolCallId, params) {
+      consumeBrowserAction(state);
       const page = await ensurePage(state);
+      await fillField(page, params.field, params.value);
       return {
-        content: [
-          {
-            type: "text",
-            text: await fillField(page, params.field, params.value),
-          },
-        ],
+        content: [{ type: "text", text: await snapshot(page) }],
         details: {},
       };
     },
@@ -237,24 +302,21 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
     description:
       "Fill an input from an environment variable without returning the secret.",
     parameters: Type.Object({
-      envName: Type.String({
-        description: "Environment variable containing the secret",
-      }),
       field: Type.String({
         description: "Label, placeholder, name, or nearby text",
       }),
     }),
     async execute(_toolCallId, params) {
-      const value = process.env[params.envName];
+      consumeBrowserAction(state);
+      const value = process.env.TETHER_AUTOLOOP_APP_PASSWORD;
       if (value === undefined || value.length === 0) {
-        throw new Error(`missing ${params.envName}`);
+        throw new Error("missing TETHER_AUTOLOOP_APP_PASSWORD");
       }
       const page = await ensurePage(state);
+      await fillField(page, params.field, value);
       return {
-        content: [
-          { type: "text", text: await fillField(page, params.field, value) },
-        ],
-        details: { envName: params.envName },
+        content: [{ type: "text", text: "Secret filled." }],
+        details: {},
       };
     },
   });
@@ -265,6 +327,7 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
     description: "Return recent browser console messages.",
     parameters: Type.Object({}),
     execute() {
+      consumeBrowserAction(state);
       return Promise.resolve({
         content: [
           {
@@ -283,6 +346,7 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
     description: "Return recent failed requests and HTTP 4xx/5xx responses.",
     parameters: Type.Object({}),
     execute() {
+      consumeBrowserAction(state);
       return Promise.resolve({
         content: [
           {
@@ -299,14 +363,12 @@ export default function autoloopBrowserExtension(pi: ExtensionAPI): void {
     name: "browser_screenshot",
     label: "Browser Screenshot",
     description: "Save a screenshot and return its path.",
-    parameters: Type.Object({
-      path: Type.Optional(Type.String({ description: "Screenshot path" })),
-    }),
-    async execute(_toolCallId, params) {
+    parameters: Type.Object({}),
+    async execute() {
+      consumeBrowserAction(state);
       const page = await ensurePage(state);
-      const path =
-        params.path ??
-        `.tether/autoloop/screenshots/${new Date().toISOString()}.png`;
+      const path = `.tether/autoloop/screenshots/${new Date().toISOString()}.png`;
+      await mkdir(dirname(path), { recursive: true });
       await page.screenshot({ fullPage: true, path });
       return { content: [{ type: "text", text: path }], details: { path } };
     },

@@ -1,13 +1,13 @@
+import { chromium } from "playwright";
+
 import {
+  abortableDelay,
   autoloopConfigFromEnv,
+  ensurePlaywrightBrowser,
   runExplorerOnce,
   runPiJson,
   type AutoloopConfig,
 } from "../src/autoloop.js";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function boolEnv(name: string): boolean {
   return process.env[name] === "1" || process.env[name] === "true";
@@ -38,6 +38,7 @@ Stop after the requested PR/merge/deploy boundary.`;
 }
 
 async function main(): Promise<void> {
+  await ensurePlaywrightBrowser(chromium.executablePath());
   const config = autoloopConfigFromEnv();
   const loopDelayMs = Number.parseInt(
     process.env.TETHER_AUTOLOOP_DELAY_MS ?? "5000",
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
     const result = await runExplorerOnce(config);
     if (result.finding === undefined) {
       process.stdout.write("\n[autoloop] no finding\n");
-      await sleep(loopDelayMs);
+      await abortableDelay(loopDelayMs, stopController.signal);
       continue;
     }
 
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
       await runFixer(result.issueUrl, config);
     }
 
-    await sleep(loopDelayMs);
+    await abortableDelay(loopDelayMs, stopController.signal);
   }
 }
 
