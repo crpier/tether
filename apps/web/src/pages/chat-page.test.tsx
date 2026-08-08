@@ -62,6 +62,17 @@ function latestFakeRecorder(): FakeMediaRecorder {
 }
 
 describe("Chat view", () => {
+  test("does not expose a destructive transcript reset", async () => {
+    const api = new FakeApi({ authenticated: true });
+    renderApp(api);
+
+    await screen.findByRole("heading", { name: "Tether chat" });
+
+    expect(
+      screen.queryByRole("button", { name: "New chat" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("shows only the confirmed loaded skill count in the header", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
@@ -601,48 +612,6 @@ describe("Chat view", () => {
     expect(screen.getByText("Generation stopped.")).toBeInTheDocument();
   });
 
-  test("New chat clears the transcript via the API", async () => {
-    const api = new FakeApi({
-      authenticated: true,
-      messages: [message({ content: "old topic", role: "user", seq: 1 })],
-    });
-    renderApp(api);
-
-    expect(await screen.findByText("old topic")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
-
-    await waitFor(() => {
-      expect(api.clearConversationCalls).toBe(1);
-    });
-    await waitFor(() => {
-      expect(screen.queryByText("old topic")).not.toBeInTheDocument();
-    });
-  });
-
-  test("New chat discards queued messages", async () => {
-    const api = new FakeApi({ authenticated: true });
-    const bus = renderApp(api);
-    const messageBox = textarea(await screen.findByLabelText("Message"));
-    fireEvent.input(messageBox, { target: { value: "First" } });
-    fireEvent.keyDown(messageBox, { key: "Enter" });
-    fireEvent.input(messageBox, { target: { value: "Queued" } });
-    fireEvent.keyDown(messageBox, { key: "Enter" });
-    expect(
-      screen.getByRole("region", { name: "Queued messages" }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
-
-    await waitFor(() => {
-      expect(api.clearConversationCalls).toBe(1);
-    });
-    expect(
-      screen.queryByRole("region", { name: "Queued messages" }),
-    ).not.toBeInTheDocument();
-    expect(bus.sent.at(-1)?.type).toBe("abort");
-  });
-
   test("invalidate frames refetch named query keys", async () => {
     const api = new FakeApi({ authenticated: true });
     const bus = renderApp(api);
@@ -808,41 +777,6 @@ describe("Chat view", () => {
     expect(
       await screen.findByText("Next message starts a fresh session"),
     ).toBeInTheDocument();
-  });
-
-  test("New chat resets accumulated pagination state", async () => {
-    const messages = Array.from({ length: 32 }, (_, index) =>
-      message({
-        content: `msg-${(index + 1).toString()}`,
-        role: "user",
-        seq: index + 1,
-      }),
-    );
-    const api = new FakeApi({ authenticated: true, messages });
-    renderApp(api);
-
-    expect(await screen.findByText("msg-32")).toBeInTheDocument();
-    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
-    expect(await screen.findByText("msg-1")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
-    await waitFor(() => {
-      expect(api.clearConversationCalls).toBe(1);
-    });
-    await waitFor(() => {
-      expect(screen.queryByText("msg-1")).not.toBeInTheDocument();
-    });
-
-    // Scrolling after the reset must not reissue a fetch for the now-stale
-    // pre-clear cursor (seq 3): the accumulated map and hasMore were reset.
-    const callsAfterClear = api.listMessagesCalls.length;
-    fireEvent.scroll(screen.getByLabelText("Chat transcript"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(
-      api.listMessagesCalls
-        .slice(callsAfterClear)
-        .every((call) => call?.beforeSeq === undefined),
-    ).toBe(true);
   });
 
   describe("voice input (issue #19)", () => {

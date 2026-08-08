@@ -478,7 +478,6 @@ export function ChatPage() {
   // Survives the live turn being retired by settled history, so the "stopped"
   // marker stays on the (now persisted) partial reply instead of flashing away.
   const [interrupted, setInterrupted] = createSignal(false);
-  const [clearing, setClearing] = createSignal(false);
   // Signal-driven overlay (#188, no router): set by an artifact card's Open
   // click, cleared to `null` on close. `null` both hides the overlay and
   // (via ArtifactOverlay's own effect) tears down its iframe.
@@ -789,41 +788,6 @@ export function ChatPage() {
     sendPrompt(transcript);
   };
 
-  const clearConversation = () => {
-    const id = conversationId();
-    if (id === undefined || clearing()) {
-      return;
-    }
-    void (async () => {
-      setClearing(true);
-      setError(undefined);
-      try {
-        if (generating()) {
-          bus()?.abort(id);
-        }
-        await api.clearConversation(id);
-        setInterrupted(false);
-        setAwaitingAgentEnd(false);
-        setOutboundPrompt(null);
-        setQueuedPrompts([]);
-        setEditingPromptId(null);
-        setEditingPromptContent("");
-        setDraft("");
-        setTurn(emptyTurn());
-        setLoadedSkillCount(undefined);
-        setAccumulated(new Map());
-        setHasMoreHistory(false);
-        rehydrate();
-      } catch (caught) {
-        setError(
-          caught instanceof Error ? caught.message : "Could not clear the chat",
-        );
-      } finally {
-        setClearing(false);
-      }
-    })();
-  };
-
   const abort = () => {
     const id = conversationId();
     if (id !== undefined && !awaitingAgentEnd()) {
@@ -863,15 +827,6 @@ export function ChatPage() {
             Skills loaded · {loadedSkillCount()}
           </p>
         </Show>
-        <Button
-          disabled={clearing() || conversation() === undefined}
-          onClick={clearConversation}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          New chat
-        </Button>
       </header>
       <div class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-3 p-4 sm:p-5 lg:overflow-hidden">
         <Show when={connection() !== "open"}>
@@ -1043,7 +998,6 @@ export function ChatPage() {
               </section>
             </Show>
             <VoiceComposerControls
-              disabled={clearing()}
               onTranscript={handleVoiceTranscript}
               transcribe={(blob) => api.transcribeAudio(blob)}
             />
