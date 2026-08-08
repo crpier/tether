@@ -9,8 +9,8 @@ import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const read_conversation_historyParameters = Type.Object({
-  limit: Type.Optional(Type.Integer({ default: 20 })),
-  before: Type.Optional(Type.Integer()),
+  limit: Type.Optional(Type.Integer({ default: 20, maximum: 50, minimum: 1 })),
+  before: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type ReadConversationHistoryParams = Static<

@@ -68,6 +68,7 @@ from tether.gmail_oauth import (
 )
 from tether.gmail_purge import GmailPurgeSweepService
 from tether.health_connect import HealthConnectService, create_health_connect_schema
+from tether.health_connect_tools import internal_health_connect_tool_routes
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
@@ -1795,6 +1796,7 @@ def create_app(
             *internal_conversation_history_tool_routes(),
             *internal_panel_tool_routes(),
             *internal_kosync_tool_routes(),
+            *internal_health_connect_tool_routes(),
             *internal_proposal_tool_routes(),
             # The device-facing kosync protocol is mounted only when configured
             # (username + userkey set): a disabled install leaves `/kosync/*`

@@ -1573,6 +1573,110 @@
       }
     },
     {
+      "endpoint": "/internal/tools/health_connect_inventory",
+      "name": "health_connect_inventory",
+      "params_model": "HealthConnectInventoryParams",
+      "schema": {
+        "description": "List populated Health Connect record types and their UTC time bounds.",
+        "properties": {},
+        "title": "HealthConnectInventoryParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/query_health_connect",
+      "name": "query_health_connect",
+      "params_model": "QueryHealthConnectParams",
+      "schema": {
+        "description": "Read current Health Connect records in an optional aware UTC time window.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "record_type": {
+            "enum": [
+              "active_calories_burned",
+              "basal_body_temperature",
+              "basal_metabolic_rate",
+              "blood_glucose",
+              "blood_pressure",
+              "body_fat",
+              "body_temperature",
+              "body_water_mass",
+              "bone_mass",
+              "cervical_mucus",
+              "cycling_pedaling_cadence",
+              "distance",
+              "elevation_gained",
+              "exercise",
+              "floors_climbed",
+              "heart_rate",
+              "heart_rate_variability_rmssd",
+              "height",
+              "hydration",
+              "intermenstrual_bleeding",
+              "lean_body_mass",
+              "menstruation_flow",
+              "menstruation_period",
+              "mindfulness_session",
+              "nutrition",
+              "ovulation_test",
+              "oxygen_saturation",
+              "planned_exercise_session",
+              "power",
+              "respiratory_rate",
+              "resting_heart_rate",
+              "sexual_activity",
+              "skin_temperature",
+              "sleep",
+              "speed",
+              "steps",
+              "steps_cadence",
+              "total_calories_burned",
+              "vo2_max",
+              "weight",
+              "wheelchair_pushes"
+            ],
+            "title": "Record Type",
+            "type": "string"
+          }
+        },
+        "required": ["record_type"],
+        "title": "QueryHealthConnectParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/propose",
       "name": "propose",
       "params_model": "ProposeParams",
