@@ -16,6 +16,8 @@ interface JsonSchema {
   exclusiveMinimum?: number;
   format?: string;
   items?: JsonSchema;
+  maximum?: number;
+  minimum?: number;
   minLength?: number;
   properties?: Record<string, JsonSchema>;
   required?: string[];
@@ -54,6 +56,12 @@ function renderOptions(schema: JsonSchema): string {
     options.push(
       `format: ${quoted(schema.format === "uuid7" ? "uuid" : schema.format)}`,
     );
+  }
+  if (typeof schema.maximum === "number") {
+    options.push(`maximum: ${String(schema.maximum)}`);
+  }
+  if (typeof schema.minimum === "number") {
+    options.push(`minimum: ${String(schema.minimum)}`);
   }
   if (typeof schema.minLength === "number") {
     options.push(`minLength: ${String(schema.minLength)}`);

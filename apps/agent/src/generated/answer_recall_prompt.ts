@@ -10,9 +10,9 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const answer_recall_promptParameters = Type.Object({
   prompt_id: Type.String({ format: "uuid" }),
-  selected_index: Type.Optional(Type.Integer()),
+  selected_index: Type.Optional(Type.Integer({ minimum: 0 })),
   answer_text: Type.Optional(Type.String()),
-  response_ms: Type.Integer(),
+  response_ms: Type.Integer({ minimum: 0 }),
 });
 
 export type AnswerRecallPromptParams = Static<

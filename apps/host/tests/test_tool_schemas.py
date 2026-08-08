@@ -9,6 +9,7 @@ from tether.bucket_tools import internal_bucket_tool_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
+from tether.health_connect_tools import internal_health_connect_tool_routes
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.proposal_tools import internal_proposal_tool_routes
@@ -83,6 +84,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "label_ebook",
             "match_ebook_filename",
             "list_unlabeled_ebooks",
+            "health_connect_inventory",
+            "query_health_connect",
             "propose",
             "list_proposals",
         },
@@ -106,6 +109,20 @@ def tool_schema_document_describes_the_internal_tools() -> None:
     assert_in("memory_id", tether_schema["required"])
     assert_eq(tools["append"]["endpoint"], "/internal/tools/append")
     assert_in("content", append_schema["required"])
+
+
+@test()
+def health_connect_query_schema_is_typed_and_bounded() -> None:
+    """The generated query tool offers every record type and a fixed limit."""
+    document = build_tool_schema_document()
+    tools = {tool["name"]: tool for tool in document["tools"]}
+    query_schema = cast("dict[str, Any]", tools["query_health_connect"]["schema"])
+    record_type_schema = query_schema["properties"]["record_type"]
+
+    assert_eq(record_type_schema["enum"][0], "active_calories_burned")
+    assert_in("weight", record_type_schema["enum"])
+    assert_eq(query_schema["properties"]["limit"]["default"], 20)
+    assert_eq(query_schema["properties"]["limit"]["maximum"], 100)
 
 
 @test()
@@ -171,6 +188,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_artifact_tool_routes(),
             internal_panel_tool_routes(),
             internal_kosync_tool_routes(),
+            internal_health_connect_tool_routes(),
             internal_proposal_tool_routes(),
         )
         for route in routes

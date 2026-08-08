@@ -25,6 +25,18 @@ describe("renderTypeBoxProperty", () => {
     );
   });
 
+  test("preserves inclusive numeric bounds", () => {
+    const rendered = renderTypeBoxProperty(
+      "limit",
+      { default: 20, maximum: 100, minimum: 1, type: "integer" },
+      false,
+    );
+
+    expect(rendered).toBe(
+      "limit: Type.Optional(Type.Integer({ default: 20, maximum: 100, minimum: 1 }))",
+    );
+  });
+
   test("unwraps a nullable optional to its inner type", () => {
     const rendered = renderTypeBoxProperty(
       "year",

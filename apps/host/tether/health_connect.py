@@ -6,9 +6,10 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from snekql.sqlite import (
     PENDING_GENERATION,
     Database,
@@ -128,6 +129,8 @@ _GENERIC_RECORD_TYPES: tuple[HealthRecordType, ...] = tuple(
 )
 RecordStatus = Literal["baseline", "changes", "initial"]
 GENERIC_RECORD_CONTRACT_VERSION = 3
+_TOOL_NESTED_LIMIT = 1_000
+"""Maximum nested samples/details returned by one agent tool call."""
 
 
 class HealthConnectSyncState[S = Pending](Model[S, "HealthConnectSyncState[Fetched]"]):
@@ -381,22 +384,67 @@ class HcHeartRateRecordCurrent[S = Pending](
 ):
     version_id: HcHeartRateRecordCurrent.Col[int] = Integer(primary_key=True)
     record_uid: HcHeartRateRecordCurrent.Col[str] = Text(nullable=False)
+    origin_id: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
+    modified_at: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
+    received_at: HcHeartRateRecordCurrent.Col[int] = Integer(nullable=False)
+    client_record_id: HcHeartRateRecordCurrent.Col[str | None] = Text(nullable=True)
+    client_record_version: HcHeartRateRecordCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    recording_method: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
     start_time: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
     end_time: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: HcHeartRateRecordCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    end_zone_offset_seconds: HcHeartRateRecordCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
 
 
 class HcSleepSessionCurrent[S = Pending](Model[S, "HcSleepSessionCurrent[Fetched]"]):
     version_id: HcSleepSessionCurrent.Col[int] = Integer(primary_key=True)
     record_uid: HcSleepSessionCurrent.Col[str] = Text(nullable=False)
+    origin_id: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
+    modified_at: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
+    received_at: HcSleepSessionCurrent.Col[int] = Integer(nullable=False)
+    client_record_id: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
+    client_record_version: HcSleepSessionCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    recording_method: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
     start_time: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
     end_time: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: HcSleepSessionCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    end_zone_offset_seconds: HcSleepSessionCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    title: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
+    notes: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
 
 
 class HcStepIntervalCurrent[S = Pending](Model[S, "HcStepIntervalCurrent[Fetched]"]):
     version_id: HcStepIntervalCurrent.Col[int] = Integer(primary_key=True)
     record_uid: HcStepIntervalCurrent.Col[str] = Text(nullable=False)
+    origin_id: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
+    modified_at: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
+    received_at: HcStepIntervalCurrent.Col[int] = Integer(nullable=False)
+    client_record_id: HcStepIntervalCurrent.Col[str | None] = Text(nullable=True)
+    client_record_version: HcStepIntervalCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    recording_method: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
     start_time: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
     end_time: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: HcStepIntervalCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    end_zone_offset_seconds: HcStepIntervalCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    count: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
 
 
 class HcExerciseSessionCurrent[S = Pending](
@@ -404,16 +452,51 @@ class HcExerciseSessionCurrent[S = Pending](
 ):
     version_id: HcExerciseSessionCurrent.Col[int] = Integer(primary_key=True)
     record_uid: HcExerciseSessionCurrent.Col[str] = Text(nullable=False)
+    origin_id: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
+    modified_at: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
+    received_at: HcExerciseSessionCurrent.Col[int] = Integer(nullable=False)
+    client_record_id: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
+    client_record_version: HcExerciseSessionCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    recording_method: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
     start_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
     end_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: HcExerciseSessionCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    end_zone_offset_seconds: HcExerciseSessionCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    exercise_type: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
+    title: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
+    notes: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
+    planned_exercise_session_id: HcExerciseSessionCurrent.Col[str | None] = Text(
+        nullable=True
+    )
 
 
 class HcGenericRecordCurrent[S = Pending](Model[S, "HcGenericRecordCurrent[Fetched]"]):
     version_id: HcGenericRecordCurrent.Col[int] = Integer(primary_key=True)
     record_type: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
     record_uid: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
+    origin_id: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
+    modified_at: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
+    received_at: HcGenericRecordCurrent.Col[int] = Integer(nullable=False)
+    client_record_id: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
+    client_record_version: HcGenericRecordCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    recording_method: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
     start_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
     end_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: HcGenericRecordCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    end_zone_offset_seconds: HcGenericRecordCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
+    payload_json: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
 
 
 class HealthConnectWireModel(BaseModel):
@@ -683,6 +766,40 @@ class HealthConnectSyncStateRead(HealthConnectWireModel):
     status: RecordStatus
 
 
+class HealthConnectInventoryEntry(BaseModel):
+    """Current records and their observed UTC time bounds for one type."""
+
+    earliest_start: AwareDatetime | None
+    latest_end: AwareDatetime | None
+    record_count: int
+    record_type: HealthRecordType
+
+
+class HealthConnectOriginRead(BaseModel):
+    """Writing application and device provenance returned with a record."""
+
+    data_origin_package: str
+    device_manufacturer: str | None
+    device_model: str | None
+    device_type: int | None
+
+
+class HealthConnectRecordRead(BaseModel):
+    """One latest non-tombstoned Health Connect record."""
+
+    data: dict[str, object]
+    end_time: AwareDatetime | None
+    end_zone_offset_seconds: int | None
+    modified_at: AwareDatetime | None
+    origin: HealthConnectOriginRead | None
+    received_at: AwareDatetime
+    record_id: str
+    record_type: HealthRecordType
+    recording_method: int | None
+    start_time: AwareDatetime | None
+    start_zone_offset_seconds: int | None
+
+
 class HealthConnectBatchRead(HealthConnectWireModel):
     accepted: dict[HealthRecordType, int]
     deleted: dict[HealthRecordType, int]
@@ -794,6 +911,24 @@ def _hash_json(value: object) -> str:
     ).hexdigest()
 
 
+def _datetime_from_millis(value: int | None) -> datetime | None:
+    """Render Health Connect epoch milliseconds as an unambiguous UTC instant."""
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value / 1_000, UTC)
+
+
+def _millis_from_datetime(value: datetime) -> int:
+    """Convert a validated aware tool-boundary instant to epoch milliseconds."""
+    return int(value.timestamp() * 1_000)
+
+
+def _latest_bound(latest_end: int | None, latest_start: int | None) -> int | None:
+    """Use the latest available endpoint while retaining instant-only records."""
+    bounds = [value for value in (latest_end, latest_start) if value is not None]
+    return max(bounds) if bounds else None
+
+
 async def _origin_id(transaction: Transaction, metadata: RecordMetadata) -> int:
     device = metadata.device
     origin_fields = {
@@ -824,9 +959,606 @@ async def _origin_id(transaction: Transaction, metadata: RecordMetadata) -> int:
 
 @dataclass(frozen=True, slots=True)
 class HealthConnectService:
-    """Atomic Health Connect cursor and append operations."""
+    """Atomic Health Connect ingestion and current-projection reads."""
 
     database: Database
+
+    async def inventory(self) -> list[HealthConnectInventoryEntry]:
+        """List populated current projections with their observed time bounds."""
+        async with self.database.transaction() as transaction:
+            exercise_stats = await transaction.fetch_one(
+                select(
+                    HcExerciseSessionCurrent.version_id.count(),
+                    HcExerciseSessionCurrent.start_time.min(),
+                    HcExerciseSessionCurrent.end_time.max(),
+                ).all()
+            )
+            exercise_latest_start = await transaction.fetch_one(
+                select(HcExerciseSessionCurrent.start_time.max()).all()
+            )
+            heart_rate_stats = await transaction.fetch_one(
+                select(
+                    HcHeartRateRecordCurrent.version_id.count(),
+                    HcHeartRateRecordCurrent.start_time.min(),
+                    HcHeartRateRecordCurrent.end_time.max(),
+                ).all()
+            )
+            heart_rate_latest_start = await transaction.fetch_one(
+                select(HcHeartRateRecordCurrent.start_time.max()).all()
+            )
+            sleep_stats = await transaction.fetch_one(
+                select(
+                    HcSleepSessionCurrent.version_id.count(),
+                    HcSleepSessionCurrent.start_time.min(),
+                    HcSleepSessionCurrent.end_time.max(),
+                ).all()
+            )
+            sleep_latest_start = await transaction.fetch_one(
+                select(HcSleepSessionCurrent.start_time.max()).all()
+            )
+            steps_stats = await transaction.fetch_one(
+                select(
+                    HcStepIntervalCurrent.version_id.count(),
+                    HcStepIntervalCurrent.start_time.min(),
+                    HcStepIntervalCurrent.end_time.max(),
+                ).all()
+            )
+            steps_latest_start = await transaction.fetch_one(
+                select(HcStepIntervalCurrent.start_time.max()).all()
+            )
+            generic_rows = await transaction.fetch_all(
+                select(
+                    HcGenericRecordCurrent.record_type,
+                    HcGenericRecordCurrent.version_id.count(),
+                    HcGenericRecordCurrent.start_time.min(),
+                )
+                .all()
+                .group_by(HcGenericRecordCurrent.record_type)
+            )
+            generic_latest_ends = dict(
+                await transaction.fetch_all(
+                    select(
+                        HcGenericRecordCurrent.record_type,
+                        HcGenericRecordCurrent.end_time.max(),
+                    )
+                    .all()
+                    .group_by(HcGenericRecordCurrent.record_type)
+                )
+            )
+            generic_latest_starts = dict(
+                await transaction.fetch_all(
+                    select(
+                        HcGenericRecordCurrent.record_type,
+                        HcGenericRecordCurrent.start_time.max(),
+                    )
+                    .all()
+                    .group_by(HcGenericRecordCurrent.record_type)
+                )
+            )
+        typed_rows: list[
+            tuple[HealthRecordType, tuple[int, int | None, int | None, int | None]]
+        ] = [
+            ("exercise", (*exercise_stats, exercise_latest_start)),
+            ("heart_rate", (*heart_rate_stats, heart_rate_latest_start)),
+            ("sleep", (*sleep_stats, sleep_latest_start)),
+            ("steps", (*steps_stats, steps_latest_start)),
+        ]
+        entries: list[HealthConnectInventoryEntry] = []
+        for record_type, (
+            count,
+            earliest_start,
+            latest_end,
+            latest_start,
+        ) in typed_rows:
+            if count == 0:
+                continue
+            entries.append(
+                HealthConnectInventoryEntry(
+                    earliest_start=_datetime_from_millis(earliest_start),
+                    latest_end=_datetime_from_millis(
+                        _latest_bound(latest_end, latest_start)
+                    ),
+                    record_count=count,
+                    record_type=record_type,
+                )
+            )
+        for record_type, count, earliest_start in generic_rows:
+            entries.append(
+                HealthConnectInventoryEntry(
+                    earliest_start=_datetime_from_millis(earliest_start),
+                    latest_end=_datetime_from_millis(
+                        _latest_bound(
+                            generic_latest_ends[record_type],
+                            generic_latest_starts[record_type],
+                        )
+                    ),
+                    record_count=count,
+                    record_type=cast("HealthRecordType", record_type),
+                )
+            )
+        return sorted(entries, key=lambda entry: entry.record_type)
+
+    async def query_current_steps(
+        self,
+        *,
+        after: datetime | None,
+        before: datetime | None,
+        limit: int,
+    ) -> list[HealthConnectRecordRead]:
+        """Read bounded current step intervals overlapping an aware time window."""
+        query = select(HcStepIntervalCurrent)
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcStepIntervalCurrent.end_time.gte(after_millis)
+                | (
+                    HcStepIntervalCurrent.end_time.is_null()
+                    & HcStepIntervalCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcStepIntervalCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        query = query.order_by(
+            HcStepIntervalCurrent.start_time.desc(),
+            HcStepIntervalCurrent.version_id.desc(),
+        ).limit(limit)
+        async with self.database.transaction() as transaction:
+            rows = await transaction.fetch_all(query)
+            origin_ids = {row.origin_id for row in rows if row.origin_id is not None}
+            origins = (
+                await transaction.fetch_all(
+                    select(HcOrigin).where(HcOrigin.origin_id.in_(*origin_ids))
+                )
+                if origin_ids
+                else []
+            )
+        origins_by_id = {origin.origin_id: origin for origin in origins}
+        return [
+            HealthConnectRecordRead(
+                data={"count": row.count},
+                end_time=_datetime_from_millis(row.end_time),
+                end_zone_offset_seconds=row.end_zone_offset_seconds,
+                modified_at=_datetime_from_millis(row.modified_at),
+                origin=(
+                    None
+                    if row.origin_id is None
+                    else HealthConnectOriginRead(
+                        data_origin_package=origins_by_id[
+                            row.origin_id
+                        ].data_origin_package,
+                        device_manufacturer=origins_by_id[
+                            row.origin_id
+                        ].device_manufacturer,
+                        device_model=origins_by_id[row.origin_id].device_model,
+                        device_type=origins_by_id[row.origin_id].device_type,
+                    )
+                ),
+                received_at=cast("datetime", _datetime_from_millis(row.received_at)),
+                record_id=row.record_uid,
+                record_type="steps",
+                recording_method=row.recording_method,
+                start_time=_datetime_from_millis(row.start_time),
+                start_zone_offset_seconds=row.start_zone_offset_seconds,
+            )
+            for row in rows
+        ]
+
+    async def query_current_heart_rates(
+        self,
+        *,
+        after: datetime | None,
+        before: datetime | None,
+        limit: int,
+    ) -> list[HealthConnectRecordRead]:
+        """Read bounded current heart-rate records and ordered samples."""
+        query = select(HcHeartRateRecordCurrent)
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcHeartRateRecordCurrent.end_time.gte(after_millis)
+                | (
+                    HcHeartRateRecordCurrent.end_time.is_null()
+                    & HcHeartRateRecordCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcHeartRateRecordCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        query = query.order_by(
+            HcHeartRateRecordCurrent.start_time.desc(),
+            HcHeartRateRecordCurrent.version_id.desc(),
+        ).limit(limit)
+        async with self.database.transaction() as transaction:
+            rows = await transaction.fetch_all(query)
+            version_ids = [row.version_id for row in rows]
+            samples = (
+                await transaction.fetch_all(
+                    select(HcHeartRateSample)
+                    .where(HcHeartRateSample.version_id.in_(*version_ids))
+                    .order_by(
+                        HcHeartRateSample.version_id.desc(),
+                        HcHeartRateSample.sample_index.asc(),
+                    )
+                    .limit(_TOOL_NESTED_LIMIT + 1)
+                )
+                if version_ids
+                else []
+            )
+            origin_ids = {row.origin_id for row in rows if row.origin_id is not None}
+            origins = (
+                await transaction.fetch_all(
+                    select(HcOrigin).where(HcOrigin.origin_id.in_(*origin_ids))
+                )
+                if origin_ids
+                else []
+            )
+        origins_by_id = {origin.origin_id: origin for origin in origins}
+        return [
+            HealthConnectRecordRead(
+                data={
+                    "samples": [
+                        {
+                            "beats_per_minute": sample.beats_per_minute,
+                            "time": _datetime_from_millis(sample.time),
+                        }
+                        for sample in samples[:_TOOL_NESTED_LIMIT]
+                        if sample.version_id == row.version_id
+                    ],
+                    "samples_truncated": len(samples) > _TOOL_NESTED_LIMIT,
+                },
+                end_time=_datetime_from_millis(row.end_time),
+                end_zone_offset_seconds=row.end_zone_offset_seconds,
+                modified_at=_datetime_from_millis(row.modified_at),
+                origin=(
+                    None
+                    if row.origin_id is None
+                    else HealthConnectOriginRead(
+                        data_origin_package=origins_by_id[
+                            row.origin_id
+                        ].data_origin_package,
+                        device_manufacturer=origins_by_id[
+                            row.origin_id
+                        ].device_manufacturer,
+                        device_model=origins_by_id[row.origin_id].device_model,
+                        device_type=origins_by_id[row.origin_id].device_type,
+                    )
+                ),
+                received_at=cast("datetime", _datetime_from_millis(row.received_at)),
+                record_id=row.record_uid,
+                record_type="heart_rate",
+                recording_method=row.recording_method,
+                start_time=_datetime_from_millis(row.start_time),
+                start_zone_offset_seconds=row.start_zone_offset_seconds,
+            )
+            for row in rows
+        ]
+
+    async def query_current_sleep(
+        self,
+        *,
+        after: datetime | None,
+        before: datetime | None,
+        limit: int,
+    ) -> list[HealthConnectRecordRead]:
+        """Read bounded current sleep sessions and ordered stages."""
+        query = select(HcSleepSessionCurrent)
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcSleepSessionCurrent.end_time.gte(after_millis)
+                | (
+                    HcSleepSessionCurrent.end_time.is_null()
+                    & HcSleepSessionCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcSleepSessionCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        query = query.order_by(
+            HcSleepSessionCurrent.start_time.desc(),
+            HcSleepSessionCurrent.version_id.desc(),
+        ).limit(limit)
+        async with self.database.transaction() as transaction:
+            rows = await transaction.fetch_all(query)
+            version_ids = [row.version_id for row in rows]
+            stages = (
+                await transaction.fetch_all(
+                    select(HcSleepStage)
+                    .where(HcSleepStage.version_id.in_(*version_ids))
+                    .order_by(
+                        HcSleepStage.version_id.desc(),
+                        HcSleepStage.stage_index.asc(),
+                    )
+                    .limit(_TOOL_NESTED_LIMIT + 1)
+                )
+                if version_ids
+                else []
+            )
+            origin_ids = {row.origin_id for row in rows if row.origin_id is not None}
+            origins = (
+                await transaction.fetch_all(
+                    select(HcOrigin).where(HcOrigin.origin_id.in_(*origin_ids))
+                )
+                if origin_ids
+                else []
+            )
+        origins_by_id = {origin.origin_id: origin for origin in origins}
+        return [
+            HealthConnectRecordRead(
+                data={
+                    "notes": row.notes,
+                    "stages": [
+                        {
+                            "end_time": _datetime_from_millis(stage.end_time),
+                            "stage": stage.stage,
+                            "start_time": _datetime_from_millis(stage.start_time),
+                        }
+                        for stage in stages[:_TOOL_NESTED_LIMIT]
+                        if stage.version_id == row.version_id
+                    ],
+                    "stages_truncated": len(stages) > _TOOL_NESTED_LIMIT,
+                    "title": row.title,
+                },
+                end_time=_datetime_from_millis(row.end_time),
+                end_zone_offset_seconds=row.end_zone_offset_seconds,
+                modified_at=_datetime_from_millis(row.modified_at),
+                origin=(
+                    None
+                    if row.origin_id is None
+                    else HealthConnectOriginRead(
+                        data_origin_package=origins_by_id[
+                            row.origin_id
+                        ].data_origin_package,
+                        device_manufacturer=origins_by_id[
+                            row.origin_id
+                        ].device_manufacturer,
+                        device_model=origins_by_id[row.origin_id].device_model,
+                        device_type=origins_by_id[row.origin_id].device_type,
+                    )
+                ),
+                received_at=cast("datetime", _datetime_from_millis(row.received_at)),
+                record_id=row.record_uid,
+                record_type="sleep",
+                recording_method=row.recording_method,
+                start_time=_datetime_from_millis(row.start_time),
+                start_zone_offset_seconds=row.start_zone_offset_seconds,
+            )
+            for row in rows
+        ]
+
+    async def query_current_exercise(
+        self,
+        *,
+        after: datetime | None,
+        before: datetime | None,
+        limit: int,
+    ) -> list[HealthConnectRecordRead]:
+        """Read bounded current exercise sessions and nested details."""
+        query = select(HcExerciseSessionCurrent)
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcExerciseSessionCurrent.end_time.gte(after_millis)
+                | (
+                    HcExerciseSessionCurrent.end_time.is_null()
+                    & HcExerciseSessionCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcExerciseSessionCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        if after is None and before is None:
+            query = query.all()
+        query = query.order_by(
+            HcExerciseSessionCurrent.start_time.desc(),
+            HcExerciseSessionCurrent.version_id.desc(),
+        ).limit(limit)
+        async with self.database.transaction() as transaction:
+            rows = await transaction.fetch_all(query)
+            version_ids = [row.version_id for row in rows]
+            segments = (
+                await transaction.fetch_all(
+                    select(HcExerciseSegment)
+                    .where(HcExerciseSegment.version_id.in_(*version_ids))
+                    .order_by(
+                        HcExerciseSegment.version_id.desc(),
+                        HcExerciseSegment.segment_index.asc(),
+                    )
+                    .limit(_TOOL_NESTED_LIMIT + 1)
+                )
+                if version_ids
+                else []
+            )
+            laps = (
+                await transaction.fetch_all(
+                    select(HcExerciseLap)
+                    .where(HcExerciseLap.version_id.in_(*version_ids))
+                    .order_by(
+                        HcExerciseLap.version_id.desc(),
+                        HcExerciseLap.lap_index.asc(),
+                    )
+                    .limit(_TOOL_NESTED_LIMIT + 1)
+                )
+                if version_ids
+                else []
+            )
+            route = (
+                await transaction.fetch_all(
+                    select(HcExerciseRoutePoint)
+                    .where(HcExerciseRoutePoint.version_id.in_(*version_ids))
+                    .order_by(
+                        HcExerciseRoutePoint.version_id.desc(),
+                        HcExerciseRoutePoint.point_index.asc(),
+                    )
+                    .limit(_TOOL_NESTED_LIMIT + 1)
+                )
+                if version_ids
+                else []
+            )
+            origin_ids = {row.origin_id for row in rows if row.origin_id is not None}
+            origins = (
+                await transaction.fetch_all(
+                    select(HcOrigin).where(HcOrigin.origin_id.in_(*origin_ids))
+                )
+                if origin_ids
+                else []
+            )
+        origins_by_id = {origin.origin_id: origin for origin in origins}
+        return [
+            HealthConnectRecordRead(
+                data={
+                    "exercise_type": row.exercise_type,
+                    "laps": [
+                        {
+                            "end_time": _datetime_from_millis(lap.end_time),
+                            "length_meters": lap.length_meters,
+                            "start_time": _datetime_from_millis(lap.start_time),
+                        }
+                        for lap in laps[:_TOOL_NESTED_LIMIT]
+                        if lap.version_id == row.version_id
+                    ],
+                    "nested_truncated": {
+                        "laps": len(laps) > _TOOL_NESTED_LIMIT,
+                        "route": len(route) > _TOOL_NESTED_LIMIT,
+                        "segments": len(segments) > _TOOL_NESTED_LIMIT,
+                    },
+                    "notes": row.notes,
+                    "planned_exercise_session_id": row.planned_exercise_session_id,
+                    "route": [
+                        {
+                            "altitude_meters": point.altitude_meters,
+                            "horizontal_accuracy_meters": (
+                                point.horizontal_accuracy_meters
+                            ),
+                            "latitude": point.latitude,
+                            "longitude": point.longitude,
+                            "time": _datetime_from_millis(point.time),
+                            "vertical_accuracy_meters": (
+                                point.vertical_accuracy_meters
+                            ),
+                        }
+                        for point in route[:_TOOL_NESTED_LIMIT]
+                        if point.version_id == row.version_id
+                    ],
+                    "segments": [
+                        {
+                            "end_time": _datetime_from_millis(segment.end_time),
+                            "repetitions_count": segment.repetitions_count,
+                            "segment_type": segment.segment_type,
+                            "start_time": _datetime_from_millis(segment.start_time),
+                        }
+                        for segment in segments[:_TOOL_NESTED_LIMIT]
+                        if segment.version_id == row.version_id
+                    ],
+                    "title": row.title,
+                },
+                end_time=_datetime_from_millis(row.end_time),
+                end_zone_offset_seconds=row.end_zone_offset_seconds,
+                modified_at=_datetime_from_millis(row.modified_at),
+                origin=(
+                    None
+                    if row.origin_id is None
+                    else HealthConnectOriginRead(
+                        data_origin_package=origins_by_id[
+                            row.origin_id
+                        ].data_origin_package,
+                        device_manufacturer=origins_by_id[
+                            row.origin_id
+                        ].device_manufacturer,
+                        device_model=origins_by_id[row.origin_id].device_model,
+                        device_type=origins_by_id[row.origin_id].device_type,
+                    )
+                ),
+                received_at=cast("datetime", _datetime_from_millis(row.received_at)),
+                record_id=row.record_uid,
+                record_type="exercise",
+                recording_method=row.recording_method,
+                start_time=_datetime_from_millis(row.start_time),
+                start_zone_offset_seconds=row.start_zone_offset_seconds,
+            )
+            for row in rows
+        ]
+
+    async def query_current_generic(
+        self,
+        *,
+        record_type: HealthRecordType,
+        after: datetime | None,
+        before: datetime | None,
+        limit: int,
+    ) -> list[HealthConnectRecordRead]:
+        """Read bounded current records from one expanded v3 projection."""
+        query = select(HcGenericRecordCurrent).where(
+            HcGenericRecordCurrent.record_type.eq(record_type)
+        )
+        if after is not None:
+            after_millis = _millis_from_datetime(after)
+            query = query.where(
+                HcGenericRecordCurrent.end_time.gte(after_millis)
+                | (
+                    HcGenericRecordCurrent.end_time.is_null()
+                    & HcGenericRecordCurrent.start_time.gte(after_millis)
+                )
+            )
+        if before is not None:
+            query = query.where(
+                HcGenericRecordCurrent.start_time.lte(_millis_from_datetime(before))
+            )
+        query = query.order_by(
+            HcGenericRecordCurrent.start_time.desc(),
+            HcGenericRecordCurrent.version_id.desc(),
+        ).limit(limit)
+        async with self.database.transaction() as transaction:
+            rows = await transaction.fetch_all(query)
+            origin_ids = {row.origin_id for row in rows if row.origin_id is not None}
+            origins = (
+                await transaction.fetch_all(
+                    select(HcOrigin).where(HcOrigin.origin_id.in_(*origin_ids))
+                )
+                if origin_ids
+                else []
+            )
+        origins_by_id = {origin.origin_id: origin for origin in origins}
+        return [
+            HealthConnectRecordRead(
+                data=json.loads(row.payload_json or "{}"),
+                end_time=_datetime_from_millis(row.end_time),
+                end_zone_offset_seconds=row.end_zone_offset_seconds,
+                modified_at=_datetime_from_millis(row.modified_at),
+                origin=(
+                    None
+                    if row.origin_id is None
+                    else HealthConnectOriginRead(
+                        data_origin_package=origins_by_id[
+                            row.origin_id
+                        ].data_origin_package,
+                        device_manufacturer=origins_by_id[
+                            row.origin_id
+                        ].device_manufacturer,
+                        device_model=origins_by_id[row.origin_id].device_model,
+                        device_type=origins_by_id[row.origin_id].device_type,
+                    )
+                ),
+                received_at=cast("datetime", _datetime_from_millis(row.received_at)),
+                record_id=row.record_uid,
+                record_type=record_type,
+                recording_method=row.recording_method,
+                start_time=_datetime_from_millis(row.start_time),
+                start_zone_offset_seconds=row.start_zone_offset_seconds,
+            )
+            for row in rows
+        ]
 
     async def fetch_sync_state(
         self, installation_id: str, record_types: tuple[HealthRecordType, ...]

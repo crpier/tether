@@ -11,7 +11,9 @@ import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const web_searchParameters = Type.Object({
   query: Type.String({ minLength: 1 }),
-  max_results: Type.Optional(Type.Integer({ default: 5 })),
+  max_results: Type.Optional(
+    Type.Integer({ default: 5, maximum: 20, minimum: 1 }),
+  ),
   search_depth: Type.Optional(StringEnum(["basic", "advanced"] as const)),
 });
 
