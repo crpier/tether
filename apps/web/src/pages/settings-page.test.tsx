@@ -34,6 +34,9 @@ describe("Settings page", () => {
       expect(provider).toHaveTextContent("OpenAI Codex");
       expect(provider).toHaveTextContent("Connected");
     });
+    expect(
+      await screen.findByRole("button", { name: "Reconnect OpenAI Codex" }),
+    ).toBeInTheDocument();
   });
 
   test("starts device recovery and shows the OpenAI code", async () => {
@@ -56,7 +59,7 @@ describe("Settings page", () => {
     await navigateTo("Settings");
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Connect ChatGPT" }),
+      await screen.findByRole("button", { name: "Connect OpenAI Codex" }),
     );
 
     expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
@@ -84,7 +87,7 @@ describe("Settings page", () => {
     renderApp(host);
     await navigateTo("Settings");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Connect ChatGPT" }),
+      await screen.findByRole("button", { name: "Connect OpenAI Codex" }),
     );
     await screen.findByText("ABCD-EFGH");
 
@@ -114,7 +117,7 @@ describe("Settings page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
 
     expect(
-      await screen.findByRole("button", { name: "Connect ChatGPT" }),
+      await screen.findByRole("button", { name: "Connect OpenAI Codex" }),
     ).toBeInTheDocument();
     expect(host.providerAuth.cancelProviderAuthCalls).toBe(1);
   });
