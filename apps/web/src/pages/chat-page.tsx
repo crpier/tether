@@ -62,9 +62,9 @@ function bubbleClass(role: ChatRole): string {
   const base = "flex flex-col gap-1 rounded-lg text-sm";
   switch (role) {
     case "user":
-      return `${base} bg-primary text-primary-foreground ml-auto max-w-[80%] px-3 py-2`;
+      return `${base} bg-primary text-primary-foreground ml-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "assistant":
-      return `${base} bg-muted mr-auto max-w-[80%] px-3 py-2`;
+      return `${base} bg-muted mr-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "tool":
       return `${base} text-muted-foreground mx-auto py-0.5 text-xs italic`;
   }
@@ -217,7 +217,7 @@ function MessageRow(props: {
           return (
             <article
               aria-label="Tool activity"
-              class="bg-muted/50 text-muted-foreground mr-auto max-w-[80%] rounded-lg px-3 py-2 text-xs"
+              class="bg-muted/50 text-muted-foreground mr-auto max-w-[96%] rounded-lg px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%]"
             >
               <div class="flex items-center gap-2">
                 <Show
@@ -271,7 +271,7 @@ function MessageRow(props: {
           return (
             <article
               aria-label="Tether reasoning"
-              class="bg-muted/50 text-muted-foreground mr-auto max-w-[80%] rounded-lg px-3 py-2 text-xs"
+              class="bg-muted/50 text-muted-foreground mr-auto max-w-[96%] rounded-lg px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%]"
             >
               <button
                 type="button"
@@ -384,7 +384,7 @@ function MessageRows(props: {
   });
 
   return (
-    <div class="relative flex min-h-[55svh] flex-1 flex-col lg:min-h-0">
+    <div class="relative flex min-h-0 flex-1 flex-col">
       <section
         ref={(element) => {
           viewport = element;
@@ -820,9 +820,9 @@ export function ChatPage() {
   return (
     <section
       aria-labelledby="chat-title"
-      class="flex min-h-full flex-1 flex-col"
+      class="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <header class="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5">
+      <header class="bg-card flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5">
         <h1
           id="chat-title"
           class="mr-auto text-lg font-semibold tracking-tight"
@@ -835,7 +835,7 @@ export function ChatPage() {
           </p>
         </Show>
       </header>
-      <div class="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-3 p-4 sm:p-5 lg:overflow-hidden">
+      <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 overflow-hidden p-4 sm:p-5">
         <Show when={connection() !== "open"}>
           <p
             class="bg-muted text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
@@ -892,7 +892,7 @@ export function ChatPage() {
               Next message starts a fresh session
             </p>
           </Show>
-          <form class="space-y-2" onSubmit={onSubmit}>
+          <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
             <Show when={conversation()}>
               {(currentConversation) => (
                 <ModelSelector api={api} conversation={currentConversation()} />
