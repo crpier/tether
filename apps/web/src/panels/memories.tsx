@@ -47,6 +47,12 @@ function memoryLabel(content: string): string {
     : `Memory: ${content.slice(0, LABEL_MAX_CHARS)}…`;
 }
 
+function visiblyMatchesSearch(item: Memory, query: string): boolean {
+  const content = item.content.toLowerCase();
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return terms.every((term) => content.includes(term));
+}
+
 interface Editing {
   // The content the edit was formulated against; a 409 whose fresh row still
   // matches this basis is a mere version bump (e.g. a tether) and safe to
@@ -130,6 +136,12 @@ export function MemoriesPanel(props: {
     searchTerm().length > 0
       ? (searchQuery.data ?? [])
       : (tetheredQuery.data ?? []),
+  );
+  const showingClosestMatches = createMemo(
+    () =>
+      searchTerm().length > 0 &&
+      corpusItems().length > 0 &&
+      !corpusItems().some((item) => visiblyMatchesSearch(item, searchTerm())),
   );
 
   const refresh = () => {
@@ -508,6 +520,11 @@ export function MemoriesPanel(props: {
               }
               when={corpusItems().length > 0}
             >
+              <Show when={showingClosestMatches()}>
+                <p class="text-muted-foreground mt-3 text-sm">
+                  No exact matches — showing closest memories
+                </p>
+              </Show>
               <ul class="mt-3 space-y-2">
                 <For each={corpusItems()}>{memoryRow}</For>
               </ul>

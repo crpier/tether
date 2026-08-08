@@ -270,6 +270,38 @@ describe("Memories panel (Browse corpus)", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("labels semantic fallback results when no listed memory visibly matches", async () => {
+    const fallback = memory({
+      content: "Prefers aisle seats",
+      id: "mem-1",
+      state: "tethered",
+    });
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [fallback],
+    });
+    host.memories.searchMemories = (q: string) => {
+      host.memories.searchMemoriesCalls.push(q);
+      return Promise.resolve([fallback]);
+    };
+    renderApp(host);
+
+    const panel = await openCorpus();
+    await screen.findByLabelText("Memory: Prefers aisle seats");
+    fireEvent.input(input(within(panel).getByLabelText("Search memories")), {
+      target: { value: "NO_SUCH_TOKEN_98765" },
+    });
+
+    expect(
+      await within(panel).findByText(
+        "No exact matches — showing closest memories",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("Memory: Prefers aisle seats"),
+    ).toBeInTheDocument();
+  });
+
   test("corpus search keystrokes are debounced into one request per pause", async () => {
     const host = new FakeHost({
       authenticated: true,
