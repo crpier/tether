@@ -25,6 +25,7 @@ export function BrowsePage() {
   const todos = useHost("todos");
   const triggers = useHost("triggers");
   const [view, setView] = createSignal<BrowseView>("memories");
+  const memoriesActive = () => view() === "memories";
 
   return (
     <section
@@ -56,8 +57,9 @@ export function BrowsePage() {
         {/* Keep Memories mounted while another Browse tab is selected so an
             in-progress edit remains intact when the user returns. */}
         <div
+          aria-hidden={memoriesActive() ? undefined : "true"}
           aria-labelledby={segmentedTabId("browse-view", "memories")}
-          hidden={view() !== "memories"}
+          hidden={!memoriesActive()}
           id={segmentedPanelId("browse-view", "memories")}
           role="tabpanel"
         >

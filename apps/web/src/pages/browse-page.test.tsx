@@ -55,6 +55,36 @@ describe("Browse page", () => {
     expect(host.memories.editMemoryCalls).toHaveLength(0);
   });
 
+  test("hides preserved Memories controls from inactive Browse tabs", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [
+        memory({ content: "Aisle seats", id: "mem-1", state: "tethered" }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+
+    const tabs = await screen.findByRole("tablist", { name: "Browse view" });
+    const memoriesPanel = await screen.findByRole("tabpanel", {
+      name: "Memories",
+    });
+    expect(memoriesPanel).not.toHaveAttribute("aria-hidden");
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Reminders" }));
+    expect(
+      await screen.findByRole("region", { name: "Reminders" }),
+    ).toBeInTheDocument();
+
+    expect(memoriesPanel).toHaveAttribute("aria-hidden", "true");
+    expect(
+      screen.queryByRole("searchbox", { name: "Search memories" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Edit Memory/ }),
+    ).not.toBeInTheDocument();
+  });
+
   test("switches between Bucket, Todos, Reminders and Panels tabs", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
