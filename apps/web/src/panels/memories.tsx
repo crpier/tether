@@ -38,13 +38,18 @@ const SEARCH_DEBOUNCE_MS = 150;
 
 // Row labels feed the accessibility tree (and test selectors), so cap them:
 // enough of a free-form memory to identify the row, without turning the
-// label into a paragraph.
+// label into a paragraph. Action names keep the full content so controls
+// identify their target without truncation.
 const LABEL_MAX_CHARS = 80;
 
 function memoryLabel(content: string): string {
   return content.length <= LABEL_MAX_CHARS
-    ? `Memory: ${content}`
+    ? fullMemoryLabel(content)
     : `Memory: ${content.slice(0, LABEL_MAX_CHARS)}…`;
+}
+
+function fullMemoryLabel(content: string): string {
+  return `Memory: ${content}`;
 }
 
 function visiblyMatchesSearch(item: Memory, query: string): boolean {
@@ -415,7 +420,7 @@ export function MemoriesPanel(props: {
           </span>
           <Show when={item.state === "loose"}>
             <Button
-              aria-label={`Tether ${memoryLabel(item.content)}`}
+              aria-label={`Tether ${fullMemoryLabel(item.content)}`}
               class="ml-auto"
               onClick={() => {
                 act(item, "tether");
@@ -428,7 +433,7 @@ export function MemoriesPanel(props: {
             </Button>
           </Show>
           <Button
-            aria-label={`Edit ${memoryLabel(item.content)}`}
+            aria-label={`Edit ${fullMemoryLabel(item.content)}`}
             class={item.state === "loose" ? "" : "ml-auto"}
             onClick={() => {
               startEdit(item);
@@ -440,7 +445,7 @@ export function MemoriesPanel(props: {
             Edit
           </Button>
           <Button
-            aria-label={`Reject ${memoryLabel(item.content)}`}
+            aria-label={`Reject ${fullMemoryLabel(item.content)}`}
             onClick={() => {
               act(item, "reject");
             }}

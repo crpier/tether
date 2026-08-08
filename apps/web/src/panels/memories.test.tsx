@@ -59,6 +59,26 @@ describe("Memories panel (Browse corpus)", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("long corpus memory actions use full accessible target names", async () => {
+    const content =
+      "EXP-ABLEAN customer lives in green building, prefers aisle seats, and wants invoices grouped by trip";
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [memory({ content, id: "mem-1", state: "tethered" })],
+    });
+    renderApp(host);
+
+    await openCorpus();
+
+    expect(
+      await screen.findByRole("button", { name: `Edit Memory: ${content}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Reject Memory: ${content}` }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /…/ })).not.toBeInTheDocument();
+  });
+
   test("editing a memory saves the new content at the observed version", async () => {
     const host = new FakeHost({
       authenticated: true,
