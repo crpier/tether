@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 
 import { useAppContext } from "../app-context";
 import { ApiError } from "../api";
-import type { GrantSuggestion, Proposal, ProposalAction } from "../api";
+import type { Grant, GrantSuggestion, Proposal, ProposalAction } from "../api";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -20,6 +20,37 @@ import {
 } from "@/components/ui/text-field";
 
 type ProposalsView = "queue" | "history" | "grants";
+type HistoryStateFilter =
+  "all" | "approved" | "executing" | "executed" | "failed" | "rejected";
+
+const PAGE_SIZE = 25;
+
+function pageCount(total: number): number {
+  return Math.max(1, Math.ceil(total / PAGE_SIZE));
+}
+
+function boundedPage(page: number, total: number): number {
+  return Math.min(page, pageCount(total));
+}
+
+function pageItems<T>(items: T[], page: number): T[] {
+  const safePage = boundedPage(page, items.length);
+  return items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+}
+
+function searchable(value: string | null | undefined): string {
+  return value?.toLocaleLowerCase() ?? "";
+}
+
+function matchesSearch(
+  fields: (string | null | undefined)[],
+  term: string,
+): boolean {
+  return (
+    term.length === 0 ||
+    fields.some((field) => searchable(field).includes(term))
+  );
+}
 
 function grantLabel(kind: string, scope: string | null): string {
   return scope === null ? `Grant: ${kind}` : `Grant: ${kind} (${scope})`;
@@ -29,6 +60,13 @@ function suggestionLabel(kind: string, scope: string | null): string {
   return scope === null
     ? `Suggestion: ${kind}`
     : `Suggestion: ${kind} (${scope})`;
+}
+
+function grantSuggestionActionLabel(
+  kind: string,
+  scope: string | null,
+): string {
+  return scope === null ? `Grant ${kind}` : `Grant ${kind} for ${scope}`;
 }
 
 // The primary, reviewer-facing line for one action: the consumer-supplied
@@ -89,6 +127,14 @@ export function ProposalsPage() {
   const [revocationOffers, setRevocationOffers] = createSignal<
     Record<string, string[]>
   >({});
+  const [historySearch, setHistorySearch] = createSignal("");
+  const [historyState, setHistoryState] =
+    createSignal<HistoryStateFilter>("all");
+  const [historyPage, setHistoryPage] = createSignal(1);
+  const [grantSearch, setGrantSearch] = createSignal("");
+  const [grantPage, setGrantPage] = createSignal(1);
+  const [suggestionSearch, setSuggestionSearch] = createSignal("");
+  const [suggestionPage, setSuggestionPage] = createSignal(1);
 
   const queueQuery = createQuery(() => ({
     queryFn: () => api.listProposals("pending"),
@@ -111,10 +157,66 @@ export function ProposalsPage() {
   }));
 
   const historyItems = createMemo(() =>
-    (historyQuery.data ?? []).filter((item) => item.state !== "pending"),
+    (historyQuery.data ?? [])
+      .filter((item) => item.state !== "pending")
+      .toSorted((a, b) =>
+        (b.decided_at ?? b.updated_at).localeCompare(
+          a.decided_at ?? a.updated_at,
+        ),
+      ),
+  );
+  const filteredHistoryItems = createMemo(() => {
+    const term = historySearch().trim().toLocaleLowerCase();
+    const state = historyState();
+    return historyItems().filter(
+      (item) =>
+        (state === "all" || item.state === state) &&
+        matchesSearch(
+          [
+            item.title,
+            item.summary,
+            item.consumer,
+            item.state,
+            item.rejection_reason,
+            ...item.actions.flatMap((action) => [
+              action.kind,
+              action.scope,
+              actionPrimary(action),
+            ]),
+          ],
+          term,
+        ),
+    );
+  });
+  const visibleHistoryItems = createMemo(() =>
+    pageItems(filteredHistoryItems(), historyPage()),
   );
 
   const queueItems = createMemo(() => queueQuery.data ?? []);
+  const grants = createMemo(() => grantsQuery.data ?? []);
+  const suggestions = createMemo(() =>
+    [...(suggestionsQuery.data ?? [])].sort(
+      (a, b) => b.seen - a.seen || a.kind.localeCompare(b.kind),
+    ),
+  );
+  const filteredGrants = createMemo(() => {
+    const term = grantSearch().trim().toLocaleLowerCase();
+    return grants().filter((grant) =>
+      matchesSearch([grant.kind, grant.scope], term),
+    );
+  });
+  const visibleGrants = createMemo(() =>
+    pageItems(filteredGrants(), grantPage()),
+  );
+  const filteredSuggestions = createMemo(() => {
+    const term = suggestionSearch().trim().toLocaleLowerCase();
+    return suggestions().filter((suggestion) =>
+      matchesSearch([suggestion.kind, suggestion.scope], term),
+    );
+  });
+  const visibleSuggestions = createMemo(() =>
+    pageItems(filteredSuggestions(), suggestionPage()),
+  );
   const selected = createMemo(() =>
     queueItems().find((item) => item.id === selectedId()),
   );
@@ -389,9 +491,18 @@ export function ProposalsPage() {
           id="proposals-view"
           onChange={setView}
           options={[
-            { label: "Queue", value: "queue" },
-            { label: "Decided", value: "history" },
-            { label: "Grants", value: "grants" },
+            {
+              label: `Queue (${queueItems().length.toString()})`,
+              value: "queue",
+            },
+            {
+              label: `Decided (${historyItems().length.toString()})`,
+              value: "history",
+            },
+            {
+              label: `Grants (${(grants().length + suggestions().length).toString()})`,
+              value: "grants",
+            },
           ]}
           value={view()}
         />
@@ -522,16 +633,67 @@ export function ProposalsPage() {
               id={segmentedPanelId("proposals-view", "history")}
               role="tabpanel"
             >
+              <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 class="text-base font-semibold">
+                    {`Decided proposals (${historyItems().length.toString()})`}
+                  </h2>
+                  <p class="text-muted-foreground text-xs">
+                    {rangeSummary(
+                      filteredHistoryItems().length,
+                      historyItems().length,
+                      historyPage(),
+                    )}
+                  </p>
+                </div>
+                <div class="flex flex-col gap-2 sm:flex-row">
+                  <label class="text-muted-foreground text-xs font-medium">
+                    Search decided proposals
+                    <input
+                      aria-label="Search decided proposals"
+                      class="border-input bg-background mt-1 h-9 w-full rounded-md border px-3 text-sm sm:w-64"
+                      onInput={(event) => {
+                        setHistorySearch(event.currentTarget.value);
+                        setHistoryPage(1);
+                      }}
+                      placeholder="Title, reason, action…"
+                      type="search"
+                      value={historySearch()}
+                    />
+                  </label>
+                  <label class="text-muted-foreground text-xs font-medium">
+                    State
+                    <select
+                      aria-label="Filter decided proposals by state"
+                      class="border-input bg-background mt-1 h-9 rounded-md border px-2 text-sm"
+                      onChange={(event) => {
+                        setHistoryState(
+                          event.currentTarget.value as HistoryStateFilter,
+                        );
+                        setHistoryPage(1);
+                      }}
+                      value={historyState()}
+                    >
+                      <option value="all">All states</option>
+                      <option value="approved">Approved</option>
+                      <option value="executing">Executing</option>
+                      <option value="executed">Executed</option>
+                      <option value="failed">Failed</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
               <Show
                 fallback={
                   <p class="text-muted-foreground text-sm">
-                    No decided proposals yet
+                    No decided proposals match.
                   </p>
                 }
-                when={historyItems().length > 0}
+                when={visibleHistoryItems().length > 0}
               >
                 <ul class="space-y-2">
-                  <For each={historyItems()}>
+                  <For each={visibleHistoryItems()}>
                     {(item) => (
                       <li
                         aria-label={`Proposal: ${item.title}`}
@@ -561,6 +723,12 @@ export function ProposalsPage() {
                   </For>
                 </ul>
               </Show>
+              <Pager
+                label="Decided proposals"
+                onPage={setHistoryPage}
+                page={boundedPage(historyPage(), filteredHistoryItems().length)}
+                total={filteredHistoryItems().length}
+              />
             </div>
           </Match>
           <Match when={view() === "grants"}>
@@ -569,39 +737,55 @@ export function ProposalsPage() {
               id={segmentedPanelId("proposals-view", "grants")}
               role="tabpanel"
             >
-              <div>
-                <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-                  Active grants
-                </h2>
+              <section aria-labelledby="active-grants-title">
+                <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h2
+                      class="text-base font-semibold"
+                      id="active-grants-title"
+                    >
+                      {`Active grants (${grants().length.toString()})`}
+                    </h2>
+                    <p class="text-muted-foreground text-xs">
+                      {rangeSummary(
+                        filteredGrants().length,
+                        grants().length,
+                        grantPage(),
+                      )}
+                    </p>
+                  </div>
+                  <label class="text-muted-foreground text-xs font-medium">
+                    Search active grants
+                    <input
+                      aria-label="Search active grants"
+                      class="border-input bg-background mt-1 h-9 w-full rounded-md border px-3 text-sm sm:w-64"
+                      onInput={(event) => {
+                        setGrantSearch(event.currentTarget.value);
+                        setGrantPage(1);
+                      }}
+                      placeholder="Kind or scope…"
+                      type="search"
+                      value={grantSearch()}
+                    />
+                  </label>
+                </div>
                 <Show
                   fallback={
                     <p class="text-muted-foreground mt-2 text-sm">
-                      No active grants
+                      No active grants match.
                     </p>
                   }
-                  when={(grantsQuery.data ?? []).length > 0}
+                  when={visibleGrants().length > 0}
                 >
                   <ul class="mt-2 space-y-2">
-                    <For each={grantsQuery.data ?? []}>
+                    <For each={visibleGrants()}>
                       {(g) => (
                         <li
                           aria-label={grantLabel(g.kind, g.scope)}
                           class="bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
                           data-id={g.id}
                         >
-                          <span class="flex-1">
-                            <span class="font-medium">{g.kind}</span>
-                            <Show when={g.scope}>
-                              {(scope) => (
-                                <span class="text-muted-foreground">
-                                  {` · ${scope()}`}
-                                </span>
-                              )}
-                            </Show>
-                            <span class="text-muted-foreground block text-xs">
-                              {`granted ${formatWhen(g.granted_at)}`}
-                            </span>
-                          </span>
+                          <GrantSummary grant={g} />
                           <Button
                             aria-label={`Revoke ${grantLabel(g.kind, g.scope)}`}
                             onClick={() => {
@@ -618,21 +802,55 @@ export function ProposalsPage() {
                     </For>
                   </ul>
                 </Show>
-              </div>
-              <div class="mt-4">
-                <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-                  Suggestions
-                </h2>
+                <Pager
+                  label="Active grants"
+                  onPage={setGrantPage}
+                  page={boundedPage(grantPage(), filteredGrants().length)}
+                  total={filteredGrants().length}
+                />
+              </section>
+              <section aria-labelledby="grant-suggestions-title" class="mt-5">
+                <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h2
+                      class="text-base font-semibold"
+                      id="grant-suggestions-title"
+                    >
+                      {`Suggestions (${suggestions().length.toString()})`}
+                    </h2>
+                    <p class="text-muted-foreground text-xs">
+                      {rangeSummary(
+                        filteredSuggestions().length,
+                        suggestions().length,
+                        suggestionPage(),
+                      )}
+                    </p>
+                  </div>
+                  <label class="text-muted-foreground text-xs font-medium">
+                    Search grant suggestions
+                    <input
+                      aria-label="Search grant suggestions"
+                      class="border-input bg-background mt-1 h-9 w-full rounded-md border px-3 text-sm sm:w-64"
+                      onInput={(event) => {
+                        setSuggestionSearch(event.currentTarget.value);
+                        setSuggestionPage(1);
+                      }}
+                      placeholder="Kind or scope…"
+                      type="search"
+                      value={suggestionSearch()}
+                    />
+                  </label>
+                </div>
                 <Show
                   fallback={
                     <p class="text-muted-foreground mt-2 text-sm">
-                      No suggestions yet
+                      No suggestions match.
                     </p>
                   }
-                  when={(suggestionsQuery.data ?? []).length > 0}
+                  when={visibleSuggestions().length > 0}
                 >
                   <ul class="mt-2 space-y-2">
-                    <For each={suggestionsQuery.data ?? []}>
+                    <For each={visibleSuggestions()}>
                       {(s) => (
                         <li
                           aria-label={suggestionLabel(s.kind, s.scope)}
@@ -652,7 +870,10 @@ export function ProposalsPage() {
                             </span>
                           </span>
                           <Button
-                            aria-label={`Grant ${s.kind}${s.scope === null ? "" : ` (${s.scope})`}`}
+                            aria-label={grantSuggestionActionLabel(
+                              s.kind,
+                              s.scope,
+                            )}
                             onClick={() => {
                               grantFromSuggestion(s);
                             }}
@@ -666,12 +887,93 @@ export function ProposalsPage() {
                     </For>
                   </ul>
                 </Show>
-              </div>
+                <Pager
+                  label="Grant suggestions"
+                  onPage={setSuggestionPage}
+                  page={boundedPage(
+                    suggestionPage(),
+                    filteredSuggestions().length,
+                  )}
+                  total={filteredSuggestions().length}
+                />
+              </section>
             </div>
           </Match>
         </Switch>
       </div>
     </section>
+  );
+}
+
+function rangeSummary(filtered: number, total: number, page: number): string {
+  if (total === 0) {
+    return "No items";
+  }
+  if (filtered === 0) {
+    return `No matches of ${total.toString()}`;
+  }
+  const safePage = boundedPage(page, filtered);
+  const start = (safePage - 1) * PAGE_SIZE + 1;
+  const end = Math.min(safePage * PAGE_SIZE, filtered);
+  const base = `Showing ${start.toString()}-${end.toString()} of ${filtered.toString()}`;
+  return filtered === total ? base : `${base} matching ${total.toString()}`;
+}
+
+function Pager(props: {
+  label: string;
+  onPage: (page: number) => void;
+  page: number;
+  total: number;
+}) {
+  return (
+    <Show when={props.total > PAGE_SIZE}>
+      <nav
+        aria-label={`${props.label} pages`}
+        class="mt-3 flex items-center justify-between gap-2 text-sm"
+      >
+        <Button
+          disabled={props.page <= 1}
+          onClick={() => {
+            props.onPage(props.page - 1);
+          }}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Previous
+        </Button>
+        <span class="text-muted-foreground text-xs">
+          {`Page ${props.page.toString()} of ${pageCount(props.total).toString()}`}
+        </span>
+        <Button
+          disabled={props.page >= pageCount(props.total)}
+          onClick={() => {
+            props.onPage(props.page + 1);
+          }}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Next
+        </Button>
+      </nav>
+    </Show>
+  );
+}
+
+function GrantSummary(props: { grant: Grant }) {
+  return (
+    <span class="flex-1">
+      <span class="font-medium">{props.grant.kind}</span>
+      <Show when={props.grant.scope}>
+        {(scope) => (
+          <span class="text-muted-foreground">{` · ${scope()}`}</span>
+        )}
+      </Show>
+      <span class="text-muted-foreground block text-xs">
+        {`granted ${formatWhen(props.grant.granted_at)}`}
+      </span>
+    </span>
   );
 }
 

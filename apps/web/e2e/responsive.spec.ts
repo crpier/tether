@@ -39,6 +39,68 @@ function longMessage(seq: number, role: "assistant" | "user") {
   };
 }
 
+function decidedProposal(index: number) {
+  const padded = index.toString().padStart(2, "0");
+  return {
+    actions: [
+      {
+        display: `Archive batch ${padded}`,
+        disposition: "pending",
+        id: `018f0000-0000-7000-8001-${index.toString().padStart(12, "0")}`,
+        kind: "archive_email",
+        params: { batch: padded },
+        scope: `mailbox-${padded}`,
+      },
+    ],
+    consumer: "gmail-purge",
+    created_at: `2026-01-${padded}T00:00:00Z`,
+    decided_at: `2026-01-${padded}T00:00:00Z`,
+    id: `018f0000-0000-7000-8002-${index.toString().padStart(12, "0")}`,
+    producing_run_id: null,
+    rejection_reason: null,
+    state: index % 2 === 0 ? "approved" : "rejected",
+    summary: `Historical proposal ${padded}`,
+    title: `Decision ${padded}`,
+    updated_at: `2026-01-${padded}T00:00:00Z`,
+    version: 1,
+  };
+}
+
+function grantSuggestion(index: number) {
+  const padded = index.toString().padStart(2, "0");
+  return {
+    approved: index,
+    edited: 0,
+    kind: `operation-${padded}`,
+    last_rejection: null,
+    rejected: 0,
+    scope: `scope-${padded}`,
+    seen: index + 1,
+  };
+}
+
+async function serveLargeProposalSurfaces(page: Page) {
+  const decided = Array.from({ length: 40 }, (_, index) =>
+    decidedProposal(index + 1),
+  );
+  const suggestions = Array.from({ length: 35 }, (_, index) =>
+    grantSuggestion(index + 1),
+  );
+  await page.route("**/api/proposals**", (route) => {
+    const url = new URL(route.request().url());
+    return route.fulfill({
+      contentType: "application/json",
+      json: url.searchParams.get("state") === "pending" ? [] : decided,
+    });
+  });
+  await page.route("**/api/grants", (route) =>
+    route.fulfill({ contentType: "application/json", json: [] }),
+  );
+  await page.route("**/api/grants/suggestions", (route) =>
+    route.fulfill({ contentType: "application/json", json: suggestions }),
+  );
+}
+
 async function serveLongChat(page: Page) {
   const messages = Array.from({ length: 30 }, (_, index) =>
     longMessage(index + 1, index % 2 === 0 ? "user" : "assistant"),
@@ -168,6 +230,57 @@ for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
     ).toBeLessThanOrEqual(
       await page.locator("main").evaluate((element) => element.clientHeight),
     );
+  });
+}
+
+for (const viewport of [PHONE, DESKTOP]) {
+  test(`proposals history and grants stay bounded at ${viewport.width.toString()}px`, async ({
+    page,
+    login,
+  }) => {
+    await page.setViewportSize(viewport);
+    await serveLargeProposalSurfaces(page);
+    await login();
+
+    const navName =
+      viewport.width < 1024 ? "Main navigation (compact)" : "Main navigation";
+    await page
+      .getByRole("navigation", { name: navName })
+      .getByRole("link", { name: /^Proposals/ })
+      .click();
+
+    await page.getByRole("tab", { name: /Decided/ }).click();
+    await expect(
+      page.getByRole("heading", { name: "Decided proposals (40)" }),
+    ).toBeVisible();
+    const historyPanel = page.getByRole("tabpanel", { name: /Decided/ });
+    await expect
+      .poll(() => historyPanel.locator('li[aria-label^="Proposal:"]').count())
+      .toBe(25);
+    await historyPanel
+      .getByRole("searchbox", { name: "Search decided proposals" })
+      .fill("Decision 36");
+    await expect(historyPanel.getByText("Decision 36")).toBeVisible();
+    await expect(historyPanel.getByText("Decision 35")).toBeHidden();
+
+    await page.getByRole("tab", { name: /Grants/ }).click();
+    const grantsPanel = page.getByRole("tabpanel", { name: /Grants/ });
+    await expect(
+      grantsPanel.getByRole("heading", { name: "Suggestions (35)" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        grantsPanel.getByRole("button", { name: /^Grant operation-/ }).count(),
+      )
+      .toBe(25);
+    await grantsPanel
+      .getByRole("searchbox", { name: "Search grant suggestions" })
+      .fill("scope-30");
+    await expect(
+      grantsPanel.getByRole("button", {
+        name: "Grant operation-30 for scope-30",
+      }),
+    ).toBeVisible();
   });
 }
 
