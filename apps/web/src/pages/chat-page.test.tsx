@@ -706,6 +706,19 @@ describe("Chat view", () => {
     expect(selector.closest("form")).not.toBeNull();
   });
 
+  test("labels the current model as selected", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+
+    const selected = await screen.findByRole("button", {
+      name: "GPT 4.1 Selected",
+    });
+    const unselected = screen.getByRole("button", { name: "Claude Sonnet" });
+
+    expect(selected).toHaveAttribute("aria-pressed", "true");
+    expect(unselected).toHaveAttribute("aria-pressed", "false");
+  });
+
   test("selecting a model persists it without moving the transcript", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);

@@ -105,7 +105,12 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
             type="button"
             variant={selectedModel() === model.id ? "default" : "outline"}
           >
-            {model.display_name}
+            <span>{model.display_name}</span>
+            <Show when={selectedModel() === model.id}>
+              <span class="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide">
+                Selected
+              </span>
+            </Show>
           </Button>
         )}
       </For>
