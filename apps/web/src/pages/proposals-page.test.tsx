@@ -79,6 +79,21 @@ describe("Proposals page", () => {
     });
   });
 
+  test("preloads grants tab count before Grants is opened", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      grants: [grant({ id: "grant-1", kind: "send_email" })],
+      grantSuggestions: [grantSuggestion({ kind: "archive_email" })],
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    expect(
+      await screen.findByRole("tab", { name: "Grants (2)" }),
+    ).toBeInTheDocument();
+  });
+
   test("switching to Grants shows active grants", async () => {
     const host = new FakeHost({
       authenticated: true,
