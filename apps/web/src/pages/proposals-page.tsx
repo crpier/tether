@@ -150,12 +150,10 @@ export function ProposalsPage() {
     queryKey: queryKeys.proposalsAll,
   }));
   const grantsQuery = createQuery(() => ({
-    enabled: view() === "grants",
     queryFn: () => api.listGrants(),
     queryKey: queryKeys.grants,
   }));
   const suggestionsQuery = createQuery(() => ({
-    enabled: view() === "grants",
     queryFn: () => api.grantSuggestions(),
     queryKey: queryKeys.grantSuggestions,
   }));
