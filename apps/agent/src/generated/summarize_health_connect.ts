@@ -5,12 +5,14 @@ import type {
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const summarize_health_connectParameters = Type.Object({
   after: Type.String({ format: "date-time" }),
   before: Type.String({ format: "date-time" }),
+  bucket: Type.Optional(StringEnum(["none", "day"] as const)),
 });
 
 export type SummarizeHealthConnectParams = Static<

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from json import dumps
-from typing import Any, Self, cast
+from typing import Any, Literal, Self, cast
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from starlette.requests import Request
@@ -45,6 +45,7 @@ class SummarizeHealthConnectParams(BaseModel):
 
     after: AwareDatetime
     before: AwareDatetime
+    bucket: Literal["none", "day"] = "none"
 
     @model_validator(mode="after")
     def ordered_time_window(self) -> Self:
@@ -105,7 +106,9 @@ async def _summarize_health_connect(
 ) -> CapabilityOutcome:
     """Return compact current metrics for overview and trend requests."""
     service = cast("HealthConnectService", request.app.state.health_connect_service)
-    summary = await service.summarize_current(after=params.after, before=params.before)
+    summary = await service.summarize_current(
+        after=params.after, before=params.before, bucket=params.bucket
+    )
     return CapabilityOutcome(result=summary.model_dump(mode="json"))
 
 
@@ -145,8 +148,18 @@ async def _query_health_connect(
             before=params.before,
             limit=params.limit,
         )
+    total_matching_count = await service.count_current_records(
+        record_type=params.record_type,
+        after=params.after,
+        before=params.before,
+    )
     return CapabilityOutcome(
-        result=[_bounded_record_result(record) for record in records]
+        result={
+            "records": [_bounded_record_result(record) for record in records],
+            "returned_count": len(records),
+            "total_matching_count": total_matching_count,
+            "truncated": total_matching_count > len(records),
+        }
     )
 
 
