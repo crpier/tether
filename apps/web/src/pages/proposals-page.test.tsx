@@ -88,7 +88,7 @@ describe("Proposals page", () => {
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
-    fireEvent.click(await screen.findByRole("tab", { name: "Grants" }));
+    fireEvent.click(await screen.findByRole("tab", { name: /Grants/ }));
 
     expect(
       await screen.findByLabelText("Grant: send_email"),
@@ -102,39 +102,97 @@ describe("Proposals page", () => {
     await screen.findByRole("heading", { name: "Proposals" });
 
     const tabs = screen.getByRole("tablist", { name: "Proposals view" });
-    expect(within(tabs).getByRole("tab", { name: "Queue" })).toHaveAttribute(
+    expect(within(tabs).getByRole("tab", { name: /Queue/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
-    fireEvent.keyDown(within(tabs).getByRole("tab", { name: "Queue" }), {
+    fireEvent.keyDown(within(tabs).getByRole("tab", { name: /Queue/ }), {
       key: "ArrowRight",
     });
 
-    expect(within(tabs).getByRole("tab", { name: "Decided" })).toHaveAttribute(
+    expect(within(tabs).getByRole("tab", { name: /Decided/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
     expect(
-      screen.getByRole("tabpanel", { name: "Decided" }),
+      screen.getByRole("tabpanel", { name: /Decided/ }),
     ).toBeInTheDocument();
   });
 
-  test("repeated grant actions include suggestion context in the accessible name", async () => {
+  test("large decided history is counted, paged, searchable, and preserved", async () => {
+    const decided = Array.from({ length: 40 }, (_, index) =>
+      proposal({
+        decided_at: `2026-01-${(index + 1).toString().padStart(2, "0")}T00:00:00Z`,
+        id: `history-${index.toString().padStart(2, "0")}`,
+        state: index % 2 === 0 ? "approved" : "rejected",
+        title: `Decision ${index.toString().padStart(2, "0")}`,
+      }),
+    );
+    const api = new FakeApi({ authenticated: true, proposals: decided });
+    renderApp(api);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Decided proposals (40)" }),
+    ).toBeInTheDocument();
+    const panel = screen.getByRole("tabpanel", { name: /Decided/ });
+    await waitFor(() => {
+      expect(within(panel).getAllByRole("listitem")).toHaveLength(25);
+    });
+
+    fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
+      target: { value: "Decision 36" },
+    });
+
+    expect(await within(panel).findByText("Decision 36")).toBeInTheDocument();
+    expect(within(panel).queryByText("Decision 35")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Queue/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Decided/ }));
+    const restoredPanel = screen.getByRole("tabpanel", { name: /Decided/ });
+    expect(
+      within(restoredPanel).getByDisplayValue("Decision 36"),
+    ).toBeInTheDocument();
+  });
+
+  test("large grant suggestions are counted, paged, searchable, and uniquely actionable", async () => {
+    const suggestions = Array.from({ length: 35 }, (_, index) =>
+      grantSuggestion({
+        approved: index,
+        kind: `operation-${index.toString().padStart(2, "0")}`,
+        scope: `scope-${index.toString().padStart(2, "0")}`,
+        seen: index + 1,
+      }),
+    );
     const api = new FakeApi({
       authenticated: true,
-      grantSuggestions: [
-        grantSuggestion({ kind: "send_email", scope: "newsletter" }),
-      ],
+      grantSuggestions: suggestions,
     });
     renderApp(api);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
-    fireEvent.click(await screen.findByRole("tab", { name: "Grants" }));
+    fireEvent.click(await screen.findByRole("tab", { name: /Grants/ }));
 
-    const grantButton = await screen.findByRole("button", {
-      name: "Grant send_email (newsletter)",
+    expect(
+      await screen.findByRole("heading", { name: "Suggestions (35)" }),
+    ).toBeInTheDocument();
+    const panel = screen.getByRole("tabpanel", { name: /Grants/ });
+    await waitFor(() => {
+      expect(
+        within(panel).getAllByRole("button", { name: /^Grant operation-/ }),
+      ).toHaveLength(25);
+    });
+
+    fireEvent.input(within(panel).getByLabelText("Search grant suggestions"), {
+      target: { value: "scope-30" },
+    });
+
+    const grantButton = await within(panel).findByRole("button", {
+      name: "Grant operation-30 for scope-30",
     });
     expect(grantButton).toHaveTextContent("Grant");
   });
