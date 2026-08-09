@@ -111,6 +111,21 @@ describe("Proposals page", () => {
     ).toBeInTheDocument();
   });
 
+  test("direct queue proposals route opens the queue tab", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [proposal({ id: "prop-1", title: "Needs approval" })],
+    });
+    renderApp(host, createBusHarness(), { path: "/proposals/queue" });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    expect(await screen.findByRole("tab", { name: /Queue/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(await screen.findByText("Needs approval")).toBeInTheDocument();
+  });
+
   test("direct decided proposals route opens the decided tab", async () => {
     const host = new FakeHost({
       authenticated: true,
