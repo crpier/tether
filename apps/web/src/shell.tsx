@@ -129,7 +129,7 @@ function useNavItems(): NavItem[] {
   ];
 }
 
-function DesktopSidebar(props: { active: boolean; items: NavItem[] }) {
+function DesktopSidebar(props: { items: NavItem[] }) {
   const [collapsed, setCollapsed] = createSignal(false);
   const location = useLocation();
 
@@ -139,7 +139,6 @@ function DesktopSidebar(props: { active: boolean; items: NavItem[] }) {
         "border-sidebar-border bg-sidebar text-sidebar-foreground hidden shrink-0 flex-col border-r transition-[width] duration-150 lg:flex",
         collapsed() ? "w-14" : "w-56",
       )}
-      hidden={!props.active}
     >
       <div class="flex items-center justify-between px-3 py-3">
         <Show when={!collapsed()}>
@@ -208,19 +207,25 @@ function DesktopSidebar(props: { active: boolean; items: NavItem[] }) {
   );
 }
 
-function MobileBottomTabs(props: { active: boolean; items: NavItem[] }) {
+function MobileBottomTabs(props: { items: NavItem[] }) {
   const location = useLocation();
   return (
     <nav
       aria-label="Main navigation (compact)"
       class="border-sidebar-border bg-sidebar text-sidebar-foreground fixed inset-x-0 bottom-0 z-40 flex border-t lg:hidden"
-      hidden={!props.active}
     >
       <For each={props.items}>
         {(item) => {
           const active = createMemo(() => location.pathname === item.path);
+          const badgeCount = createMemo(() => item.badge?.() ?? 0);
+          const navLabel = createMemo(() =>
+            badgeCount() > 0
+              ? `${item.label} ${badgeCount().toString()}`
+              : item.label,
+          );
           return (
             <A
+              aria-label={navLabel()}
               class={cx(
                 "relative flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
                 active()
@@ -231,14 +236,10 @@ function MobileBottomTabs(props: { active: boolean; items: NavItem[] }) {
               href={item.path}
             >
               <span>{item.label}</span>
-              <Show when={item.badge}>
-                {(badge) => (
-                  <Show when={badge()() > 0}>
-                    <span class="bg-sidebar-primary text-sidebar-primary-foreground absolute top-1 right-3 inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold">
-                      {badge()()}
-                    </span>
-                  </Show>
-                )}
+              <Show when={badgeCount() > 0}>
+                <span class="bg-sidebar-primary text-sidebar-primary-foreground absolute top-1 right-3 inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold">
+                  {badgeCount()}
+                </span>
               </Show>
             </A>
           );
@@ -254,11 +255,15 @@ export function Shell(props: { children?: JSX.Element }) {
 
   return (
     <div class="flex h-dvh w-dvw overflow-hidden">
-      <DesktopSidebar active={isDesktop()} items={items} />
+      <Show when={isDesktop()}>
+        <DesktopSidebar items={items} />
+      </Show>
       <main class="flex min-w-0 flex-1 flex-col overflow-y-auto pb-16 lg:pb-0">
         {props.children}
       </main>
-      <MobileBottomTabs active={!isDesktop()} items={items} />
+      <Show when={!isDesktop()}>
+        <MobileBottomTabs items={items} />
+      </Show>
     </div>
   );
 }
