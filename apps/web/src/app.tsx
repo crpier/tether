@@ -53,6 +53,10 @@ const BrowseTodosPage = directBrowsePage("todos");
 const BrowseRemindersPage = directBrowsePage("reminders");
 const BrowsePanelsPage = directBrowsePage("panels");
 
+function DirectDecidedProposalsPage() {
+  return <ProposalsPage initialView="history" />;
+}
+
 function ConnectedApp(props: Required<AppDependencies>) {
   const queryClient = useQueryClient();
   const [connection, setConnection] =
@@ -116,6 +120,10 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={ChatPage} path="/" />
         <Route component={ChatPage} path="/chat" />
         <Route component={ProposalsPage} path="/proposals" />
+        <Route
+          component={DirectDecidedProposalsPage}
+          path="/proposals/decided"
+        />
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowsePage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
