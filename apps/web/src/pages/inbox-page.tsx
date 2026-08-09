@@ -529,7 +529,7 @@ function InboxDetail(props: {
                   size="sm"
                   type="button"
                 >
-                  Tether
+                  Accept memory
                 </Button>
                 <Button
                   aria-label="Reject memory"
