@@ -150,6 +150,23 @@ describe("Proposals page", () => {
     ).toBeInTheDocument();
   });
 
+  test("direct grants proposals route opens the grants tab", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      grants: [grant({ id: "grant-1", kind: "send_email" })],
+    });
+    renderApp(host, createBusHarness(), { path: "/proposals/grants" });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    expect(await screen.findByRole("tab", { name: /Grants/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      await screen.findByLabelText("Grant: send_email"),
+    ).toBeInTheDocument();
+  });
+
   test("honors proposals tab and page query params", async () => {
     const grants = Array.from({ length: 40 }, (_, index) =>
       grant({
