@@ -1,4 +1,4 @@
-import { Match, Switch, createSignal } from "solid-js";
+import { Match, Switch, createSignal, onCleanup, onMount } from "solid-js";
 
 import { useHost } from "../app-context";
 import {
@@ -15,6 +15,32 @@ import { TriggersPanel } from "../panels/triggers";
 export type BrowseView =
   "memories" | "bucket" | "todos" | "reminders" | "panels";
 
+const browsePaths: Record<BrowseView, string> = {
+  bucket: "/browse/bucket",
+  memories: "/browse/memories",
+  panels: "/browse/panels",
+  reminders: "/browse/reminders",
+  todos: "/browse/todos",
+};
+
+function browseViewFromLocation(): BrowseView | undefined {
+  const pathView = Object.entries(browsePaths).find(
+    ([, path]) => window.location.pathname === path,
+  )?.[0] as BrowseView | undefined;
+  if (pathView) {
+    return pathView;
+  }
+
+  const queryView = new URLSearchParams(window.location.search).get("tab");
+  return queryView === "memories" ||
+    queryView === "bucket" ||
+    queryView === "todos" ||
+    queryView === "reminders" ||
+    queryView === "panels"
+    ? queryView
+    : undefined;
+}
+
 // Look-things-up state (#250): memory corpus search, todos, triggers, and the
 // user's synthetic panels. This is deliberately not master-detail — nothing
 // here is awaiting adjudication, so a page-level segmented control between
@@ -28,12 +54,29 @@ export function BrowsePage(
   const todos = useHost("todos");
   const triggers = useHost("triggers");
   const [view, setView] = createSignal<BrowseView>(
-    props.initialView ?? "memories",
+    props.initialView ?? browseViewFromLocation() ?? "memories",
   );
   const [memoryEditing, setMemoryEditing] = createSignal<
     MemoryEditing | undefined
   >();
   const [memoryDraft, setMemoryDraft] = createSignal("");
+  const selectView = (nextView: BrowseView) => {
+    setView(nextView);
+    const nextPath = browsePaths[nextView];
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, "", nextPath);
+    }
+  };
+
+  onMount(() => {
+    const onPopState = () => {
+      setView(browseViewFromLocation() ?? "memories");
+    };
+    window.addEventListener("popstate", onPopState);
+    onCleanup(() => {
+      window.removeEventListener("popstate", onPopState);
+    });
+  });
 
   return (
     <section
@@ -50,7 +93,7 @@ export function BrowsePage(
         <SegmentedControl
           aria-label="Browse view"
           id="browse-view"
-          onChange={setView}
+          onChange={selectView}
           options={[
             { label: "Memories", value: "memories" },
             { label: "Bucket", value: "bucket" },

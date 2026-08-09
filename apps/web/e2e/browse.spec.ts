@@ -12,6 +12,21 @@ test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
   );
 });
 
+test("Browse tab clicks update the shareable URL", async ({ page, login }) => {
+  await login();
+
+  await page.goto("/browse", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Reminders" }).click();
+  await expect(page.getByRole("region", { name: "Reminders" })).toBeVisible();
+  await expect(page).toHaveURL(/\/browse\/reminders$/);
+
+  await page.getByRole("tab", { name: "Todos" }).click();
+  await expect(page.getByRole("region", { name: "Todos" })).toBeVisible();
+  await expect(page).toHaveURL(/\/browse\/todos$/);
+});
+
 test("direct Bucket browse exposes no inactive Memories controls", async ({
   page,
   login,

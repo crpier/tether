@@ -154,6 +154,26 @@ describe("Browse page", () => {
     );
   });
 
+  test("updates the URL when switching Browse tabs", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host, undefined, { path: "/browse" });
+
+    await screen.findByRole("heading", { name: "Browse" });
+    const tabs = screen.getByRole("tablist", { name: "Browse view" });
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Reminders" }));
+    expect(
+      await screen.findByRole("region", { name: "Reminders" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/browse/reminders");
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Todos" }));
+    expect(
+      await screen.findByRole("region", { name: "Todos" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/browse/todos");
+  });
+
   test("opens Bucket history from its direct Browse URL", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host, undefined, { path: "/browse/bucket/history" });
