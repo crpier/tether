@@ -123,6 +123,19 @@ describe("Shell accessibility", () => {
     }
   });
 
+  test("Browse Todos mounts only the active responsive nav", async () => {
+    installMatchMedia(true);
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/browse",
+    });
+
+    const tabs = await screen.findByRole("tablist", { name: "Browse view" });
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Todos" }));
+
+    expect(await screen.findByRole("region", { name: "Todos" })).toBeVisible();
+    expect(screen.getAllByRole("navigation", { hidden: true })).toHaveLength(1);
+  });
+
   test("only the active responsive nav is exposed", async () => {
     const labels = ["Chat", "Proposals", "Inbox", "Browse", "Settings"];
 
@@ -196,6 +209,22 @@ describe("Shell nav badges", () => {
     await waitFor(() => {
       const inboxLink = within(nav).getByRole("link", { name: /^Inbox/ });
       expect(badgeDigit(inboxLink)).toBe("1");
+    });
+  });
+
+  test("compact badge names keep a space before the count", async () => {
+    installMatchMedia(false);
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [memory({ content: "Prefers aisle seats" })],
+    });
+    renderApp(host);
+    const nav = await screen.findByRole("navigation", {
+      name: "Main navigation (compact)",
+    });
+
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: "Inbox 1" })).toBeVisible();
     });
   });
 
