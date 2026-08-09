@@ -33,7 +33,7 @@ test("captures a memory, tethers it from the Inbox, and finds it in the Browse c
     await page
       .locator('[aria-label^="Inbox item: "]')
       .first()
-      .getByRole("button", { name: "Tether" })
+      .getByRole("button", { name: "Accept memory" })
       .click();
     await expect(
       page.getByRole("button", { name: text, exact: true }),
