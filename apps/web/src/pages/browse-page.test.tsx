@@ -77,6 +77,7 @@ describe("Browse page", () => {
     ).toBeInTheDocument();
 
     expect(memoriesPanel).toHaveAttribute("aria-hidden", "true");
+    expect(memoriesPanel).toHaveAttribute("inert");
     expect(
       screen.queryByRole("searchbox", { name: "Search memories" }),
     ).not.toBeInTheDocument();
