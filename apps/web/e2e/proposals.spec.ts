@@ -32,7 +32,7 @@ test("grants suggestions pagination is reflected in the URL", async ({
   );
 
   await login();
-  await page.goto("/proposals?tab=grants&page=8", {
+  await page.goto("/proposals?tab=grants", {
     waitUntil: "domcontentloaded",
   });
 
@@ -40,14 +40,15 @@ test("grants suggestions pagination is reflected in the URL", async ({
   await expect(
     grantsPanel.getByRole("heading", { name: "Suggestions (200)" }),
   ).toBeVisible();
-  await expect(grantsPanel.getByText("Page 8 of 8")).toBeVisible();
+  await expect(grantsPanel.getByText("Page 1 of 8")).toBeVisible();
+  await expect(page).toHaveURL(/\/proposals\?tab=grants$/u);
+
+  await grantsPanel.getByRole("button", { name: "Next" }).click();
+  await grantsPanel.getByRole("button", { name: "Next" }).click();
+
+  await expect(grantsPanel.getByText("Page 3 of 8")).toBeVisible();
   await expect(
-    grantsPanel.getByRole("button", { name: /^Grant operation-176/u }),
+    grantsPanel.getByRole("button", { name: /^Grant operation-051/u }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/proposals\?tab=grants&page=8$/u);
-
-  await grantsPanel.getByRole("button", { name: "Previous" }).click();
-
-  await expect(grantsPanel.getByText("Page 7 of 8")).toBeVisible();
-  await expect(page).toHaveURL(/\/proposals\?tab=grants&page=7$/u);
+  await expect(page).toHaveURL(/\/proposals\?tab=grants&page=3$/u);
 });
