@@ -322,6 +322,39 @@ describe("Inbox page", () => {
     ).toBeInTheDocument();
   });
 
+  test("fired reminder rows show visible identity metadata", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const firstId = "018f0000-0000-7000-8000-000000000001";
+    const secondId = "018f0000-0000-7000-8000-000000000002";
+    host.notifications.storedNotifications = [
+      notification({
+        body: "Call the dentist",
+        created_at: "2026-01-01T00:00:00Z",
+        id: firstId,
+      }),
+      notification({
+        body: "Call the dentist",
+        created_at: "2026-01-01T00:00:00Z",
+        id: secondId,
+      }),
+    ];
+    renderApp(host);
+    await navigateTo("Inbox");
+
+    await screen.findByText("Fired reminder (2)");
+
+    const firstRow = screen.getByRole("button", {
+      name: new RegExp(`Fired reminder: Call the dentist.*${firstId}`),
+    });
+    const secondRow = screen.getByRole("button", {
+      name: new RegExp(`Fired reminder: Call the dentist.*${secondId}`),
+    });
+    expect(firstRow).toHaveTextContent(/Fired .*01\/01\/2026/);
+    expect(firstRow).toHaveTextContent("ID …00000001");
+    expect(secondRow).toHaveTextContent(/Fired .*01\/01\/2026/);
+    expect(secondRow).toHaveTextContent("ID …00000002");
+  });
+
   test("fired reminder detail includes exact fired identity", async () => {
     const host = new FakeHost({ authenticated: true });
     host.notifications.storedNotifications = [

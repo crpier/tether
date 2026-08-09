@@ -411,6 +411,13 @@ export function InboxPage() {
                               <span class="truncate font-medium">
                                 {itemTitle(item)}
                               </span>
+                              <Show when={itemVisibleMetadata(item)}>
+                                {(metadata) => (
+                                  <span class="text-muted-foreground truncate text-xs">
+                                    {metadata()}
+                                  </span>
+                                )}
+                              </Show>
                             </button>
                           </li>
                         )}
@@ -491,6 +498,17 @@ function itemAccessibleName(item: InboxItem): string | undefined {
     return undefined;
   }
   return `Fired reminder: ${item.notification.body} — fired ${formatSyncTimestamp(item.notification.created_at)} — id ${item.notification.id}`;
+}
+
+function itemVisibleMetadata(item: InboxItem): string | undefined {
+  if (item.kind !== "notification") {
+    return undefined;
+  }
+  return `Fired ${formatDateTime(new Date(item.notification.created_at))} · ID ${shortId(item.notification.id)}`;
+}
+
+function shortId(id: string): string {
+  return id.length > 12 ? `…${id.slice(-8)}` : id;
 }
 
 function InboxDetail(props: {
