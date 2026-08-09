@@ -16,6 +16,7 @@ import {
   proposal,
   renderApp,
 } from "../testing/harness";
+import { formatDateTime } from "../lib/format";
 
 afterEach(cleanup);
 
@@ -300,6 +301,44 @@ describe("Proposals page", () => {
     expect(
       within(restoredPanel).getByDisplayValue("Decision 36"),
     ).toBeInTheDocument();
+  });
+
+  test("decided proposal search matches the visible decided timestamp", async () => {
+    const decidedAt = "2026-07-22T20:30:45Z";
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          decided_at: decidedAt,
+          id: "decision-time-match",
+          state: "approved",
+          title: "Timestamp-only match",
+        }),
+        proposal({
+          decided_at: "2026-07-22T19:00:00Z",
+          id: "decision-no-match",
+          state: "rejected",
+          title: "Other decision",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
+
+    const panel = screen.getByRole("tabpanel", { name: /Decided/ });
+    await within(panel).findByText(formatDateTime(new Date(decidedAt)));
+    fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
+      target: { value: formatDateTime(new Date(decidedAt)) },
+    });
+
+    expect(
+      await within(panel).findByLabelText("Proposal: Timestamp-only match"),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByLabelText("Proposal: Other decision"),
+    ).not.toBeInTheDocument();
   });
 
   test("large grant suggestions are counted, paged, searchable, and uniquely actionable", async () => {
