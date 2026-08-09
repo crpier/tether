@@ -1,4 +1,4 @@
-import { Match, Switch, createEffect, createSignal } from "solid-js";
+import { Match, Switch, createSignal } from "solid-js";
 
 import { useHost } from "../app-context";
 import {
@@ -7,7 +7,7 @@ import {
   segmentedTabId,
 } from "../components/segmented-control";
 import { BucketPanel, type BucketView } from "../panels/bucket";
-import { MemoriesPanel } from "../panels/memories";
+import { MemoriesPanel, type MemoryEditing } from "../panels/memories";
 import { SyntheticPanels } from "../panels/synthetic";
 import { TodosPanel } from "../panels/todos";
 import { TriggersPanel } from "../panels/triggers";
@@ -30,18 +30,10 @@ export function BrowsePage(
   const [view, setView] = createSignal<BrowseView>(
     props.initialView ?? "memories",
   );
-  const memoriesActive = () => view() === "memories";
-  const inertWhenMemoriesInactive = (element: HTMLElement) => {
-    createEffect(() => {
-      if (memoriesActive()) {
-        element.inert = false;
-        element.removeAttribute("inert");
-        return;
-      }
-      element.inert = true;
-      element.setAttribute("inert", "");
-    });
-  };
+  const [memoryEditing, setMemoryEditing] = createSignal<
+    MemoryEditing | undefined
+  >();
+  const [memoryDraft, setMemoryDraft] = createSignal("");
 
   return (
     <section
@@ -70,20 +62,26 @@ export function BrowsePage(
         />
       </header>
       <div class="mx-auto w-full max-w-3xl flex-1 space-y-4 p-4 sm:p-5">
-        {/* Keep Memories mounted while another Browse tab is selected so an
-            in-progress edit remains intact when the user returns. */}
-        <div
-          aria-hidden={memoriesActive() ? undefined : "true"}
-          aria-labelledby={segmentedTabId("browse-view", "memories")}
-          hidden={!memoriesActive()}
-          ref={inertWhenMemoriesInactive}
-          id={segmentedPanelId("browse-view", "memories")}
-          role="tabpanel"
-        >
-          {/* Review lives on the Inbox page; Browse only opens on Corpus. */}
-          <MemoriesPanel api={memories} initialView="corpus" />
-        </div>
         <Switch>
+          <Match when={view() === "memories"}>
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "memories")}
+              id={segmentedPanelId("browse-view", "memories")}
+              role="tabpanel"
+            >
+              {/* Review lives on the Inbox page; Browse only opens on Corpus.
+                  Keep the edit draft in Browse so inactive controls can unmount
+                  without losing in-progress edits. */}
+              <MemoriesPanel
+                api={memories}
+                draft={memoryDraft}
+                editing={memoryEditing}
+                initialView="corpus"
+                setDraft={setMemoryDraft}
+                setEditing={setMemoryEditing}
+              />
+            </div>
+          </Match>
           <Match when={view() === "bucket"}>
             <div
               aria-labelledby={segmentedTabId("browse-view", "bucket")}

@@ -8,7 +8,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import type { JSX } from "solid-js";
+import type { Accessor, JSX, Setter } from "solid-js";
 
 import {
   SegmentedControl,
@@ -58,7 +58,7 @@ function visiblyMatchesSearch(item: Memory, query: string): boolean {
   return terms.every((term) => content.includes(term));
 }
 
-interface Editing {
+export interface MemoryEditing {
   // The content the edit was formulated against; a 409 whose fresh row still
   // matches this basis is a mere version bump (e.g. a tether) and safe to
   // retry, while a changed basis is a genuine concurrent edit.
@@ -83,6 +83,10 @@ export function MemoriesPanel(props: {
   // page only ever wants the corpus, so callers pin the view rather than
   // relying on the user finding the right tab.
   initialView?: MemoriesView;
+  draft?: Accessor<string>;
+  editing?: Accessor<MemoryEditing | undefined>;
+  setDraft?: Setter<string>;
+  setEditing?: Setter<MemoryEditing | undefined>;
 }) {
   const queryClient = useQueryClient();
   const [view, setView] = createSignal<MemoriesView>(
@@ -93,8 +97,14 @@ export function MemoriesPanel(props: {
   const [search, setSearch] = createSignal("");
   const [debouncedSearch, setDebouncedSearch] = createSignal("");
   const [error, setError] = createSignal<string | undefined>();
-  const [editing, setEditing] = createSignal<Editing | undefined>();
-  const [draft, setDraft] = createSignal("");
+  const [localEditing, setLocalEditing] = createSignal<
+    MemoryEditing | undefined
+  >();
+  const [localDraft, setLocalDraft] = createSignal("");
+  const editing = props.editing ?? localEditing;
+  const setEditing = props.setEditing ?? setLocalEditing;
+  const draft = props.draft ?? localDraft;
+  const setDraft = props.setDraft ?? setLocalDraft;
 
   // Debounce keystrokes so each typing pause issues one search request (and
   // registers one cache entry) instead of one per keystroke.
@@ -348,7 +358,10 @@ export function MemoriesPanel(props: {
   // tethered meanwhile) is retried transparently; a genuine concurrent content
   // change re-arms the editor (keeping the draft) so a second Save, after
   // reviewing the refreshed row, deliberately wins.
-  const recoverEditConflict = async (current: Editing, content: string) => {
+  const recoverEditConflict = async (
+    current: MemoryEditing,
+    content: string,
+  ) => {
     const fresh = await refetchOne(current.state, current.id);
     if (fresh === undefined) {
       cancelEdit();

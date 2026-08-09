@@ -55,7 +55,7 @@ describe("Browse page", () => {
     expect(host.memories.editMemoryCalls).toHaveLength(0);
   });
 
-  test("hides preserved Memories controls from inactive Browse tabs", async () => {
+  test("removes preserved Memories controls from inactive Browse tabs", async () => {
     const host = new FakeHost({
       authenticated: true,
       memories: [
@@ -66,23 +66,62 @@ describe("Browse page", () => {
     await navigateTo("Browse");
 
     const tabs = await screen.findByRole("tablist", { name: "Browse view" });
-    const memoriesPanel = await screen.findByRole("tabpanel", {
-      name: "Memories",
-    });
-    expect(memoriesPanel).not.toHaveAttribute("aria-hidden");
+    await screen.findByRole("tabpanel", { name: "Memories" });
 
     fireEvent.click(within(tabs).getByRole("tab", { name: "Reminders" }));
     expect(
       await screen.findByRole("region", { name: "Reminders" }),
     ).toBeInTheDocument();
 
-    expect(memoriesPanel).toHaveAttribute("aria-hidden", "true");
-    expect(memoriesPanel).toHaveAttribute("inert");
     expect(
-      screen.queryByRole("searchbox", { name: "Search memories" }),
+      screen.queryByRole("tabpanel", { hidden: true, name: "Memories" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^Edit Memory/ }),
+      screen.queryByRole("searchbox", {
+        hidden: true,
+        name: "Search memories",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { hidden: true, name: /^Edit Memory/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("unmounts inactive Memories controls while Bucket is active", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [
+        memory({ content: "Aisle seats", id: "mem-1", state: "tethered" }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+
+    const tabs = await screen.findByRole("tablist", { name: "Browse view" });
+    await screen.findByRole("searchbox", { name: "Search memories" });
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Bucket" }));
+    expect(
+      await screen.findByRole("region", { name: "Bucket" }),
+    ).toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("searchbox", {
+        hidden: true,
+        name: "Search memories",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        hidden: true,
+        name: /^Edit Memory/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        hidden: true,
+        name: /^Reject Memory/,
+      }),
     ).not.toBeInTheDocument();
   });
 
