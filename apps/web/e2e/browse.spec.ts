@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+
 import { expect, test } from "./fixtures";
 
 test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
@@ -34,6 +36,19 @@ test("direct Bucket browse exposes no inactive Memories controls", async ({
   await login();
 
   const content = `e2e bucket-only a11y ${String(Date.now())}`;
+  await acceptMemory(page, content);
+
+  await page.goto("/browse/bucket", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Bucket" })).toBeVisible();
+
+  const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
+  expect(snapshot).not.toContain("Search memories");
+  expect(snapshot).not.toContain(`Edit Memory: ${content}`);
+  expect(snapshot).not.toContain(`Reject Memory: ${content}`);
+});
+
+async function acceptMemory(page: Page, content: string) {
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: /^Inbox/ })
@@ -47,10 +62,29 @@ test("direct Bucket browse exposes no inactive Memories controls", async ({
     .getByRole("button", { name: "Accept memory" })
     .click();
   await expect(page.getByRole("button", { name: content })).toHaveCount(0);
+}
 
-  await page.goto("/browse/bucket", { waitUntil: "domcontentloaded" });
+test("Panels empty state exposes no inactive Memories controls", async ({
+  page,
+  login,
+}) => {
+  await login();
+
+  const content = `e2e panels-only a11y ${String(Date.now())}`;
+  await acceptMemory(page, content);
+
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: /^Browse/ })
+    .click();
   await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Bucket" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Memories" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Panels" }).click();
+  await expect(page.getByRole("region", { name: "Panels" })).toBeVisible();
+  await expect(
+    page.getByText("Panels are saved views over your memories"),
+  ).toBeVisible();
 
   const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
   expect(snapshot).not.toContain("Search memories");
