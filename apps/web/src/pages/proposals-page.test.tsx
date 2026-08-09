@@ -534,6 +534,37 @@ describe("Proposals page", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("grant suggestion search distinguishes matching and total counts", async () => {
+    const suggestions = Array.from({ length: 197 }, (_, index) =>
+      grantSuggestion({
+        kind: index === 48 ? "job alerts" : `operation-${index.toString()}`,
+        seen: index + 1,
+      }),
+    );
+    const host = new FakeHost({
+      authenticated: true,
+      grantSuggestions: suggestions,
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Grants/ }));
+    const panel = screen.getByRole("tabpanel", { name: /Grants/ });
+    fireEvent.input(within(panel).getByLabelText("Search grant suggestions"), {
+      target: { value: "job alerts" },
+    });
+
+    expect(
+      await within(panel).findByText(
+        "Showing 1-1 of 1 matching suggestion (197 total)",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByText("Showing 1-1 of 1 matching 197"),
+    ).not.toBeInTheDocument();
+  });
+
   test("large grant suggestions are counted, paged, searchable, and uniquely actionable", async () => {
     const suggestions = Array.from({ length: 35 }, (_, index) =>
       grantSuggestion({
