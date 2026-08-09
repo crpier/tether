@@ -1,4 +1,4 @@
-import { Match, Switch, createSignal } from "solid-js";
+import { Match, Switch, createEffect, createSignal } from "solid-js";
 
 import { useHost } from "../app-context";
 import {
@@ -31,6 +31,17 @@ export function BrowsePage(
     props.initialView ?? "memories",
   );
   const memoriesActive = () => view() === "memories";
+  const inertWhenMemoriesInactive = (element: HTMLElement) => {
+    createEffect(() => {
+      if (memoriesActive()) {
+        element.inert = false;
+        element.removeAttribute("inert");
+        return;
+      }
+      element.inert = true;
+      element.setAttribute("inert", "");
+    });
+  };
 
   return (
     <section
@@ -65,6 +76,7 @@ export function BrowsePage(
           aria-hidden={memoriesActive() ? undefined : "true"}
           aria-labelledby={segmentedTabId("browse-view", "memories")}
           hidden={!memoriesActive()}
+          ref={inertWhenMemoriesInactive}
           id={segmentedPanelId("browse-view", "memories")}
           role="tabpanel"
         >
