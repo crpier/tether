@@ -48,6 +48,36 @@ test("direct Bucket browse exposes no inactive Memories controls", async ({
   expect(snapshot).not.toContain(`Reject Memory: ${content}`);
 });
 
+test("selecting Bucket Active exposes no inactive Memories controls", async ({
+  page,
+  login,
+}) => {
+  await login();
+
+  const content = `e2e bucket-active a11y ${String(Date.now())}`;
+  await acceptMemory(page, content);
+
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: /^Browse/ })
+    .click();
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Memories" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Bucket" }).click();
+  await expect(page.getByRole("region", { name: "Bucket" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Active" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByText("Nothing in the bucket yet")).toBeVisible();
+
+  const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
+  expect(snapshot).not.toContain("Search memories");
+  expect(snapshot).not.toContain(`Edit Memory: ${content}`);
+  expect(snapshot).not.toContain(`Reject Memory: ${content}`);
+});
+
 async function acceptMemory(page: Page, content: string) {
   await page
     .getByRole("navigation", { name: "Main navigation" })
