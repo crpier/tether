@@ -115,6 +115,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
   const resetForm = () => {
     setFormOpen(false);
     setEditing(undefined);
+    setError(undefined);
     setPayload("");
     setFireAt("");
     setRecurrence("once");
