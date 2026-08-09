@@ -87,7 +87,9 @@ describe("Inbox page", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "Tether" })).toHaveLength(1);
+      expect(
+        screen.getAllByRole("button", { name: "Accept memory" }),
+      ).toHaveLength(1);
     });
     expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
   });
@@ -109,7 +111,9 @@ describe("Inbox page", () => {
     const detail = await screen.findByLabelText(
       "Inbox item: Prefers aisle seats",
     );
-    fireEvent.click(within(detail).getByRole("button", { name: /^Tether/ }));
+    fireEvent.click(
+      within(detail).getByRole("button", { name: "Accept memory" }),
+    );
 
     await waitFor(() => {
       expect(host.memories.tetherMemoryCalls).toEqual([

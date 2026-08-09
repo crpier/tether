@@ -522,6 +522,7 @@ function InboxDetail(props: {
               </p>
               <div class="flex gap-2">
                 <Button
+                  aria-label="Accept memory"
                   onClick={() => {
                     props.memoryAct(entry().memory, "tether");
                   }}
