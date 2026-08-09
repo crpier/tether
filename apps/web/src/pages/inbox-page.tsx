@@ -532,6 +532,7 @@ function InboxDetail(props: {
                   Tether
                 </Button>
                 <Button
+                  aria-label="Reject memory"
                   onClick={() => {
                     props.memoryAct(entry().memory, "reject");
                   }}

@@ -71,7 +71,7 @@ describe("Inbox page", () => {
     expect(screen.getByText("Fired reminder (1)")).toBeInTheDocument();
   });
 
-  test("selecting a memory review item exposes one accessible action row", async () => {
+  test("selecting a memory review item exposes contextual accessible action names", async () => {
     const host = new FakeHost({
       authenticated: true,
       memories: [
@@ -91,7 +91,9 @@ describe("Inbox page", () => {
         screen.getAllByRole("button", { name: "Accept memory" }),
       ).toHaveLength(1);
     });
-    expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: "Reject memory" }),
+    ).toHaveLength(1);
   });
 
   test("selecting a memory review item tethers it from the detail pane", async () => {
