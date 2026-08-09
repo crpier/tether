@@ -202,6 +202,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
   const initialView =
     parseQueryView(searchParams.tab) ?? props.initialView ?? "queue";
   const initialPage = parseQueryPage(searchParams.page) ?? 1;
+  const initialHistorySearch = singleSearchValue(searchParams.search) ?? "";
   const [view, setView] = createSignal<ProposalsView>(initialView);
   const [selectedId, setSelectedId] = createSignal<string | undefined>();
   // Action ids unticked per proposal, keyed by proposal id, before approval.
@@ -216,7 +217,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
   const [revocationOffers, setRevocationOffers] = createSignal<
     Record<string, string[]>
   >({});
-  const [historySearch, setHistorySearch] = createSignal("");
+  const [historySearch, setHistorySearch] = createSignal(initialHistorySearch);
   const [historyState, setHistoryState] =
     createSignal<HistoryStateFilter>("all");
   const [historyPage, setHistoryPage] = createSignal(
@@ -227,6 +228,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
     initialView === "grants" ? initialPage : 1,
   );
   const [suggestionSearch, setSuggestionSearch] = createSignal("");
+  let pendingHistorySearchParam: string | undefined;
 
   const queueQuery = createQuery(() => ({
     queryFn: () => api.listProposals("pending"),
@@ -317,10 +319,16 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
       "queue";
     useInitialView = false;
     const nextPage = parseQueryPage(searchParams.page) ?? 1;
+    const nextHistorySearch = singleSearchValue(searchParams.search) ?? "";
     untrack(() => {
       setView(nextView);
       if (nextView === "history") {
         setHistoryPage(nextPage);
+        if (pendingHistorySearchParam === nextHistorySearch) {
+          pendingHistorySearchParam = undefined;
+        } else {
+          setHistorySearch(nextHistorySearch);
+        }
       }
       if (nextView === "grants") {
         setGrantPage(nextPage);
@@ -360,12 +368,16 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
         : view() === "grants"
           ? pageParam(grantPage())
           : undefined;
+    const nextSearch =
+      view() === "history" ? historySearch().trim() || undefined : undefined;
     if (
       singleSearchValue(searchParams.tab) !== nextTab ||
-      singleSearchValue(searchParams.page) !== nextPage
+      singleSearchValue(searchParams.page) !== nextPage ||
+      singleSearchValue(searchParams.search) !== nextSearch
     ) {
+      pendingHistorySearchParam = nextSearch ?? "";
       setSearchParams(
-        { page: nextPage, tab: nextTab },
+        { page: nextPage, search: nextSearch, tab: nextTab },
         { replace: true, scroll: false },
       );
     }
