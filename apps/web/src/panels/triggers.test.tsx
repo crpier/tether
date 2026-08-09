@@ -54,6 +54,28 @@ describe("Triggers panel", () => {
     ).toBeInTheDocument();
   });
 
+  test("canceling reminder creation clears validation errors", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a reminder message",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add reminder" }),
+    ).toBeInTheDocument();
+  });
+
   test("lists existing reminders", async () => {
     const host = new FakeHost({
       authenticated: true,
