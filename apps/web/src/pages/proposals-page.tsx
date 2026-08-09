@@ -238,6 +238,10 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
     queryFn: () => api.listProposals(),
     queryKey: queryKeys.proposalsAll,
   }));
+  const countsQuery = createQuery(() => ({
+    queryFn: () => api.proposalCounts(),
+    queryKey: queryKeys.proposalCounts,
+  }));
   const grantsQuery = createQuery(() => ({
     queryFn: () => api.listGrants(),
     queryKey: queryKeys.grants,
@@ -654,11 +658,11 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
           onChange={setView}
           options={[
             {
-              label: `Queue (${queueItems().length.toString()})`,
+              label: `Queue (${(countsQuery.data?.pending ?? queueItems().length).toString()})`,
               value: "queue",
             },
             {
-              label: `Decided (${historyItems().length.toString()})`,
+              label: `Decided (${(countsQuery.data?.decided ?? historyItems().length).toString()})`,
               value: "history",
             },
             {

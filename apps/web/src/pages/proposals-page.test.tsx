@@ -18,6 +18,7 @@ import {
   renderApp,
 } from "../testing/harness";
 import { formatDateTime } from "../lib/format";
+import type { Proposal, ProposalState } from "../host/proposals";
 
 afterEach(cleanup);
 
@@ -313,27 +314,36 @@ describe("Proposals page", () => {
     ).toBeInTheDocument();
   });
 
-  test("preloads decided proposals count from the all-proposals query", async () => {
+  test("preloads decided proposal count before the history list loads", async () => {
+    let resolveHistory: ((items: Proposal[]) => void) | undefined;
+    const pendingHistory = new Promise<Proposal[]>((resolve) => {
+      resolveHistory = resolve;
+    });
     const host = new FakeHost({
       authenticated: true,
       proposals: [
         proposal({
+          decided_at: "2026-01-01T00:00:00Z",
           id: "decision-1",
           state: "approved",
           title: "Already approved",
-          decided_at: "2026-01-01T00:00:00Z",
         }),
       ],
     });
+    const listProposals = host.proposals.listProposals.bind(host.proposals);
+    host.proposals.listProposals = (state?: ProposalState) =>
+      state === undefined ? pendingHistory : listProposals(state);
     renderApp(host);
     await navigateTo("Proposals");
     await screen.findByRole("heading", { name: "Proposals" });
 
-    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
-
-    expect(
-      await screen.findByRole("heading", { name: "Decided proposals (1)" }),
-    ).toBeInTheDocument();
+    try {
+      expect(
+        await screen.findByRole("tab", { name: "Decided (1)" }),
+      ).toBeInTheDocument();
+    } finally {
+      resolveHistory?.(host.proposals.storedProposals);
+    }
   });
 
   test("large decided history is counted, paged, searchable, and preserved", async () => {

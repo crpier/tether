@@ -1512,6 +1512,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/proposals/counts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Count proposals for the queue and history tab labels. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ProposalCountsRead"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/proposals/{proposal_id}": {
     parameters: {
       query?: never;
@@ -4110,6 +4146,16 @@ export interface components {
       scope: string | null;
       /** Seq */
       seq: number;
+    };
+    /**
+     * ProposalCountsRead
+     * @description Queue and history totals for the Proposals tab strip.
+     */
+    ProposalCountsRead: {
+      /** Decided */
+      decided: number;
+      /** Pending */
+      pending: number;
     };
     /**
      * ProposalRead

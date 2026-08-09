@@ -30,6 +30,7 @@ from tether.proposals import (
     Proposal,
     ProposalAction,
     ProposalConflictError,
+    ProposalCounts,
     ProposalDraft,
     ProposalNotFoundError,
     ProposalState,
@@ -123,6 +124,18 @@ class ProposalRead(BaseModel):
             decided_at=_as_utc(proposal.decided_at),
             actions=[ProposalActionRead.from_action(a) for a in view.actions],
         )
+
+
+class ProposalCountsRead(BaseModel):
+    """Queue and history totals for the Proposals tab strip."""
+
+    decided: int
+    pending: int
+
+    @classmethod
+    def from_counts(cls, counts: ProposalCounts) -> ProposalCountsRead:
+        """Render persisted proposal totals for HTTP clients."""
+        return cls(decided=counts.decided, pending=counts.pending)
 
 
 class ProposalCreationRead(BaseModel):
@@ -231,6 +244,16 @@ async def list_proposals(
     )
     return CapabilityOutcome(
         result=[ProposalRead.from_view(view).model_dump(mode="json") for view in views]
+    )
+
+
+async def counts(request: Request) -> CapabilityOutcome:
+    """Count queue and history proposals without loading actions."""
+    proposal_counts = await request.app.state.proposal_service.counts(
+        logger=get_request_logger(request)
+    )
+    return CapabilityOutcome(
+        result=ProposalCountsRead.from_counts(proposal_counts).model_dump(mode="json")
     )
 
 

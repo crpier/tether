@@ -23,6 +23,7 @@ from tether.proposal_capabilities import (
     PROPOSAL_ERRORS,
     GrantRead,
     GrantSuggestionRead,
+    ProposalCountsRead,
     ProposalRead,
     RejectionRead,
 )
@@ -90,6 +91,12 @@ async def list_proposals(request: Request) -> Response:
     )
 
 
+@endpoint(response=ProposalCountsRead)
+async def proposal_counts(request: Request) -> Response:
+    """Count proposals for the queue and history tab labels."""
+    return rest_response(await proposal_capabilities.counts(request))
+
+
 @endpoint(response=ProposalRead)
 @_translate_domain_errors
 async def get_proposal(request: Request) -> Response:
@@ -150,6 +157,7 @@ async def revoke_grant(request: Request) -> Response:
 
 proposal_routes: list[Route] = [
     EndpointRoute("/api/proposals", list_proposals, methods=["GET"]),
+    EndpointRoute("/api/proposals/counts", proposal_counts, methods=["GET"]),
     EndpointRoute("/api/proposals/{proposal_id}", get_proposal, methods=["GET"]),
     EndpointRoute(
         "/api/proposals/{proposal_id}/approve", approve_proposal, methods=["POST"]

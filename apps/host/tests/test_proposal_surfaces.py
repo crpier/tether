@@ -228,6 +228,28 @@ def reject_returns_the_revocation_signal() -> None:
 
 
 @test()
+def proposal_counts_report_tab_totals() -> None:
+    """`GET /api/proposals/counts` reports queue and history tab totals."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        install_fake_kind(client)
+        login(client)
+        _ = compose_pending(client)
+        executed_proposal = compose_pending(client)
+        _ = client.post(
+            f"/api/proposals/{executed_proposal['id']}/approve",
+            json={
+                "deselected_action_ids": [],
+                "version": executed_proposal["version"],
+            },
+        )
+
+        response = client.get("/api/proposals/counts")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), {"decided": 1, "pending": 1})
+
+
+@test()
 def list_proposals_filters_by_state() -> None:
     """`GET /api/proposals?state=pending` filters the list by lifecycle state."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
