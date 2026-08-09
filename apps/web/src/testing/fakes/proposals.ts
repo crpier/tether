@@ -49,6 +49,16 @@ export class FakeProposalsHost implements ProposalsHost {
     );
   }
 
+  proposalCounts(): Promise<{ decided: number; pending: number }> {
+    const pending = this.storedProposals.filter(
+      (item) => item.state === "pending",
+    ).length;
+    return Promise.resolve({
+      decided: this.storedProposals.length - pending,
+      pending,
+    });
+  }
+
   getProposal(proposalId: string): Promise<Proposal> {
     this.getProposalCalls.push(proposalId);
     const found = this.storedProposals.find(

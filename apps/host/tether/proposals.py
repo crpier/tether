@@ -207,6 +207,14 @@ class ProposalView:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposalCounts:
+    """Queue and history totals for the Proposals tab strip."""
+
+    decided: int
+    pending: int
+
+
+@dataclass(frozen=True, slots=True)
 class ProposalCreation:
     """The result of composing a proposal: the view plus whether it auto-executed.
 
@@ -410,6 +418,24 @@ class ProposalService:
                 ProposalView(proposal=p, actions=await self._fetch_actions(p.id, tx=tx))
                 for p in proposals
             ]
+
+    async def counts(self, *, logger: Logger) -> ProposalCounts:
+        """Count queue and history proposals without loading actions."""
+        _debug(logger, "Counting proposals")
+        async with self.database.transaction() as tx:
+            rows = await tx.fetch_all(
+                select(Proposal.state, Proposal.id.count())
+                .all()
+                .group_by(Proposal.state)
+            )
+        pending = 0
+        decided = 0
+        for state, count in rows:
+            if state == "pending":
+                pending = count
+            else:
+                decided += count
+        return ProposalCounts(decided=decided, pending=pending)
 
     async def get(self, proposal_id: UUID7) -> ProposalView:
         """Fetch one proposal bundled with its actions, or raise when absent."""

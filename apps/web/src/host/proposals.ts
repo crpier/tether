@@ -7,6 +7,7 @@ export type ProposalState = components["schemas"]["ProposalState"];
 export type ActionDisposition = components["schemas"]["ActionDisposition"];
 export type ActionOutcome = components["schemas"]["ActionOutcome"];
 export type ProposalRejection = components["schemas"]["RejectionRead"];
+export type ProposalCounts = components["schemas"]["ProposalCountsRead"];
 export type Grant = components["schemas"]["GrantRead"];
 export type GrantSuggestion = components["schemas"]["GrantSuggestionRead"];
 export type CreateGrant = components["schemas"]["CreateGrantRequest"];
@@ -23,6 +24,7 @@ export interface RejectProposalInput {
 
 export interface ProposalsHost {
   listProposals(state?: ProposalState): Promise<Proposal[]>;
+  proposalCounts(): Promise<ProposalCounts>;
   getProposal(proposalId: string): Promise<Proposal>;
   approveProposal(
     proposalId: string,
@@ -49,6 +51,12 @@ export function createProposalsHost(context: RestContext): ProposalsHost {
       const data = response.ok
         ? ((await response.json()) as Proposal[])
         : undefined;
+      return requireData(data, response);
+    },
+    async proposalCounts() {
+      const { data, response } = await context.client.GET(
+        "/api/proposals/counts",
+      );
       return requireData(data, response);
     },
     async getProposal(proposalId) {

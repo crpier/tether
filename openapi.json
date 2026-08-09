@@ -3057,6 +3057,25 @@
         "title": "ProposalActionRead",
         "type": "object"
       },
+      "ProposalCountsRead": {
+        "description": "Queue and history totals for the Proposals tab strip.",
+        "properties": {
+          "decided": {
+            "title": "Decided",
+            "type": "integer"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decided",
+          "pending"
+        ],
+        "title": "ProposalCountsRead",
+        "type": "object"
+      },
       "ProposalRead": {
         "description": "HTTP representation of a proposal bundled with its actions.",
         "properties": {
@@ -6078,6 +6097,23 @@
           }
         },
         "summary": "List proposals newest first, optionally filtered by state."
+      }
+    },
+    "/api/proposals/counts": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalCountsRead"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Count proposals for the queue and history tab labels."
       }
     },
     "/api/proposals/{proposal_id}": {
