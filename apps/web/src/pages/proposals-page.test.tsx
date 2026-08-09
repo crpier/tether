@@ -229,6 +229,43 @@ describe("Proposals page", () => {
     });
   });
 
+  test("hydrates decided search query param on initial load", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          id: "decision-label",
+          state: "approved",
+          title: "Label matching decision",
+        }),
+        proposal({
+          id: "decision-other",
+          state: "approved",
+          title: "Unrelated decision",
+        }),
+      ],
+    });
+    renderApp(host, createBusHarness(), {
+      path: "/proposals?tab=history&search=label",
+    });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    const panel = screen.getByRole("tabpanel", { name: /Decided/ });
+    expect(await within(panel).findByDisplayValue("label")).toBeInTheDocument();
+    expect(
+      await within(panel).findByText("Label matching decision"),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByText("Unrelated decision"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByText("Showing 1-1 of 1 matching proposal (2 total)"),
+    ).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search).toBe(
+      "/proposals?tab=history&search=label",
+    );
+  });
+
   test("normalizes out-of-range proposals page query params", async () => {
     const grants = Array.from({ length: 40 }, (_, index) =>
       grant({
