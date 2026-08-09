@@ -120,6 +120,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={ChatPage} path="/" />
         <Route component={ChatPage} path="/chat" />
         <Route component={ProposalsPage} path="/proposals" />
+        <Route component={ProposalsPage} path="/proposals/queue" />
         <Route
           component={DirectDecidedProposalsPage}
           path="/proposals/decided"
