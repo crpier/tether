@@ -14,6 +14,7 @@ import {
   grantSuggestion,
   navigateTo,
   proposal,
+  proposalAction,
   renderApp,
 } from "../testing/harness";
 import { formatDateTime } from "../lib/format";
@@ -301,6 +302,51 @@ describe("Proposals page", () => {
     expect(
       within(restoredPanel).getByDisplayValue("Decision 36"),
     ).toBeInTheDocument();
+  });
+
+  test("decided proposal search ignores hidden summary action counts", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          actions: Array.from({ length: 4 }, (_, index) =>
+            proposalAction({ id: `match-action-${index.toString()}` }),
+          ),
+          decided_at: "2026-07-23T20:30:45Z",
+          id: "decision-action-count-match",
+          state: "approved",
+          summary: "Inbox hygiene: 2 gmail.archive, 2 gmail.delete.",
+          title: "Inbox hygiene: 4 actions",
+        }),
+        proposal({
+          actions: Array.from({ length: 8 }, (_, index) =>
+            proposalAction({ id: `hidden-action-${index.toString()}` }),
+          ),
+          decided_at: "2026-07-22T20:30:45Z",
+          id: "decision-hidden-count-match",
+          state: "approved",
+          summary: "Inbox hygiene: 4 gmail.archive, 4 gmail.delete.",
+          title: "Inbox hygiene: 8 actions",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
+
+    const panel = screen.getByRole("tabpanel", { name: /Decided/ });
+    await within(panel).findByLabelText("Proposal: Inbox hygiene: 4 actions");
+    fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
+      target: { value: "Inbox hygiene: 4" },
+    });
+
+    expect(
+      await within(panel).findByLabelText("Proposal: Inbox hygiene: 4 actions"),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByLabelText("Proposal: Inbox hygiene: 8 actions"),
+    ).not.toBeInTheDocument();
   });
 
   test("decided proposal search matches the visible decided timestamp", async () => {
