@@ -6,7 +6,7 @@ import {
   segmentedPanelId,
   segmentedTabId,
 } from "../components/segmented-control";
-import { BucketPanel } from "../panels/bucket";
+import { BucketPanel, type BucketView } from "../panels/bucket";
 import { MemoriesPanel } from "../panels/memories";
 import { SyntheticPanels } from "../panels/synthetic";
 import { TodosPanel } from "../panels/todos";
@@ -19,7 +19,9 @@ export type BrowseView =
 // user's synthetic panels. This is deliberately not master-detail — nothing
 // here is awaiting adjudication, so a page-level segmented control between
 // the existing panel components is enough room.
-export function BrowsePage(props: { initialView?: BrowseView } = {}) {
+export function BrowsePage(
+  props: { initialBucketView?: BucketView; initialView?: BrowseView } = {},
+) {
   const bucket = useHost("bucket");
   const memories = useHost("memories");
   const panels = useHost("panels");
@@ -76,7 +78,11 @@ export function BrowsePage(props: { initialView?: BrowseView } = {}) {
               id={segmentedPanelId("browse-view", "bucket")}
               role="tabpanel"
             >
-              <BucketPanel api={bucket} hiddenViews={["triage"]} />
+              <BucketPanel
+                api={bucket}
+                hiddenViews={["triage"]}
+                initialView={props.initialBucketView}
+              />
             </div>
           </Match>
           <Match when={view() === "todos"}>

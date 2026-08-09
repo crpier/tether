@@ -38,7 +38,7 @@ const selectClass =
   "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 rounded-md border px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px]";
 const fieldLabelClass = "text-muted-foreground text-xs font-medium";
 
-type BucketView = "active" | "history" | "triage";
+export type BucketView = "active" | "history" | "triage";
 
 interface PayloadField {
   key: string;
@@ -130,6 +130,7 @@ export function BucketPanel(props: {
   // Inbox page only ever wants Triage (the review-queue obligation), and
   // Browse only wants Active/History (look-things-up, not adjudication).
   hiddenViews?: BucketView[];
+  initialView?: BucketView;
 }) {
   const queryClient = useQueryClient();
   const availableViews = createMemo(() =>
@@ -138,7 +139,10 @@ export function BucketPanel(props: {
     ),
   );
   const [view, setView] = createSignal<BucketView>(
-    availableViews()[0] ?? "active",
+    props.initialView !== undefined &&
+      availableViews().includes(props.initialView)
+      ? props.initialView
+      : (availableViews()[0] ?? "active"),
   );
   const [itemType, setItemType] = createSignal<BucketItemType>("movie");
   const [formOpen, setFormOpen] = createSignal(false);
