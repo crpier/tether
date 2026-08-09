@@ -349,6 +349,58 @@ describe("Proposals page", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("decided proposal search leaves approved-state filtering to state control", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          decided_at: "2026-07-23T20:30:45Z",
+          id: "decision-approved-state-only",
+          state: "approved",
+          title: "State-only decision",
+        }),
+        proposal({
+          decided_at: "2026-07-22T20:30:45Z",
+          id: "decision-rejected-state-only",
+          state: "rejected",
+          title: "Other state-only decision",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
+
+    const panel = screen.getByRole("tabpanel", { name: /Decided/ });
+    await within(panel).findByLabelText("Proposal: State-only decision");
+    fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
+      target: { value: "approved" },
+    });
+
+    expect(
+      within(panel).queryByLabelText("Proposal: State-only decision"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByText("No decided proposals match."),
+    ).toBeInTheDocument();
+
+    fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
+      target: { value: "" },
+    });
+    fireEvent.change(
+      within(panel).getByLabelText("Filter decided proposals by state"),
+      { target: { value: "approved" } },
+    );
+
+    expect(
+      await within(panel).findByLabelText("Proposal: State-only decision"),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByLabelText("Proposal: Other state-only decision"),
+    ).not.toBeInTheDocument();
+  });
+
   test("decided proposal search matches the visible decided timestamp", async () => {
     const decidedAt = "2026-07-22T20:30:45Z";
     const host = new FakeHost({

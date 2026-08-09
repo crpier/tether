@@ -232,7 +232,6 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
         matchesSearch(
           [
             item.title,
-            item.state,
             count,
             `${item.title} ${count}`,
             `${item.title}: ${count}`,
