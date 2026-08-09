@@ -793,6 +793,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                       filteredHistoryItems().length,
                       historyItems().length,
                       historyPage(),
+                      "proposal",
                     )}
                   </p>
                 </div>
@@ -881,6 +882,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                         filteredGrants().length,
                         grants().length,
                         grantPage(),
+                        "grant",
                       )}
                     </p>
                   </div>
@@ -953,6 +955,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                         filteredSuggestions().length,
                         suggestions().length,
                         grantPage(),
+                        "suggestion",
                       )}
                     </p>
                   </div>
@@ -1032,18 +1035,29 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
   );
 }
 
-function rangeSummary(filtered: number, total: number, page: number): string {
+function rangeNoun(noun: string, count: number): string {
+  return count === 1 ? noun : `${noun}s`;
+}
+
+function rangeSummary(
+  filtered: number,
+  total: number,
+  page: number,
+  noun = "item",
+): string {
   if (total === 0) {
     return "No items";
   }
   if (filtered === 0) {
-    return `No matches of ${total.toString()}`;
+    return `No matching ${rangeNoun(noun, 0)} (${total.toString()} total)`;
   }
   const safePage = boundedPage(page, filtered);
   const start = (safePage - 1) * PAGE_SIZE + 1;
   const end = Math.min(safePage * PAGE_SIZE, filtered);
   const base = `Showing ${start.toString()}-${end.toString()} of ${filtered.toString()}`;
-  return filtered === total ? base : `${base} matching ${total.toString()}`;
+  return filtered === total
+    ? base
+    : `${base} matching ${rangeNoun(noun, filtered)} (${total.toString()} total)`;
 }
 
 function Pager(props: {
