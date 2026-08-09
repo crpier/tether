@@ -1239,6 +1239,55 @@ def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
 
 
 @test()
+def websocket_marks_tool_only_turns_without_a_final_answer() -> None:
+    """A completed turn cannot end in the transcript at the tool row."""
+    fake_runtime = FakeRuntime(
+        [
+            ToolStarted(
+                args={"record_type": "walking"},
+                tool_call_id="call-health",
+                tool_name="query_health_connect",
+            ),
+            ToolSettled(
+                result={"records": []},
+                tool_call_id="call-health",
+                tool_name="query_health_connect",
+            ),
+            AgentEnded(),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        cast(
+            "Starlette", client.app
+        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "look at all the walks these past week",
+                }
+            )
+            while websocket.receive_json().get("event") != "agent_end":
+                pass
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    messages = response.json()
+    assert_eq(
+        [(message["role"], message["content"]) for message in messages],
+        [
+            ("user", "look at all the walks these past week"),
+            ("tool", "query_health_connect"),
+            ("assistant", "Turn ended after tool use without a final answer."),
+        ],
+    )
+
+
+@test()
 def websocket_persists_tool_call_rows() -> None:
     """Tool completion events settle as compact transcript rows."""
     fake_runtime = FakeRuntime(
@@ -1277,7 +1326,7 @@ def websocket_persists_tool_call_rows() -> None:
         response = client.get(f"/api/conversations/{conversation_id}/messages")
 
     messages = response.json()
-    assert_eq([message["role"] for message in messages], ["user", "tool"])
+    assert_eq([message["role"] for message in messages], ["user", "tool", "assistant"])
     assert_eq(messages[1]["tool_name"], "capture")
     assert_eq(messages[1]["tool_args"], {"content": "tool memory"})
     assert_eq(messages[1]["tool_result"], {"details": {"result": {"id": "memory-id"}}})

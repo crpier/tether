@@ -57,6 +57,8 @@ from tether.pi_runtime import (
 _POLICY_VIOLATION = 1008
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
 _LOCALTIME_PATH = Path("/etc/localtime")
+_TOOL_ONLY_TURN_MARKER = "Turn ended after tool use without a final answer."
+"""Transcript marker for completed turns that would otherwise end at a tool row."""
 _TOOL_RESULT_FRAME_LIMIT_BYTES = 64 * 1_024
 """Maximum settled tool result retained in the browser-facing transcript."""
 _ZONEINFO_MARKER = "zoneinfo/"
@@ -203,7 +205,7 @@ async def _settle_message_end(
     settled: MessageSettled,
     streamed_text: list[str],
     streamed_reasoning: list[str],
-) -> None:
+) -> bool:
     """Persist the settled reasoning and answer rows once pi closes a message.
 
     Reasoning is persisted ahead of the answer so the transcript keeps
@@ -230,6 +232,7 @@ async def _settle_message_end(
             )
         )
     await websocket.send_json(MessageEndFrame(conversation_id=conversation_id).wire())
+    return bool(content)
 
 
 async def _forward_tool_start(
@@ -258,9 +261,10 @@ async def _settle_tool_end(
     conversation_id: UUID,
     settled: ToolSettled,
     pending_tool_args: dict[str, dict[str, Any]],
-) -> None:
+) -> bool:
     """Persist tool completion envelopes and forward tool-end events."""
     transcript_result = _compact_tool_result(settled.result)
+    persisted = False
     if settled.tool_call_id is not None and settled.tool_name is not None:
         _ = await websocket.app.state.conversation_service.append_message(
             MessageDraft(
@@ -273,6 +277,7 @@ async def _settle_tool_end(
                 tool_result=transcript_result,
             )
         )
+        persisted = True
     await websocket.send_json(
         ToolEndFrame(
             conversation_id=conversation_id,
@@ -281,6 +286,7 @@ async def _settle_tool_end(
             tool_result=transcript_result,
         ).wire()
     )
+    return persisted
 
 
 async def _relay_tool_event(
@@ -289,7 +295,7 @@ async def _relay_tool_event(
     conversation_id: UUID,
     tool_event: ToolStarted | ToolSettled,
     pending_tool_args: dict[str, dict[str, Any]],
-) -> None:
+) -> bool:
     """Relay ordinary tools while keeping bundled skill reads operational-only."""
     match tool_event:
         case ToolStarted(tool_name="read"):
@@ -298,12 +304,14 @@ async def _relay_tool_event(
                 conversation_id=str(conversation_id),
                 tool_call_id=tool_event.tool_call_id,
             )
+            return False
         case ToolSettled(tool_name="read"):
             _logger.info(
                 "Bundled skill read settled",
                 conversation_id=str(conversation_id),
                 tool_call_id=tool_event.tool_call_id,
             )
+            return False
         case ToolStarted():
             await _forward_tool_start(
                 websocket,
@@ -311,13 +319,44 @@ async def _relay_tool_event(
                 started=tool_event,
                 pending_tool_args=pending_tool_args,
             )
+            return False
         case ToolSettled():
-            await _settle_tool_end(
+            return await _settle_tool_end(
                 websocket,
                 conversation_id=conversation_id,
                 settled=tool_event,
                 pending_tool_args=pending_tool_args,
             )
+
+
+async def _settle_tool_only_turn_marker(
+    websocket: WebSocket,
+    *,
+    conversation_id: UUID,
+) -> None:
+    """Append a durable marker when pi ends after tools without answering."""
+    _ = await websocket.app.state.conversation_service.append_message(
+        MessageDraft(
+            content=_TOOL_ONLY_TURN_MARKER,
+            conversation_id=conversation_id,
+            role="assistant",
+        )
+    )
+
+
+async def _settle_tool_only_turn_marker_if_needed(
+    websocket: WebSocket,
+    *,
+    conversation_id: UUID,
+    turn_needs_final_answer: bool,
+) -> None:
+    """Settle the missing-answer marker only for unresolved tool turns."""
+    if not turn_needs_final_answer:
+        return
+    await _settle_tool_only_turn_marker(
+        websocket,
+        conversation_id=conversation_id,
+    )
 
 
 async def _stream_runtime(
@@ -338,6 +377,7 @@ async def _stream_runtime(
     pending_tool_args: dict[str, dict[str, Any]] = {}
     streamed_text: list[str] = []
     streamed_reasoning: list[str] = []
+    turn_needs_final_answer = False
     turn_stream: AsyncGenerator[TurnEvent] = runtime.stream_turn(
         wait_seconds=_AGENT_EVENT_TIMEOUT_SECONDS
     )
@@ -368,23 +408,32 @@ async def _stream_runtime(
                     detail=error,
                 )
             case MessageSettled():
-                await _settle_message_end(
+                answered = await _settle_message_end(
                     websocket,
                     conversation_id=conversation_id,
                     settled=turn_event,
                     streamed_text=streamed_text,
                     streamed_reasoning=streamed_reasoning,
                 )
+                turn_needs_final_answer = turn_needs_final_answer and not answered
                 streamed_text.clear()
                 streamed_reasoning.clear()
             case ToolStarted() | ToolSettled():
-                await _relay_tool_event(
-                    websocket,
-                    conversation_id=conversation_id,
-                    tool_event=turn_event,
-                    pending_tool_args=pending_tool_args,
+                turn_needs_final_answer = (
+                    await _relay_tool_event(
+                        websocket,
+                        conversation_id=conversation_id,
+                        tool_event=turn_event,
+                        pending_tool_args=pending_tool_args,
+                    )
+                    or turn_needs_final_answer
                 )
             case AgentEnded():
+                await _settle_tool_only_turn_marker_if_needed(
+                    websocket,
+                    conversation_id=conversation_id,
+                    turn_needs_final_answer=turn_needs_final_answer,
+                )
                 await websocket.send_json(
                     AgentEndFrame(conversation_id=conversation_id).wire()
                 )
