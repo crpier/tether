@@ -126,6 +126,45 @@ describe("Browse page", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("unmounts inactive Memories controls while Panels empty state is active", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memories: [
+        memory({ content: "Aisle seats", id: "mem-1", state: "tethered" }),
+      ],
+      panels: [],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+
+    const tabs = await screen.findByRole("tablist", { name: "Browse view" });
+    await screen.findByRole("searchbox", { name: "Search memories" });
+
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Panels" }));
+    expect(
+      await screen.findByRole("region", { name: "Panels" }),
+    ).toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("searchbox", {
+        hidden: true,
+        name: "Search memories",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        hidden: true,
+        name: /^Edit Memory/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        hidden: true,
+        name: /^Reject Memory/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   test("opens the Todos tab from its direct Browse URL", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host, undefined, { path: "/browse/todos" });
