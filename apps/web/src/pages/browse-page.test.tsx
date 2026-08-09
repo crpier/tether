@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   FakeHost,
+  bucketItem,
   memory,
   navigateTo,
   renderApp,
@@ -155,6 +156,42 @@ describe("Browse page", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  test("opens Bucket history from its tab query deep link", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      bucketItems: [
+        bucketItem({
+          completed_at: "2026-01-02T00:00:00Z",
+          state: "completed",
+          title: "Watched long ago",
+        }),
+      ],
+    });
+    renderApp(host, undefined, { path: "/browse/bucket?tab=history" });
+
+    await screen.findByRole("heading", { name: "Browse" });
+    expect(
+      await screen.findByRole("region", { name: "Bucket" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Bucket" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("searchbox", { name: "Search bucket history" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("Bucket item: Watched long ago"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("searchbox", { name: "Search bucket items" }),
+    ).not.toBeInTheDocument();
   });
 
   test("switches between Bucket, Todos, Reminders and Panels tabs", async () => {

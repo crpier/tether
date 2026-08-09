@@ -1,4 +1,4 @@
-import { Route, Router } from "@solidjs/router";
+import { Route, Router, useSearchParams } from "@solidjs/router";
 import {
   QueryClientProvider,
   createQuery,
@@ -36,13 +36,28 @@ export interface AppDependencies {
   createChatBus?: CreateChatBus;
 }
 
-// The WebSocket bus and frame handling live above the router, beside the
-// session gate (#250): one /ws connection app-wide, so `invalidate` and
-// `notify` frames flow regardless of which page is mounted. Only created once
-// a session is confirmed authenticated.
+type SearchValue = string | string[] | undefined;
+
+function singleSearchValue(value: SearchValue): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parseBucketTab(value: SearchValue): BucketView | undefined {
+  const raw = singleSearchValue(value);
+  return raw === "active" || raw === "history" ? raw : undefined;
+}
+
 function directBrowsePage(view: BrowseView, bucketView?: BucketView) {
   return function DirectBrowsePage() {
-    return <BrowsePage initialBucketView={bucketView} initialView={view} />;
+    const [searchParams] = useSearchParams();
+    const queryBucketView =
+      view === "bucket" ? parseBucketTab(searchParams.tab) : undefined;
+    return (
+      <BrowsePage
+        initialBucketView={bucketView ?? queryBucketView}
+        initialView={view}
+      />
+    );
   };
 }
 
@@ -61,6 +76,10 @@ function DirectGrantsProposalsPage() {
   return <ProposalsPage initialView="grants" />;
 }
 
+// The WebSocket bus and frame handling live above the router, beside the
+// session gate (#250): one /ws connection app-wide, so `invalidate` and
+// `notify` frames flow regardless of which page is mounted. Only created once
+// a session is confirmed authenticated.
 function ConnectedApp(props: Required<AppDependencies>) {
   const queryClient = useQueryClient();
   const [connection, setConnection] =
