@@ -57,6 +57,10 @@ function DirectDecidedProposalsPage() {
   return <ProposalsPage initialView="history" />;
 }
 
+function DirectGrantsProposalsPage() {
+  return <ProposalsPage initialView="grants" />;
+}
+
 function ConnectedApp(props: Required<AppDependencies>) {
   const queryClient = useQueryClient();
   const [connection, setConnection] =
@@ -125,6 +129,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
           component={DirectDecidedProposalsPage}
           path="/proposals/decided"
         />
+        <Route component={DirectGrantsProposalsPage} path="/proposals/grants" />
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowsePage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
