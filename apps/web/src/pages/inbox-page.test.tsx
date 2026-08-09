@@ -71,7 +71,7 @@ describe("Inbox page", () => {
     expect(screen.getByText("Fired reminder (1)")).toBeInTheDocument();
   });
 
-  test("selecting a memory review item exposes contextual accessible action names", async () => {
+  test("selecting a memory review item exposes contextual accessible and visible action names", async () => {
     const host = new FakeHost({
       authenticated: true,
       memories: [
@@ -86,11 +86,10 @@ describe("Inbox page", () => {
       await screen.findByRole("button", { name: "Prefers aisle seats" }),
     );
 
-    await waitFor(() => {
-      expect(
-        screen.getAllByRole("button", { name: "Accept memory" }),
-      ).toHaveLength(1);
+    const acceptButton = await screen.findByRole("button", {
+      name: "Accept memory",
     });
+    expect(acceptButton).toHaveTextContent("Accept memory");
     expect(
       screen.getAllByRole("button", { name: "Reject memory" }),
     ).toHaveLength(1);
