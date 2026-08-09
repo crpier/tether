@@ -228,6 +228,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
             item.consumer,
             item.state,
             item.rejection_reason,
+            item.decided_at ? formatWhen(item.decided_at) : "not decided",
             ...item.actions.flatMap((action) => [
               action.kind,
               action.scope,
