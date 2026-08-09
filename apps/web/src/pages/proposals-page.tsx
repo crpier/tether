@@ -73,6 +73,17 @@ function boundedPage(page: number, total: number): number {
   return Math.min(page, pageCount(total));
 }
 
+function boundedGrantTabPage(
+  page: number,
+  activeGrantTotal: number,
+  suggestionTotal: number,
+): number {
+  return Math.min(
+    page,
+    Math.max(pageCount(activeGrantTotal), pageCount(suggestionTotal)),
+  );
+}
+
 function pageItems<T>(items: T[], page: number): T[] {
   const safePage = boundedPage(page, items.length);
   return items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -212,7 +223,6 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
     initialView === "grants" ? initialPage : 1,
   );
   const [suggestionSearch, setSuggestionSearch] = createSignal("");
-  const [suggestionPage, setSuggestionPage] = createSignal(1);
 
   const queueQuery = createQuery(() => ({
     queryFn: () => api.listProposals("pending"),
@@ -292,7 +302,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
     );
   });
   const visibleSuggestions = createMemo(() =>
-    pageItems(filteredSuggestions(), suggestionPage()),
+    pageItems(filteredSuggestions(), grantPage()),
   );
   const selected = createMemo(() =>
     queueItems().find((item) => item.id === selectedId()),
@@ -327,10 +337,14 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
   });
 
   createEffect(() => {
-    if (grantsQuery.data === undefined) {
+    if (grantsQuery.data === undefined || suggestionsQuery.data === undefined) {
       return;
     }
-    const safePage = boundedPage(grantPage(), filteredGrants().length);
+    const safePage = boundedGrantTabPage(
+      grantPage(),
+      filteredGrants().length,
+      filteredSuggestions().length,
+    );
     if (safePage !== grantPage()) {
       setGrantPage(safePage);
     }
@@ -936,7 +950,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                       {rangeSummary(
                         filteredSuggestions().length,
                         suggestions().length,
-                        suggestionPage(),
+                        grantPage(),
                       )}
                     </p>
                   </div>
@@ -947,7 +961,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                       class="border-input bg-background mt-1 h-9 w-full rounded-md border px-3 text-sm sm:w-64"
                       onInput={(event) => {
                         setSuggestionSearch(event.currentTarget.value);
-                        setSuggestionPage(1);
+                        setGrantPage(1);
                       }}
                       placeholder="Kind or scope…"
                       type="search"
@@ -1003,11 +1017,8 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                 </Show>
                 <Pager
                   label="Grant suggestions"
-                  onPage={setSuggestionPage}
-                  page={boundedPage(
-                    suggestionPage(),
-                    filteredSuggestions().length,
-                  )}
+                  onPage={setGrantPage}
+                  page={boundedPage(grantPage(), filteredSuggestions().length)}
                   total={filteredSuggestions().length}
                 />
               </section>

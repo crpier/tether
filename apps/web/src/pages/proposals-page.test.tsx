@@ -196,6 +196,39 @@ describe("Proposals page", () => {
     );
   });
 
+  test("honors grants suggestion page query params", async () => {
+    const grantSuggestions = Array.from({ length: 200 }, (_, index) =>
+      grantSuggestion({
+        kind: `suggestion-${index.toString().padStart(3, "0")}`,
+        seen: 200 - index,
+      }),
+    );
+    const host = new FakeHost({ authenticated: true, grantSuggestions });
+    renderApp(host, createBusHarness(), {
+      path: "/proposals?tab=grants&page=5",
+    });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    const panel = screen.getByRole("tabpanel", { name: /Grants/ });
+    expect(
+      await within(panel).findByLabelText("Suggestion: suggestion-100"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("Page 5 of 8")).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search).toBe(
+      "/proposals?tab=grants&page=5",
+    );
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Next" }));
+
+    await within(panel).findByLabelText("Suggestion: suggestion-125");
+    expect(within(panel).getByText("Page 6 of 8")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.location.pathname + window.location.search).toBe(
+        "/proposals?tab=grants&page=6",
+      );
+    });
+  });
+
   test("normalizes out-of-range proposals page query params", async () => {
     const grants = Array.from({ length: 40 }, (_, index) =>
       grant({
