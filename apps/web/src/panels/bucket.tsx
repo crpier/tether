@@ -122,6 +122,38 @@ function metadataLine(item: BucketItem): string | undefined {
   return `${field.label}: ${value.toString()}`;
 }
 
+function searchableValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value.toString();
+  }
+  return JSON.stringify(value);
+}
+
+function matchesHistorySearch(item: BucketItem, term: string): boolean {
+  if (term.length === 0) {
+    return true;
+  }
+  return [
+    item.title,
+    item.intent_context,
+    item.item_type,
+    item.state,
+    metadataLine(item) ?? "",
+    terminalDate(item) ?? "",
+    ...Object.values(item.data).map(searchableValue),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(term);
+}
+
 const ALL_BUCKET_VIEWS: BucketView[] = ["active", "history", "triage"];
 
 export function BucketPanel(props: {
@@ -634,21 +666,40 @@ function BucketHistory(props: {
   completed: BucketItem[];
   deleted: BucketItem[];
 }) {
+  const [historySearch, setHistorySearch] = createSignal("");
+  const historySearchTerm = createMemo(() =>
+    historySearch().trim().toLowerCase(),
+  );
   // One interleaved timeline, newest terminal transition first.
   const items = createMemo(() =>
     [...props.completed, ...props.deleted].sort(
       (first, second) => terminalTime(second) - terminalTime(first),
     ),
   );
+  const visibleItems = createMemo(() =>
+    items().filter((item) => matchesHistorySearch(item, historySearchTerm())),
+  );
   return (
-    <Show
-      fallback={<p class="text-muted-foreground text-sm">No history yet</p>}
-      when={items().length > 0}
-    >
-      <ul class="space-y-2">
-        <For each={items()}>{(item) => <HistoryRow item={item} />}</For>
-      </ul>
-    </Show>
+    <div class="space-y-3">
+      <TextField onChange={setHistorySearch} value={historySearch()}>
+        <TextFieldLabel>Search bucket history</TextFieldLabel>
+        <TextFieldInput name="history-search" type="search" />
+      </TextField>
+      <Show
+        fallback={
+          <p class="text-muted-foreground text-sm">
+            {historySearchTerm().length > 0 ? "No matches" : "No history yet"}
+          </p>
+        }
+        when={visibleItems().length > 0}
+      >
+        <ul class="space-y-2">
+          <For each={visibleItems()}>
+            {(item) => <HistoryRow item={item} />}
+          </For>
+        </ul>
+      </Show>
+    </div>
   );
 }
 
