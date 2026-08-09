@@ -22,6 +22,7 @@ import {
   invalidateNamedKey,
 } from "./lib/query-keys";
 import { LoginScreen } from "./login";
+import type { BucketView } from "./panels/bucket";
 import { BrowsePage, type BrowseView } from "./pages/browse-page";
 import { ChatPage } from "./pages/chat-page";
 import { InboxPage } from "./pages/inbox-page";
@@ -39,14 +40,15 @@ export interface AppDependencies {
 // session gate (#250): one /ws connection app-wide, so `invalidate` and
 // `notify` frames flow regardless of which page is mounted. Only created once
 // a session is confirmed authenticated.
-function directBrowsePage(view: BrowseView) {
+function directBrowsePage(view: BrowseView, bucketView?: BucketView) {
   return function DirectBrowsePage() {
-    return <BrowsePage initialView={view} />;
+    return <BrowsePage initialBucketView={bucketView} initialView={view} />;
   };
 }
 
 const BrowseMemoriesPage = directBrowsePage("memories");
 const BrowseBucketPage = directBrowsePage("bucket");
+const BrowseBucketHistoryPage = directBrowsePage("bucket", "history");
 const BrowseTodosPage = directBrowsePage("todos");
 const BrowseRemindersPage = directBrowsePage("reminders");
 const BrowsePanelsPage = directBrowsePage("panels");
@@ -118,6 +120,10 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={BrowsePage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
         <Route component={BrowseBucketPage} path="/browse/bucket" />
+        <Route
+          component={BrowseBucketHistoryPage}
+          path="/browse/bucket/history"
+        />
         <Route component={BrowseTodosPage} path="/browse/todos" />
         <Route component={BrowseRemindersPage} path="/browse/reminders" />
         <Route component={BrowsePanelsPage} path="/browse/panels" />
