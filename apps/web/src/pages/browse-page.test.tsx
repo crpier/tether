@@ -85,6 +85,20 @@ describe("Browse page", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("opens the Todos tab from its direct Browse URL", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host, undefined, { path: "/browse/todos" });
+
+    await screen.findByRole("heading", { name: "Browse" });
+    expect(
+      await screen.findByRole("region", { name: "Todos" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Todos" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   test("switches between Bucket, Todos, Reminders and Panels tabs", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);

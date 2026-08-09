@@ -22,7 +22,7 @@ import {
   invalidateNamedKey,
 } from "./lib/query-keys";
 import { LoginScreen } from "./login";
-import { BrowsePage } from "./pages/browse-page";
+import { BrowsePage, type BrowseView } from "./pages/browse-page";
 import { ChatPage } from "./pages/chat-page";
 import { InboxPage } from "./pages/inbox-page";
 import { NotFoundPage } from "./pages/not-found-page";
@@ -39,6 +39,18 @@ export interface AppDependencies {
 // session gate (#250): one /ws connection app-wide, so `invalidate` and
 // `notify` frames flow regardless of which page is mounted. Only created once
 // a session is confirmed authenticated.
+function directBrowsePage(view: BrowseView) {
+  return function DirectBrowsePage() {
+    return <BrowsePage initialView={view} />;
+  };
+}
+
+const BrowseMemoriesPage = directBrowsePage("memories");
+const BrowseBucketPage = directBrowsePage("bucket");
+const BrowseTodosPage = directBrowsePage("todos");
+const BrowseRemindersPage = directBrowsePage("reminders");
+const BrowsePanelsPage = directBrowsePage("panels");
+
 function ConnectedApp(props: Required<AppDependencies>) {
   const queryClient = useQueryClient();
   const [connection, setConnection] =
@@ -104,6 +116,11 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={ProposalsPage} path="/proposals" />
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowsePage} path="/browse" />
+        <Route component={BrowseMemoriesPage} path="/browse/memories" />
+        <Route component={BrowseBucketPage} path="/browse/bucket" />
+        <Route component={BrowseTodosPage} path="/browse/todos" />
+        <Route component={BrowseRemindersPage} path="/browse/reminders" />
+        <Route component={BrowsePanelsPage} path="/browse/panels" />
         <Route component={SettingsPage} path="/settings" />
         <Route component={NotFoundPage} path="*404" />
       </Router>

@@ -12,19 +12,22 @@ import { SyntheticPanels } from "../panels/synthetic";
 import { TodosPanel } from "../panels/todos";
 import { TriggersPanel } from "../panels/triggers";
 
-type BrowseView = "memories" | "bucket" | "todos" | "reminders" | "panels";
+export type BrowseView =
+  "memories" | "bucket" | "todos" | "reminders" | "panels";
 
 // Look-things-up state (#250): memory corpus search, todos, triggers, and the
 // user's synthetic panels. This is deliberately not master-detail — nothing
 // here is awaiting adjudication, so a page-level segmented control between
 // the existing panel components is enough room.
-export function BrowsePage() {
+export function BrowsePage(props: { initialView?: BrowseView } = {}) {
   const bucket = useHost("bucket");
   const memories = useHost("memories");
   const panels = useHost("panels");
   const todos = useHost("todos");
   const triggers = useHost("triggers");
-  const [view, setView] = createSignal<BrowseView>("memories");
+  const [view, setView] = createSignal<BrowseView>(
+    props.initialView ?? "memories",
+  );
   const memoriesActive = () => view() === "memories";
 
   return (
