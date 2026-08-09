@@ -126,6 +126,27 @@ function actionPrimary(action: ProposalAction): string {
     : action.kind;
 }
 
+function actionCategory(action: ProposalAction): string {
+  return action.scope !== null
+    ? `${action.kind} · ${action.scope}`
+    : action.kind;
+}
+
+function historyActionSearchLabel(action: ProposalAction): string {
+  const primary = actionPrimary(action);
+  const category = actionCategory(action);
+  return primary === category ? primary : `${primary} · ${category}`;
+}
+
+function historyActionMatchLabels(item: Proposal, term: string): string[] {
+  if (term.length === 0) {
+    return [];
+  }
+  return item.actions
+    .map(historyActionSearchLabel)
+    .filter((label) => searchable(label).includes(term));
+}
+
 function formatWhen(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
@@ -237,6 +258,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
             `${item.title}: ${count}`,
             item.rejection_reason,
             decided,
+            ...item.actions.map(historyActionSearchLabel),
           ],
           term,
         )
@@ -807,30 +829,10 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                 <ul class="space-y-2">
                   <For each={visibleHistoryItems()}>
                     {(item) => (
-                      <li
-                        aria-label={`Proposal: ${item.title}`}
-                        class="bg-muted rounded-md border px-3 py-2 text-sm"
-                        data-id={item.id}
-                      >
-                        <div class="flex items-center justify-between gap-2">
-                          <span class="font-medium">{item.title}</span>
-                          <span class="text-muted-foreground text-xs">
-                            {`${item.state} · ${actionCountLabel(item.actions.length)}`}
-                          </span>
-                        </div>
-                        <p class="text-muted-foreground text-xs">
-                          {item.decided_at
-                            ? formatWhen(item.decided_at)
-                            : "not decided"}
-                        </p>
-                        <Show when={item.rejection_reason}>
-                          {(reason) => (
-                            <p class="text-muted-foreground text-xs">
-                              {`Reason: ${reason()}`}
-                            </p>
-                          )}
-                        </Show>
-                      </li>
+                      <HistoryProposalItem
+                        item={item}
+                        searchTerm={historySearch().trim().toLocaleLowerCase()}
+                      />
                     )}
                   </For>
                 </ul>
@@ -1086,6 +1088,47 @@ function GrantSummary(props: { grant: Grant }) {
         {`granted ${formatWhen(props.grant.granted_at)}`}
       </span>
     </span>
+  );
+}
+
+function HistoryProposalItem(props: { item: Proposal; searchTerm: string }) {
+  const matchedActions = createMemo(() =>
+    historyActionMatchLabels(props.item, props.searchTerm),
+  );
+  return (
+    <li
+      aria-label={`Proposal: ${props.item.title}`}
+      class="bg-muted rounded-md border px-3 py-2 text-sm"
+      data-id={props.item.id}
+    >
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-medium">{props.item.title}</span>
+        <span class="text-muted-foreground text-xs">
+          {`${props.item.state} · ${actionCountLabel(props.item.actions.length)}`}
+        </span>
+      </div>
+      <p class="text-muted-foreground text-xs">
+        {props.item.decided_at
+          ? formatWhen(props.item.decided_at)
+          : "not decided"}
+      </p>
+      <Show when={props.item.rejection_reason}>
+        {(reason) => (
+          <p class="text-muted-foreground text-xs">{`Reason: ${reason()}`}</p>
+        )}
+      </Show>
+      <Show when={matchedActions().length > 0}>
+        <ul class="mt-1 space-y-1">
+          <For each={matchedActions()}>
+            {(label) => (
+              <li class="text-muted-foreground text-xs">
+                {`Matched action: ${label}`}
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </li>
   );
 }
 

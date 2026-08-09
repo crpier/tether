@@ -304,6 +304,63 @@ describe("Proposals page", () => {
     ).toBeInTheDocument();
   });
 
+  test("decided proposal search reveals matching action text", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          actions: [
+            proposalAction({
+              display: "Archive two warranty emails",
+              id: "warranty-display-action",
+              kind: "gmail.archive",
+              scope: "warranty",
+            }),
+          ],
+          decided_at: "2026-07-23T20:30:45Z",
+          id: "decision-warranty-display-match",
+          rejection_reason: "Bulk rejected",
+          state: "rejected",
+          title: "Inbox hygiene",
+        }),
+        proposal({
+          actions: [
+            proposalAction({
+              display: null,
+              id: "warranty-category-action",
+              kind: "gmail.delete",
+              scope: "warranty",
+            }),
+          ],
+          decided_at: "2026-07-22T20:30:45Z",
+          id: "decision-warranty-category-match",
+          rejection_reason: "Bulk rejected",
+          state: "rejected",
+          title: "Inbox hygiene",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Proposals");
+    await screen.findByRole("heading", { name: "Proposals" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
+
+    const panel = screen.getByRole("tabpanel", { name: /Decided/ });
+    await within(panel).findAllByLabelText("Proposal: Inbox hygiene");
+    fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
+      target: { value: "warranty" },
+    });
+
+    expect(
+      await within(panel).findByText(
+        "Matched action: Archive two warranty emails · gmail.archive · warranty",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await within(panel).findByText("Matched action: gmail.delete · warranty"),
+    ).toBeInTheDocument();
+  });
+
   test("decided proposal search ignores hidden summary action counts", async () => {
     const host = new FakeHost({
       authenticated: true,
