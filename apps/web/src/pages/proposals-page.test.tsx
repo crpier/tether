@@ -111,6 +111,30 @@ describe("Proposals page", () => {
     ).toBeInTheDocument();
   });
 
+  test("direct decided proposals route opens the decided tab", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      proposals: [
+        proposal({
+          decided_at: "2026-01-01T00:00:00Z",
+          id: "decision-1",
+          state: "approved",
+          title: "Already approved",
+        }),
+      ],
+    });
+    renderApp(host, createBusHarness(), { path: "/proposals/decided" });
+    await screen.findByRole("heading", { name: "Proposals" });
+
+    expect(await screen.findByRole("tab", { name: /Decided/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Decided proposals (1)" }),
+    ).toBeInTheDocument();
+  });
+
   test("honors proposals tab and page query params", async () => {
     const grants = Array.from({ length: 40 }, (_, index) =>
       grant({

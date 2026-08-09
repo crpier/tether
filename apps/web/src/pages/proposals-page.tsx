@@ -150,11 +150,17 @@ function sameProposalBasis(a: Proposal, b: Proposal): boolean {
   );
 }
 
-export function ProposalsPage() {
+export interface ProposalsPageProps {
+  initialView?: ProposalsView;
+}
+
+export function ProposalsPage(props: ProposalsPageProps = {}) {
   const api = useHost("proposals");
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialView = parseQueryView(searchParams.tab) ?? "queue";
+  let useInitialView = props.initialView !== undefined;
+  const initialView =
+    parseQueryView(searchParams.tab) ?? props.initialView ?? "queue";
   const initialPage = parseQueryPage(searchParams.page) ?? 1;
   const [view, setView] = createSignal<ProposalsView>(initialView);
   const [selectedId, setSelectedId] = createSignal<string | undefined>();
@@ -266,7 +272,11 @@ export function ProposalsPage() {
   );
 
   createEffect(() => {
-    const nextView = parseQueryView(searchParams.tab) ?? "queue";
+    const nextView =
+      parseQueryView(searchParams.tab) ??
+      (useInitialView ? props.initialView : undefined) ??
+      "queue";
+    useInitialView = false;
     const nextPage = parseQueryPage(searchParams.page) ?? 1;
     untrack(() => {
       setView(nextView);

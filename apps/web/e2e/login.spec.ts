@@ -35,6 +35,25 @@ test("unknown routes show not found without redirecting", async ({
   await expect(page.locator("#chat-title")).toBeHidden();
 });
 
+test("direct decided proposals route loads the decided tab", async ({
+  page,
+  login,
+}) => {
+  await login();
+  await page.goto("/proposals/decided", { waitUntil: "domcontentloaded" });
+
+  await expect(
+    page.getByRole("heading", { exact: true, name: "Proposals" }),
+  ).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Decided/u })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Page not found" }),
+  ).toBeHidden();
+});
+
 test("logs in and lands on pure chat, with the nav present", async ({
   page,
   login,
