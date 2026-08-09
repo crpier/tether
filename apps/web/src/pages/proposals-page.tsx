@@ -92,6 +92,10 @@ function matchesSearch(
   );
 }
 
+function actionCountLabel(count: number): string {
+  return `${count.toString()} action${count === 1 ? "" : "s"}`;
+}
+
 function grantLabel(kind: string, scope: string | null): string {
   return scope === null ? `Grant: ${kind}` : `Grant: ${kind} (${scope})`;
 }
@@ -218,26 +222,27 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
   const filteredHistoryItems = createMemo(() => {
     const term = historySearch().trim().toLocaleLowerCase();
     const state = historyState();
-    return historyItems().filter(
-      (item) =>
+    return historyItems().filter((item) => {
+      const count = actionCountLabel(item.actions.length);
+      const decided = item.decided_at
+        ? formatWhen(item.decided_at)
+        : "not decided";
+      return (
         (state === "all" || item.state === state) &&
         matchesSearch(
           [
             item.title,
-            item.summary,
-            item.consumer,
             item.state,
+            count,
+            `${item.title} ${count}`,
+            `${item.title}: ${count}`,
             item.rejection_reason,
-            item.decided_at ? formatWhen(item.decided_at) : "not decided",
-            ...item.actions.flatMap((action) => [
-              action.kind,
-              action.scope,
-              actionPrimary(action),
-            ]),
+            decided,
           ],
           term,
-        ),
-    );
+        )
+      );
+    });
   });
   const visibleHistoryItems = createMemo(() =>
     pageItems(filteredHistoryItems(), historyPage()),
@@ -661,7 +666,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                               {item.title}
                             </span>
                             <span class="text-muted-foreground truncate text-xs">
-                              {`${item.consumer} · ${item.actions.length.toString()} action${item.actions.length === 1 ? "" : "s"}`}
+                              {`${item.consumer} · ${actionCountLabel(item.actions.length)}`}
                             </span>
                           </button>
                         </li>
@@ -764,7 +769,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                         setHistorySearch(event.currentTarget.value);
                         setHistoryPage(1);
                       }}
-                      placeholder="Title, reason, action…"
+                      placeholder="Title, count, reason…"
                       type="search"
                       value={historySearch()}
                     />
@@ -811,7 +816,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
                         <div class="flex items-center justify-between gap-2">
                           <span class="font-medium">{item.title}</span>
                           <span class="text-muted-foreground text-xs">
-                            {item.state}
+                            {`${item.state} · ${actionCountLabel(item.actions.length)}`}
                           </span>
                         </div>
                         <p class="text-muted-foreground text-xs">
