@@ -140,6 +140,20 @@ describe("Browse page", () => {
     );
   });
 
+  test("opens Reminders from the Browse tab query deep link", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host, undefined, { path: "/browse?tab=reminders" });
+
+    await screen.findByRole("heading", { name: "Browse" });
+    expect(
+      await screen.findByRole("region", { name: "Reminders" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Reminders" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   test("opens Bucket history from its direct Browse URL", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host, undefined, { path: "/browse/bucket/history" });

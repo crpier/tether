@@ -47,6 +47,22 @@ function parseBucketTab(value: SearchValue): BucketView | undefined {
   return raw === "active" || raw === "history" ? raw : undefined;
 }
 
+function parseBrowseTab(value: SearchValue): BrowseView | undefined {
+  const raw = singleSearchValue(value);
+  return raw === "memories" ||
+    raw === "bucket" ||
+    raw === "todos" ||
+    raw === "reminders" ||
+    raw === "panels"
+    ? raw
+    : undefined;
+}
+
+function BrowseIndexPage() {
+  const [searchParams] = useSearchParams();
+  return <BrowsePage initialView={parseBrowseTab(searchParams.tab)} />;
+}
+
 function directBrowsePage(view: BrowseView, bucketView?: BucketView) {
   return function DirectBrowsePage() {
     const [searchParams] = useSearchParams();
@@ -150,7 +166,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
         />
         <Route component={DirectGrantsProposalsPage} path="/proposals/grants" />
         <Route component={InboxPage} path="/inbox" />
-        <Route component={BrowsePage} path="/browse" />
+        <Route component={BrowseIndexPage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
         <Route component={BrowseBucketPage} path="/browse/bucket" />
         <Route

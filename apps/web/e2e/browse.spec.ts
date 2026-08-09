@@ -1,5 +1,17 @@
 import { expect, test } from "./fixtures";
 
+test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
+  await login();
+
+  await page.goto("/browse?tab=reminders", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Reminders" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Reminders" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 test("direct Bucket browse exposes no inactive Memories controls", async ({
   page,
   login,
