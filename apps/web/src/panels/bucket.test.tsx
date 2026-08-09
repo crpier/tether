@@ -650,6 +650,46 @@ describe("Bucket panel", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("searches bucket history without showing active items", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      bucketItems: [
+        bucketItem({ id: "item-1", title: "Still active" }),
+        bucketItem({
+          completed_at: "2022-03-01T00:00:00Z",
+          id: "item-2",
+          state: "completed",
+          title: "Blade Runner",
+        }),
+        bucketItem({
+          deleted_at: "2023-06-01T00:00:00Z",
+          id: "item-3",
+          state: "deleted",
+          title: "Dune",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Bucket" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
+
+    await screen.findByLabelText("Bucket item: Blade Runner");
+    fireEvent.input(input(screen.getByLabelText("Search bucket history")), {
+      target: { value: "blade" },
+    });
+
+    expect(
+      await screen.findByLabelText("Bucket item: Blade Runner"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Bucket item: Dune"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Bucket item: Still active"),
+    ).not.toBeInTheDocument();
+  });
+
   test("shows type-specific metadata in history", async () => {
     const host = new FakeHost({
       authenticated: true,
