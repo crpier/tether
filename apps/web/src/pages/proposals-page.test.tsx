@@ -491,7 +491,7 @@ describe("Proposals page", () => {
     ).not.toBeInTheDocument();
   });
 
-  test("decided proposal search matches the visible decided timestamp", async () => {
+  test("decided proposal search matches visible decided timestamp substrings", async () => {
     const decidedAt = "2026-07-22T20:30:45Z";
     const host = new FakeHost({
       authenticated: true,
@@ -516,9 +516,14 @@ describe("Proposals page", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Decided/ }));
 
     const panel = screen.getByRole("tabpanel", { name: /Decided/ });
-    await within(panel).findByText(formatDateTime(new Date(decidedAt)));
+    const visibleTimestamp = formatDateTime(new Date(decidedAt));
+    const visibleTimeSubstring = /\d{1,2}:\d{2}/u.exec(visibleTimestamp)?.[0];
+    if (visibleTimeSubstring === undefined) {
+      throw new Error(`No searchable time substring in ${visibleTimestamp}`);
+    }
+    await within(panel).findByText(visibleTimestamp);
     fireEvent.input(within(panel).getByLabelText("Search decided proposals"), {
-      target: { value: formatDateTime(new Date(decidedAt)) },
+      target: { value: visibleTimeSubstring },
     });
 
     expect(
