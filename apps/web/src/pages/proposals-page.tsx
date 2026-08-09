@@ -163,6 +163,10 @@ function formatWhen(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
 }
 
+function decidedTimestampLabel(item: Proposal): string {
+  return item.decided_at ? formatWhen(item.decided_at) : "not decided";
+}
+
 // The fields a 409 retry is judged against (mirrors triggers.tsx's
 // `sameDefinition`): a mere version bump (e.g. a sibling action finished
 // executing) is safe to retry, while a genuinely changed title, summary, or
@@ -255,9 +259,7 @@ export function ProposalsPage(props: ProposalsPageProps = {}) {
     const state = historyState();
     return historyItems().filter((item) => {
       const count = actionCountLabel(item.actions.length);
-      const decided = item.decided_at
-        ? formatWhen(item.decided_at)
-        : "not decided";
+      const decided = decidedTimestampLabel(item);
       return (
         (state === "all" || item.state === state) &&
         matchesSearch(
@@ -1119,9 +1121,7 @@ function HistoryProposalItem(props: { item: Proposal; searchTerm: string }) {
         </span>
       </div>
       <p class="text-muted-foreground text-xs">
-        {props.item.decided_at
-          ? formatWhen(props.item.decided_at)
-          : "not decided"}
+        {decidedTimestampLabel(props.item)}
       </p>
       <Show when={props.item.rejection_reason}>
         {(reason) => (
