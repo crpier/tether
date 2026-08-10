@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly backup: safe snapshots of both SQLite sources + kb_root + .env -> restic -> B2.
+# Nightly backup: both SQLite sources + KB Markdown/sessions + .env -> restic -> B2.
 # Run by the `tether-backup` systemd timer (docs/deployment.md#backups); safe to
 # run by hand too: `sudo -E deploy/backup.sh` (needs restic.env sourced/exported
 # and docker compose access).
@@ -69,6 +69,23 @@ PY
     compose cp "host:${container_snapshot}" "${workdir}/${output_name}"
 }
 
+copy_kb_source_data() {
+    mkdir "${workdir}/kb"
+    compose exec -T host python3 -c '
+import sys
+import tarfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+    for markdown_path in sorted(root.glob("*.md")):
+        archive.add(markdown_path, arcname=markdown_path.name)
+    sessions_path = root / "pi-sessions"
+    if sessions_path.is_dir():
+        archive.add(sessions_path, arcname=sessions_path.name)
+' /data/kb | tar -C "${workdir}/kb" -xf -
+}
+
 curl --fail --silent --show-error --max-time 10 "${ping_url}/start" >/dev/null
 
 # 1. SQLite: independently VACUUM INTO both source-of-truth databases inside
@@ -76,9 +93,9 @@ curl --fail --silent --show-error --max-time 10 "${ping_url}/start" >/dev/null
 snapshot_database "/data/tether.sqlite3" "${tether_container_snapshot}" "tether.sqlite3"
 snapshot_database "/data/telemetry.sqlite3" "${telemetry_container_snapshot}" "telemetry.sqlite3"
 
-# 2. kb_root, copied whole. It currently co-locates derived indexes and pi
-# sessions with Markdown, so those files are included too (docs/deployment.md).
-compose cp "host:/data/kb" "${workdir}/kb"
+# 2. KB source data. Derived Lance indexes are rebuildable and can exceed the
+# host's tmpfs, so stream only Markdown and retained pi sessions into staging.
+copy_kb_source_data
 
 # 3. .env: the app secrets, so a total-loss recovery doesn't depend on
 # remembering what was in it (1Password is still the primary source of truth).

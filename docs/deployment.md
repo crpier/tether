@@ -386,9 +386,11 @@ Nightly `restic` → Backblaze B2, client-side encrypted, run by a systemd timer
 **on the VM host, outside compose** (so it's independent of the app container's
 lifecycle). The script uses Python's SQLite driver inside the container to make
 independent, consistent `VACUUM INTO` snapshots of `/data/tether.sqlite3` and
-`/data/telemetry.sqlite3`, then backs up both snapshots, all of `/data/kb`, and
-`.env` in one restic run. Failure to snapshot or copy either database fails the
-whole run; a partial source-of-truth backup is never reported as successful.
+`/data/telemetry.sqlite3`, then backs up both snapshots, the KB's top-level
+Markdown and retained pi sessions, and `.env` in one restic run. Rebuildable
+Lance indexes are excluded instead of being copied through the VM's bounded
+`/tmp` tmpfs. Failure to snapshot or copy either database fails the whole run;
+a partial source-of-truth backup is never reported as successful.
 Retention: `--keep-daily 7 --keep-weekly 4 --prune`. Every run pings
 healthchecks.io — success, and `/fail` on any error via a shell trap — so a
 run that fails *or silently stops happening* (VM down, timer disabled) alerts.
@@ -396,12 +398,12 @@ run that fails *or silently stops happening* (VM down, timer disabled) alerts.
 Current coverage is intentionally explicit:
 
 - Included: both SQLite sources of truth (`tether.sqlite3` and
-  `telemetry.sqlite3`), `/data/kb`, and production `.env`.
-- `/data/kb` currently contains Markdown plus derived Lance indexes and pi
-  sessions. Backing those derived files is safe but made the first restore about
-  544 MiB; recovery does not depend on the index copy.
-- Excluded: `/srv/tether/pi-agent`, `/data/youtube`, and other OAuth/ingestion
-  state outside `/data/kb`.
+  `telemetry.sqlite3`), top-level `/data/kb/*.md`, `/data/kb/pi-sessions`, and
+  production `.env`.
+- Excluded as rebuildable: `/data/kb/index`, `/data/kb/transcript-index`, and
+  `/data/kb/bucket-item-index`.
+- Also excluded: `/srv/tether/pi-agent`, `/data/youtube`, and other
+  OAuth/ingestion state outside `/data/kb`.
   Reauthorize those providers or protect them separately until coverage grows.
 - `restic.env` is restored from 1Password, not from the restic repository.
 
