@@ -60,12 +60,36 @@ case "${FAKE_FAILURE_MODE:-}:$*" in
     tether-snapshot:*"python3 - /data/tether.sqlite3"* | telemetry-snapshot:*"python3 - /data/telemetry.sqlite3"*) exit 42 ;;
     tether-copy:*"cp host:"*"-tether.sqlite3"* | telemetry-copy:*"cp host:"*"-telemetry.sqlite3"*) exit 42 ;;
 esac
+if [[ "$*" == *"exec -T host python3 -c"*"/data/kb"* ]]; then
+    fixture_dir="$(mktemp -d)"
+    trap 'rm -rf "${fixture_dir}"' EXIT
+    mkdir -p \
+        "${fixture_dir}/pi-sessions" \
+        "${fixture_dir}/index" \
+        "${fixture_dir}/transcript-index" \
+        "${fixture_dir}/bucket-item-index"
+    printf 'memory\n' > "${fixture_dir}/memory.md"
+    printf 'session\n' > "${fixture_dir}/pi-sessions/session.jsonl"
+    printf 'derived\n' > "${fixture_dir}/index/chunk.lance"
+    printf 'derived\n' > "${fixture_dir}/transcript-index/chunk.lance"
+    printf 'derived\n' > "${fixture_dir}/bucket-item-index/chunk.lance"
+    python3 -c "${@: -2:1}" "${fixture_dir}"
+    exit 0
+fi
 if [[ "$*" == *" cp host:"* ]]; then
     source_path="${@: -2:1}"
     destination="${@: -1}"
     if [[ "${source_path}" == *"/kb" ]]; then
-        mkdir -p "${destination}"
+        mkdir -p \
+            "${destination}/pi-sessions" \
+            "${destination}/index" \
+            "${destination}/transcript-index" \
+            "${destination}/bucket-item-index"
         printf 'memory\n' > "${destination}/memory.md"
+        printf 'session\n' > "${destination}/pi-sessions/session.jsonl"
+        printf 'derived\n' > "${destination}/index/chunk.lance"
+        printf 'derived\n' > "${destination}/transcript-index/chunk.lance"
+        printf 'derived\n' > "${destination}/bucket-item-index/chunk.lance"
     else
         printf 'consistent snapshot\n' > "${destination}"
     fi
@@ -131,7 +155,13 @@ def test_backup_snapshots_both_sqlite_sources_of_truth() -> None:
     assert_eq(run.result.returncode, 0)
     assert_eq(
         run.manifest,
-        ["env", "kb/memory.md", "telemetry.sqlite3", "tether.sqlite3"],
+        [
+            "env",
+            "kb/memory.md",
+            "kb/pi-sessions/session.jsonl",
+            "telemetry.sqlite3",
+            "tether.sqlite3",
+        ],
     )
 
 
