@@ -70,6 +70,50 @@ dev:
     # return as soon as either process exits; the trap tears the other down
     wait -n
 
+# deterministic local-only loop: real host/web/pi, no external integrations or credentials
+# Optional args let tests/parallel checkouts avoid port and state collisions.
+dev-local host_port="8000" web_port="3000" local_data_root=".tether/local":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -m
+    root="{{local_data_root}}"
+    mkdir -p "$root/logs" "$root/pi-agent"
+    : > "$root/logs/host.log"
+    : > "$root/logs/web.log"
+    echo "local-only web → http://127.0.0.1:{{web_port}}  host → http://127.0.0.1:{{host_port}}"
+    # Start the host from an allowlisted environment rather than the dotenv-loaded
+    # recipe environment. The host and every spawned pi process therefore receive
+    # no production provider/API credentials, even when root `.env` contains them.
+    env -i \
+        HOME="$HOME" PATH="$PATH" LANG="${LANG:-C.UTF-8}" TERM="${TERM:-dumb}" \
+        UV_PROJECT="$UV_PROJECT" VIRTUAL_ENV="$VIRTUAL_ENV" \
+        TETHER_DEPENDENCY_PROFILE=local \
+        TETHER_LOCAL_DATA_ROOT="$root" \
+        TETHER_HOST=127.0.0.1 \
+        TETHER_PORT="{{host_port}}" \
+        TETHER_RELOAD=true \
+        TETHER_APP_PASSWORD=dev \
+        TETHER_SESSION_SECRET=dev-local-session-secret \
+        TETHER_STT_API_KEY=local \
+        TETHER_LOGGING_LEVEL=DEBUG \
+        PI_CODING_AGENT_DIR="$root/pi-agent" \
+        uv run python -m tether &
+    host_pid=$!
+    env -i \
+        HOME="$HOME" PATH="$PATH" LANG="${LANG:-C.UTF-8}" TERM="${TERM:-dumb}" \
+        TETHER_API_TARGET="http://127.0.0.1:{{host_port}}" \
+        TETHER_WS_TARGET="ws://127.0.0.1:{{host_port}}" \
+        pnpm -C apps/web exec vite --host 127.0.0.1 --port "{{web_port}}" --strictPort \
+        > >(tee "$root/logs/web.log") 2>&1 &
+    web_pid=$!
+    cleanup() {
+        kill -TERM -"$host_pid" -"$web_pid" 2>/dev/null || true
+        sleep 2
+        kill -KILL -"$host_pid" -"$web_pid" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+    wait -n
+
 # one-time local setup: write .env with generated secrets + create the pi-agent dir
 bootstrap:
     #!/usr/bin/env bash

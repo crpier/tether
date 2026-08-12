@@ -13,7 +13,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import uvicorn
 from anyio import Path as AsyncPath
@@ -53,7 +53,7 @@ from tether.conversation_history_tools import (
 )
 from tether.conversations import ConversationService, create_conversation_schema
 from tether.ebook_stats import EbookStatsSyncService, create_ebook_stats_schema
-from tether.embeddings import Embedder, FastEmbedder
+from tether.embeddings import Embedder, FakeEmbedder, FastEmbedder
 from tether.events import EventHub
 from tether.gmail import (
     GmailClient,
@@ -81,6 +81,7 @@ from tether.ingestion_lifecycle import (
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
+from tether.local_dependencies import LocalProviderAuthBackend, LocalSttTransport
 from tether.memories import (
     KnowledgeBaseService,
     MemoryService,
@@ -311,6 +312,10 @@ class HostSettings(BaseSettings):
     passes the app-session gate exactly as a valid cookie would; revocation is
     rotating this value."""
     database_path: Path = Path(".tether/tether.sqlite3")
+    dependency_profile: Literal["local", "production"] = "production"
+    """Composition profile for real integrations or deterministic local adapters."""
+    local_data_root: Path = Path(".tether/local")
+    """Disposable state root used only by the local dependency profile."""
     telemetry_database_path: Path | None = None
 
     @property
@@ -1925,6 +1930,53 @@ def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport |
     )
 
 
+def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
+    """Build isolated deterministic wiring without consulting integration config."""
+    local_root = settings.local_data_root
+    return AppConfig(
+        app_password=settings.app_password,
+        database_path=local_root / "tether.sqlite3",
+        default_model="local",
+        ebook_statistics_db_path="",
+        extra_extension_paths=(
+            Path(__file__).resolve().parents[2] / "agent/src/local-faux.ts",
+        ),
+        gmail_purge_enabled=False,
+        gmail_sync_enabled=False,
+        gmail_transport=None,
+        kb_root=local_root / "kb",
+        kosync_enabled=False,
+        log_file=local_root / "logs/host.log",
+        logging_level=settings.logging_level,
+        model_allowlist=(
+            AgentModelConfig(
+                display_name="Local deterministic model",
+                id="local",
+                model_id="tether-local-faux",
+                provider="faux",
+            ),
+        ),
+        provider_auth_backend=LocalProviderAuthBackend(),
+        readwise_api_key="",
+        readwise_reader_sync_enabled=False,
+        readwise_sync_enabled=False,
+        search_provider=None,
+        secure_cookies=False,
+        session_secret=settings.session_secret,
+        stt_client=SttClient(LocalSttTransport(), model="local"),
+        telemetry_database_path=local_root / "telemetry.sqlite3",
+        tool_base_url=f"http://{settings.host}:{settings.port}",
+        transcript_provider=None,
+        transcript_sync_enabled=False,
+        vapid_private_key="",
+        vapid_public_key="",
+        vapid_subject="",
+        web_dist=settings.web_dist,
+        youtube_api=None,
+        youtube_sync_enabled=False,
+    )
+
+
 def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     """Build the `AppConfig` the app factory wires from environment settings.
 
@@ -1932,6 +1984,8 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     field mapping is unit-testable without spinning up the full ASGI app (which
     needs a YouTube OAuth token on disk to wire the background workers).
     """
+    if settings.dependency_profile == "local":
+        return _local_app_config_from_settings(settings)
     return AppConfig(
         api_token=settings.api_token,
         app_password=settings.app_password,
@@ -2001,7 +2055,9 @@ def create_app_from_environment() -> Starlette:
         config=_app_config_from_settings(settings),
         telemetry_settings=settings.telemetry,
         tool_secret=settings.tool_secret,
-        embedder=FastEmbedder(),
+        embedder=(
+            FakeEmbedder() if settings.dependency_profile == "local" else FastEmbedder()
+        ),
     )
 
 
