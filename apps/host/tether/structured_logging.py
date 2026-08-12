@@ -23,14 +23,14 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
 import structlog
-from starlette.requests import Request
+from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog.typing import EventDict, WrappedLogger
 
@@ -38,7 +38,9 @@ type Logger = structlog.stdlib.BoundLogger
 
 try:
     from opentelemetry.trace import get_current_span
-except ModuleNotFoundError:
+except ModuleNotFoundError as error:
+    if error.name not in {"opentelemetry", "opentelemetry.trace"}:
+        raise
     _get_current_span: Callable[[], Any] | None = None
 else:
     _get_current_span = get_current_span
@@ -53,16 +55,43 @@ QUIET_LOGGERS = (
 
 The `uvicorn`/`uvicorn.error` pair remains enabled and propagates to the root
 handler. This suppresses routine lifecycle chatter while retaining startup
-failure tracebacks. Applications can replace this collection through
+failure tracebacks. Policies apply to each named logger and its descendants.
+Applications can replace this collection through
 `configure_logging(quiet_loggers=...)`.
 """
 
 SILENCED_LOGGERS = ("uvicorn.access",)
-"""Uvicorn loggers that are fully disabled because uvicorn owns its formatting."""
+"""Loggers disabled because the middleware emits structured access events."""
 _REQUEST_LOGGER: ContextVar[Logger | None] = ContextVar(
     "request_logger",
     default=None,
 )
+
+
+class _NamespaceFilter(logging.Filter):
+    """Apply quiet and silenced policies to logger namespaces at each sink."""
+
+    def __init__(
+        self,
+        *,
+        quiet_loggers: Collection[str],
+        silenced_loggers: Collection[str],
+    ) -> None:
+        super().__init__()
+        self.quiet_loggers: tuple[str, ...] = tuple(quiet_loggers)
+        self.silenced_loggers: tuple[str, ...] = tuple(silenced_loggers)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Reject silenced records and quiet records below WARNING."""
+        if any(
+            record.name == namespace or record.name.startswith(f"{namespace}.")
+            for namespace in self.silenced_loggers
+        ):
+            return False
+        return record.levelno >= logging.WARNING or not any(
+            record.name == namespace or record.name.startswith(f"{namespace}.")
+            for namespace in self.quiet_loggers
+        )
 
 
 def _clear_handlers(logger: logging.Logger) -> None:
@@ -100,28 +129,29 @@ def _process_positional_args(
     if not positional_args:
         return event_dict
 
-    message_args: list[Any] = []
-    for positional_arg in positional_args:
-        if isinstance(positional_arg, dict):
-            event_dict.update(cast("dict[str, Any]", positional_arg))
+    message_args: list[Any]
+    format_args: object
+    if isinstance(positional_args, Mapping):
+        mapping_args = cast("Mapping[object, object]", positional_args)
+        format_args = mapping_args
+        message_args = [mapping_args]
+    else:
+        message_args = list(cast("tuple[Any, ...]", positional_args))
+        if len(message_args) == 1 and isinstance(message_args[0], Mapping):
+            format_args = cast("Mapping[object, object]", message_args[0])
         else:
-            message_args.append(positional_arg)
-
-    if not message_args:
-        return event_dict
+            format_args = tuple(message_args)
 
     event = event_dict.get("event")
     if isinstance(event, str):
         try:
-            event_dict["event"] = event % tuple(message_args)
+            event_dict["event"] = event % format_args
         except Exception:
-            event_dict["event"] = " ".join([event, *[str(arg) for arg in message_args]])
+            event_dict["event"] = " ".join([event, *map(str, message_args)])
     elif event is None:
-        event_dict["event"] = " ".join(str(arg) for arg in message_args)
+        event_dict["event"] = " ".join(map(str, message_args))
     else:
-        event_dict["event"] = " ".join(
-            [str(event), *[str(arg) for arg in message_args]]
-        )
+        event_dict["event"] = " ".join([str(event), *map(str, message_args)])
     return event_dict
 
 
@@ -268,7 +298,12 @@ def configure_logging(
     )
 
     handlers: list[logging.Handler] = []
+    namespace_filter = _NamespaceFilter(
+        quiet_loggers=quiet_loggers,
+        silenced_loggers=silenced_loggers,
+    )
     console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.addFilter(namespace_filter)
     console_handler.setFormatter(
         _make_processor_formatter(
             shared_processors=processors, renderer=console_renderer
@@ -280,6 +315,7 @@ def configure_logging(
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        file_handler.addFilter(namespace_filter)
         file_handler.setFormatter(
             _make_processor_formatter(
                 shared_processors=processors,
@@ -312,15 +348,15 @@ def get_bound_request_logger() -> Logger | None:
     return _REQUEST_LOGGER.get()
 
 
-def get_request_logger(request: Request) -> Logger:
-    """Return the logger installed on a request by `ContextLoggerMiddleware`.
+def get_request_logger(connection: HTTPConnection) -> Logger:
+    """Return the logger installed on an HTTP or WebSocket connection.
 
     ```python
     async def endpoint(request):
         get_request_logger(request).info("Handling request")
     ```
     """
-    logger = getattr(request.state, "logger", None)
+    logger = getattr(connection.state, "logger", None)
     if logger is None:
         error_message = "ContextLoggerMiddleware is not configured for this request."
         raise RuntimeError(error_message)
@@ -328,19 +364,21 @@ def get_request_logger(request: Request) -> Logger:
 
 
 class ContextLoggerMiddleware:
-    """Bind request metadata to logs for each Starlette HTTP request.
+    """Bind context to logs for each Starlette HTTP or WebSocket connection.
 
-    The middleware wraps the ASGI send lifecycle directly, so completion timing
+    The middleware wraps the ASGI lifecycle directly, so HTTP completion timing
     includes streaming the response body and streaming failures are logged.
-    `client_ip` is the ASGI peer address; forwarded headers are not trusted or
-    interpreted. Disable sensitive fields when they are unnecessary:
+    Successful lifecycle events use INFO by default; `completion_log_level` can
+    move them to another stdlib logging level. Client addresses and user-agent
+    values are omitted by default. When enabled, `client_ip` is the ASGI peer
+    address; forwarded headers are not interpreted:
 
     ```python
     app.state.logger = configure_logging()
     app.add_middleware(
         ContextLoggerMiddleware,
-        include_client_ip=False,
-        include_user_agent=False,
+        include_client_ip=True,
+        include_user_agent=True,
     )
     ```
     """
@@ -349,10 +387,12 @@ class ContextLoggerMiddleware:
         self,
         app: ASGIApp,
         *,
-        include_client_ip: bool = True,
-        include_user_agent: bool = True,
+        completion_log_level: int = logging.INFO,
+        include_client_ip: bool = False,
+        include_user_agent: bool = False,
     ) -> None:
         self.app: ASGIApp = app
+        self.completion_log_level: int = completion_log_level
         self.include_client_ip: bool = include_client_ip
         self.include_user_agent: bool = include_user_agent
 
@@ -362,25 +402,14 @@ class ContextLoggerMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        """Log one HTTP request while passing other ASGI scopes through."""
-        if scope["type"] != "http":
+        """Log HTTP and WebSocket scopes while passing other scopes through."""
+        if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
 
-        request = Request(scope)
-        base_logger = cast("Logger", request.app.state.logger)
-        request_context: dict[str, object] = {
-            "request_id": str(uuid4()),
-            "method": request.method,
-            "path": request.url.path,
-        }
-        if self.include_client_ip:
-            request_context["client_ip"] = (
-                request.client.host if request.client is not None else None
-            )
-        if self.include_user_agent:
-            request_context["user_agent"] = request.headers.get("user-agent")
-
+        connection = HTTPConnection(scope)
+        base_logger = cast("Logger", connection.app.state.logger)
+        request_context = self._connection_context(connection, scope)
         status_code: int | None = None
 
         async def send_with_status(message: Message) -> None:
@@ -390,26 +419,59 @@ class ContextLoggerMiddleware:
             await send(message)
 
         context_tokens = structlog.contextvars.bind_contextvars(**request_context)
-        request.state.logger = base_logger
+        connection.state.logger = base_logger
         token = _REQUEST_LOGGER.set(base_logger)
         started_at = time.perf_counter()
+        is_http = scope["type"] == "http"
         try:
             await self.app(scope, receive, send_with_status)
         except Exception:
+            failure_context: dict[str, object] = {
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 3)
+            }
+            if status_code is not None:
+                failure_context["status_code"] = status_code
             base_logger.exception(
-                "Request failed",
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
+                "Request failed" if is_http else "WebSocket failed",
+                **failure_context,
             )
             raise
         else:
-            base_logger.debug(
-                "Request completed",
-                status_code=status_code,
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
+            completion_context: dict[str, object] = {
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 3)
+            }
+            if status_code is not None:
+                completion_context["status_code"] = status_code
+            base_logger.log(
+                self.completion_log_level,
+                "Request completed" if is_http else "WebSocket completed",
+                **completion_context,
             )
         finally:
             _REQUEST_LOGGER.reset(token)
             structlog.contextvars.reset_contextvars(**context_tokens)
+
+    def _connection_context(
+        self,
+        connection: HTTPConnection,
+        scope: Scope,
+    ) -> dict[str, object]:
+        """Build protocol-specific context without collecting sensitive defaults."""
+        request_context: dict[str, object] = {
+            "path": connection.url.path,
+            "request_id": str(uuid4()),
+        }
+        if scope["type"] == "http":
+            request_context["method"] = scope["method"]
+        else:
+            request_context["connection_type"] = "websocket"
+        if self.include_client_ip:
+            request_context["client_ip"] = (
+                connection.client.host if connection.client is not None else None
+            )
+        if self.include_user_agent:
+            request_context["user_agent"] = connection.headers.get("user-agent")
+        return request_context
 
 
 __all__ = [
