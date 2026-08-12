@@ -20,11 +20,11 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
 from tether.search_meta import (
     SearchMetaService,
     create_search_meta_schema,
 )
+from tether.structured_logging import Logger
 
 
 def _logger() -> Logger:

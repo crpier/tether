@@ -45,7 +45,7 @@ from tether.recall import StudyItem
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 type SourceType = Literal["memory", "bucket_item"]
 """Every fused result's arm tag, so a caller can act on a hit without a lookup."""

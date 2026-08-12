@@ -26,7 +26,6 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tether import server
-from tether.logging import QUIET_LOGGERS, SILENCED_LOGGERS
 from tether.server import (
     AppConfig,
     HostSettings,
@@ -34,6 +33,7 @@ from tether.server import (
     create_app_from_environment,
     serve,
 )
+from tether.structured_logging import QUIET_LOGGERS, SILENCED_LOGGERS
 from tether.telemetry import TelemetryExporter, TelemetrySettings
 
 
@@ -338,6 +338,37 @@ with TestClient(create_app_from_environment()):
 
     assert_eq(completed.returncode, 0)
     assert_eq(completed.stderr, "")
+
+
+@test()
+def serve_quiets_host_dependency_loggers() -> None:
+    """The host adds its noisy dependencies to generic server logger defaults."""
+    dependency_names = ("aiosqlite", "snekql", "httpcore2")
+    original_levels = {name: logging.getLogger(name).level for name in dependency_names}
+
+    def fake_run(_app: object, **_kwargs: object) -> None:
+        pass
+
+    original_run = server.uvicorn.run
+    server.uvicorn.run = fake_run
+    try:
+        with captured_logging():
+            serve(
+                HostSettings(
+                    app_password="test-app-password",
+                    session_secret="test-session-secret",
+                    stt_api_key="test-stt-key",
+                )
+            )
+            configured_levels = {
+                name: logging.getLogger(name).level for name in dependency_names
+            }
+    finally:
+        server.uvicorn.run = original_run
+        for name, level in original_levels.items():
+            logging.getLogger(name).setLevel(level)
+
+    assert_eq(configured_levels, dict.fromkeys(dependency_names, logging.WARNING))
 
 
 @test()

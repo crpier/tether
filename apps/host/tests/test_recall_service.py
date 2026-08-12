@@ -31,7 +31,6 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
@@ -55,6 +54,7 @@ from tether.recall import (
     StudyItemExistsError,
     create_recall_schema,
 )
+from tether.structured_logging import Logger
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.recall_service")
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)

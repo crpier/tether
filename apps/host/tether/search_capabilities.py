@@ -16,10 +16,10 @@ from starlette.requests import Request
 
 from tether.bucket_capabilities import BucketItemRead
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
 from tether.memories import EmptySearchQueryError, Memory
 from tether.memory_capabilities import MemoryRead
 from tether.search_fusion import InvalidSearchWindowError, SourceType
+from tether.structured_logging import get_request_logger
 
 if TYPE_CHECKING:
     from datetime import datetime

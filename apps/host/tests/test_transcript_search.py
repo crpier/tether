@@ -16,7 +16,7 @@ import structlog
 from snektest import assert_eq, test
 
 from tether.embeddings import FakeEmbedder
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.transcript_index import ChunkCandidate
 from tether.transcript_search import TranscriptSearchService
 

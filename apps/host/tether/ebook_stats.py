@@ -59,7 +59,7 @@ from snekql.sqlite import (
 
 from tether.db_retry import run_in_transaction
 from tether.kosync import EbookDocument
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 _WATERMARK_KEY = "statistics_file_watermark"
 """Sync-state key under which the last fully-ingested file's `mtime_ns:size`

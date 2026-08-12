@@ -31,7 +31,7 @@ from tether.hybrid_lance_table import (
 )
 
 if TYPE_CHECKING:
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 _DIM = 4
 _TABLE_NAME = "documents"

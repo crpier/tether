@@ -69,8 +69,8 @@ from tether.action_registry import (
 )
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.logging import Logger
 from tether.notifications import NotificationDraft, NotificationService
+from tether.structured_logging import Logger
 
 type ProposalState = Literal[
     "pending", "approved", "executing", "executed", "failed", "rejected"

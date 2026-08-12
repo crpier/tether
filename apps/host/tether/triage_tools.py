@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether.capabilities import CapabilityOutcome, bind_params
-from tether.logging import get_request_logger
+from tether.structured_logging import get_request_logger
 from tether.tools import ToolSpec
 
 

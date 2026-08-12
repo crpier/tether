@@ -47,7 +47,6 @@ from tether.gmail import (
     GmailSyncService,
     create_gmail_schema,
 )
-from tether.logging import Logger
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
@@ -55,6 +54,7 @@ from tether.memories import (
     create_memory_schema,
 )
 from tether.notifications import create_notification_schema
+from tether.structured_logging import Logger
 from tether.todos import (
     Todo,
     TodoMemory,

@@ -25,7 +25,7 @@ from snektest import (
 )
 
 from tether.events import HubEvent, InvalidateEvent
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.triggers import (
     InvalidTriggerSpecError,
     ScheduledTrigger,

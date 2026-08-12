@@ -31,10 +31,10 @@ from pydantic import UUID7, BaseModel
 from snekql.sqlite import Database, Fetched
 
 from tether.embeddings import Embedder, Vector, vector_from_bytes
-from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.memory_capabilities import MemoryRead
 from tether.search_meta import SearchMetaService
+from tether.structured_logging import Logger
 
 DEDUP_THRESHOLD = 0.6
 """Token-overlap ratio above which two loose Memories are near-duplicates.

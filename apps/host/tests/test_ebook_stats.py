@@ -37,7 +37,7 @@ from tether.ebook_stats import (
     create_ebook_stats_schema,
 )
 from tether.kosync import EbookDocument, create_kosync_schema
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 
 def test_logger() -> Logger:

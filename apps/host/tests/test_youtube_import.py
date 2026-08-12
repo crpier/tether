@@ -25,7 +25,7 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.youtube import IngestedVideo, create_youtube_schema
 from tether.youtube_import import (
     BackupLikedVideo,

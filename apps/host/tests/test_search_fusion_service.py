@@ -48,7 +48,6 @@ from tether.bucket_items import (
     create_bucket_item_schema,
 )
 from tether.embeddings import FakeEmbedder
-from tether.logging import Logger
 from tether.memories import (
     EmptySearchQueryError,
     KnowledgeBaseService,
@@ -61,6 +60,7 @@ from tether.reconciler import SearchReconciler
 from tether.search_fusion import FusedHit, InvalidSearchWindowError, SearchFusionService
 from tether.search_index import SearchCandidate, SearchDocument
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.structured_logging import Logger
 
 _DIM = 16
 

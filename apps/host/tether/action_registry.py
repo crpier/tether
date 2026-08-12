@@ -35,7 +35,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from tether.gmail import GmailClient
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 type ActionOutcome = Literal["succeeded", "failed", "skipped"]
 """The terminal result of running one action's executor."""

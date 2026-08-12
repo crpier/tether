@@ -19,7 +19,6 @@ from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
 from tether.memory_capabilities import MemoryRead
 from tether.panels import (
     EXECUTE_DEFAULT_LIMIT,
@@ -31,6 +30,7 @@ from tether.panels import (
     PanelSpec,
     SyntheticPanel,
 )
+from tether.structured_logging import get_request_logger
 
 PANEL_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((PanelNotFoundError,), "not_found", 404, detail="panel not found"),

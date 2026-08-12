@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 _TABLE = "transcript_chunks"
 """The single table name inside the transcript index dataset."""

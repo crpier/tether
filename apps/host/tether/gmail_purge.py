@@ -48,8 +48,8 @@ from tether.gmail import (
     GmailTriageError,
     GmailTriageRunner,
 )
-from tether.logging import Logger
 from tether.proposals import ActionDraft, ProposalDraft, ProposalService
+from tether.structured_logging import Logger
 
 DEFAULT_PURGE_CHUNK_SIZE = 10
 """How many backlog messages are triaged per sweep chunk (and per proposal), by

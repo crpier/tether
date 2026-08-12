@@ -29,7 +29,6 @@ from snektest import (
 )
 
 from tether.agent_trace import AgentTraceRecorder, RunKind
-from tether.logging import Logger
 from tether.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from tether.scheduler import (
     EphemeralPiConfig,
@@ -40,6 +39,7 @@ from tether.scheduler import (
     TriggerDispatcher,
     TriggerNotifier,
 )
+from tether.structured_logging import Logger
 from tether.system_prompt import TASK_SYSTEM_PROMPT
 from tether.tools import SessionRegistry
 from tether.triggers import (

@@ -64,9 +64,9 @@ if TYPE_CHECKING:
     from snekql.sqlite import Database, Fetched, Transaction
 
     from tether.embeddings import Embedder, Vector
-    from tether.logging import Logger
     from tether.search_index import SearchCandidate
     from tether.search_meta import SearchMetaService
+    from tether.structured_logging import Logger
 
 
 class EmbedderIndexMismatchError(Exception):

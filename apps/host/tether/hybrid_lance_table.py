@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from lancedb.db import AsyncConnection
     from lancedb.table import AsyncTable
 
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 # Marker lance stamps on the "file a bug report" class of internal errors — the
 # recoverable-by-rewrite failures (e.g. a fragment whose compaction batch-decode

@@ -18,7 +18,7 @@ from pydantic import AwareDatetime, BaseModel, PositiveInt
 from starlette.requests import Request
 
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
+from tether.structured_logging import get_request_logger
 from tether.triggers import (
     Fetched,
     InvalidTriggerSpecError,

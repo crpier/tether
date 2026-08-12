@@ -39,7 +39,7 @@ from yaml import safe_dump, safe_load
 
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

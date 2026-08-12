@@ -22,7 +22,7 @@ from opentelemetry import trace
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.youtube import (
     DailyQuota,
     InMemoryYouTubeApi,

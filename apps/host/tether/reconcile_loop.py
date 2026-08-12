@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 
 async def run_reconcile_loop(

@@ -55,8 +55,8 @@ from snekql.sqlite import (
 
 from tether.db_retry import run_in_transaction
 from tether.kosync import EbookDocument, EbookProgressEvent
-from tether.logging import Logger
 from tether.memories import Memory, MemoryConflictError, MemoryProvenance, MemoryService
+from tether.structured_logging import Logger
 
 _EXPORT_PATH = "/api/v2/export/"
 _AUTH_PATH = "/api/v2/auth/"

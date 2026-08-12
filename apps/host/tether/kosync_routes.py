@@ -35,8 +35,8 @@ from tether import kosync_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.kosync import KosyncService, ProgressUpdate
 from tether.kosync_capabilities import KOSYNC_ERRORS, EbookDocumentRead
-from tether.logging import get_request_logger
 from tether.openapi import EndpointRoute, endpoint
+from tether.structured_logging import get_request_logger
 
 _CODE_UNAUTHORIZED = 2001
 _CODE_INVALID_REQUEST = 2003

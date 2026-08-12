@@ -24,7 +24,6 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
@@ -41,6 +40,7 @@ from tether.panels import (
     create_panel_schema,
 )
 from tether.search_index import SearchCandidate
+from tether.structured_logging import Logger
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.panels_service")
 
