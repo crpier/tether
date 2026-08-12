@@ -32,7 +32,6 @@ from snekql.sqlite import Fetched
 
 from tether.agent_trace import AgentTraceRecorder, RunKind, record_run
 from tether.events import EventPublisher, NotifyEvent
-from tether.logging import Logger
 from tether.model_selection import AgentModelConfig
 from tether.notifications import NotificationDraft
 from tether.pi_runtime import (
@@ -44,6 +43,7 @@ from tether.pi_runtime import (
     PiSpawnRequest,
     spawn_pi_runtime,
 )
+from tether.structured_logging import Logger
 from tether.system_prompt import system_prompt_for
 from tether.tools import SessionRegistry
 from tether.triggers import (

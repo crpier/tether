@@ -32,7 +32,6 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
@@ -45,6 +44,7 @@ from tether.readwise import (
     ReadwiseSyncService,
     create_readwise_schema,
 )
+from tether.structured_logging import Logger
 
 
 def noop_tracer() -> Tracer:

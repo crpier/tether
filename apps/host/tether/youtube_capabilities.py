@@ -17,7 +17,7 @@ from pydantic import UUID7, BaseModel
 from starlette.requests import Request
 
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
+from tether.structured_logging import get_request_logger
 from tether.youtube import (
     EmptyYouTubeSearchQueryError,
     Fetched,

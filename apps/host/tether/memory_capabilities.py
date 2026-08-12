@@ -19,7 +19,6 @@ from pydantic import UUID7, BaseModel, PositiveInt, StringConstraints
 from starlette.requests import Request
 
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
 from tether.memories import (
     EmptySearchQueryError,
     FacetOverviewEntry,
@@ -30,6 +29,7 @@ from tether.memories import (
     MemoryProvenance,
     MemoryState,
 )
+from tether.structured_logging import get_request_logger
 
 type MemoryContent = Annotated[
     str,

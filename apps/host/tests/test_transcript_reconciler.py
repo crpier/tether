@@ -21,7 +21,7 @@ from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
 from tether.embeddings import Embedder, FakeEmbedder, Vector
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.transcript_index import ChunkDocument
 from tether.transcript_reconciler import TranscriptReconciler
 from tether.youtube import IngestedVideo, create_youtube_schema

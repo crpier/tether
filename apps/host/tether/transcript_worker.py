@@ -27,7 +27,7 @@ from snekql.sqlite import Database, Fetched, select
 
 from tether.escalating_pause import PauseState, PersistentEscalatingPause
 from tether.events import EventPublisher, NullEventPublisher
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.transcript_library import reset_library_pass_budget
 from tether.youtube import (
     IngestedVideo,

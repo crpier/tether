@@ -32,7 +32,6 @@ from tether.action_registry import (
     build_action_registry,
 )
 from tether.events import HubEvent, InvalidateEvent
-from tether.logging import Logger
 from tether.notifications import NotificationService, create_notification_schema
 from tether.proposals import (
     ActionDraft,
@@ -44,6 +43,7 @@ from tether.proposals import (
     ProposalService,
     create_proposal_schema,
 )
+from tether.structured_logging import Logger
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.proposals_service")
 NOW = datetime(2030, 1, 1, 9, 0, tzinfo=UTC)

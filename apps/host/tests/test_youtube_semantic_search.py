@@ -17,7 +17,7 @@ from opentelemetry import trace
 from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, fixture, load_fixture, test
 
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.transcript_search import VideoMatch
 from tether.youtube import (
     DailyQuota,

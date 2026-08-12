@@ -28,7 +28,6 @@ from snektest import (
 )
 
 from tether.embeddings import Embedder, Vector, vector_to_bytes
-from tether.logging import Logger
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
@@ -38,6 +37,7 @@ from tether.memories import (
 )
 from tether.review import EmbeddingBatchMismatchError, ReviewDigest, ReviewService
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.structured_logging import Logger
 
 
 def noop_tracer() -> Tracer:

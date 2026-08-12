@@ -3,7 +3,7 @@
 Tether is an LLM-agent system: when the agent misbehaves you need to see *what
 it did and why* — the loop iterations, the tool calls it made, the arguments,
 and the response envelopes (`tether.tools.ToolEnvelope`) coming back. Structured
-logging (`tether.logging`) already records individual lines; this module builds
+logging (`tether.structured_logging`) already records individual lines; this module builds
 a coherent **trace view over a single agent run** on top of it.
 
 An *agent run* is one prompt driven to termination: one user/scheduled prompt,

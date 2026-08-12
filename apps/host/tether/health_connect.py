@@ -30,8 +30,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.logging import Logger
 from tether.openapi import EndpointRoute, endpoint
+from tether.structured_logging import Logger
 
 HealthRecordType = Literal[
     "active_calories_burned",

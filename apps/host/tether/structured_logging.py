@@ -1,13 +1,19 @@
-"""Structured logging setup for Starlette servers.
+"""Structured logging for Starlette and FastAPI applications.
+
+Required packages: `starlette` and `structlog`. Install `opentelemetry-api` only
+when trace/span correlation is wanted.
+
+After copying this file as `structured_logging.py`, configure logging before the
+application starts handling requests. The middleware requires
+`app.state.logger`:
 
 ```python
-from starlette.applications import Starlette
+from fastapi import FastAPI
 
-from tether.logging import ContextLoggerMiddleware, configure_logging
+from structured_logging import ContextLoggerMiddleware, configure_logging
 
-logger = configure_logging()
-app = Starlette()
-app.state.logger = logger
+app = FastAPI()
+app.state.logger = configure_logging()
 app.add_middleware(ContextLoggerMiddleware)
 ```
 """
@@ -17,58 +23,44 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from collections.abc import Callable, Collection
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
 import structlog
-from opentelemetry import trace
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog.typing import EventDict, WrappedLogger
 
 type Logger = structlog.stdlib.BoundLogger
+
+try:
+    from opentelemetry.trace import get_current_span
+except ModuleNotFoundError:
+    _get_current_span: Callable[[], Any] | None = None
+else:
+    _get_current_span = get_current_span
 
 
 QUIET_LOGGERS = (
     "watchfiles.main",
     "uvicorn",
     "uvicorn.error",
-    "aiosqlite",
-    "snekql",
-    "httpcore2",
 )
-"""Server loggers that share the root handler but emit warnings only.
+"""Common development-server loggers that emit warnings only by default.
 
-The `uvicorn`/`uvicorn.error` pair is quieted rather than silenced: `serve()`
-runs uvicorn with `log_config=None`, so uvicorn configures no logging of its
-own. Fully silencing these would discard uvicorn's ERROR-level output —
-including the lifespan *startup-failure* traceback it logs on `uvicorn.error`
-with `exc_info` — leaving a misconfigured deploy to crash-loop (`restart:` +
-exit 3) with nothing in the logs. They must stay quiet *and* propagate: the
-parent `uvicorn` keeps `propagate=True` so a child `uvicorn.error` record can
-reach the structlog root handler instead of stdlib's last-resort stderr sink.
-At WARNING the routine INFO lifecycle chatter ("Application startup complete.")
-stays suppressed while genuine failures surface through structlog.
-
-`aiosqlite` and `snekql` are quieted for a different reason: at DEBUG they emit
-a line per cursor/commit/SQL statement (and child loggers `snekql.runtime`,
-`snekql.sqlite.pool` inherit the parent level), which drowns the app's own DEBUG
-logs. WARNING keeps their genuine errors while dropping the per-query noise.
-
-`httpcore2` is quieted for the same reason: at DEBUG its connection backend
-(`httpcore2.connection`, `httpcore2.http11` children inherit the level) logs a
-line per TCP connect / TLS handshake / request-header/body frame for every
-outbound HTTP call, which buries the app's own logs. WARNING drops that spam;
-the `httpx2` request/response summary (one INFO line per call, e.g. the Supadata
-transcript fetch and its status) is a separate logger and stays."""
+The `uvicorn`/`uvicorn.error` pair remains enabled and propagates to the root
+handler. This suppresses routine lifecycle chatter while retaining startup
+failure tracebacks. Applications can replace this collection through
+`configure_logging(quiet_loggers=...)`.
+"""
 
 SILENCED_LOGGERS = ("uvicorn.access",)
 """Uvicorn loggers that are fully disabled because uvicorn owns its formatting."""
 _REQUEST_LOGGER: ContextVar[Logger | None] = ContextVar(
-    "tether_request_logger",
+    "request_logger",
     default=None,
 )
 
@@ -139,7 +131,10 @@ def _add_trace_context(
     event_dict: EventDict,
 ) -> EventDict:
     """Attach active span ids so logs can be correlated with traces."""
-    span_context = trace.get_current_span().get_span_context()
+    if _get_current_span is None:
+        return event_dict
+
+    span_context = _get_current_span().get_span_context()
     if span_context.is_valid:
         event_dict["trace_id"] = f"{span_context.trace_id:032x}"
         event_dict["span_id"] = f"{span_context.span_id:016x}"
@@ -173,10 +168,7 @@ def _shared_processors(*, format_exceptions: bool) -> list[structlog.types.Proce
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(
-            fmt="%Y-%m-%d %H:%M:%S",
-            key="timestamp",
-        ),
+        structlog.processors.TimeStamper(fmt="iso", utc=True, key="timestamp"),
         structlog.processors.StackInfoRenderer(),
     ]
     if format_exceptions:
@@ -192,16 +184,20 @@ def _shared_processors(*, format_exceptions: bool) -> list[structlog.types.Proce
     return processors
 
 
-def _configure_quiet_loggers() -> None:
-    """Route non-uvicorn logs through root and disable uvicorn output."""
-    for logger_name in QUIET_LOGGERS:
+def _configure_quiet_loggers(
+    *,
+    quiet_loggers: Collection[str],
+    silenced_loggers: Collection[str],
+) -> None:
+    """Route quiet loggers through root and fully disable silenced loggers."""
+    for logger_name in quiet_loggers:
         logger = logging.getLogger(logger_name)
         _clear_handlers(logger)
         logger.setLevel(logging.WARNING)
         logger.propagate = True
         logger.disabled = False
 
-    for logger_name in SILENCED_LOGGERS:
+    for logger_name in silenced_loggers:
         logger = logging.getLogger(logger_name)
         _clear_handlers(logger)
         logger.propagate = False
@@ -230,6 +226,8 @@ def configure_logging(
     *,
     force_tty: bool | None = None,
     log_file: str | Path | None = None,
+    quiet_loggers: Collection[str] = QUIET_LOGGERS,
+    silenced_loggers: Collection[str] = SILENCED_LOGGERS,
 ) -> Logger:
     """Configure structlog and stdlib logging for a Starlette process.
 
@@ -238,13 +236,13 @@ def configure_logging(
     logger.info("Server starting")
     ```
 
-    When `log_file` is given, logs are *also* written there as one JSON object
-    per line, regardless of the console's TTY state. The dev loop uses this to
-    keep the colorized terminal output while persisting a machine-parseable
-    record an agent can read back when debugging a reported bug (see
-    `docs/development.md`). The file is opened in append mode, so a process
-    reload keeps the running session's history; `just dev` truncates it once at
-    launch. The directory is created if missing.
+    This function takes ownership of process-wide logging: it removes and
+    closes existing root handlers, installs its own handlers, and reconfigures
+    structlog. Call it once during process startup, not from a reusable library.
+
+    When `log_file` is given, logs are also appended there as one JSON object
+    per line, regardless of the console's TTY state. Its parent directory is
+    created when missing.
     """
     is_tty = sys.stdout.isatty() if force_tty is None else force_tty
     console_renderer: structlog.types.Processor
@@ -256,8 +254,7 @@ def configure_logging(
     # With a file sink the exceptions must be pre-rendered into the `exception`
     # string so the JSON file carries the traceback; a non-TTY console already
     # needs this too. The only cost is that a TTY console then prints that
-    # pre-rendered string instead of `ConsoleRenderer`'s colorized traceback —
-    # an acceptable trade in dev, where the file is the traceback of record.
+    # pre-rendered string instead of `ConsoleRenderer`'s colorized traceback.
     format_exceptions = (not is_tty) or log_file is not None
     processors = _shared_processors(format_exceptions=format_exceptions)
     structlog.configure(
@@ -296,7 +293,10 @@ def configure_logging(
     for handler in handlers:
         root_logger.addHandler(handler)
     root_logger.setLevel(log_level)
-    _configure_quiet_loggers()
+    _configure_quiet_loggers(
+        quiet_loggers=quiet_loggers,
+        silenced_loggers=silenced_loggers,
+    )
     return cast("Logger", structlog.wrap_logger(logging.getLogger()))
 
 
@@ -327,51 +327,89 @@ def get_request_logger(request: Request) -> Logger:
     return cast("Logger", logger)
 
 
-class ContextLoggerMiddleware(BaseHTTPMiddleware):
-    """Bind request metadata to logs for each Starlette request.
+class ContextLoggerMiddleware:
+    """Bind request metadata to logs for each Starlette HTTP request.
+
+    The middleware wraps the ASGI send lifecycle directly, so completion timing
+    includes streaming the response body and streaming failures are logged.
+    `client_ip` is the ASGI peer address; forwarded headers are not trusted or
+    interpreted. Disable sensitive fields when they are unnecessary:
 
     ```python
     app.state.logger = configure_logging()
-    app.add_middleware(ContextLoggerMiddleware)
+    app.add_middleware(
+        ContextLoggerMiddleware,
+        include_client_ip=False,
+        include_user_agent=False,
+    )
     ```
     """
 
-    def __init__(self, app: Any) -> None:
-        super().__init__(app)
-
-    async def dispatch(
+    def __init__(
         self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
+        app: ASGIApp,
+        *,
+        include_client_ip: bool = True,
+        include_user_agent: bool = True,
+    ) -> None:
+        self.app: ASGIApp = app
+        self.include_client_ip: bool = include_client_ip
+        self.include_user_agent: bool = include_user_agent
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Log one HTTP request while passing other ASGI scopes through."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
         base_logger = cast("Logger", request.app.state.logger)
-        request_logger = base_logger.bind(
-            request_id=str(uuid4()),
-            method=request.method,
-            path=request.url.path,
-            client_ip=request.client.host if request.client is not None else None,
-            user_agent=request.headers.get("user-agent"),
-        )
-        request.state.logger = request_logger
-        token = _REQUEST_LOGGER.set(request_logger)
+        request_context: dict[str, object] = {
+            "request_id": str(uuid4()),
+            "method": request.method,
+            "path": request.url.path,
+        }
+        if self.include_client_ip:
+            request_context["client_ip"] = (
+                request.client.host if request.client is not None else None
+            )
+        if self.include_user_agent:
+            request_context["user_agent"] = request.headers.get("user-agent")
+
+        status_code: int | None = None
+
+        async def send_with_status(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        context_tokens = structlog.contextvars.bind_contextvars(**request_context)
+        request.state.logger = base_logger
+        token = _REQUEST_LOGGER.set(base_logger)
         started_at = time.perf_counter()
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, send_with_status)
         except Exception:
-            request_logger.exception(
+            base_logger.exception(
                 "Request failed",
                 duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
             )
             raise
         else:
-            request_logger.debug(
+            base_logger.debug(
                 "Request completed",
-                status_code=response.status_code,
+                status_code=status_code,
                 duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
             )
-            return response
         finally:
             _REQUEST_LOGGER.reset(token)
+            structlog.contextvars.reset_contextvars(**context_tokens)
 
 
 __all__ = [

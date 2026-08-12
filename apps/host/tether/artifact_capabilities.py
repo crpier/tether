@@ -30,7 +30,7 @@ from tether.artifacts import (
     JsonValue,
 )
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
+from tether.structured_logging import get_request_logger
 
 ARTIFACT_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((ArtifactNotFoundError,), "not_found", 404, detail="artifact not found"),

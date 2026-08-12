@@ -49,7 +49,6 @@ from snektest import (
 from structlog.testing import capture_logs
 
 from tether.embeddings import FakeEmbedder
-from tether.logging import Logger
 from tether.memories import (
     EmptyMemoryContentError,
     EmptySearchQueryError,
@@ -66,6 +65,7 @@ from tether.memories import (
 from tether.reconciler import SearchReconciler
 from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.structured_logging import Logger
 
 
 def noop_tracer() -> Tracer:

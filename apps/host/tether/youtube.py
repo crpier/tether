@@ -63,7 +63,7 @@ from tether.escalating_pause import (
     load_pause_state,
 )
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 # `Clock`, `DailyQuota`, `SystemClock`, `YouTubeApiGate` and `YouTubeApiGateConfig`
 # are not otherwise referenced in this module; the `as`-aliases are explicit

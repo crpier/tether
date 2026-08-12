@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from snekql.sqlite import Database
 
     from tether.embeddings import Embedder
-    from tether.logging import Logger
+    from tether.structured_logging import Logger
 
 # Transformer inference memory grows steeply with batch size because every
 # document is padded to the longest sequence. Keep cold corpus rebuilds within

@@ -19,7 +19,6 @@ from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
 from tether.proposals import (
     ActionDisposition,
     ActionOutcome,
@@ -38,6 +37,7 @@ from tether.proposals import (
     ProposalView,
     RejectionOutcome,
 )
+from tether.structured_logging import get_request_logger
 
 PROPOSAL_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((ProposalNotFoundError,), "not_found", 404, detail="proposal not found"),

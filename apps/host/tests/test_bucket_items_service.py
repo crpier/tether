@@ -54,8 +54,8 @@ from tether.bucket_items import (
     derive_state,
 )
 from tether.embeddings import FakeEmbedder
-from tether.logging import Logger
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.structured_logging import Logger
 
 
 def noop_tracer() -> Tracer:

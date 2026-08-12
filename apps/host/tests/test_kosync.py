@@ -36,13 +36,13 @@ from tether.kosync import (
     create_kosync_schema,
     ebook_hash_for_filename,
 )
-from tether.logging import Logger
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
     MemoryService,
     create_memory_schema,
 )
+from tether.structured_logging import Logger
 
 _FIXED_NOW = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
 

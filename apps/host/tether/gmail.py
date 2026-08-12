@@ -66,8 +66,8 @@ from snekql.sqlite import (
 
 from tether.chat_ws import local_timezone_name
 from tether.db_retry import run_in_transaction
-from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
+from tether.structured_logging import Logger
 from tether.todos import TodoService
 from tether.triggers import TriggerService, TriggerSpec
 

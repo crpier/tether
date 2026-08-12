@@ -26,7 +26,7 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.youtube import (
     DailyQuota,
     EmptyYouTubeSearchQueryError,

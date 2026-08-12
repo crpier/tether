@@ -2,10 +2,12 @@
 
 import json
 import logging
+import subprocess
 import sys
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 from typing import TextIO, cast
@@ -25,11 +27,12 @@ from snektest import (
 )
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from tether.logging import (
+from tether.model_selection import AgentModelCatalog, ModelSelectionConfigError
+from tether.structured_logging import (
     QUIET_LOGGERS,
     SILENCED_LOGGERS,
     ContextLoggerMiddleware,
@@ -40,7 +43,6 @@ from tether.logging import (
     get_bound_request_logger,
     get_request_logger,
 )
-from tether.model_selection import AgentModelCatalog, ModelSelectionConfigError
 
 
 class CapturedStdout(StringIO):
@@ -56,7 +58,11 @@ class CapturedStdout(StringIO):
 
 
 @contextmanager
-def captured_logging(*, is_tty: bool) -> Generator[CapturedStdout]:
+def captured_logging(
+    *,
+    is_tty: bool,
+    logger_names: tuple[str, ...] = (),
+) -> Generator[CapturedStdout]:
     """Isolate global logging state while exercising configuration."""
     original_stdout = sys.stdout
     root_logger = logging.getLogger()
@@ -69,7 +75,7 @@ def captured_logging(*, is_tty: bool) -> Generator[CapturedStdout]:
             logging.getLogger(name).disabled,
             list(logging.getLogger(name).handlers),
         )
-        for name in (*QUIET_LOGGERS, *SILENCED_LOGGERS)
+        for name in (*QUIET_LOGGERS, *SILENCED_LOGGERS, *logger_names)
     }
     stream = CapturedStdout(is_tty=is_tty)
     sys.stdout = stream
@@ -120,6 +126,33 @@ def json_log_for_event(stream: CapturedStdout, event: str) -> dict[str, object]:
         for line in stream.getvalue().splitlines()
         if (parsed := json.loads(line))["event"] == event
     )
+
+
+@test()
+def structured_logging_imports_without_opentelemetry() -> None:
+    """Tracing support remains optional for applications that do not use it."""
+    import_script = """
+import builtins
+
+original_import = builtins.__import__
+def import_without_opentelemetry(name, *args, **kwargs):
+    if name.startswith("opentelemetry"):
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = import_without_opentelemetry
+import tether.structured_logging
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", import_script],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert_eq(completed.returncode, 0)
+    assert_eq(completed.stderr, "")
 
 
 @test()
@@ -218,6 +251,17 @@ def configure_logging_emits_json_when_stdout_is_not_a_tty() -> None:
     assert_eq(logged["level"], "info")
     assert_eq(logged["logger"], "third.party")
     assert_in("timestamp", logged)
+
+
+@test()
+def configure_logging_emits_utc_iso_8601_timestamps() -> None:
+    """Structured timestamps identify UTC unambiguously."""
+    with captured_logging(is_tty=False) as stream:
+        configure_logging(force_tty=False)
+        structlog.get_logger("example").info("Saved")
+
+    logged_at = datetime.fromisoformat(str(first_json_log(stream)["timestamp"]))
+    assert_is(logged_at.tzinfo, UTC)
 
 
 @test()
@@ -333,6 +377,41 @@ def configure_logging_quiets_noisy_loggers() -> None:
 
 
 @test()
+def configure_logging_accepts_custom_quiet_loggers() -> None:
+    """Applications can choose which dependency loggers emit warnings only."""
+    with captured_logging(
+        is_tty=False,
+        logger_names=("example.dependency",),
+    ):
+        configure_logging(
+            force_tty=False,
+            quiet_loggers=("example.dependency",),
+        )
+
+        dependency_logger = logging.getLogger("example.dependency")
+        assert_eq(dependency_logger.level, logging.WARNING)
+        assert_true(dependency_logger.propagate)
+        assert_false(dependency_logger.disabled)
+
+
+@test()
+def configure_logging_accepts_custom_silenced_loggers() -> None:
+    """Applications can choose which dependency loggers emit nothing."""
+    with captured_logging(
+        is_tty=False,
+        logger_names=("example.noisy",),
+    ):
+        configure_logging(
+            force_tty=False,
+            silenced_loggers=("example.noisy",),
+        )
+
+        noisy_logger = logging.getLogger("example.noisy")
+        assert_false(noisy_logger.propagate)
+        assert_true(noisy_logger.disabled)
+
+
+@test()
 def configure_logging_silences_uvicorn_loggers() -> None:
     """Uvicorn must not emit its own routine lifecycle or access logs.
 
@@ -444,6 +523,109 @@ def context_logger_middleware_logs_completed_requests() -> None:
     assert_in("duration_ms", logged)
     assert_in("request_id", logged)
     assert_eq(logged["user_agent"], "snektest")
+
+
+@test()
+def context_logger_middleware_logs_streaming_failures() -> None:
+    """Exceptions raised while sending a response are logged as failures."""
+
+    async def broken_body() -> AsyncGenerator[bytes]:
+        yield b"partial"
+        raise RuntimeError("stream failed")
+
+    async def read(_request: Request) -> Response:
+        return StreamingResponse(broken_body())
+
+    with captured_logging(is_tty=False) as stream:
+        app = Starlette(routes=[Route("/stream", read)])
+        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
+        with TestClient(app) as client, assert_raises(RuntimeError):
+            client.get("/stream")
+
+    events = [json.loads(line)["event"] for line in stream.getvalue().splitlines()]
+    assert_in("Request failed", events)
+    assert_false("Request completed" in events)
+
+
+@test()
+def context_logger_middleware_logs_completion_after_streaming_finishes() -> None:
+    """Request duration covers delivery of the complete streaming response."""
+
+    async def body() -> AsyncGenerator[bytes]:
+        structlog.get_logger("example").info("Stream yielded")
+        yield b"done"
+
+    async def read(_request: Request) -> Response:
+        return StreamingResponse(body())
+
+    with captured_logging(is_tty=False) as stream:
+        app = Starlette(routes=[Route("/stream", read)])
+        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
+        with TestClient(app) as client:
+            response = client.get("/stream")
+
+    events = [json.loads(line)["event"] for line in stream.getvalue().splitlines()]
+    assert_eq(response.content, b"done")
+    assert_true(events.index("Stream yielded") < events.index("Request completed"))
+
+
+@test()
+def context_logger_middleware_places_request_context_after_event_fields() -> None:
+    """Request metadata follows call-site details in structured output."""
+
+    async def read(_request: Request) -> Response:
+        return JSONResponse({"ok": True})
+
+    with captured_logging(is_tty=False) as stream:
+        app = Starlette(routes=[Route("/ok", read)])
+        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.add_middleware(ContextLoggerMiddleware)
+        with TestClient(app) as client:
+            client.get("/ok")
+
+    logged = json_log_for_event(stream, "Request completed")
+    assert_eq(
+        list(logged),
+        [
+            "timestamp",
+            "level",
+            "logger",
+            "event",
+            "duration_ms",
+            "status_code",
+            "client_ip",
+            "method",
+            "path",
+            "request_id",
+            "user_agent",
+        ],
+    )
+
+
+@test()
+def context_logger_middleware_can_exclude_sensitive_request_fields() -> None:
+    """Applications can omit client addresses and user-agent values."""
+
+    async def read(_request: Request) -> Response:
+        return JSONResponse({"ok": True})
+
+    with captured_logging(is_tty=False) as stream:
+        app = Starlette(routes=[Route("/ok", read)])
+        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.add_middleware(
+            ContextLoggerMiddleware,
+            include_client_ip=False,
+            include_user_agent=False,
+        )
+        with TestClient(app) as client:
+            response = client.get("/ok", headers={"user-agent": "snektest"})
+
+    logged = json_log_for_event(stream, "Request completed")
+    assert_eq(response.status_code, 200)
+    assert_false("client_ip" in logged)
+    assert_false("user_agent" in logged)
 
 
 @test()

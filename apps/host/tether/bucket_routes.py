@@ -40,8 +40,8 @@ from tether.bucket_items import (
     PurchaseDecision,
 )
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.logging import get_request_logger
 from tether.openapi import EndpointRoute, endpoint
+from tether.structured_logging import get_request_logger
 from tether.triage import TriageReport
 
 type IntentContext = Annotated[

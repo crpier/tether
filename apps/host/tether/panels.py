@@ -49,8 +49,8 @@ from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.logging import Logger
 from tether.memories import Memory, MemoryService
+from tether.structured_logging import Logger
 
 type PanelRenderKind = Literal["table", "vega-lite"]
 """How a panel's results render: a Tether-styled table, or a stored Vega-Lite

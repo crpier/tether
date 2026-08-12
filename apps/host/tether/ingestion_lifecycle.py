@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 
 class IngestionBootOutcome(StrEnum):

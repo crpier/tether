@@ -58,8 +58,8 @@ from tether.bucket_item_reconciler import (
 )
 from tether.bucket_items import BucketItem, create_bucket_item_schema
 from tether.embeddings import Embedder, FakeEmbedder, Vector
-from tether.logging import Logger
 from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.structured_logging import Logger
 
 _DIM = 16
 

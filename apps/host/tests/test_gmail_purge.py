@@ -34,8 +34,8 @@ from tether.gmail import (
     create_gmail_schema,
 )
 from tether.gmail_purge import GmailPurgeSweepService
-from tether.logging import Logger
 from tether.proposals import ProposalService, create_proposal_schema
+from tether.structured_logging import Logger
 
 
 def noop_tracer() -> Tracer:

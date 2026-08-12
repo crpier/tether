@@ -37,7 +37,7 @@ from tether.bucket_items import (
     derive_state,
 )
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.logging import get_request_logger
+from tether.structured_logging import get_request_logger
 
 BUCKET_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule(

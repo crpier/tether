@@ -45,7 +45,7 @@ from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]

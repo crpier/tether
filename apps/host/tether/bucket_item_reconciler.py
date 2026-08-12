@@ -62,8 +62,8 @@ if TYPE_CHECKING:
 
     from tether.bucket_item_index import BucketItemCandidate
     from tether.embeddings import Embedder
-    from tether.logging import Logger
     from tether.search_meta import SearchMetaService
+    from tether.structured_logging import Logger
 
 
 class EmbedderIndexMismatchError(Exception):

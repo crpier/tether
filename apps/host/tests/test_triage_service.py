@@ -34,7 +34,7 @@ from tether.bucket_items import (
     PurchaseDecision,
     create_bucket_item_schema,
 )
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.triage import (
     STALE_AFTER_DAYS,
     DecayedIntentContext,

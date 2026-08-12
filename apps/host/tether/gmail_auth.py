@@ -27,7 +27,7 @@ from tether.gmail_oauth import (
     GMAIL_READONLY_SCOPE,
     HttpGmailTransport,
 )
-from tether.logging import Logger
+from tether.structured_logging import Logger
 from tether.youtube_oauth import OAuthConfig, YouTubeAuthError, run_auth_flow
 
 _VERIFY_COUNT = 5

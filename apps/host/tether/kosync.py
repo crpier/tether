@@ -57,8 +57,8 @@ from snekql.sqlite import (
 )
 
 from tether.db_retry import run_in_transaction
-from tether.logging import Logger
 from tether.memories import MemoryProvenance, MemoryService
+from tether.structured_logging import Logger
 
 FINISHED_THRESHOLD = 0.98
 """Reading fraction at or beyond which a document is treated as finished.

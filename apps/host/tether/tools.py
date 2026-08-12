@@ -47,7 +47,6 @@ from tether.capabilities import (
     catchable_exceptions,
     match_rule,
 )
-from tether.logging import get_request_logger
 from tether.memories import MemoryProvenance, MemoryState
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent
 from tether.memory_capabilities import (
@@ -80,6 +79,7 @@ from tether.memory_capabilities import (
 from tether.search_capabilities import SEARCH_ERRORS
 from tether.search_capabilities import search as search_fused
 from tether.search_fusion import SourceType
+from tether.structured_logging import get_request_logger
 from tether.youtube import CacheMeta, QuotaMeta
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"

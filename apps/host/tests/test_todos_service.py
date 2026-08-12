@@ -25,12 +25,12 @@ from snektest import (
     test,
 )
 
-from tether.logging import Logger
 from tether.notifications import (
     NotificationDraft,
     NotificationService,
     create_notification_schema,
 )
+from tether.structured_logging import Logger
 from tether.todos import (
     InvalidTodoError,
     TodoConflictError,

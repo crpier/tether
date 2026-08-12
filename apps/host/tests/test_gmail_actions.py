@@ -28,7 +28,7 @@ from tether.gmail_actions import (
     _delete,
     _label,
 )
-from tether.logging import Logger
+from tether.structured_logging import Logger
 
 
 def test_logger() -> Logger:

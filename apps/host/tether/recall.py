@@ -56,8 +56,8 @@ from snekql.sqlite import (
 
 from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.logging import Logger
 from tether.memories import Memory, MemoryProvenance, MemoryService
+from tether.structured_logging import Logger
 
 GRADUATION_REPETITIONS = 3
 """Consecutive passing repetitions after which a prompt counts as learned.

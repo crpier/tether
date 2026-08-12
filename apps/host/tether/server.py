@@ -81,7 +81,6 @@ from tether.ingestion_lifecycle import (
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth, kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
-from tether.logging import ContextLoggerMiddleware, Logger, configure_logging
 from tether.memories import (
     KnowledgeBaseService,
     MemoryService,
@@ -149,6 +148,12 @@ from tether.search_tools import (
     SearchProvider,
     TavilySearchProvider,
     internal_search_tool_routes,
+)
+from tether.structured_logging import (
+    QUIET_LOGGERS,
+    ContextLoggerMiddleware,
+    Logger,
+    configure_logging,
 )
 from tether.stt import HttpSttTransport, SttClient
 from tether.telemetry import (
@@ -1501,6 +1506,10 @@ def _wire_web_search(app: Starlette, config: AppConfig, database: Database) -> N
     app.state.search_provider = config.search_provider
 
 
+_HOST_QUIET_LOGGERS = (*QUIET_LOGGERS, "aiosqlite", "snekql", "httpcore2")
+"""Dependency loggers whose debug chatter obscures host application events."""
+
+
 def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wired gate
     *,
     config: AppConfig,
@@ -1516,7 +1525,11 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncGenerator[None]:
         """Build the Memory service for the app lifetime and close it after."""
-        app_logger = configure_logging(config.logging_level, log_file=config.log_file)
+        app_logger = configure_logging(
+            config.logging_level,
+            log_file=config.log_file,
+            quiet_loggers=_HOST_QUIET_LOGGERS,
+        )
         telemetry = configure_telemetry(telemetry_settings)
         ingestion_lifecycle = IngestionLifecycle(app_logger)
         (
@@ -2011,7 +2024,9 @@ def serve(settings: HostSettings | None = None) -> None:
     """
     configured_settings = HostSettings() if settings is None else settings
     _ = configure_logging(
-        configured_settings.logging_level, log_file=configured_settings.log_file
+        configured_settings.logging_level,
+        log_file=configured_settings.log_file,
+        quiet_loggers=_HOST_QUIET_LOGGERS,
     )
     uvicorn.run(
         "tether.server:create_app_from_environment",
