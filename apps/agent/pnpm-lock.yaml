@@ -13,9 +13,6 @@ importers:
       "@earendil-works/pi-coding-agent":
         specifier: 0.80.10
         version: 0.80.10(ws@8.21.0)(zod@4.4.3)
-      playwright:
-        specifier: ^1.62.1
-        version: 1.62.1
       typebox:
         specifier: 1.1.38
         version: 1.1.38
@@ -2177,22 +2174,6 @@ packages:
       }
     engines: { node: ">=12" }
 
-  playwright-core@1.62.1:
-    resolution:
-      {
-        integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==,
-      }
-    engines: { node: ">=20" }
-    hasBin: true
-
-  playwright@1.62.1:
-    resolution:
-      {
-        integrity: sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==,
-      }
-    engines: { node: ">=20" }
-    hasBin: true
-
   postcss@8.5.15:
     resolution:
       {
@@ -3941,14 +3922,6 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@4.0.4: {}
-
-  playwright-core@1.62.1: {}
-
-  playwright@1.62.1:
-    dependencies:
-      playwright-core: 1.62.1
-    optionalDependencies:
-      fsevents: 2.3.2
 
   postcss@8.5.15:
     dependencies:
