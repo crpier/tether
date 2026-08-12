@@ -12,9 +12,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
+from socket import AF_INET, SOCK_STREAM, socket
 from tempfile import TemporaryDirectory
 
 import structlog
+from httpx2 import AsyncClient
 from snektest import (
     assert_eq,
     assert_false,
@@ -26,6 +28,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tether import server
+from tether.model_selection import AgentModelConfig
 from tether.server import (
     AppConfig,
     HostSettings,
@@ -167,6 +170,145 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.vapid_subject, "mailto:test@example.com")
     assert_false(settings.youtube_sync_enabled)
     assert_false(settings.transcript_sync_enabled)
+
+
+@test()
+def local_dependency_profile_isolates_state_and_external_boundaries() -> None:
+    """Local startup ignores production state, credentials, and integration gates."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        youtube_token = root / "youtube-token.json"
+        gmail_token = root / "gmail-token.json"
+        _ = youtube_token.write_text("production-token")
+        _ = gmail_token.write_text("production-token")
+        settings = HostSettings(
+            app_password="test-app-password",
+            database_path=root / "production.sqlite3",
+            default_model="production",
+            dependency_profile="local",
+            ebook_statistics_db_path=str(root / "production-ebooks.sqlite3"),
+            gmail_purge_enabled=True,
+            gmail_sync_enabled=True,
+            gmail_token_path=gmail_token,
+            kb_root=root / "production-kb",
+            kosync_enabled=True,
+            kosync_username="production-user",
+            kosync_userkey="production-key",
+            local_data_root=root / "local",
+            model_allowlist=(
+                AgentModelConfig(
+                    display_name="Production model",
+                    id="production",
+                    model_id="production-model",
+                    provider="production-provider",
+                ),
+            ),
+            readwise_api_key="production-readwise-key",
+            readwise_reader_sync_enabled=True,
+            readwise_sync_enabled=True,
+            search_api_key="production-search-key",
+            session_secret="test-session-secret",
+            stt_api_key="production-stt-key",
+            supadata_api_key="production-supadata-key",
+            supadata_enabled=True,
+            transcript_sync_enabled=True,
+            vapid_private_key="production-private-key",
+            vapid_public_key="production-public-key",
+            vapid_subject="mailto:production@example.com",
+            youtube_sync_enabled=True,
+            youtube_token_path=youtube_token,
+        )
+
+        config = server._app_config_from_settings(settings)
+
+    assert_eq(config.database_path, root / "local/tether.sqlite3")
+    assert_eq(config.telemetry_database_path, root / "local/telemetry.sqlite3")
+    assert_eq(config.kb_root, root / "local/kb")
+    assert_eq(config.default_model, "local")
+    assert_eq(config.model_allowlist[0].provider, "faux")
+    assert_in("local-faux.ts", str(config.extra_extension_paths[0]))
+    assert_true(config.provider_auth_backend is not None)
+    assert_true(config.stt_client is not None)
+    assert_eq(config.search_provider, None)
+    assert_eq(config.youtube_api, None)
+    assert_false(config.youtube_sync_enabled)
+    assert_eq(config.transcript_provider, None)
+    assert_false(config.transcript_sync_enabled)
+    assert_eq(config.gmail_transport, None)
+    assert_false(config.gmail_sync_enabled)
+    assert_false(config.gmail_purge_enabled)
+    assert_eq(config.readwise_api_key, "")
+    assert_false(config.readwise_sync_enabled)
+    assert_false(config.readwise_reader_sync_enabled)
+    assert_eq(config.vapid_public_key, "")
+    assert_eq(config.ebook_statistics_db_path, "")
+    assert_false(config.kosync_enabled)
+
+
+async def _wait_for_local_service(url: str) -> None:
+    """Wait briefly for one process managed by the local development command."""
+    async with AsyncClient() as client:
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            try:
+                response = await client.get(url)
+            except Exception:
+                await asyncio.sleep(0.1)
+                continue
+            if response.status_code < 500:
+                return
+            await asyncio.sleep(0.1)
+    raise AssertionError(f"local service did not become ready: {url}")
+
+
+@test()
+async def dev_local_command_exposes_the_full_local_stack() -> None:
+    """`just dev-local` exposes both development servers over disposable state."""
+    with TemporaryDirectory() as directory:
+        ports: list[int] = []
+        for _ in range(2):
+            with socket(AF_INET, SOCK_STREAM) as listener:
+                listener.bind(("127.0.0.1", 0))
+                ports.append(listener.getsockname()[1])
+        process_environment = os.environ.copy()
+        process_environment["OPENAI_API_KEY"] = "must-not-reach-pi"
+        process_environment["TETHER_SEARCH_API_KEY"] = "must-not-reach-host"
+        process = await asyncio.create_subprocess_exec(
+            "just",
+            "dev-local",
+            str(ports[0]),
+            str(ports[1]),
+            directory,
+            cwd=__file__.rsplit("/", 4)[0],
+            env=process_environment,
+            stderr=asyncio.subprocess.STDOUT,
+            stdout=asyncio.subprocess.PIPE,
+        )
+        try:
+            await _wait_for_local_service(f"http://127.0.0.1:{ports[0]}/openapi.json")
+            await _wait_for_local_service(f"http://127.0.0.1:{ports[1]}")
+            async with AsyncClient(base_url=f"http://127.0.0.1:{ports[0]}") as client:
+                login_response = await client.post(
+                    "/api/auth/login", json={"password": "dev"}
+                )
+                transcription_response = await client.post(
+                    "/api/stt/transcriptions",
+                    files={"file": ("clip.webm", b"local-audio", "audio/webm")},
+                )
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    _ = await asyncio.wait_for(process.wait(), timeout=4)
+                except TimeoutError:
+                    process.kill()
+                    _ = await process.wait()
+
+        _ = await process.stdout.read() if process.stdout is not None else b""
+        assert_true(process.returncode is not None)
+        assert_eq(login_response.status_code, 204)
+        assert_eq(transcription_response.json(), {"transcript": "Local transcription."})
+        assert_true((Path(directory) / "tether.sqlite3").exists())
 
 
 @test()

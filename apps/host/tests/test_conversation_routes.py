@@ -22,8 +22,10 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tether import server
 from tether.chat_ws import _prompt_with_time_context, local_timezone_name
 from tether.conversations import ConversationService, Message, MessageDraft
+from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
 from tether.pi_runtime import (
     AgentEnded,
@@ -37,7 +39,7 @@ from tether.pi_runtime import (
     ToolStarted,
     TurnEvent,
 )
-from tether.server import AppConfig, create_app
+from tether.server import AppConfig, HostSettings, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import TOOL_AUTH_HEADER
 
@@ -720,6 +722,55 @@ async def _backdate_transcript(
             .set(Message.created_at.to(stale))
             .where(Message.conversation_id.eq(conversation_id))
         )
+
+
+@test()
+def local_dependency_profile_returns_deterministic_chat_without_credentials() -> None:
+    """The composed local host drives a real pi turn through the Faux provider."""
+    with TemporaryDirectory() as directory:
+        local_root = Path(directory) / "local"
+        config = server._app_config_from_settings(
+            HostSettings(
+                app_password=APP_PASSWORD,
+                dependency_profile="local",
+                local_data_root=local_root,
+                session_secret=SESSION_SECRET,
+                stt_api_key="production-key-is-ignored",
+            )
+        )
+        with TestClient(
+            create_app(
+                config=config,
+                embedder=FakeEmbedder(),
+                telemetry_settings=TelemetrySettings(install_global_provider=False),
+            )
+        ) as client:
+            login(client)
+            conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+            for content in ("Hello from local development", "Second local turn"):
+                with client.websocket_connect("/ws") as websocket:
+                    websocket.send_json(
+                        {
+                            "type": "prompt",
+                            "conversation_id": conversation_id,
+                            "content": content,
+                        }
+                    )
+                    while websocket.receive_json().get("event") != "agent_end":
+                        pass
+
+            response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    assert_eq(
+        [message["content"] for message in response.json()],
+        [
+            "Hello from local development",
+            "Local development response.",
+            "Second local turn",
+            "Local development response.",
+        ],
+    )
 
 
 @test()

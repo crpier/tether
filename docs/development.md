@@ -11,8 +11,10 @@ This is the **fast local iteration loop**. Use it for day-to-day work.
 
 ```sh
 just install      # uv sync + pnpm install for web and agent (one time / on dep changes)
-just bootstrap    # one time: write .env with generated secrets + create the pi-agent dir
-just dev          # host (auto-reload) + web (Vite HMR) together; Ctrl-C stops both
+just dev-local    # deterministic host + web + pi; no credentials or external services
+# or, when deliberately exercising configured production integrations:
+just bootstrap
+just dev
 ```
 
 Then open **<http://127.0.0.1:3000>** — the Vite dev server. It proxies `/api`
@@ -27,7 +29,31 @@ What you get:
   (`apps/agent/src/generated/index.ts`), no build step; restart the host (or it
   reloads) to pick up changes to spawned pi processes.
 
-`just dev` bakes in a dev login (`TETHER_APP_PASSWORD=dev`). Log in with `dev`.
+Both commands bake in a dev login (`TETHER_APP_PASSWORD=dev`). Log in with `dev`.
+
+## Local-only dependency profile
+
+`just dev-local` is the safe default for application development. It keeps the
+real Starlette host, Vite SPA, pi RPC subprocess, generated tool shims, SQLite,
+LanceDB, and filesystem projections. It replaces boundaries that would leave
+the machine:
+
+- chat uses the deterministic pi Faux model and needs no provider login;
+- speech-to-text returns `Local transcription.` without uploading audio;
+- embeddings use the deterministic `FakeEmbedder`, with no model download;
+- YouTube, transcripts, Gmail, Readwise/Reader, Tavily, Web Push, ebook-file
+  ingestion, and KOReader sync are disabled;
+- provider authorization reports connected without reading `auth.json`.
+
+The command starts its host from an environment allowlist, so credentials in
+`.env` or the invoking shell do not reach the host or spawned pi processes.
+State is isolated under `.tether/local/`; remove that directory to reset local
+chat, Memories, indexes, and sessions. Host and web logs are under
+`.tether/local/logs/`.
+
+Use `just dev` only when you intentionally need configured model providers or
+external Ingestion gates. Its existing behavior and `.tether/` state are
+unchanged.
 
 ## First-run setup, in detail
 
