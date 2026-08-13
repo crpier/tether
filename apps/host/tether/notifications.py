@@ -35,6 +35,7 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
@@ -44,7 +45,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.openapi import EndpointRoute, endpoint
 
@@ -69,8 +69,8 @@ class Notification[S = Pending](Model[S, "Notification[Fetched]"]):
     """Human-facing origin — the reminder text or the agent prompt that fired."""
     body: Notification.Col[str] = Text()
     """The delivered message: a fixed reminder verbatim, or an agent result."""
-    created_at: Notification.GenCol[datetime] = Text(default=CurrentTimestamp)
-    dismissed_at: Notification.Col[datetime | None] = Text(
+    created_at: Notification.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    dismissed_at: Notification.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -121,7 +121,8 @@ class NotificationService:
                 ).returning()
             )
 
-        notification = await run_in_transaction(self.database, _record)
+        async with self.database.transaction(mode="immediate") as tx:
+            notification = await _record(tx)
         await self.event_publisher.publish(InvalidateEvent(keys=["notifications"]))
         return notification
 
@@ -149,7 +150,8 @@ class NotificationService:
                 .where(Notification.dismissed_at.is_null())
             )
 
-        matched = await run_in_transaction(self.database, _dismiss)
+        async with self.database.transaction(mode="immediate") as tx:
+            matched = await _dismiss(tx)
         if matched:
             await self.event_publisher.publish(InvalidateEvent(keys=["notifications"]))
 
@@ -163,7 +165,8 @@ class NotificationService:
                 .where(Notification.dismissed_at.is_null())
             )
 
-        matched = await run_in_transaction(self.database, _clear)
+        async with self.database.transaction(mode="immediate") as tx:
+            matched = await _clear(tx)
         if matched:
             await self.event_publisher.publish(InvalidateEvent(keys=["notifications"]))
         return matched

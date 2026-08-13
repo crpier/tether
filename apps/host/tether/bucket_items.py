@@ -40,13 +40,13 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
 
@@ -297,13 +297,13 @@ class BucketItem[S = Pending](Model[S, "BucketItem[Fetched]"]):
     """The objective origin of the Added item."""
     version: BucketItem.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: BucketItem.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: BucketItem.GenCol[datetime] = Text(default=CurrentTimestamp)
-    completed_at: BucketItem.Col[datetime | None] = Text(
+    created_at: BucketItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: BucketItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    completed_at: BucketItem.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    deleted_at: BucketItem.Col[datetime | None] = Text(
+    deleted_at: BucketItem.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -468,7 +468,8 @@ class BucketItemService:
                 )
                 return item, duplicates
 
-            item, duplicates = await run_in_transaction(self.database, _add)
+            async with self.database.transaction(mode="immediate") as tx:
+                item, duplicates = await _add(tx)
             severity = _dedup_severity(duplicates)
             span.set_attribute("bucket_item.id", str(item.id))
             span.set_attribute("bucket_item.dedup_severity", severity)
@@ -733,7 +734,8 @@ class BucketItemService:
                 raise BucketItemConflictError(msg)
             return fresh_item
 
-        fresh_item = await run_in_transaction(self.database, _terminate_tx)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh_item = await _terminate_tx(tx)
         _info(
             logger,
             "Bucket item terminated",
@@ -791,7 +793,8 @@ class BucketItemService:
             )
             return await self._fetch(tx, item.id)
 
-        fresh_item = await run_in_transaction(self.database, _set_decision_tx)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh_item = await _set_decision_tx(tx)
         _info(
             logger,
             "Purchase decision set",
@@ -856,7 +859,8 @@ class BucketItemService:
                 raise BucketItemConflictError(msg)
             return fresh_item
 
-        fresh_item = await run_in_transaction(self.database, _set_intent_tx)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh_item = await _set_intent_tx(tx)
         _info(
             logger,
             "Bucket item intent context set",

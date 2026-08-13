@@ -29,7 +29,6 @@ from snektest import (
     test,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.ebook_stats import (
     EbookStatBook,
     EbookStatPageEvent,
@@ -313,12 +312,10 @@ async def a_title_match_links_document_hash() -> None:
     """A book whose title matches an `EbookDocument.title` gets `document_hash`."""
     env = await load_fixture(ebook_stats_env())
 
-    _ = await run_in_transaction(
-        env.database,
-        lambda tx: tx.execute(
+    async with env.database.transaction(mode="immediate") as tx:
+        _ = await tx.execute(
             insert(EbookDocument(document_hash="hash-abc", title="Deep Work"))
-        ),
-    )
+        )
     write_statistics_file(
         env.tmp_dir / "statistics.sqlite",
         books=(StatsBookRow(id=1, title="Deep Work"),),

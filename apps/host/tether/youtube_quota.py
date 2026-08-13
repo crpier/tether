@@ -31,7 +31,6 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.escalating_pause import PauseKeys, PersistentEscalatingPause
 
 
@@ -189,7 +188,8 @@ async def state_set(database: Database, key: str, value: str) -> None:
                 .where(YouTubeSyncState.key.eq(key))
             )
 
-    await run_in_transaction(database, _set)
+    async with database.transaction(mode="immediate") as tx:
+        await _set(tx)
 
 
 # The shared, global Data API backoff gate, persisted so a live quota block
@@ -250,7 +250,8 @@ class DailyQuota:
                     .where(YouTubeQuotaDaily.day.eq(day))
                 )
 
-        await run_in_transaction(self.database, _spend)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _spend(tx)
 
     async def _row(
         self, tx: Transaction, day: str

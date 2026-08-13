@@ -40,7 +40,6 @@ from typing import Literal, cast
 from pydantic import BaseModel, ValidationError
 from snekql.sqlite import Database, Transaction, insert, select, update
 
-from tether.db_retry import run_in_transaction
 from tether.gmail import (
     GmailClient,
     GmailMessage,
@@ -483,7 +482,8 @@ class GmailPurgeSweepService:
                     .where(GmailSyncState.key.eq(_PURGE_WATERMARK_KEY))
                 )
 
-        await run_in_transaction(self.database, _set)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _set(tx)
 
 
 __all__ = [

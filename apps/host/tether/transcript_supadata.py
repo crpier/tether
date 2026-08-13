@@ -46,7 +46,6 @@ import httpx2
 import structlog
 from snekql.sqlite import Database, Transaction, insert, select, update
 
-from tether.db_retry import run_in_transaction
 from tether.youtube import (
     Clock,
     FetchedTranscript,
@@ -379,7 +378,8 @@ class PersistentSupadataSpendGuard(SupadataSpendGuard):
                     .where(YouTubeSyncState.key.eq(month_key))
                 )
 
-        await run_in_transaction(self._database, _reserve)
+        async with self._database.transaction(mode="immediate") as tx:
+            await _reserve(tx)
 
     async def snapshot(self, *, now: datetime) -> SourceUsage:
         """Report the current UTC month's usage against the cap, without charging."""

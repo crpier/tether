@@ -17,7 +17,6 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether.capabilities import CapabilityOutcome, ErrorRule, bind_params
-from tether.db_retry import run_in_transaction
 from tether.tools import ToolSpec
 from tether.youtube_quota import QuotaMeta, SystemClock, YouTubeSyncState
 
@@ -129,7 +128,8 @@ class PersistentSearchSpendGuard(SearchSpendGuard):
                     .where(YouTubeSyncState.key.eq(month_key))
                 )
 
-        await run_in_transaction(self._database, _reserve)
+        async with self._database.transaction(mode="immediate") as tx:
+            await _reserve(tx)
 
     async def snapshot(self) -> QuotaMeta:
         """Read the current month's credit use without reserving more."""
