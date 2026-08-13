@@ -14,7 +14,7 @@ from typing import Any
 
 from snektest import assert_eq, assert_is_none, assert_raises, test
 
-from tether.transcript_library import (
+from tether.transcripts.library import (
     LibraryPassBudget,
     YouTubeTranscriptApiProvider,
     _classify_library_error,

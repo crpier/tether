@@ -5,7 +5,7 @@ The transcript-chunk LanceDB projection is disposable and rebuildable; SQLite's
 the Memory reconciler it stores *no* vectors in SQLite — chunks (and therefore
 vectors) are re-derived from the canonical transcript on demand, the "re-embed on
 rebuild" trade. What keeps that cheap is the deterministic, model-stamped chunk
-id (`transcript_index.chunk_id`): a reconcile re-chunks every active transcript,
+id (`transcripts.index.chunk_id`): a reconcile re-chunks every active transcript,
 but only embeds the chunk ids the index does not already hold, and drops the ids
 no live transcript still produces.
 
@@ -30,8 +30,8 @@ from typing import TYPE_CHECKING, Protocol
 from snekql.sqlite import select
 
 from tether.reconcile_loop import run_reconcile_loop
-from tether.transcript_chunks import chunk_transcript
-from tether.transcript_index import ChunkDocument, chunk_id
+from tether.transcripts.chunks import chunk_transcript
+from tether.transcripts.index import ChunkDocument, chunk_id
 from tether.youtube import IngestedVideo
 
 if TYPE_CHECKING:

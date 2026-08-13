@@ -18,7 +18,7 @@ from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.structured_logging import Logger
-from tether.transcript_search import VideoMatch
+from tether.transcripts.search import VideoMatch
 from tether.youtube import (
     DailyQuota,
     IngestedVideo,

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from tether.embeddings import Embedder
     from tether.structured_logging import Logger
-    from tether.transcript_index import ChunkCandidate
+    from tether.transcripts.index import ChunkCandidate
 
 # A single video can own several of the top chunk hits, so fetch this many chunks
 # per requested video to keep enough distinct videos after dedup.

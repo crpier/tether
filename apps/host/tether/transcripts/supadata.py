@@ -5,7 +5,7 @@ The OAuth captions Data API is owner-only — it 403s for nearly every third-par
 so on their own they transcribe almost none of the liked corpus. Supadata is an
 HTTP transcript API (with an API key, billed per call) that reliably does, so when
 it is configured it becomes the *primary* source (see
-`tether.transcript_provider_composition`); the free providers trail it as
+`tether.transcripts.provider_composition`); the free providers trail it as
 best-effort fallbacks.
 
 This wraps Supadata behind the `TranscriptProvider` port so the composite
@@ -92,17 +92,6 @@ def _start_of_next_month(now: datetime) -> datetime:
     return datetime(moment.year, moment.month + 1, 1, tzinfo=UTC)
 
 
-_HTTP_TOO_MANY_REQUESTS = 429
-"""Supadata's rate-limit / quota status — the *blocked* outcome."""
-_HTTP_FORBIDDEN = 403
-"""Supadata cannot access this video, so retrying cannot produce a transcript."""
-_HTTP_NOT_FOUND = 404
-"""Supadata's conventional "no transcript" status — an *unavailable* outcome."""
-_HTTP_PARTIAL_CONTENT = 206
-"""Supadata's nonstandard `transcript-unavailable` status, not a partial result."""
-_HTTP_CLIENT_ERROR_FLOOR = 400
-"""Any status at or above this is an error response to classify, not a transcript."""
-
 # Supadata async-job terminal states (`GET /v1/transcript/{jobId}` -> `status`); any
 # other status (active, queued, starting, ...) is still pending and keeps polling.
 _JOB_COMPLETED = "completed"
@@ -181,7 +170,7 @@ class SupadataConfig:
 
 def _is_rate_limited(response: SupadataResponse) -> bool:
     """Whether a response is Supadata's rate-limit / quota signal (the *blocked* outcome)."""
-    if response.status_code == _HTTP_TOO_MANY_REQUESTS:
+    if response.status_code == httpx2.codes.TOO_MANY_REQUESTS.value:
         return True
     error = response.payload.get("error")
     if isinstance(error, str):
@@ -193,9 +182,9 @@ def _is_rate_limited(response: SupadataResponse) -> bool:
 def _is_unavailable(response: SupadataResponse) -> bool:
     """Whether a response means Supadata has no transcript (terminal *unavailable*)."""
     if response.status_code in {
-        _HTTP_FORBIDDEN,
-        _HTTP_NOT_FOUND,
-        _HTTP_PARTIAL_CONTENT,
+        httpx2.codes.FORBIDDEN.value,
+        httpx2.codes.NOT_FOUND.value,
+        httpx2.codes.PARTIAL_CONTENT.value,
     }:
         return True
     error = response.payload.get("error")
@@ -504,7 +493,7 @@ class SupadataTranscriptProvider(TranscriptProvider):
             # Loud: the paid monthly budget is spent. The worker pauses Supadata
             # until the month boundary (the carried retry-after), leaving videos
             # pending rather than overspending.
-            structlog.stdlib.get_logger("tether.transcript_supadata").warning(
+            structlog.stdlib.get_logger("tether.transcripts.supadata").warning(
                 "Supadata monthly use cap exhausted; pausing until reset",
                 used=error.used,
                 limit=error.limit,
@@ -525,10 +514,7 @@ class SupadataTranscriptProvider(TranscriptProvider):
             raise TranscriptTransientError(video_id) from error
         # A rate limit or any client/server error is a failure to classify; a 2xx is
         # either a job handoff, a direct transcript, or a genuine "no transcript".
-        if (
-            _is_rate_limited(response)
-            or response.status_code >= _HTTP_CLIENT_ERROR_FLOOR
-        ):
+        if _is_rate_limited(response) or httpx2.codes.is_error(response.status_code):
             raise _classify_failure(video_id, response)
         job_id = _job_id(response.payload)
         if job_id is not None:
@@ -556,7 +542,7 @@ class SupadataTranscriptProvider(TranscriptProvider):
             except httpx2.RequestError as error:
                 # Same transport-hiccup mapping as the submit call above.
                 raise TranscriptTransientError(video_id) from error
-            if response.status_code >= _HTTP_CLIENT_ERROR_FLOOR:
+            if httpx2.codes.is_error(response.status_code):
                 # A failed poll maps the same way a failed submit does.
                 raise _classify_failure(video_id, response)
             status = response.payload.get("status")

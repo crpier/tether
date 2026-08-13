@@ -9,7 +9,7 @@ makes the bounded async-job polling resolve instantly. Covered: a direct hit
 its retry-after and source, the async job model (pending then complete), a failed
 job -> *unavailable*, an over-budget poll -> *transient*, and the transport's
 key/`Retry-After` handling. The flag/key gating is asserted against the
-`tether.transcript_provider_composition` wiring helpers.
+`tether.transcripts.provider_composition` wiring helpers.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import httpx2
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 
-from tether.transcript_supadata import (
+from tether.transcripts.supadata import (
     HttpSupadataTransport,
     PersistentSupadataSpendGuard,
     SupadataBudgetExhaustedError,

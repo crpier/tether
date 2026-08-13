@@ -87,7 +87,7 @@ from tether.youtube_quota import (
 )
 
 if TYPE_CHECKING:
-    from tether.transcript_search import TranscriptSearchService
+    from tether.transcripts.search import TranscriptSearchService
 
 # `Clock`, `DailyQuota`, `SystemClock`, `YouTubeApiGate`, and `YouTubeApiGateConfig`
 # live in `tether.youtube_quota` (#203) and are not otherwise referenced in this

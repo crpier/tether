@@ -173,15 +173,15 @@ from tether.todos import (
 )
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
-from tether.transcript_index import TranscriptIndex
-from tether.transcript_provider_composition import (
+from tether.transcripts.index import TranscriptIndex
+from tether.transcripts.provider_composition import (
     build_configured_transcript_provider,
     resolve_transcript_provider,
 )
-from tether.transcript_reconciler import TranscriptReconciler
-from tether.transcript_search import TranscriptSearchService
-from tether.transcript_supadata import SupadataMode
-from tether.transcript_worker import TranscriptSyncService
+from tether.transcripts.reconciler import TranscriptReconciler
+from tether.transcripts.search import TranscriptSearchService
+from tether.transcripts.supadata import SupadataMode
+from tether.transcripts.worker import TranscriptSyncService
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes

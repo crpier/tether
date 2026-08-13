@@ -24,8 +24,8 @@ from typing import Protocol
 
 from snekql.sqlite import Database
 
-from tether.transcript_library import LibraryPassBudget, YouTubeTranscriptApiProvider
-from tether.transcript_supadata import (
+from tether.transcripts.library import LibraryPassBudget, YouTubeTranscriptApiProvider
+from tether.transcripts.supadata import (
     HttpSupadataTransport,
     SupadataConfig,
     SupadataMode,

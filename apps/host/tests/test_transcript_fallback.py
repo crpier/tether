@@ -33,7 +33,7 @@ from snektest import (
 )
 
 from tether.structured_logging import Logger
-from tether.transcript_worker import TranscriptSyncService
+from tether.transcripts.worker import TranscriptSyncService
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
     DailyQuota,
