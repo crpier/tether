@@ -48,17 +48,18 @@ ENV UV_PROJECT_ENVIRONMENT=/app/apps/host/.venv \
 WORKDIR /app/apps/host
 
 # Resolve Python deps from the lockfile first so the layer caches across source
-# edits. `--no-dev` skips the dev group (pyright/ruff/snektest), so the editable
-# `snektest` path source is never needed in the image.
+# edits. `--no-dev` skips the dev group (pyright/ruff/snektest); snekok is held
+# back until its source is copied with the host below.
 COPY apps/host/pyproject.toml apps/host/uv.lock ./
+COPY packages/snekok/pyproject.toml packages/snekok/README.md /app/packages/snekok/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --group youtube --no-install-project
+    uv sync --frozen --no-dev --group youtube --no-install-project --no-install-package snekok
 
-# Lay out the three apps in the layout the editable install + `_repo_root()`
-# expect, then install the host package itself (editable, so `import tether`
-# resolves to /app/apps/host/tether and the agent/SPA paths resolve relative to
-# /app).
+# Lay out the apps and local Python package in the layout the editable installs
+# + `_repo_root()` expect, then install the host and snekok (editable, so imports
+# resolve to their source directories and agent/SPA paths resolve from /app).
 COPY apps/host/ /app/apps/host/
+COPY packages/snekok/src/ /app/packages/snekok/src/
 COPY --from=agent-deps /app/apps/agent/ /app/apps/agent/
 COPY --from=web-build /app/apps/web/dist/ /app/apps/web/dist/
 RUN --mount=type=cache,target=/root/.cache/uv \

@@ -1367,6 +1367,20 @@ wheels = [
 ]
 
 [[package]]
+name = "snekok"
+version = "0.1.0"
+source = { editable = "../../packages/snekok" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.410" },
+    { name = "ruff", specifier = ">=0.15.18" },
+    { name = "snektest", git = "ssh://git@github.com/crpier/snektest?rev=b6ff08544eade05804a2fdfd894c2c854145e537" },
+]
+
+[[package]]
 name = "snekql"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1440,6 +1454,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "pywebpush" },
     { name = "pyyaml" },
+    { name = "snekok" },
     { name = "snekql" },
     { name = "starlette" },
     { name = "structlog" },
@@ -1476,6 +1491,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "pywebpush", specifier = ">=2.3.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "snekok", editable = "../../packages/snekok" },
     { name = "snekql", specifier = ">=0.5.0" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=26.1.0" },
