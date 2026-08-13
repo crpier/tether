@@ -943,7 +943,7 @@ class HealthConnectIngestion:
         request_id: str,
     ) -> HealthConnectSyncStateRead:
         key = _state_key(installation_id, record_types)
-        async with self.database.transaction() as transaction:
+        async with self.database.transaction(mode="immediate") as transaction:
             stored = await transaction.fetch_one_or_none(
                 select(HealthConnectSyncState).where(
                     HealthConnectSyncState.state_key.eq(key)
@@ -999,7 +999,7 @@ class HealthConnectIngestion:
         record_types = _canonical_record_types(list(body.record_types))
         _validate_versioned_record_types(body.contract_version, record_types)
         key = _state_key(body.installation_id, record_types)
-        async with self.database.transaction() as transaction:
+        async with self.database.transaction(mode="immediate") as transaction:
             state = await transaction.fetch_one_or_none(
                 select(HealthConnectSyncState).where(
                     HealthConnectSyncState.state_key.eq(key)
@@ -1225,7 +1225,7 @@ class HealthConnectIngestion:
         _validate_versioned_record_types(batch.contract_version, record_types)
         key = _state_key(batch.installation_id, record_types)
         payload_hash = _hash_json(batch.model_dump(mode="json"))
-        async with self.database.transaction() as transaction:
+        async with self.database.transaction(mode="immediate") as transaction:
             replay = await transaction.fetch_one_or_none(
                 select(HcPageRequest).where(
                     HcPageRequest.request_id.eq(batch.request_id)
@@ -1816,7 +1816,8 @@ class HealthConnectIngestion:
         skipped: dict[HealthRecordType, int],
     ) -> None:
         for record_type in _GENERIC_RECORD_TYPES:
-            for record in getattr(batch.records, record_type):
+            records = cast("list[GenericRecord]", getattr(batch.records, record_type))
+            for record in records:
                 digest = _hash_json(record.model_dump(mode="json"))
                 latest = await transaction.fetch_one_or_none(
                     select(HcGenericRecord)

@@ -19,6 +19,7 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     delete,
     insert,
     select,
@@ -29,7 +30,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.db_retry import run_in_transaction
 from tether.model_selection import (
     AgentModelCatalog,
     AgentModelConfig,
@@ -81,7 +81,7 @@ class Conversation[S = Pending](Model[S, "Conversation[Fetched]"]):
     """A stable host-owned chat thread."""
 
     id: Conversation.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    created_at: Conversation.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: Conversation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     pi_session_id: Conversation.GenCol[UUID7] = Text(default_factory=uuid7)
     selected_model: Conversation.Col[str | None] = Text(default=None, nullable=True)
     title: Conversation.Col[str | None] = Text(default=None, nullable=True)
@@ -95,7 +95,7 @@ class Message[S = Pending](Model[S, "Message[Fetched]"]):
     seq: Message.Col[PositiveInt] = Integer()
     role: Message.Col[MessageRole] = Text()
     content: Message.Col[str] = Text()
-    created_at: Message.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: Message.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     pi_message_id: Message.Col[str | None] = Text(default=None, nullable=True)
     tool_args: Message.Col[str | None] = Text(default=None, nullable=True)
     tool_name: Message.Col[str | None] = Text(default=None, nullable=True)
@@ -210,7 +210,8 @@ class ConversationService:
             )
             return [conversation]
 
-        return await run_in_transaction(self.database, _list)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _list(tx)
 
     async def fetch_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
         """Return one conversation or raise when the id is unknown."""
@@ -262,7 +263,8 @@ class ConversationService:
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
 
-        conversation = await run_in_transaction(self.database, _set_selected_model)
+        async with self.database.transaction(mode="immediate") as tx:
+            conversation = await _set_selected_model(tx)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation, model
@@ -324,7 +326,8 @@ class ConversationService:
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
 
-        conversation = await run_in_transaction(self.database, _rotate)
+        async with self.database.transaction(mode="immediate") as tx:
+            conversation = await _rotate(tx)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation
@@ -357,7 +360,8 @@ class ConversationService:
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
 
-        conversation = await run_in_transaction(self.database, _clear)
+        async with self.database.transaction(mode="immediate") as tx:
+            conversation = await _clear(tx)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation
@@ -485,7 +489,8 @@ class ConversationService:
                 ).returning()
             )
 
-        return await run_in_transaction(self.database, _append)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _append(tx)
 
 
 async def create_conversation_schema(database: Database) -> None:

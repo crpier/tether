@@ -15,8 +15,6 @@ compared. The table is a singleton — one row, replaced in place.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import PositiveInt
 from snekql.sqlite import (
     CurrentTimestamp,
@@ -27,13 +25,13 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     scaffold,
     select,
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.structured_logging import Logger
 
 _SINGLETON_ID = 1
@@ -57,7 +55,7 @@ class SearchMeta[S = Pending](Model[S, "SearchMeta[Fetched]"]):
     """Dimension of those vectors; the LanceDB schema is built from it."""
     index_schema_version: SearchMeta.Col[PositiveInt] = Integer(default=1)
     """Bumped when the index layout (not the model) changes incompatibly."""
-    updated_at: SearchMeta.GenCol[datetime] = Text(default=CurrentTimestamp)
+    updated_at: SearchMeta.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class SearchMetaService:
@@ -117,7 +115,8 @@ class SearchMetaService:
                 raise SearchMetaInvariantError(message)
             return fetched
 
-        return await run_in_transaction(self.database, _set)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _set(tx)
 
 
 async def create_search_meta_schema(database: Database) -> None:

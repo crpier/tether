@@ -35,7 +35,6 @@ import asyncio
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
 
@@ -52,12 +51,12 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.kosync import EbookDocument
 from tether.structured_logging import Logger
 
@@ -118,8 +117,8 @@ class EbookStatBook[S = Pending](Model[S, "EbookStatBook[Fetched]"]):
     notes: EbookStatBook.Col[int | None] = Integer(default=None, nullable=True)
     last_open: EbookStatBook.Col[int | None] = Integer(default=None, nullable=True)
     document_hash: EbookStatBook.Col[str | None] = Text(default=None, nullable=True)
-    created_at: EbookStatBook.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: EbookStatBook.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: EbookStatBook.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: EbookStatBook.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     __indexes__: ClassVar = [Index(source_book_id, unique=True)]
 
 
@@ -473,7 +472,8 @@ class EbookStatsSyncService:
                 )
             )
 
-        return await run_in_transaction(self.database, _upsert)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _upsert(tx)
 
     async def _insert_events(
         self,
@@ -515,7 +515,8 @@ class EbookStatsSyncService:
                 count += 1
             return count
 
-        return await run_in_transaction(self.database, _insert)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _insert(tx)
 
     async def _existing_event_keys(self, book_id: int) -> set[tuple[int, int]]:
         """The `(page, start_time)` pairs already stored for a book."""
@@ -555,7 +556,8 @@ class EbookStatsSyncService:
                     .where(EbookStatSyncState.key.eq(_WATERMARK_KEY))
                 )
 
-        await run_in_transaction(self.database, _set)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _set(tx)
 
 
 _EBOOK_STATS_MIGRATIONS: dict[str, str] = {

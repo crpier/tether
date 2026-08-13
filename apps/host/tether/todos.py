@@ -48,13 +48,13 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.notifications import Notification
 from tether.structured_logging import Logger
@@ -133,8 +133,8 @@ class Todo[S = Pending](Model[S, "Todo[Fetched]"]):
     reference, not a DB-enforced foreign key (mirrors `Notification.trigger_id`)."""
     version: Todo.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: Todo.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: Todo.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: Todo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: Todo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(status)]
 
@@ -145,7 +145,7 @@ class TodoMemory[S = Pending](Model[S, "TodoMemory[Fetched]"]):
     id: TodoMemory.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
     todo_id: TodoMemory.Col[str] = Text()
     memory_id: TodoMemory.Col[str] = Text()
-    created_at: TodoMemory.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: TodoMemory.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(todo_id)]
 
@@ -224,7 +224,8 @@ class TodoService:
                     ).returning()
                 )
 
-            todo = await run_in_transaction(self.database, _create)
+            async with self.database.transaction(mode="immediate") as tx:
+                todo = await _create(tx)
             span.set_attribute("todo.id", str(todo.id))
             _info(logger, "Todo created", todo_id=str(todo.id))
         await self.event_publisher.publish(InvalidateEvent(keys=["todos"]))
@@ -265,7 +266,8 @@ class TodoService:
                 self._raise_version_conflict(todo, fresh)
             return fresh
 
-        fresh = await run_in_transaction(self.database, _set_status)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh = await _set_status(tx)
         _info(
             logger,
             "Todo status set",
@@ -305,7 +307,8 @@ class TodoService:
                 self._raise_version_conflict(todo, fresh)
             return fresh
 
-        fresh = await run_in_transaction(self.database, _link)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh = await _link(tx)
         _info(logger, "Todo trigger linked", todo_id=str(fresh.id))
         await self.event_publisher.publish(InvalidateEvent(keys=["todos"]))
         return fresh
@@ -343,7 +346,8 @@ class TodoService:
                 ).returning()
             )
 
-        await run_in_transaction(self.database, _link)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _link(tx)
         await self.event_publisher.publish(InvalidateEvent(keys=["todos"]))
 
     async def linked_memory_ids(self, todo_id: UUID) -> list[str]:

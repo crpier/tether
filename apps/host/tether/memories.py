@@ -31,13 +31,13 @@ from snekql.sqlite import (
     SelectModelQuery,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 from yaml import safe_dump, safe_load
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
 
@@ -174,13 +174,13 @@ class Memory[S = Pending](Model[S, "Memory[Fetched]"]):
     handled by curation (`rename_facet_key` / `merge_facet_value`), not code.
     `sensitivity` is a reserved key name but stored and treated like any other
     facet; there is no special-cased code path for it."""
-    created_at: Memory.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: Memory.GenCol[datetime] = Text(default=CurrentTimestamp)
-    tethered_at: Memory.Col[datetime | None] = Text(
+    created_at: Memory.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: Memory.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    tethered_at: Memory.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    deleted_at: Memory.Col[datetime | None] = Text(
+    deleted_at: Memory.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -376,7 +376,8 @@ class MemoryService:
                     ).returning()
                 )
 
-            memory = await run_in_transaction(self.database, _capture)
+            async with self.database.transaction(mode="immediate") as tx:
+                memory = await _capture(tx)
             span.set_attribute("memory.id", str(memory.id))
             span.set_attribute("memory.version", memory.version)
             _info(
@@ -442,7 +443,8 @@ class MemoryService:
                 )
                 return await self._fetch_active(tx, inserted.id)
 
-            memory = await run_in_transaction(self.database, _capture)
+            async with self.database.transaction(mode="immediate") as tx:
+                memory = await _capture(tx)
             span.set_attribute("memory.id", str(memory.id))
             span.set_attribute("memory.provenance_kind", provenance["kind"])
             _info(
@@ -712,7 +714,8 @@ class MemoryService:
                         raise MemoryConflictError(msg)
                 return fresh_memory
 
-            fresh_memory = await run_in_transaction(self.database, _tether)
+            async with self.database.transaction(mode="immediate") as tx:
+                fresh_memory = await _tether(tx)
             await self._try_set_projection(fresh_memory, logger=logger)
             await self._try_index(fresh_memory, logger=logger)
             span.set_attribute("memory.version", fresh_memory.version)
@@ -785,7 +788,8 @@ class MemoryService:
                 raise MemoryConflictError(msg)
             return fresh_memory
 
-        fresh_memory = await run_in_transaction(self.database, _edit_content)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh_memory = await _edit_content(tx)
 
         # An invariant is that loose memories don't have projections, and loose
         # memories aren't indexed — so both derived artifacts refresh only when
@@ -859,7 +863,8 @@ class MemoryService:
             )
             return await self._fetch_active(tx, memory.id)
 
-        fresh_memory = await run_in_transaction(self.database, _append_content)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh_memory = await _append_content(tx)
         if fresh_memory.tethered_at is not None:
             await self._try_set_projection(fresh_memory, logger=logger)
             await self._try_index(fresh_memory, logger=logger)
@@ -935,7 +940,8 @@ class MemoryService:
                 raise MemoryConflictError(msg)
             return deleted_memory
 
-        deleted_memory = await run_in_transaction(self.database, _delete)
+        async with self.database.transaction(mode="immediate") as tx:
+            deleted_memory = await _delete(tx)
         await self._try_remove_projection(memory.id, logger=logger)
         await self._try_deindex(deleted_memory.id, logger=logger)
         _info(
@@ -1060,7 +1066,8 @@ class MemoryService:
                     changed.append(await self._fetch_active(tx, row.id))
             return changed
 
-        changed_memories = await run_in_transaction(self.database, _rename)
+        async with self.database.transaction(mode="immediate") as tx:
+            changed_memories = await _rename(tx)
         for memory in changed_memories:
             if memory.tethered_at is not None:
                 await self._try_set_projection(memory, logger=logger)
@@ -1116,7 +1123,8 @@ class MemoryService:
                     changed.append(await self._fetch_active(tx, row.id))
             return changed
 
-        changed_memories = await run_in_transaction(self.database, _merge)
+        async with self.database.transaction(mode="immediate") as tx:
+            changed_memories = await _merge(tx)
         for memory in changed_memories:
             if memory.tethered_at is not None:
                 await self._try_set_projection(memory, logger=logger)

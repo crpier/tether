@@ -36,6 +36,7 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
@@ -45,7 +46,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.openapi import EndpointRoute, endpoint
 
@@ -60,9 +60,9 @@ class PushSubscription[S = Pending](Model[S, "PushSubscription[Fetched]"]):
     """The subscription's public key, used by a future VAPID transport."""
     auth: PushSubscription.Col[str] = Text()
     """The subscription's auth secret, used by a future VAPID transport."""
-    created_at: PushSubscription.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: PushSubscription.GenCol[datetime] = Text(default=CurrentTimestamp)
-    deleted_at: PushSubscription.Col[datetime | None] = Text(
+    created_at: PushSubscription.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: PushSubscription.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    deleted_at: PushSubscription.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -162,7 +162,8 @@ class PushService:
             assert refreshed is not None  # row exists: just updated it
             return refreshed
 
-        subscription = await run_in_transaction(self.database, _subscribe)
+        async with self.database.transaction(mode="immediate") as tx:
+            subscription = await _subscribe(tx)
         await self.event_publisher.publish(InvalidateEvent(keys=["push"]))
         return subscription
 
@@ -178,7 +179,8 @@ class PushService:
                 .where(PushSubscription.deleted_at.is_null())
             )
 
-        matched = await run_in_transaction(self.database, _unsubscribe)
+        async with self.database.transaction(mode="immediate") as tx:
+            matched = await _unsubscribe(tx)
         if matched:
             await self.event_publisher.publish(InvalidateEvent(keys=["push"]))
 

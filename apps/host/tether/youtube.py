@@ -50,13 +50,13 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     delete,
     insert,
     select,
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.escalating_pause import (
     PauseKeys,
     PauseState,
@@ -549,13 +549,15 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     transcript_source: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
     """Which provider produced the stored transcript (e.g. `supadata`,
     `youtube_transcript_api`); null until one is fetched."""
-    ignored_at: IngestedVideo.Col[datetime | None] = Text(default=None, nullable=True)
+    ignored_at: IngestedVideo.Col[UtcDatetime | None] = Text(
+        default=None, nullable=True
+    )
     """When the video was purged from ingestion; null while it is active."""
     # --- Enriched metadata (nullable; filled by sync detail fetch / import). ---
     channel_id: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    liked_at: IngestedVideo.Col[datetime | None] = Text(default=None, nullable=True)
+    liked_at: IngestedVideo.Col[UtcDatetime | None] = Text(default=None, nullable=True)
     """When the user liked the video; the ordering key for browse."""
-    video_published_at: IngestedVideo.Col[datetime | None] = Text(
+    video_published_at: IngestedVideo.Col[UtcDatetime | None] = Text(
         default=None, nullable=True
     )
     duration_seconds: IngestedVideo.Col[int | None] = Integer(
@@ -588,7 +590,7 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     statistics_comment_count: IngestedVideo.Col[int | None] = Integer(
         default=None, nullable=True
     )
-    statistics_fetched_at: IngestedVideo.Col[datetime | None] = Text(
+    statistics_fetched_at: IngestedVideo.Col[UtcDatetime | None] = Text(
         default=None, nullable=True
     )
     topic_categories_json: IngestedVideo.Col[str | None] = Text(
@@ -596,8 +598,8 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     )
     tags_json: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
     thumbnails_json: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    created_at: IngestedVideo.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: IngestedVideo.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: IngestedVideo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: IngestedVideo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(topic)]
 
@@ -633,7 +635,9 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
     last_error: YouTubeTranscriptState.Col[str | None] = Text(
         default=None, nullable=True
     )
-    updated_at: YouTubeTranscriptState.GenCol[datetime] = Text(default=CurrentTimestamp)
+    updated_at: YouTubeTranscriptState.GenCol[UtcDatetime] = Text(
+        default=CurrentTimestamp
+    )
 
 
 _BACKFILL_CURSOR_KEY = "likes_backfill_next_page_token"
@@ -1384,7 +1388,8 @@ class YouTubeSyncService:
             await self._update_known_skipped(tx, add=skipped, remove=ingested)
             return upserted
 
-        return await run_in_transaction(self.database, _mirror)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _mirror(tx)
 
     async def _update_known_skipped(
         self, tx: Transaction, *, add: set[str], remove: set[str]
@@ -1782,7 +1787,8 @@ async def _store_transcript(
             select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
         )
 
-    updated = await run_in_transaction(database, _store)
+    async with database.transaction(mode="immediate") as tx:
+        updated = await _store(tx)
     if updated is None:
         raise YouTubeVideoNotFoundError(video_id)
     return updated
@@ -1805,7 +1811,8 @@ async def _mark_needs_review(database: Database, video_id: str, *, error: str) -
             ),
         )
 
-    await run_in_transaction(database, _mark)
+    async with database.transaction(mode="immediate") as tx:
+        await _mark(tx)
 
 
 async def _record_retry(
@@ -1832,7 +1839,8 @@ async def _record_retry(
             ),
         )
 
-    await run_in_transaction(database, _retry)
+    async with database.transaction(mode="immediate") as tx:
+        await _retry(tx)
 
 
 class YouTubeService:
@@ -1962,7 +1970,8 @@ class YouTubeService:
                 )
             )
 
-        await run_in_transaction(self.database, _keep_trying)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _keep_trying(tx)
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         _info(logger, "Transcript acquisition re-opened", video_id=video_id)
         return TranscriptDecisionOutcome(video_id=video_id, transcript_status="pending")
@@ -1988,7 +1997,8 @@ class YouTubeService:
                 ),
             )
 
-        await run_in_transaction(self.database, _give_up)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _give_up(tx)
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         _info(logger, "Transcript marked unavailable", video_id=video_id)
         return TranscriptDecisionOutcome(
@@ -2225,7 +2235,8 @@ class YouTubeService:
             )
             return await self._fetch(tx, video_id)
 
-        video = await run_in_transaction(self.database, _ignore)
+        async with self.database.transaction(mode="immediate") as tx:
+            video = await _ignore(tx)
         _info(logger, "YouTube video ignored", video_id=video_id)
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return video
@@ -2244,7 +2255,8 @@ class YouTubeService:
             )
             return await self._fetch(tx, video_id)
 
-        video = await run_in_transaction(self.database, _retry)
+        async with self.database.transaction(mode="immediate") as tx:
+            video = await _retry(tx)
         _info(logger, "YouTube video retried", video_id=video_id)
         await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
         return video
@@ -2358,6 +2370,14 @@ def _youtube_migrations() -> dict[str, str]:
         "WHEN 'retry' THEN 'retrying' "
         "WHEN 'terminal' THEN 'unavailable' "
         'ELSE "status" END'
+    )
+    migrations["011_normalize_transcript_state_defaults"] = (
+        'UPDATE "you_tube_transcript_state" '
+        'SET "attempts" = COALESCE("attempts", 0), '
+        '"updated_at" = COALESCE('
+        '"updated_at", '
+        "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+        ")"
     )
     return migrations
 

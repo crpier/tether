@@ -55,6 +55,7 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
@@ -67,7 +68,6 @@ from tether.action_registry import (
     all_action_specs,
     build_action_registry,
 )
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.notifications import NotificationDraft, NotificationService
 from tether.structured_logging import Logger
@@ -120,9 +120,9 @@ class Proposal[S = Pending](Model[S, "Proposal[Fetched]"]):
     rejection_reason: Proposal.Col[str | None] = Text(default=None, nullable=True)
     version: Proposal.Col[PositiveInt] = Integer(default=1)
     """Optimistic-concurrency version, bumped on every lifecycle transition."""
-    created_at: Proposal.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: Proposal.GenCol[datetime] = Text(default=CurrentTimestamp)
-    decided_at: Proposal.Col[datetime | None] = Text(default=None, nullable=True)
+    created_at: Proposal.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: Proposal.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    decided_at: Proposal.Col[UtcDatetime | None] = Text(default=None, nullable=True)
     """Stamped when the proposal leaves `pending` (approved or rejected)."""
 
     __indexes__: ClassVar = [Index(state, created_at)]
@@ -152,7 +152,9 @@ class ProposalAction[S = Pending](Model[S, "ProposalAction[Fetched]"]):
     )
     """Terminal execution result; append-only, never overwritten once set."""
     outcome_detail: ProposalAction.Col[str | None] = Text(default=None, nullable=True)
-    executed_at: ProposalAction.Col[datetime | None] = Text(default=None, nullable=True)
+    executed_at: ProposalAction.Col[UtcDatetime | None] = Text(
+        default=None, nullable=True
+    )
 
     __indexes__: ClassVar = [Index(proposal_id, seq)]
 
@@ -168,8 +170,10 @@ class AutonomyGrant[S = Pending](Model[S, "AutonomyGrant[Fetched]"]):
     id: AutonomyGrant.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
     kind: AutonomyGrant.Col[str] = Text()
     scope: AutonomyGrant.Col[str | None] = Text(default=None, nullable=True)
-    granted_at: AutonomyGrant.GenCol[datetime] = Text(default=CurrentTimestamp)
-    revoked_at: AutonomyGrant.Col[datetime | None] = Text(default=None, nullable=True)
+    granted_at: AutonomyGrant.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    revoked_at: AutonomyGrant.Col[UtcDatetime | None] = Text(
+        default=None, nullable=True
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,7 +390,8 @@ class ProposalService:
                 )
             return proposal.id
 
-        return await run_in_transaction(self.database, _create)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _create(tx)
 
     # --- read ------------------------------------------------------------
 
@@ -506,7 +511,8 @@ class ProposalService:
                 self._raise_transition_failure(proposal_ref, fresh, logger=logger)
             return fresh
 
-        return await run_in_transaction(self.database, _approve)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _approve(tx)
 
     async def reject(
         self,
@@ -546,7 +552,8 @@ class ProposalService:
                 self._raise_transition_failure(proposal_ref, fresh, logger=logger)
             return fresh
 
-        proposal = await run_in_transaction(self.database, _reject)
+        async with self.database.transaction(mode="immediate") as tx:
+            proposal = await _reject(tx)
         actions = await self._fetch_actions(proposal_ref.id)
         grants = await self._live_grants()
         revocable = sorted(
@@ -613,7 +620,8 @@ class ProposalService:
                 )
             return await self._fetch(proposal_id, tx=tx)
 
-        return await run_in_transaction(self.database, _enter)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _enter(tx)
 
     async def _run_action(
         self, action: ProposalAction[Fetched], context: ActionContext
@@ -643,7 +651,8 @@ class ProposalService:
                 .where(ProposalAction.outcome.is_null())
             )
 
-        _ = await run_in_transaction(self.database, _append)
+        async with self.database.transaction(mode="immediate") as tx:
+            _ = await _append(tx)
 
     async def _settle(self, proposal_id: UUID7) -> Proposal[Fetched]:
         """Settle `executing -> executed | failed` from the action outcomes."""
@@ -665,7 +674,8 @@ class ProposalService:
             )
             return await self._fetch(proposal_id, tx=tx)
 
-        return await run_in_transaction(self.database, _finish)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _finish(tx)
 
     # --- grants ----------------------------------------------------------
 
@@ -680,7 +690,8 @@ class ProposalService:
                 insert(AutonomyGrant(kind=kind, scope=scope)).returning()
             )
 
-        granted = await run_in_transaction(self.database, _grant)
+        async with self.database.transaction(mode="immediate") as tx:
+            granted = await _grant(tx)
         await self.event_publisher.publish(InvalidateEvent(keys=["proposals"]))
         return granted
 
@@ -695,7 +706,8 @@ class ProposalService:
                 .where(AutonomyGrant.revoked_at.is_null())
             )
 
-        matched = await run_in_transaction(self.database, _revoke)
+        async with self.database.transaction(mode="immediate") as tx:
+            matched = await _revoke(tx)
         if matched:
             await self.event_publisher.publish(InvalidateEvent(keys=["proposals"]))
 

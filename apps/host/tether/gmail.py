@@ -59,13 +59,13 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 
 from tether.chat_ws import local_timezone_name
-from tether.db_retry import run_in_transaction
 from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.structured_logging import Logger
 from tether.todos import TodoService
@@ -759,7 +759,7 @@ class GmailMessageRecord[S = Pending](Model[S, "GmailMessageRecord[Fetched]"]):
     memory_id: GmailMessageRecord.Col[str | None] = Text(default=None, nullable=True)
     trigger_id: GmailMessageRecord.Col[str | None] = Text(default=None, nullable=True)
     internal_date: GmailMessageRecord.Col[str] = Text()
-    created_at: GmailMessageRecord.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: GmailMessageRecord.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class GmailSyncState[S = Pending](Model[S, "GmailSyncState[Fetched]"]):
@@ -1074,7 +1074,8 @@ class GmailSyncService:
                     .where(GmailMessageRecord.message_id.eq(message.message_id))
                 )
 
-        await run_in_transaction(self.database, _upsert)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _upsert(tx)
 
     async def _read_watermark(self) -> datetime | None:
         """The last fully successful pass's start time, or None on first sync."""
@@ -1104,7 +1105,8 @@ class GmailSyncService:
                     .where(GmailSyncState.key.eq(_WATERMARK_KEY))
                 )
 
-        await run_in_transaction(self.database, _set)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _set(tx)
 
 
 _GMAIL_MIGRATIONS: dict[str, str] = {

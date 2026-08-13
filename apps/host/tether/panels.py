@@ -41,13 +41,13 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.memories import Memory, MemoryService
 from tether.structured_logging import Logger
@@ -193,9 +193,9 @@ class SyntheticPanel[S = Pending](Model[S, "SyntheticPanel[Fetched]"]):
     """Explicit sort position; the panel column never reshuffles on its own."""
     version: SyntheticPanel.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: SyntheticPanel.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: SyntheticPanel.GenCol[datetime] = Text(default=CurrentTimestamp)
-    deleted_at: SyntheticPanel.Col[datetime | None] = Text(
+    created_at: SyntheticPanel.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: SyntheticPanel.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    deleted_at: SyntheticPanel.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -258,7 +258,8 @@ class PanelService:
                     ).returning()
                 )
 
-            panel = await run_in_transaction(self.database, _create)
+            async with self.database.transaction(mode="immediate") as tx:
+                panel = await _create(tx)
             span.set_attribute("panel.id", str(panel.id))
             _info(
                 logger,
@@ -324,7 +325,8 @@ class PanelService:
                 raise PanelConflictError(panel.id)
             return fresh
 
-        fresh = await run_in_transaction(self.database, _update)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh = await _update(tx)
         _info(
             logger,
             "Synthetic panel updated",
@@ -377,7 +379,8 @@ class PanelService:
                 raise PanelConflictError(panel.id)
             return current
 
-        current = await run_in_transaction(self.database, _delete)
+        async with self.database.transaction(mode="immediate") as tx:
+            current = await _delete(tx)
         _info(logger, "Synthetic panel deleted", panel_id=str(current.id))
         await self.event_publisher.publish(InvalidateEvent(keys=["panels"]))
         return current

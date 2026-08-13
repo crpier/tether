@@ -55,13 +55,13 @@ from snekql.sqlite import (
     Text,
     Transaction,
     UpdateQuery,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
 
@@ -309,18 +309,18 @@ class ScheduledTrigger[S = Pending](Model[S, "ScheduledTrigger[Fetched]"]):
     """`HH:MM` wall-clock fire time for recurring triggers; null for `once`."""
     weekday: ScheduledTrigger.Col[int | None] = Integer(default=None, nullable=True)
     """Weekday (Mon=0) for `weekly`; null otherwise."""
-    next_fire_at: ScheduledTrigger.Col[datetime] = Text()
+    next_fire_at: ScheduledTrigger.Col[UtcDatetime] = Text()
     """The next scheduled occurrence, as UTC."""
     status: ScheduledTrigger.Col[TriggerStatus] = Text()
     """Firing lifecycle; recurring triggers remain `active`."""
-    claimed_at: ScheduledTrigger.Col[datetime | None] = Text(
+    claimed_at: ScheduledTrigger.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
     """Stamped when a scheduler tick claims the row for dispatch."""
     attempts: ScheduledTrigger.Col[int] = Integer(default=0)
     """Failed dispatch attempts at the current occurrence."""
-    next_attempt_at: ScheduledTrigger.Col[datetime | None] = Text(
+    next_attempt_at: ScheduledTrigger.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -329,9 +329,9 @@ class ScheduledTrigger[S = Pending](Model[S, "ScheduledTrigger[Fetched]"]):
     """The most recent dispatch failure message, for diagnostics."""
     version: ScheduledTrigger.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: ScheduledTrigger.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: ScheduledTrigger.GenCol[datetime] = Text(default=CurrentTimestamp)
-    deleted_at: ScheduledTrigger.Col[datetime | None] = Text(
+    created_at: ScheduledTrigger.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: ScheduledTrigger.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    deleted_at: ScheduledTrigger.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -426,7 +426,8 @@ class TriggerService:
                     ).returning()
                 )
 
-            trigger = await run_in_transaction(self.database, _create)
+            async with self.database.transaction(mode="immediate") as tx:
+                trigger = await _create(tx)
             span.set_attribute("trigger.id", str(trigger.id))
             _info(
                 logger,
@@ -518,7 +519,8 @@ class TriggerService:
                 self._raise_version_conflict(trigger, fresh, logger=logger)
             return fresh
 
-        fresh = await run_in_transaction(self.database, _update)
+        async with self.database.transaction(mode="immediate") as tx:
+            fresh = await _update(tx)
         _info(
             logger,
             "Scheduled trigger updated",
@@ -575,7 +577,8 @@ class TriggerService:
                 self._raise_version_conflict(trigger, current, logger=logger)
             return current
 
-        current = await run_in_transaction(self.database, _delete)
+        async with self.database.transaction(mode="immediate") as tx:
+            current = await _delete(tx)
         _info(
             logger,
             "Scheduled trigger deleted",
@@ -618,7 +621,8 @@ class TriggerService:
                     claimed.append(await self._fetch_live(tx, candidate.id))
             return claimed
 
-        return await run_in_transaction(self.database, _claim_due)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _claim_due(tx)
 
     async def record_success(
         self,
@@ -733,7 +737,8 @@ class TriggerService:
             )
             return await self._fetch_any(tx, trigger_id)
 
-        return await run_in_transaction(self.database, _apply)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _apply(tx)
 
     def _raise_version_conflict(
         self,

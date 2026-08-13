@@ -49,12 +49,12 @@ from snekql.sqlite import (
     Real,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.structured_logging import Logger
@@ -603,9 +603,9 @@ class StudyItem[S = Pending](Model[S, "StudyItem[Fetched]"]):
     """The source's human-facing title, for the recall surface."""
     state: StudyItem.Col[StudyItemState] = Text()
     """`studying` while prompts are being drilled; `completed` once all learned."""
-    created_at: StudyItem.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: StudyItem.GenCol[datetime] = Text(default=CurrentTimestamp)
-    completed_at: StudyItem.Col[datetime | None] = Text(default=None, nullable=True)
+    created_at: StudyItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: StudyItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    completed_at: StudyItem.Col[UtcDatetime | None] = Text(default=None, nullable=True)
 
     __indexes__: ClassVar = [Index(state)]
 
@@ -637,10 +637,10 @@ class RecallPrompt[S = Pending](Model[S, "RecallPrompt[Fetched]"]):
     """The SM-2 interval multiplier; clamped at `MIN_EASE_FACTOR`."""
     interval_days: RecallPrompt.Col[int] = Integer(default=0)
     """Days until the next review of this card."""
-    due_at: RecallPrompt.Col[datetime] = Text()
+    due_at: RecallPrompt.Col[UtcDatetime] = Text()
     """When this prompt's next review is owed, as UTC."""
-    created_at: RecallPrompt.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: RecallPrompt.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: RecallPrompt.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: RecallPrompt.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(study_item_id, due_at)]
 
@@ -658,7 +658,7 @@ class RecallAnswer[S = Pending](Model[S, "RecallAnswer[Fetched]"]):
     response_ms: RecallAnswer.Col[int] = Integer()
     quality: RecallAnswer.Col[int] = Integer()
     """The SM-2 quality the answer graded to (0..5)."""
-    answered_at: RecallAnswer.GenCol[datetime] = Text(default=CurrentTimestamp)
+    answered_at: RecallAnswer.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(prompt_id)]
 
@@ -859,7 +859,8 @@ class RecallService:
                     )
                 return study_item
 
-            study_item = await run_in_transaction(self.database, _start_recall)
+            async with self.database.transaction(mode="immediate") as tx:
+                study_item = await _start_recall(tx)
         _info(
             logger,
             "Recall started",
@@ -994,9 +995,8 @@ class RecallService:
                     )
                 return fresh_prompt, study_item, newly_complete
 
-            fresh_prompt, study_item, newly_complete = await run_in_transaction(
-                self.database, _answer
-            )
+            async with self.database.transaction(mode="immediate") as tx:
+                fresh_prompt, study_item, newly_complete = await _answer(tx)
         tethered = False
         if newly_complete:
             tethered = await self._tether_memory(study_item.memory_id, logger=logger)

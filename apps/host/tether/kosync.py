@@ -51,12 +51,12 @@ from snekql.sqlite import (
     Real,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.memories import MemoryProvenance, MemoryService
 from tether.structured_logging import Logger
 
@@ -87,7 +87,7 @@ class EbookProgressEvent[S = Pending](Model[S, "EbookProgressEvent[Fetched]"]):
     device: EbookProgressEvent.Col[str] = Text(nullable=False)
     device_id: EbookProgressEvent.Col[str] = Text(nullable=False)
     timestamp: EbookProgressEvent.Col[int] = Integer(nullable=False)
-    received_at: EbookProgressEvent.GenCol[datetime] = Text(default=CurrentTimestamp)
+    received_at: EbookProgressEvent.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     __indexes__: ClassVar = [Index(document_hash)]
 
 
@@ -105,8 +105,8 @@ class EbookDocument[S = Pending](Model[S, "EbookDocument[Fetched]"]):
     finished_captured_at: EbookDocument.Col[str | None] = Text(
         default=None, nullable=True
     )
-    created_at: EbookDocument.GenCol[datetime] = Text(default=CurrentTimestamp)
-    updated_at: EbookDocument.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: EbookDocument.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: EbookDocument.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +158,8 @@ class KosyncService:
     `MemoryService.capture_tethered`, so the Commons projection and search index
     are written exactly as any tether would. Labeling (`label_ebook`,
     `match_ebook_filename`, `list_unlabeled`) is how a hash acquires a human
-    title. All writes go through `run_in_transaction` for retry safety.
+    title. Write transactions declare immediate mode to acquire SQLite's writer
+    lock before running their bodies.
     """
 
     def __init__(
@@ -245,7 +246,8 @@ class KosyncService:
                 )
             )
 
-        return await run_in_transaction(self.database, _label)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _label(tx)
 
     async def match_ebook_filename(self, filename: str) -> EbookDocument[Fetched]:
         """Label the document a filename hashes to, deriving the title from it.
@@ -295,7 +297,8 @@ class KosyncService:
             )
             return existing
 
-        return await run_in_transaction(self.database, _upsert)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _upsert(tx)
 
     async def _append_event(
         self, update: ProgressUpdate, server_timestamp: int
@@ -316,7 +319,8 @@ class KosyncService:
                 )
             )
 
-        await run_in_transaction(self.database, _insert)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _insert(tx)
 
     async def _capture_finished(
         self, document: EbookDocument[Fetched], *, logger: Logger
@@ -353,7 +357,8 @@ class KosyncService:
                 .where(EbookDocument.document_hash.eq(document_hash))
             )
 
-        await run_in_transaction(self.database, _stamp)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _stamp(tx)
 
 
 _KOSYNC_MIGRATIONS: dict[str, str] = {

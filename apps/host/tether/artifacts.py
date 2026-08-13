@@ -22,7 +22,6 @@ and are never updated or deleted, so the log is a durable audit trail.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import ClassVar
 from uuid import uuid7
 
@@ -38,12 +37,12 @@ from snekql.sqlite import (
     Pending,
     Text,
     Transaction,
+    UtcDatetime,
     insert,
     select,
 )
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
-from tether.db_retry import run_in_transaction
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
 
@@ -94,7 +93,7 @@ class Artifact[S = Pending](Model[S, "Artifact[Fetched]"]):
     """1-based, incrementing by exactly 1 per Update; immutable once written."""
     title: Artifact.Col[str] = Text()
     html: Artifact.Col[str] = Text()
-    created_at: Artifact.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: Artifact.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(artifact_id, version)]
 
@@ -106,7 +105,7 @@ class ArtifactEvent[S = Pending](Model[S, "ArtifactEvent[Fetched]"]):
     payload: ArtifactEvent.Col[Json[dict[str, JsonValue]]] = Text()
     """Opaque, free-form event data — no schema enforced, by convention an
     optional `type` key names it for whoever renders it later."""
-    created_at: ArtifactEvent.GenCol[datetime] = Text(default=CurrentTimestamp)
+    created_at: ArtifactEvent.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(artifact_id)]
 
@@ -152,7 +151,8 @@ class ArtifactService:
                     ).returning()
                 )
 
-            artifact = await run_in_transaction(self.database, _create)
+            async with self.database.transaction(mode="immediate") as tx:
+                artifact = await _create(tx)
             span.set_attribute("artifact.artifact_id", str(artifact.artifact_id))
             span.set_attribute("artifact.version", artifact.version)
             _info(
@@ -191,7 +191,8 @@ class ArtifactService:
                 ).returning()
             )
 
-        artifact = await run_in_transaction(self.database, _update)
+        async with self.database.transaction(mode="immediate") as tx:
+            artifact = await _update(tx)
         _info(
             logger,
             "Artifact updated",
@@ -271,7 +272,8 @@ class ArtifactService:
                 ).returning()
             )
 
-        event = await run_in_transaction(self.database, _record)
+        async with self.database.transaction(mode="immediate") as tx:
+            event = await _record(tx)
         _info(logger, "Artifact event recorded", artifact_id=str(artifact_id))
         await self.event_publisher.publish(InvalidateEvent(keys=["artifacts"]))
         return event

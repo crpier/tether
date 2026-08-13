@@ -53,7 +53,6 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.kosync import EbookDocument, EbookProgressEvent
 from tether.memories import Memory, MemoryConflictError, MemoryProvenance, MemoryService
 from tether.structured_logging import Logger
@@ -655,7 +654,8 @@ class ReadwiseSyncService:
                 )
             )
 
-        await run_in_transaction(self.database, _insert)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _insert(tx)
 
     async def _touch_mapping(
         self, highlight_id: int, updated_at: datetime | None
@@ -674,7 +674,8 @@ class ReadwiseSyncService:
                 .where(ReadwiseHighlight.highlight_id.eq(highlight_id))
             )
 
-        await run_in_transaction(self.database, _update)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _update(tx)
 
     async def _remove_mapping(self, highlight_id: int) -> None:
         """Drop a mapping row once its Memory has been deleted."""
@@ -687,7 +688,8 @@ class ReadwiseSyncService:
             )
             await cursor.close()
 
-        await run_in_transaction(self.database, _delete)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _delete(tx)
 
     async def _read_watermark(self) -> datetime | None:
         """The last fully successful `updatedAfter` cursor, or None on first sync."""
@@ -723,7 +725,8 @@ class ReadwiseSyncService:
                     .where(ReadwiseSyncState.key.eq(_WATERMARK_KEY))
                 )
 
-        await run_in_transaction(self.database, _set)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _set(tx)
 
 
 def _isoformat_or_empty(when: datetime | None) -> str:
@@ -1019,7 +1022,8 @@ class ReaderSyncService:
             )
             return existing
 
-        return await run_in_transaction(self.database, _upsert)
+        async with self.database.transaction(mode="immediate") as tx:
+            return await _upsert(tx)
 
     async def _append_if_changed(self, key: str, document: ReaderDocument) -> bool:
         """Append a progress event unless it repeats the latest stored one.
@@ -1066,7 +1070,8 @@ class ReaderSyncService:
                 )
             )
 
-        await run_in_transaction(self.database, _insert)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _insert(tx)
 
     async def _capture_finished(
         self, key: str, document: ReaderDocument, *, logger: Logger
@@ -1104,7 +1109,8 @@ class ReaderSyncService:
                 .where(EbookDocument.document_hash.eq(key))
             )
 
-        await run_in_transaction(self.database, _stamp)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _stamp(tx)
 
     async def _read_watermark(self) -> datetime | None:
         """The last fully successful `updatedAfter` cursor, or None on first sync."""
@@ -1140,7 +1146,8 @@ class ReaderSyncService:
                     .where(ReadwiseSyncState.key.eq(_READER_WATERMARK_KEY))
                 )
 
-        await run_in_transaction(self.database, _set)
+        async with self.database.transaction(mode="immediate") as tx:
+            await _set(tx)
 
 
 class HttpReaderTransport(ReaderTransport):

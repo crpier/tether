@@ -47,7 +47,6 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.db_retry import run_in_transaction
 from tether.structured_logging import Logger
 from tether.youtube import (
     IngestedVideo,
@@ -331,14 +330,15 @@ async def import_backup(
             transcript_skipped,
         )
 
-    (
-        inserted,
-        updated,
-        likes_skipped,
-        orphans,
-        transcripts_imported,
-        transcript_skipped,
-    ) = await run_in_transaction(database, _import)
+    async with database.transaction(mode="immediate") as tx:
+        (
+            inserted,
+            updated,
+            likes_skipped,
+            orphans,
+            transcripts_imported,
+            transcript_skipped,
+        ) = await _import(tx)
 
     report = ImportReport(
         videos_inserted=inserted,
