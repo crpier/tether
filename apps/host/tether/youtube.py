@@ -40,6 +40,7 @@ from uuid import uuid7
 
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel
+from snekok import Result
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -356,7 +357,10 @@ class TranscriptProvider(Protocol):
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> FetchedTranscript:
+    ) -> Result[
+        FetchedTranscript,
+        TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError,
+    ]:
         """Return the video's transcript, or raise a typed unavailability signal."""
         ...
 

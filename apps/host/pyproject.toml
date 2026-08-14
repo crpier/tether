@@ -124,7 +124,6 @@ deprecateTypingAliases = true
 enableExperimentalFeatures = true
 reportMissingTypeStubs = "error"
 reportMissingModuleSource = "error"
-reportInvalidTypeForm = "error"
 reportMissingImports = "error"
 reportUndefinedVariable = "error"
 reportAssertAlwaysTrue = "error"
@@ -210,6 +209,9 @@ reportMissingSuperCall = false
 # This is a bit too noisy, since it complains when overriding something like
 # ___str__ on a base class, which is not a problem in practice.
 reportImplicitOverride = false
+# We use NewType calls in Annotated type aliases a lot, and this lets us spare
+# a few lines of code by inlining the NewType call.
+reportInvalidTypeForm = false
 
 # Tests exercise patterns that the strict production rules flag as false positives:
 # route handlers declared inside test bodies (never referenced by name), calls kept

@@ -19,10 +19,36 @@ match parse_port("8080"):
         print(error)
 ```
 
-The initial API deliberately contains only `Ok`, `Err`, and `Result`. Concrete
+The `Result` API deliberately contains only `Ok`, `Err`, and `Result`. Concrete
 consumer needs will drive additional operations rather than snekok anticipating
 a large functional-programming framework.
 
-See [`docs/result.md`](docs/result.md) for the contract. Pinned design references
+## Validated scalar classes
+
+`NonEmptySecretStr`, `NonEmptyStr`, and `NonNegativeInt` are nominal classes with
+validated constructors and Pydantic support:
+
+```python
+from pydantic import BaseModel
+
+from snekok import NonEmptySecretStr
+from snekok.types import NonEmptyStr, NonNegativeInt
+
+
+class ApiSettings(BaseModel):
+    api_key: NonEmptySecretStr
+
+
+label = NonEmptyStr("hello")
+retry_count = NonNegativeInt(0)
+settings = ApiSettings.model_validate({"api_key": "secret-value"})
+assert settings.api_key.get_secret_value() == "secret-value"
+```
+
+Pydantic rejects an empty value. Static type checkers also reject an ordinary
+`SecretStr` where `NonEmptySecretStr` is required, preventing unvalidated secrets
+from crossing the typed boundary.
+
+See [`docs/result.md`](docs/result.md) for the Result contract. Pinned design references
 for Better Auth and `dry-python/returns` live in
 [`docs/research/`](docs/research/).

@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Small, typed tools for treating expected failures as values"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.4",
+]
 
 [dependency-groups]
 dev = [
@@ -24,6 +26,7 @@ build-backend = "hatchling.build"
 include = ["src", "tests"]
 typeCheckingMode = "strict"
 reportMatchNotExhaustive = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
 
 [tool.ruff.lint]
 select = [

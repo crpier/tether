@@ -1370,8 +1370,12 @@ wheels = [
 name = "snekok"
 version = "0.1.0"
 source = { editable = "../../packages/snekok" }
+dependencies = [
+    { name = "pydantic" },
+]
 
 [package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13.4" }]
 
 [package.metadata.requires-dev]
 dev = [

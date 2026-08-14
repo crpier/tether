@@ -18,17 +18,21 @@ provider = build_configured_transcript_provider(settings)  # None with no token
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import TypeAdapter
+from snekok import NonEmptySecretStr, Ok, Result
 from snekql.sqlite import Database
 
 from tether.transcripts.library import LibraryPassBudget, YouTubeTranscriptApiProvider
 from tether.transcripts.supadata import (
     HttpSupadataTransport,
+    SupadataBudgetExhaustedError,
     SupadataConfig,
     SupadataMode,
+    SupadataSpendGuard,
     SupadataTranscriptProvider,
     bind_supadata_spend_guard,
 )
@@ -36,6 +40,7 @@ from tether.youtube import (
     FallbackTranscriptProvider,
     InMemoryYouTubeApi,
     NullTranscriptProvider,
+    SourceUsage,
     TranscriptProvider,
     YouTubeApi,
     YouTubeApiClient,
@@ -50,6 +55,9 @@ _KNOWN_TRANSCRIPT_SOURCES: frozenset[str] = frozenset(
     {"supadata", "captions", "library"}
 )
 """The transcript source names accepted in `TETHER_TRANSCRIPT_PROVIDER_ORDER`."""
+_SUPADATA_API_KEY_ADAPTER: TypeAdapter[NonEmptySecretStr] = TypeAdapter(
+    NonEmptySecretStr
+)
 
 
 class TranscriptProviderConfigError(Exception):
@@ -207,6 +215,23 @@ def _compose_transcript_provider(
     return FallbackTranscriptProvider(selected[0], fallbacks=selected[1:])
 
 
+class UnlimitedSpendGuard(SupadataSpendGuard):
+    """A guard that counts charges and can be scripted to exhaust after N uses."""
+
+    def __init__(self, *, cap: int | None = None) -> None: ...
+
+    async def charge(self) -> Result[None, SupadataBudgetExhaustedError]:
+        return Ok(None)
+
+    async def snapshot(self, *, now: datetime) -> SourceUsage | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return SourceUsage(
+            used=0,
+            limit=10000000000,
+            remaining=9999999999,
+            period="2026-07",
+        )
+
+
 def _build_supadata_provider(
     settings: TranscriptProviderSettings, *, languages: tuple[str, ...] = ()
 ) -> SupadataTranscriptProvider | None:
@@ -229,8 +254,11 @@ def _build_supadata_provider(
             seconds=settings.supadata_min_request_interval_seconds
         ),
     )
-    transport = HttpSupadataTransport(settings.supadata_api_key, config=config)
-    return SupadataTranscriptProvider(transport, config=config)
+    api_key = _SUPADATA_API_KEY_ADAPTER.validate_python(settings.supadata_api_key)
+    transport = HttpSupadataTransport(api_key, config=config)
+    return SupadataTranscriptProvider(
+        transport, config=config, spend_guard=UnlimitedSpendGuard()
+    )
 
 
 def resolve_transcript_provider(
