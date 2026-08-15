@@ -5,7 +5,7 @@ database, a real `MemoryService`, and a controlled fake generator — no model, 
 HTTP. They assert the load-bearing Recall behavior: a source becomes a loose
 study-item Memory with due prompts, answers grade and reschedule deterministically,
 and a study item tethers its Memory **only** on full completion. Driving
-controlled answers and timestamps keeps it all model-free (issue #20).
+controlled answers and timestamps keeps it all model-free.
 """
 
 from collections.abc import AsyncGenerator
@@ -20,6 +20,7 @@ from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from pydantic import UUID7
+from snekok import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched, select, update
 from snektest import (
     assert_eq,
@@ -38,22 +39,25 @@ from tether.memories import (
     create_memory_schema,
 )
 from tether.recall import (
-    AnswerGrader,
-    AnswerGradingUnavailableError,
-    EssayGradeProposal,
-    GeneratedPrompt,
-    GeneratedStudyItem,
     InvalidAnswerError,
     InvalidPromptError,
     PromptAnswer,
     RecallModelSteps,
-    RecallPrompt,
-    RecallPromptKind,
     RecallService,
-    StudyItem,
     StudyItemExistsError,
-    create_recall_schema,
 )
+from tether.recall_generation import (
+    GeneratedPrompt,
+    GeneratedStudyItem,
+    StudyItemGenerationFailure,
+)
+from tether.recall_grading import (
+    AnswerGrader,
+    AnswerGradingUnavailable,
+    EssayGradeProposal,
+)
+from tether.recall_schedule import RecallPromptKind
+from tether.recall_store import RecallPrompt, StudyItem, create_recall_schema
 from tether.structured_logging import Logger
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.recall_service")
@@ -77,10 +81,12 @@ class FakeGenerator:
         self.distilled: GeneratedStudyItem = distilled
         self.calls: int = 0
 
-    async def generate(self, *, transcript: str, title: str) -> GeneratedStudyItem:
+    async def generate(
+        self, *, transcript: str, title: str
+    ) -> Result[GeneratedStudyItem, StudyItemGenerationFailure]:
         _ = (transcript, title)
         self.calls += 1
-        return self.distilled
+        return Ok(self.distilled)
 
 
 def one_prompt() -> GeneratedStudyItem:
@@ -152,21 +158,23 @@ class FakeGrader:
 
     async def grade_short_answer(
         self, *, question: str, reference_answer: str, answer_text: str
-    ) -> bool:
+    ) -> Result[bool, AnswerGradingUnavailable]:
         self.short_answer_calls.append((question, reference_answer, answer_text))
         if self.short_answer_correct is None:
-            message = "grader scripted as unavailable"
-            raise AnswerGradingUnavailableError(message)
-        return self.short_answer_correct
+            return Err(
+                AnswerGradingUnavailable(message="grader scripted as unavailable")
+            )
+        return Ok(self.short_answer_correct)
 
     async def propose_essay_grade(
         self, *, question: str, rubric: str, answer_text: str
-    ) -> EssayGradeProposal:
+    ) -> Result[EssayGradeProposal, AnswerGradingUnavailable]:
         self.proposal_calls.append((question, rubric, answer_text))
         if self.proposal is None:
-            message = "grader scripted as unavailable"
-            raise AnswerGradingUnavailableError(message)
-        return self.proposal
+            return Err(
+                AnswerGradingUnavailable(message="grader scripted as unavailable")
+            )
+        return Ok(self.proposal)
 
 
 class RecallFixture:
@@ -430,7 +438,7 @@ async def completion_tolerates_a_memory_already_tethered_by_review() -> None:
     assert_eq(refreshed.state, "completed")
 
 
-# --- short-answer grading (#131) ---
+# --- short-answer grading ---
 
 
 @test()
@@ -537,7 +545,7 @@ async def a_multiple_choice_prompt_requires_a_selected_index() -> None:
         )
 
 
-# --- essay grading: the human confirms (#131, ADR 0004) ---
+# --- essay grading: the human confirms ---
 
 
 @test()

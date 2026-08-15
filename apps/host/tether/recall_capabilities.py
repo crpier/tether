@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import UUID7, BaseModel
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
@@ -25,20 +26,17 @@ from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.recall import (
     AnswerOutcome,
     DuePrompt,
-    EssayGradeProposal,
-    Fetched,
     InvalidAnswerError,
     InvalidPromptError,
     PromptAnswer,
-    RecallPrompt,
-    RecallPromptKind,
     RecallPromptNotFoundError,
-    StudyItem,
     StudyItemExistsError,
     StudyItemNotFoundError,
-    StudyItemState,
     TranscriptNotReadyError,
 )
+from tether.recall_grading import EssayGradeProposal
+from tether.recall_schedule import RecallPromptKind
+from tether.recall_store import RecallPrompt, StudyItem, StudyItemState
 from tether.structured_logging import get_request_logger
 from tether.youtube import YouTubeVideoNotFoundError
 
