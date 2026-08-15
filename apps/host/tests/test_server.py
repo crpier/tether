@@ -24,6 +24,7 @@ from snektest import (
     assert_eq,
     assert_false,
     assert_in,
+    assert_raises,
     assert_true,
     test,
 )
@@ -31,11 +32,12 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tether import server
+from tether.app_runtime import app_runtime
+from tether.host_composition import _shutdown_background_tasks
 from tether.model_selection import AgentModelConfig
 from tether.server import (
     AppConfig,
     HostSettings,
-    _shutdown_background_tasks,
     create_app_from_environment,
     serve,
 )
@@ -432,6 +434,26 @@ def app_factory_returns_fastapi() -> None:
 
 
 @test()
+def app_lifespan_installs_a_complete_typed_runtime() -> None:
+    """The request-serving phase exposes one complete dependency graph."""
+    with TemporaryDirectory() as directory:
+        app = server.create_app(
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=":memory:",
+                kb_root=directory,
+                session_secret="test-session-secret",
+            )
+        )
+
+        with TestClient(app):
+            runtime = app_runtime(app)
+
+            assert_eq(runtime.app_password, "test-app-password")
+            assert_true(runtime.youtube_service is app.state.youtube_service)
+
+
+@test()
 def app_lifespan_closes_transcript_provider_resources() -> None:
     """Application shutdown closes reusable transcript HTTP resources."""
 
@@ -439,29 +461,81 @@ def app_lifespan_closes_transcript_provider_resources() -> None:
         source: str = "supadata"
 
         def __init__(self) -> None:
-            self.closed: bool = False
+            self.close_calls: int = 0
 
         async def fetch(self, video_id: str) -> TranscriptFetchResult:
             return Err(TranscriptUnavailableFailure(video_id=video_id))
 
         async def aclose(self) -> None:
-            self.closed = True
+            self.close_calls += 1
 
     source = ClosableSource()
-    app = server.create_app(
-        config=AppConfig(
-            app_password="test-app-password",
-            database_path=":memory:",
-            kb_root="unused",
-            session_secret="test-session-secret",
-            transcript_provider=TranscriptProviderChain([source]),
+    with TemporaryDirectory() as directory:
+        app = server.create_app(
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=":memory:",
+                kb_root=directory,
+                session_secret="test-session-secret",
+                transcript_provider=TranscriptProviderChain([source]),
+            )
         )
-    )
 
-    with TestClient(app):
-        pass
+        with TestClient(app):
+            pass
 
-    assert_true(source.closed)
+        assert_eq(source.close_calls, 1)
+
+
+@test()
+def failed_app_startup_closes_transcript_provider_resources() -> None:
+    """Owned resources close when a later startup step fails."""
+
+    class ClosableSource:
+        source: str = "supadata"
+
+        def __init__(self) -> None:
+            self.close_calls: int = 0
+
+        async def fetch(self, video_id: str) -> TranscriptFetchResult:
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+
+    class FailingEmbedder:
+        @property
+        def model_name(self) -> str:
+            message = "embedding startup failed"
+            raise RuntimeError(message)
+
+        @property
+        def vector_dim(self) -> int:
+            return 8
+
+        async def embed_documents(self, texts: object) -> list[list[float]]:
+            return []
+
+        async def embed_query(self, text: str) -> list[float]:
+            return []
+
+    source = ClosableSource()
+    with TemporaryDirectory() as directory:
+        app = server.create_app(
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=":memory:",
+                kb_root=directory,
+                session_secret="test-session-secret",
+                transcript_provider=TranscriptProviderChain([source]),
+            ),
+            embedder=FailingEmbedder(),
+        )
+
+        with assert_raises(RuntimeError), TestClient(app):
+            pass
+
+        assert_eq(source.close_calls, 1)
 
 
 @test()
