@@ -8,15 +8,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
+from fastapi import APIRouter
 from itsdangerous import BadData, URLSafeSerializer
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 from starlette.types import ASGIApp
-
-from tether.openapi import EndpointRoute, endpoint
 
 SESSION_COOKIE = "tether_session"
 """Browser cookie name carrying the signed app session token."""
@@ -213,7 +211,10 @@ class AppSessionMiddleware(BaseHTTPMiddleware):
         return response
 
 
-@endpoint(request_body=LoginRequest, status=204)
+router = APIRouter()
+
+
+@router.post("/api/auth/login", status_code=204)
 async def login(request: Request, body: LoginRequest) -> Response:
     """Authenticate with the app password and set a session cookie."""
     principal = authenticate_password(
@@ -231,7 +232,7 @@ async def login(request: Request, body: LoginRequest) -> Response:
     return response
 
 
-@endpoint(response=SessionResponse)
+@router.get("/api/auth/session", response_model=SessionResponse)
 async def session(request: Request) -> Response:
     """Report whether the request carries a valid app session."""
     principal = verify_session_cookie(
@@ -249,7 +250,7 @@ async def session(request: Request) -> Response:
     return response
 
 
-@endpoint(status=204)
+@router.post("/api/auth/logout", status_code=204)
 async def logout(request: Request) -> Response:
     """Clear the app session cookie."""
     response = Response(status_code=204)
@@ -257,10 +258,3 @@ async def logout(request: Request) -> Response:
         response, secure=cast("bool", request.app.state.secure_cookies)
     )
     return response
-
-
-auth_routes: list[Route] = [
-    EndpointRoute("/api/auth/login", login, methods=["POST"]),
-    EndpointRoute("/api/auth/logout", logout, methods=["POST"]),
-    EndpointRoute("/api/auth/session", session, methods=["GET"]),
-]

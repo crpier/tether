@@ -34,7 +34,7 @@ Both commands bake in a dev login (`TETHER_APP_PASSWORD=dev`). Log in with `dev`
 ## Local-only dependency profile
 
 `just dev-local` is the safe default for application development. It keeps the
-real Starlette host, Vite SPA, pi RPC subprocess, generated tool shims, SQLite,
+real FastAPI host, Vite SPA, pi RPC subprocess, generated tool shims, SQLite,
 LanceDB, and filesystem projections. It replaces boundaries that would leave
 the machine:
 

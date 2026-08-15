@@ -109,9 +109,11 @@ def translate_domain_errors(
         handler: Callable[..., Awaitable[Response]],
     ) -> Callable[..., Awaitable[Response]]:
         @functools.wraps(handler)
-        async def translated(*arguments: object) -> Response:
+        async def translated(
+            *arguments: object, **keyword_arguments: object
+        ) -> Response:
             try:
-                return await handler(*arguments)
+                return await handler(*arguments, **keyword_arguments)
             except catchable as error:
                 rule = match_rule(rules, error)
                 detail = rule.detail if rule.detail is not None else str(error)

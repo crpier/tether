@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -35,7 +36,6 @@ from tether import kosync_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.kosync import KosyncService, ProgressUpdate
 from tether.kosync_capabilities import KOSYNC_ERRORS, EbookDocumentRead
-from tether.openapi import EndpointRoute, endpoint
 from tether.structured_logging import get_request_logger
 
 _CODE_UNAUTHORIZED = 2001
@@ -219,13 +219,16 @@ class MatchEbookFilenameRequest(BaseModel):
 _translate_domain_errors = translate_domain_errors(KOSYNC_ERRORS)
 
 
-@endpoint(response=EbookDocumentRead, response_is_list=True)
+router = APIRouter()
+
+
+@router.get("/api/ebooks/unlabeled", response_model=list[EbookDocumentRead])
 async def list_unlabeled_ebooks(request: Request) -> Response:
     """List every ebook Tether has progress for that is still unlabeled."""
     return rest_response(await kosync_capabilities.list_unlabeled_ebooks(request))
 
 
-@endpoint(request_body=LabelEbookRequest, response=EbookDocumentRead)
+@router.post("/api/ebooks/label", response_model=EbookDocumentRead)
 @_translate_domain_errors
 async def label_ebook(request: Request, body: LabelEbookRequest) -> Response:
     """Attach a human title to a document hash."""
@@ -234,7 +237,7 @@ async def label_ebook(request: Request, body: LabelEbookRequest) -> Response:
     )
 
 
-@endpoint(request_body=MatchEbookFilenameRequest, response=EbookDocumentRead)
+@router.post("/api/ebooks/match-filename", response_model=EbookDocumentRead)
 @_translate_domain_errors
 async def match_ebook_filename(
     request: Request, body: MatchEbookFilenameRequest
@@ -245,9 +248,4 @@ async def match_ebook_filename(
     )
 
 
-ebook_routes: list[Route] = [
-    EndpointRoute("/api/ebooks/unlabeled", list_unlabeled_ebooks, methods=["GET"]),
-    EndpointRoute("/api/ebooks/label", label_ebook, methods=["POST"]),
-    EndpointRoute("/api/ebooks/match-filename", match_ebook_filename, methods=["POST"]),
-]
 """The owner-facing ebook-labeling REST routes, the twin of the internal tools."""

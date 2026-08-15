@@ -14,15 +14,15 @@ envelope codes.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, RootModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
 from tether import youtube_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.openapi import EndpointRoute, endpoint
 from tether.structured_logging import get_request_logger
 from tether.youtube import (
     BrowseResult,
@@ -221,17 +221,17 @@ class TranscriptDecisionOutcomeRead(BaseModel):
     transcript_status: TranscriptStatus
 
 
-def _path_video_id(request: Request) -> str:
-    """Return the `{video_id}` path segment."""
-    return request.path_params["video_id"]
-
-
 _translate_domain_errors = translate_domain_errors(YOUTUBE_ERRORS)
 
 
-@endpoint(query=BrowseYouTubeQuery, response=YouTubeVideoListResponse)
+router = APIRouter()
+
+
+@router.get("/api/youtube", response_model=YouTubeVideoListResponse)
 @_translate_domain_errors
-async def browse_youtube(request: Request, query: BrowseYouTubeQuery) -> Response:
+async def browse_youtube(
+    request: Request, query: Annotated[BrowseYouTubeQuery, Query()]
+) -> Response:
     """List active ingested videos, optionally filtered by topic and source."""
     result = await request.app.state.youtube_service.browse(
         topic=query.topic,
@@ -243,7 +243,7 @@ async def browse_youtube(request: Request, query: BrowseYouTubeQuery) -> Respons
     )
 
 
-@endpoint(response=YouTubeSyncStatusRead)
+@router.get("/api/youtube/status", response_model=YouTubeSyncStatusRead)
 async def youtube_sync_status(request: Request) -> Response:
     """Report the background ingestion's progress and health (local read only)."""
     status = await request.app.state.youtube_service.sync_status(
@@ -254,9 +254,11 @@ async def youtube_sync_status(request: Request) -> Response:
     )
 
 
-@endpoint(query=SearchYouTubeQuery, response=YouTubeVideoListResponse)
+@router.get("/api/youtube/search", response_model=YouTubeVideoListResponse)
 @_translate_domain_errors
-async def search_youtube(request: Request, query: SearchYouTubeQuery) -> Response:
+async def search_youtube(
+    request: Request, query: Annotated[SearchYouTubeQuery, Query()]
+) -> Response:
     """Keyword Search across saved content and transcript text."""
     result = await request.app.state.youtube_service.search(
         query.q,
@@ -267,7 +269,9 @@ async def search_youtube(request: Request, query: SearchYouTubeQuery) -> Respons
     )
 
 
-@endpoint(response=TranscriptDecisionListResponse)
+@router.get(
+    "/api/youtube/transcript-decisions", response_model=TranscriptDecisionListResponse
+)
 async def transcript_decisions(request: Request) -> Response:
     """List transcript failures awaiting a human decision."""
     decisions = await request.app.state.youtube_service.transcript_decisions(
@@ -279,12 +283,14 @@ async def transcript_decisions(request: Request) -> Response:
     return JSONResponse(body.model_dump(mode="json"))
 
 
-@endpoint(response=YouTubeTranscriptResponse)
+@router.post(
+    "/api/youtube/{video_id}/transcript", response_model=YouTubeTranscriptResponse
+)
 @_translate_domain_errors
-async def fetch_youtube_transcript(request: Request) -> Response:
+async def fetch_youtube_transcript(request: Request, video_id: str) -> Response:
     """Fetch and persist a transcript for an ingested video."""
     result = await request.app.state.youtube_service.fetch_transcript(
-        _path_video_id(request),
+        video_id,
         logger=get_request_logger(request),
     )
     return JSONResponse(
@@ -292,12 +298,15 @@ async def fetch_youtube_transcript(request: Request) -> Response:
     )
 
 
-@endpoint(response=TranscriptDecisionOutcomeRead)
+@router.post(
+    "/api/youtube/{video_id}/transcript-decision/keep-trying",
+    response_model=TranscriptDecisionOutcomeRead,
+)
 @_translate_domain_errors
-async def keep_trying_transcript(request: Request) -> Response:
+async def keep_trying_transcript(request: Request, video_id: str) -> Response:
     """Return a review-needed transcript to pending acquisition."""
     outcome = await request.app.state.youtube_service.keep_trying_transcript(
-        _path_video_id(request), logger=get_request_logger(request)
+        video_id, logger=get_request_logger(request)
     )
     body = TranscriptDecisionOutcomeRead(
         video_id=outcome.video_id, transcript_status=outcome.transcript_status
@@ -305,12 +314,15 @@ async def keep_trying_transcript(request: Request) -> Response:
     return JSONResponse(body.model_dump())
 
 
-@endpoint(response=TranscriptDecisionOutcomeRead)
+@router.post(
+    "/api/youtube/{video_id}/transcript-decision/give-up",
+    response_model=TranscriptDecisionOutcomeRead,
+)
 @_translate_domain_errors
-async def give_up_transcript(request: Request) -> Response:
+async def give_up_transcript(request: Request, video_id: str) -> Response:
     """Confirm that a review-needed video has no transcript worth pursuing."""
     outcome = await request.app.state.youtube_service.give_up_transcript(
-        _path_video_id(request), logger=get_request_logger(request)
+        video_id, logger=get_request_logger(request)
     )
     body = TranscriptDecisionOutcomeRead(
         video_id=outcome.video_id, transcript_status=outcome.transcript_status
@@ -318,50 +330,21 @@ async def give_up_transcript(request: Request) -> Response:
     return JSONResponse(body.model_dump())
 
 
-@endpoint(response=YouTubeVideoRead)
+@router.post("/api/youtube/{video_id}/ignore", response_model=YouTubeVideoRead)
 @_translate_domain_errors
-async def ignore_youtube_video(request: Request) -> Response:
+async def ignore_youtube_video(request: Request, video_id: str) -> Response:
     """Purge a video from ingestion."""
-    outcome = await youtube_capabilities.ignore(request, _path_video_id(request))
+    outcome = await youtube_capabilities.ignore(request, video_id)
     return rest_response(outcome)
 
 
-@endpoint(response=YouTubeVideoRead)
+@router.post("/api/youtube/{video_id}/retry", response_model=YouTubeVideoRead)
 @_translate_domain_errors
-async def retry_youtube_video(request: Request) -> Response:
+async def retry_youtube_video(request: Request, video_id: str) -> Response:
     """Un-ignore a previously purged video."""
-    outcome = await youtube_capabilities.retry(request, _path_video_id(request))
+    outcome = await youtube_capabilities.retry(request, video_id)
     return rest_response(outcome)
 
 
 # `/api/youtube/search` precedes `/api/youtube/{video_id}/...` so the literal
 # path wins.
-youtube_routes: list[Route] = [
-    EndpointRoute("/api/youtube", browse_youtube, methods=["GET"]),
-    EndpointRoute("/api/youtube/status", youtube_sync_status, methods=["GET"]),
-    EndpointRoute("/api/youtube/search", search_youtube, methods=["GET"]),
-    EndpointRoute(
-        "/api/youtube/transcript-decisions", transcript_decisions, methods=["GET"]
-    ),
-    EndpointRoute(
-        "/api/youtube/{video_id}/transcript",
-        fetch_youtube_transcript,
-        methods=["POST"],
-    ),
-    EndpointRoute(
-        "/api/youtube/{video_id}/transcript-decision/keep-trying",
-        keep_trying_transcript,
-        methods=["POST"],
-    ),
-    EndpointRoute(
-        "/api/youtube/{video_id}/transcript-decision/give-up",
-        give_up_transcript,
-        methods=["POST"],
-    ),
-    EndpointRoute(
-        "/api/youtube/{video_id}/ignore", ignore_youtube_video, methods=["POST"]
-    ),
-    EndpointRoute(
-        "/api/youtube/{video_id}/retry", retry_youtube_video, methods=["POST"]
-    ),
-]

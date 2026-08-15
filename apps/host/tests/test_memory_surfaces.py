@@ -57,7 +57,7 @@ def post_memories_rejects_blank_content() -> None:
         response = client.post("/api/memories", json={"content": "   "})
 
     assert_eq(response.status_code, 422)
-    assert_eq(response.json()["detail"][0]["loc"], ["content"])
+    assert_eq(response.json()["detail"][0]["loc"], ["body", "content"])
 
 
 @test()

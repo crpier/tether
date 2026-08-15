@@ -524,8 +524,7 @@ MEMORY_TOOL_SPECS: tuple[ToolSpec, ...] = (
 def internal_tool_routes() -> list[Route]:
     """Mount the Memory capabilities as `/internal/tools/*` POST endpoints.
 
-    These are returned separately from the public routes so they can be mounted
-    on the app without being handed to `openapi_routes` — the tool surface is
-    deliberately absent from the public OpenAPI document and generated client.
+    These remain plain ASGI routes rather than FastAPI routes, keeping the tool
+    surface absent from the public OpenAPI document and generated client.
     """
     return [spec.route() for spec in MEMORY_TOOL_SPECS]
