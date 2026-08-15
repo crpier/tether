@@ -24,37 +24,19 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
-from snekok import Err, Ok
-
-from tether.youtube import (
-    FetchedTranscript,
-    LikedPage,
-    RawYouTubeVideo,
-    TranscriptFetchResult,
-    TranscriptProvider,
-    TranscriptQuotaExceededFailure,
-    TranscriptSegment,
-    TranscriptTransientFailure,
-    TranscriptUnavailableFailure,
-    YouTubeQuotaExceededError,
-    find_transcript_provider_leaves,
-)
+from tether.youtube import LikedPage, RawYouTubeVideo, YouTubeQuotaExceededError
 
 YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 """Read access to the user's account, including the liked-videos playlist."""
 
-YOUTUBE_CAPTION_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
-"""The scope captions.download needs; requested now so adding transcript support
-later does not force a second authorization."""
-
-REQUIRED_SCOPES: tuple[str, ...] = (YOUTUBE_READONLY_SCOPE, YOUTUBE_CAPTION_SCOPE)
+REQUIRED_SCOPES: tuple[str, ...] = (YOUTUBE_READONLY_SCOPE,)
 """Minimum scopes a stored token must carry, validated up front on load."""
 
 _LIKES_PLAYLIST_ALIAS = "LL"
@@ -65,10 +47,6 @@ _MAX_IDS_PER_CALL = 50
 """The YouTube Data API `videos.list` per-call id maximum."""
 
 _T = TypeVar("_T")
-
-_NO_PAUSED_SOURCES: frozenset[str] = frozenset()
-"""Empty default for `fetch`'s `paused_sources`, hoisted off the parameter list so
-it is not constructed in a default expression (`reportCallInDefaultInitializer`)."""
 
 _GOOGLE_INSTALL_HINT = (
     "Google client libraries are not installed. Install them with "
@@ -131,31 +109,11 @@ class _ListRequest(Protocol):
         ...
 
 
-class _DownloadRequest(Protocol):
-    """A built caption-download request whose `execute()` returns the raw track."""
-
-    def execute(self) -> bytes | str:
-        """Run the download synchronously and return the encoded caption track."""
-        ...
-
-
 class _ResourceCollection(Protocol):
     """A Data API resource collection (e.g. `playlistItems`) exposing `list`."""
 
     def list(self, **kwargs: Any) -> _ListRequest:
         """Build a list request for this collection with the given parameters."""
-        ...
-
-
-class _CaptionsCollection(Protocol):
-    """The `captions` collection, exposing both `list` and `download`."""
-
-    def list(self, **kwargs: Any) -> _ListRequest:
-        """Build a caption-track list request for a video."""
-        ...
-
-    def download(self, **kwargs: Any) -> _DownloadRequest:
-        """Build a caption-track download request for one track id."""
         ...
 
 
@@ -172,10 +130,6 @@ class _YouTubeResource(Protocol):
 
     def videos(self) -> _ResourceCollection:
         """The `videos` collection."""
-        ...
-
-    def captions(self) -> _CaptionsCollection:
-        """The `captions` collection (track list + SRT download)."""
         ...
 
 
@@ -571,76 +525,6 @@ class OAuthYouTubeApi:
         )
 
 
-_CAPTION_SRT_FORMAT = "srt"
-"""The download format the captions provider requests and parses."""
-
-
-def _srt_seconds(timestamp: str) -> float:
-    """Parse an SRT `HH:MM:SS,mmm` timestamp into whole+fractional seconds."""
-    hours, minutes, seconds = timestamp.strip().replace(",", ".").split(":")
-    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-
-
-def parse_srt_transcript(srt: str) -> tuple[str, tuple[TranscriptSegment, ...]]:
-    """Parse an SRT caption payload into joined text plus timed segments.
-
-    Blocks are separated by blank lines; each carries an index line, a
-    `start --> end` timing line, and one or more text lines. Cues with no parsable
-    timing or no text are skipped. The joined text is what keyword Search matches.
-
-    >>> text, segments = parse_srt_transcript(
-    ...     "1\\n00:00:01,000 --> 00:00:02,000\\nhello\\n"
-    ... )
-    >>> text
-    'hello'
-    >>> segments[0].start_seconds
-    1.0
-    """
-    segments: list[TranscriptSegment] = []
-    blocks = [
-        block for block in srt.replace("\r\n", "\n").split("\n\n") if block.strip()
-    ]
-    for block in blocks:
-        lines = [line for line in block.splitlines() if line.strip()]
-        timing_index = next(
-            (index for index, line in enumerate(lines) if "-->" in line), None
-        )
-        if timing_index is None:
-            continue
-        start_raw = lines[timing_index].split("-->", 1)[0]
-        try:
-            start = _srt_seconds(start_raw)
-        except ValueError, IndexError:
-            continue
-        text = " ".join(lines[timing_index + 1 :]).strip()
-        if text:
-            segments.append(TranscriptSegment(start_seconds=start, text=text))
-    joined = " ".join(segment.text for segment in segments)
-    return joined, tuple(segments)
-
-
-def _select_caption_track(items: Sequence[Mapping[str, object]]) -> str | None:
-    """Pick the best caption track id: prefer a human (non-ASR) track, else first.
-
-    Returns None when there are no usable tracks, which the provider maps to the
-    *unavailable* outcome.
-    """
-    tracks: list[tuple[str, str]] = []
-    for item in items:
-        track_id = _str_or_none(item.get("id"))
-        if track_id is None:
-            continue
-        snippet = _section(item, "snippet")
-        track_kind = (_str_or_none(snippet.get("trackKind")) or "").lower()
-        tracks.append((track_id, track_kind))
-    if not tracks:
-        return None
-    for track_id, track_kind in tracks:
-        if track_kind != "asr":
-            return track_id
-    return tracks[0][0]
-
-
 def _http_status(error: Exception) -> int | None:
     """Best-effort HTTP status from a Google client error, across versions."""
     response = getattr(error, "resp", None)
@@ -667,168 +551,7 @@ def _as_quota_error(error: Exception) -> YouTubeQuotaExceededError | None:
     return None
 
 
-_HTTP_NOT_FOUND = 404
-_HTTP_UNAUTHORIZED = 401
 _HTTP_FORBIDDEN = 403
-
-
-def _classify_caption_error(
-    video_id: str, error: Exception
-) -> TranscriptUnavailableFailure | TranscriptTransientFailure:
-    """Map a caption API exception onto a provider failure value.
-
-    A 404 (no such captions) and a 403 are both *unavailable*: the captions Data
-    API is owner-only, so it 403s for nearly every liked (third-party) video. That
-    is "this provider can't serve it", not a global property of the video — so it
-    must fall through to the library/Supadata fallbacks rather than return the
-    *excluded* outcome, which would mark the video terminal and purge it from
-    ingestion before any fallback runs. A 401 (expired/invalid credentials) is
-    *transient* and retryable; everything else — rate limits, 5xx, transport
-    errors — is *transient* too.
-    """
-    status = _http_status(error)
-    if status in (_HTTP_NOT_FOUND, _HTTP_FORBIDDEN):
-        return TranscriptUnavailableFailure(video_id=video_id)
-    if status == _HTTP_UNAUTHORIZED:
-        return TranscriptTransientFailure(
-            f"caption fetch for {video_id} unauthorized (credentials): {error}"
-        )
-    return TranscriptTransientFailure(f"caption fetch for {video_id} failed: {error}")
-
-
-async def _no_charge() -> None:
-    """The default no-op charge: a captions provider with no bound daily budget."""
-
-
-class CaptionsTranscriptProvider(TranscriptProvider):
-    """The first `TranscriptProvider`: the OAuth-backed YouTube captions API.
-
-    Lists a video's caption tracks, prefers a human-authored (non-ASR) track over
-    an auto-generated one, downloads the chosen track as SRT, and parses it into
-    transcript text plus timed segments. No tracks, an empty download, or a 403
-    (the owner-only API refusing a third-party video) is the *unavailable* outcome
-    so the composite falls through to the fallbacks; a 401 and transport/5xx/rate
-    errors are *transient*. Blocking Data API calls run in a worker thread.
-
-    This is the only transcript source that spends the YouTube Data API's daily
-    quota (`captions.list` + `captions.download` are billed Data API calls; the
-    free `youtube_transcript_api` library scrapes the page and Supadata is a
-    separate paid HTTP API, so neither should count against it). It charges the
-    budget itself, right before its own live call, via `charge` — a callback
-    late-bound by `bind_captions_daily_quota` once the budgeted client exists (the
-    provider tree is built from settings first). Unbound (e.g. in tests),
-    `charge` is a no-op.
-    """
-
-    @property
-    def source(self) -> str:
-        """The provenance tag for transcripts fetched through YouTube captions."""
-        return "youtube_captions"
-
-    def __init__(
-        self,
-        resource: _YouTubeResource,
-        *,
-        charge: Callable[[], Awaitable[None]] | None = None,
-    ) -> None:
-        self._resource: _YouTubeResource = resource
-        # Public so the wiring can late-bind the daily-quota charge once the
-        # budgeted `YouTubeApiClient` exists; a no-op by default.
-        self.charge: Callable[[], Awaitable[None]] = charge or _no_charge
-
-    @classmethod
-    def from_config(cls, config: OAuthConfig) -> CaptionsTranscriptProvider:
-        """Build the production provider: load credentials, build the client.
-
-        Reuses the same credentials (including the `youtube.force-ssl` caption
-        scope validated on load) and discovery build as the liked-list adapter.
-        """
-        credentials = load_credentials(config)
-        build = _default_discovery_build()
-        resource = build(
-            "youtube", "v3", credentials=credentials, cache_discovery=False
-        )
-        return cls(resource)
-
-    async def fetch(
-        self,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> TranscriptFetchResult:
-        """Fetch and parse the best caption track or return a typed failure.
-
-        Charges the daily Data API budget first (raising `YouTubeQuotaExceededError`
-        before any live call when the day is exhausted); the free library and
-        Supadata providers never reach this method, so they never spend it.
-        """
-        # The captions API is never blockable, so the worker's pause hook is a
-        # no-op here; the composite provider is what skips its blockable sources.
-        _ = (paused_sources, skip_sources)
-        try:
-            await self.charge()
-        except YouTubeQuotaExceededError as e:
-            return Err(TranscriptQuotaExceededFailure(message=str(e)))
-        try:
-            items = await asyncio.to_thread(self._list_captions, video_id)
-        except Exception as e:
-            return Err(_classify_caption_error(video_id, e))
-        track_id = _select_caption_track(items)
-        if track_id is None:
-            return Err(TranscriptUnavailableFailure(video_id=video_id))
-        try:
-            payload = await asyncio.to_thread(self._download_caption, track_id)
-        except Exception as e:
-            return Err(_classify_caption_error(video_id, e))
-        text, segments = parse_srt_transcript(payload)
-        if not text:
-            return Err(TranscriptUnavailableFailure(video_id=video_id))
-        return Ok(
-            FetchedTranscript(text=text, segments=segments, source="youtube_captions")
-        )
-
-    def _list_captions(self, video_id: str) -> list[Mapping[str, object]]:
-        response = (
-            self._resource.captions().list(part="snippet", videoId=video_id).execute()
-        )
-        items = response.get("items", [])
-        if not isinstance(items, list):
-            return []
-        return [
-            cast("Mapping[str, object]", item)
-            for item in cast("list[object]", items)
-            if isinstance(item, dict)
-        ]
-
-    def _download_caption(self, track_id: str) -> str:
-        raw = (
-            self._resource.captions()
-            .download(id=track_id, tfmt=_CAPTION_SRT_FORMAT)
-            .execute()
-        )
-        if isinstance(raw, bytes):
-            return raw.decode("utf-8", errors="replace")
-        return raw
-
-
-def bind_captions_daily_quota(
-    provider: TranscriptProvider, charge: Callable[[], Awaitable[None]]
-) -> None:
-    """Late-bind the YouTube Data API daily-quota charge onto every captions leaf.
-
-    The provider tree is built from settings before the budgeted
-    `YouTubeApiClient` exists, so the charge callback (its
-    `charge_transcript`) is attached here at wire time, using the generic
-    `find_transcript_provider_leaves` walk (by the `"youtube_captions"` source
-    tag) rather than a bespoke isinstance tree-walk. A no-op when the chain has
-    no captions provider — the common case, since the default order
-    (`supadata,library`) omits it, and the library/Supadata legs never spend this
-    budget at all.
-    """
-    for leaf in find_transcript_provider_leaves(provider, source="youtube_captions"):
-        if isinstance(leaf, CaptionsTranscriptProvider):
-            leaf.charge = charge
 
 
 class _InstalledAppFlow(Protocol):

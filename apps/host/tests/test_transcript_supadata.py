@@ -9,7 +9,7 @@ makes the bounded async-job polling resolve instantly. Covered: a direct hit
 its retry-after and source, the async job model (pending then complete), a failed
 job -> *unavailable*, an over-budget poll -> *transient*, and the transport's
 key/`Retry-After` handling. The flag/key gating is asserted against the
-`tether.transcripts.provider_composition` wiring helpers.
+`tether.transcripts.source_composition` wiring helpers.
 """
 
 from __future__ import annotations
@@ -23,8 +23,14 @@ from snekok import Err, NonEmptySecretStr, Ok, Result
 from snekok.types import NonBlankStr, NonNegativeInt
 from snektest import assert_eq, assert_is_none, assert_isinstance, test
 
+from tether.transcripts.contracts import (
+    TranscriptBlockedFailure,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
+)
 from tether.transcripts.supadata import (
     HttpSupadataTransport,
+    SupadataApiError,
     SupadataConfig,
     SupadataCue,
     SupadataHttpFailure,
@@ -37,15 +43,10 @@ from tether.transcripts.supadata import (
     SupadataProtocolFailure,
     SupadataSubmitResponse,
     SupadataTranscript,
-    SupadataTranscriptProvider,
+    SupadataTranscriptSource,
     SupadataTransport,
     SupadataTransportFailure,
     _retry_after_seconds,
-)
-from tether.youtube import (
-    TranscriptBlockedFailure,
-    TranscriptTransientFailure,
-    TranscriptUnavailableFailure,
 )
 
 type _ScriptedSubmit = SupadataSubmitResponse | SupadataTransportFailure
@@ -141,11 +142,11 @@ async def _no_sleep(seconds: float) -> None:
 
 def _provider(
     transport: SupadataTransport, *, max_poll_attempts: int = 5
-) -> SupadataTranscriptProvider:
+) -> SupadataTranscriptSource:
     config = SupadataConfig(
         poll_interval=timedelta(seconds=0), max_poll_attempts=max_poll_attempts
     )
-    return SupadataTranscriptProvider(transport, config=config, sleep=_no_sleep)
+    return SupadataTranscriptSource(transport, config=config, sleep=_no_sleep)
 
 
 class _FakeClock:
@@ -170,12 +171,12 @@ class _FakeClock:
 
 def _paced_provider(
     transport: FakeSupadataTransport, clock: _FakeClock, *, interval_seconds: float
-) -> SupadataTranscriptProvider:
+) -> SupadataTranscriptSource:
     config = SupadataConfig(
         min_request_interval=timedelta(seconds=interval_seconds),
         poll_interval=timedelta(seconds=0),
     )
-    return SupadataTranscriptProvider(
+    return SupadataTranscriptSource(
         transport,
         config=config,
         sleep=clock.sleep,
@@ -257,7 +258,7 @@ async def http_transport_submit_sends_configured_parameters() -> None:
 
     transport = HttpSupadataTransport(
         _api_key(),
-        config=SupadataConfig(languages=("ro", "en"), mode="native"),
+        config=SupadataConfig(languages=("ro", "en")),
         http_transport=httpx2.MockTransport(respond),
     )
 
@@ -295,6 +296,43 @@ async def http_transport_decodes_a_completed_job() -> None:
 
 
 @test()
+async def http_transport_decodes_a_failed_job_error() -> None:
+    """A failed job retains the API error that explains its terminal state."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        _ = request
+        return httpx2.Response(
+            200,
+            json={
+                "status": "failed",
+                "error": {
+                    "error": "transcript-unavailable",
+                    "message": "Transcript unavailable",
+                    "details": "No caption track exists",
+                },
+            },
+        )
+
+    transport = HttpSupadataTransport(
+        _api_key(), http_transport=httpx2.MockTransport(respond)
+    )
+
+    response = await transport.poll("job-1")
+    await transport.aclose()
+
+    assert isinstance(response, Ok)
+    assert isinstance(response.value, SupadataJobFailed)
+    assert_eq(
+        response.value.error,
+        SupadataApiError(
+            code=NonBlankStr("transcript-unavailable"),
+            message=NonBlankStr("Transcript unavailable"),
+            details=NonBlankStr("No caption track exists"),
+        ),
+    )
+
+
+@test()
 async def http_transport_treats_partial_poll_content_as_a_failure() -> None:
     """Supadata's special 206 unavailable response is typed during polling too."""
 
@@ -316,23 +354,28 @@ async def http_transport_treats_partial_poll_content_as_a_failure() -> None:
         response,
         Err(
             SupadataHttpFailure(
+                operation="poll",
                 status_code=206,
-                error="transcript-unavailable",
+                error=SupadataApiError(code=NonBlankStr("transcript-unavailable")),
             )
         ),
     )
 
 
 @test()
-async def http_transport_normalizes_an_error_response() -> None:
-    """HTTP errors retain only typed classification and cooldown fields."""
+async def http_transport_preserves_structured_error_identity() -> None:
+    """HTTP failures retain their operation, API error, and cooldown hint."""
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         _ = request
         return httpx2.Response(
             429,
             headers={"Retry-After": "30"},
-            json={"error": "rate-limit", "message": "slow down"},
+            json={
+                "error": "limit-exceeded",
+                "message": "Slow down",
+                "details": "The request rate was exceeded",
+            },
         )
 
     transport = HttpSupadataTransport(
@@ -346,8 +389,13 @@ async def http_transport_normalizes_an_error_response() -> None:
         response,
         Err(
             SupadataHttpFailure(
+                operation="submit",
                 status_code=429,
-                error="rate-limit",
+                error=SupadataApiError(
+                    code=NonBlankStr("limit-exceeded"),
+                    message=NonBlankStr("Slow down"),
+                    details=NonBlankStr("The request rate was exceeded"),
+                ),
                 retry_after=timedelta(seconds=30),
             )
         ),
@@ -456,8 +504,8 @@ async def malformed_success_payload_is_transient() -> None:
 
 
 @test()
-async def direct_hit_with_timed_cues_returns_segments_tagged_supadata() -> None:
-    """Validated timed cues yield joined text and domain transcript segments."""
+async def direct_hit_with_timed_cues_returns_joined_text() -> None:
+    """Validated timed cues yield joined text without unused timing storage."""
     transport = FakeSupadataTransport(
         submit=[
             SupadataTranscript(
@@ -473,14 +521,12 @@ async def direct_hit_with_timed_cues_returns_segments_tagged_supadata() -> None:
 
     assert_eq(result.text, "hello world")
     assert_eq(result.source, "supadata")
-    assert_eq(len(result.segments), 2)
-    assert_eq(result.segments[1].start_seconds, 1.5)
     assert_eq(transport.poll_calls, 0)
 
 
 @test()
 async def direct_hit_with_string_content_returns_text() -> None:
-    """A validated text-only transcript yields text and no segments."""
+    """A validated text-only transcript yields normalized source text."""
     transport = FakeSupadataTransport(
         submit=[SupadataTranscript(content="a plain transcript")]
     )
@@ -488,7 +534,6 @@ async def direct_hit_with_string_content_returns_text() -> None:
     result = (await _provider(transport).fetch("v1")).unwrap()
 
     assert_eq(result.text, "a plain transcript")
-    assert_eq(result.segments, ())
 
 
 @test()
@@ -505,7 +550,9 @@ async def empty_content_is_unavailable() -> None:
 @test()
 async def not_found_is_unavailable() -> None:
     """A 404 maps to unavailable for this video."""
-    transport = FakeSupadataTransport(submit=[SupadataHttpFailure(status_code=404)])
+    transport = FakeSupadataTransport(
+        submit=[SupadataHttpFailure(operation="submit", status_code=404)]
+    )
 
     failure = await _provider(transport).fetch("v1")
 
@@ -519,8 +566,9 @@ async def partial_content_status_is_unavailable() -> None:
     transport = FakeSupadataTransport(
         submit=[
             SupadataHttpFailure(
+                operation="submit",
                 status_code=206,
-                error="transcript-unavailable",
+                error=SupadataApiError(code=NonBlankStr("transcript-unavailable")),
             )
         ]
     )
@@ -535,7 +583,13 @@ async def partial_content_status_is_unavailable() -> None:
 async def forbidden_is_unavailable() -> None:
     """A plain 403 is permanent for the video."""
     transport = FakeSupadataTransport(
-        submit=[SupadataHttpFailure(status_code=403, error="forbidden")]
+        submit=[
+            SupadataHttpFailure(
+                operation="submit",
+                status_code=403,
+                error=SupadataApiError(code=NonBlankStr("forbidden")),
+            )
+        ]
     )
 
     failure = await _provider(transport).fetch("v1")
@@ -550,6 +604,7 @@ async def rate_limit_is_blocked_with_retry_after_and_source() -> None:
     transport = FakeSupadataTransport(
         submit=[
             SupadataHttpFailure(
+                operation="submit",
                 status_code=429,
                 retry_after=timedelta(minutes=5),
             )
@@ -565,13 +620,53 @@ async def rate_limit_is_blocked_with_retry_after_and_source() -> None:
 
 
 @test()
-async def quota_error_body_is_blocked() -> None:
-    """An error code naming a quota maps to blocked even without HTTP 429."""
+async def limit_error_body_is_blocked() -> None:
+    """The stable limit error code maps to blocked even without HTTP 429."""
     transport = FakeSupadataTransport(
         submit=[
             SupadataHttpFailure(
+                operation="submit",
                 status_code=403,
-                error="monthly quota exceeded",
+                error=SupadataApiError(code=NonBlankStr("limit-exceeded")),
+            )
+        ]
+    )
+
+    failure = await _provider(transport).fetch("v1")
+
+    assert isinstance(failure, Err)
+    _ = assert_isinstance(failure.error, TranscriptBlockedFailure)
+
+
+@test()
+async def unauthorized_is_blocked() -> None:
+    """An invalid or expired API key pauses the provider instead of one video."""
+    transport = FakeSupadataTransport(
+        submit=[
+            SupadataHttpFailure(
+                operation="submit",
+                status_code=401,
+                error=SupadataApiError(code=NonBlankStr("unauthorized")),
+            )
+        ]
+    )
+
+    failure = await _provider(transport).fetch("v1")
+
+    assert isinstance(failure, Err)
+    blocked = assert_isinstance(failure.error, TranscriptBlockedFailure)
+    assert_eq(blocked.source, "supadata")
+
+
+@test()
+async def upgrade_required_is_blocked() -> None:
+    """A plan-level feature restriction pauses the configured provider."""
+    transport = FakeSupadataTransport(
+        submit=[
+            SupadataHttpFailure(
+                operation="submit",
+                status_code=402,
+                error=SupadataApiError(code=NonBlankStr("upgrade-required")),
             )
         ]
     )
@@ -585,7 +680,9 @@ async def quota_error_body_is_blocked() -> None:
 @test()
 async def server_error_is_transient() -> None:
     """An ordinary 5xx maps to a retryable transient failure."""
-    transport = FakeSupadataTransport(submit=[SupadataHttpFailure(status_code=500)])
+    transport = FakeSupadataTransport(
+        submit=[SupadataHttpFailure(operation="submit", status_code=500)]
+    )
 
     failure = await _provider(transport).fetch("v1")
 
@@ -603,7 +700,8 @@ async def a_read_timeout_on_submit_is_transient() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
+    transient = assert_isinstance(failure.error, TranscriptTransientFailure)
+    assert_eq(transient.message, "supadata submit for v1 failed: timed out")
 
 
 @test()
@@ -618,6 +716,42 @@ async def a_connection_error_while_polling_is_transient() -> None:
 
     assert isinstance(failure, Err)
     _ = assert_isinstance(failure.error, TranscriptTransientFailure)
+
+
+@test()
+async def a_missing_poll_job_is_transient() -> None:
+    """A poll `404` identifies missing job state, not transcript unavailability."""
+    transport = SubmitsThenFailsOnPollTransport(
+        SupadataJobAccepted(job_id="job-1"),
+        SupadataHttpFailure(
+            operation="poll",
+            status_code=404,
+            error=SupadataApiError(code=NonBlankStr("not-found")),
+        ),
+    )
+
+    failure = await _provider(transport).fetch("v1")
+
+    assert isinstance(failure, Err)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
+
+
+@test()
+async def forbidden_while_polling_is_blocked() -> None:
+    """Poll access forbidden pauses Supadata instead of retrying one video."""
+    transport = SubmitsThenFailsOnPollTransport(
+        SupadataJobAccepted(job_id="job-1"),
+        SupadataHttpFailure(
+            operation="poll",
+            status_code=403,
+            error=SupadataApiError(code=NonBlankStr("forbidden")),
+        ),
+    )
+
+    failure = await _provider(transport).fetch("v1")
+
+    assert isinstance(failure, Err)
+    _ = assert_isinstance(failure.error, TranscriptBlockedFailure)
 
 
 @test()
@@ -639,17 +773,61 @@ async def async_job_pending_then_complete_resolves() -> None:
 
 
 @test()
-async def async_job_failed_is_unavailable() -> None:
-    """A validated failed job maps to unavailable."""
+async def async_job_transcript_unavailable_is_unavailable() -> None:
+    """A failed job with transcript-unavailable is terminal for the video."""
     transport = FakeSupadataTransport(
         submit=[SupadataJobAccepted(job_id="job-1")],
-        poll=[SupadataJobFailed(status="failed")],
+        poll=[
+            SupadataJobFailed(
+                status="failed",
+                error=SupadataApiError(code=NonBlankStr("transcript-unavailable")),
+            )
+        ],
     )
 
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
     _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
+
+
+@test()
+async def async_job_internal_error_is_transient() -> None:
+    """A failed job with an upstream internal error remains retryable."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataJobAccepted(job_id="job-1")],
+        poll=[
+            SupadataJobFailed(
+                status="failed",
+                error=SupadataApiError(code=NonBlankStr("internal-error")),
+            )
+        ],
+    )
+
+    failure = await _provider(transport).fetch("v1")
+
+    assert isinstance(failure, Err)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
+
+
+@test()
+async def async_job_limit_exceeded_is_blocked() -> None:
+    """A failed job caused by account limits pauses the Supadata source."""
+    transport = FakeSupadataTransport(
+        submit=[SupadataJobAccepted(job_id="job-1")],
+        poll=[
+            SupadataJobFailed(
+                status="failed",
+                error=SupadataApiError(code=NonBlankStr("limit-exceeded")),
+            )
+        ],
+    )
+
+    failure = await _provider(transport).fetch("v1")
+
+    assert isinstance(failure, Err)
+    blocked = assert_isinstance(failure.error, TranscriptBlockedFailure)
+    assert_eq(blocked.source, "supadata")
 
 
 @test()
@@ -688,6 +866,7 @@ async def rate_limit_while_polling_is_blocked() -> None:
         submit=[SupadataJobAccepted(job_id="job-1")],
         poll=[
             SupadataHttpFailure(
+                operation="poll",
                 status_code=429,
                 retry_after=timedelta(minutes=1),
             )
@@ -707,12 +886,6 @@ def retry_after_parses_delta_seconds_only() -> None:
     assert_eq(_retry_after_seconds({"Retry-After": "30"}), timedelta(seconds=30))
     assert_is_none(_retry_after_seconds({}))
     assert_is_none(_retry_after_seconds({"Retry-After": "soon"}))
-
-
-@test()
-def native_is_the_default_mode() -> None:
-    """The config defaults to `native` — one use per call, never AI `generate`."""
-    assert_eq(SupadataConfig().mode, "native")
 
 
 # --- Request pacing: stay under the plan's per-request rate limit ------------

@@ -1,26 +1,9 @@
-"""The `youtube-transcript-api` fallback `TranscriptProvider`.
+"""Blocking `youtube-transcript-api` adapter behind a typed async source.
 
-The captions API (`CaptionsTranscriptProvider`) only produces transcripts for a
-subset of videos; the community `youtube-transcript-api` library has much wider
-coverage but gets the host IP-blocked when used too aggressively. This module
-wraps that library behind the `TranscriptProvider` port so the composite
-(`FallbackTranscriptProvider`) can try it second, and isolates the pieces of
-resilience logic the worker's global pause depends on:
-
-* `_is_transcript_ip_block_error` — classify an IP-block / rate-limit response as
-  the distinct *blocked* outcome (so the worker pauses the whole provider rather
-  than retrying per-video).
-* `_parse_retry_after` — extract any `Retry-After` hint so the cooldown honors the
-  provider's guidance.
-* A hard per-pass request budget (`max_requests_per_pass`) plus mandatory spacing
-  (`min_request_interval`) between real calls, and a "blocked this pass" latch —
-  together these keep one sync pass from firing a burst that trips YouTube's
-  IP-level rate limit. `reset_library_pass_budget` refills the budget at the start
-  of each pass.
-
-Both classifiers are pure functions over exception shapes, unit-tested without
-ever importing the real library or touching a socket. The real library is
-imported lazily so the rest of Tether runs without it installed.
+The optional library is imported lazily and runs in a worker thread. This
+boundary normalizes its version-varying exceptions into unavailable, transient,
+or blocked values and preserves `Retry-After` guidance. Request pacing remains
+source-local; pass capacity belongs to acquisition orchestration.
 """
 
 from __future__ import annotations
@@ -36,24 +19,16 @@ from typing import Any, cast
 
 from snekok import Err, Ok
 
-from tether.youtube import (
-    FallbackTranscriptProvider,
+from tether.transcripts.contracts import (
     FetchedTranscript,
     TranscriptBlockedFailure,
-    TranscriptExcludedFailure,
     TranscriptFailure,
     TranscriptFetchResult,
-    TranscriptProvider,
-    TranscriptSegment,
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
 
 _SOURCE = "youtube_transcript_api"
-
-# Empty default for `fetch`'s `paused_sources`, hoisted off the parameter list so it
-# is not constructed in a default expression (pyright `reportCallInDefaultInitializer`).
-_NO_PAUSED_SOURCES: frozenset[str] = frozenset()
 
 # Default (disabled) request pacing, hoisted for the same reason: a `timedelta(0)`
 # default expression trips `reportCallInDefaultInitializer`.
@@ -71,14 +46,15 @@ class TranscriptLibraryUnavailableError(Exception):
 _IP_BLOCK_NAMES = frozenset({"RequestBlocked", "IpBlocked"})
 _UNAVAILABLE_NAMES = frozenset(
     {
+        "AgeRestricted",
         "TranscriptsDisabled",
         "NoTranscriptFound",
         "VideoUnavailable",
+        "VideoUnplayable",
         "InvalidVideoId",
         "YouTubeDataUnparsable",
     }
 )
-_EXCLUDED_NAMES = frozenset({"AgeRestricted", "VideoUnplayable"})
 
 # Message markers that betray an IP block / rate limit even when the class name is
 # generic (older library versions, wrapped transport errors).
@@ -164,59 +140,34 @@ def _classify_library_error(video_id: str, error: Exception) -> TranscriptFailur
     """Map a `youtube-transcript-api` exception onto a provider failure value.
 
     An IP-block / rate-limit is the *blocked* outcome (carrying any retry-after
-    hint); transcripts-disabled / not-found / gone is *unavailable* (terminal);
-    age-restricted / unplayable is *excluded* (terminal + purged); everything else
-    — transport errors, request failures — is *transient* and retryable.
+    hint); permanent media or transcript absence is *unavailable*; everything
+    else is *transient* and retryable.
     """
     if _is_transcript_ip_block_error(error):
         return TranscriptBlockedFailure(
-            f"youtube-transcript-api blocked for {video_id}: {error}",
+            message=f"youtube-transcript-api blocked for {video_id}: {error}",
             retry_after=_parse_retry_after(error),
-            # Stamped here, not left for a composite to fill in: when this
-            # provider runs standalone or as the chain's *primary* (the default
-            # when Supadata is disabled), nothing else ever stamps a source, and
-            # the worker treats a `None` source as an already-deferred skip
-            # rather than a fresh block — silently never tripping the persisted
-            # per-source pause.
             source=_SOURCE,
         )
     names = _mro_names(error)
     if names & _UNAVAILABLE_NAMES:
         return TranscriptUnavailableFailure(video_id=video_id)
-    if names & _EXCLUDED_NAMES:
-        return TranscriptExcludedFailure(video_id=video_id)
     return TranscriptTransientFailure(
         f"youtube-transcript-api fetch for {video_id} failed: {error}"
     )
 
 
-def _parse_snippets(raw: Iterable[Any]) -> tuple[str, tuple[TranscriptSegment, ...]]:
-    """Parse the library's transcript snippets into joined text plus timed segments.
-
-    Accepts both the modern object snippets (`.text` / `.start`) and the legacy
-    dict snippets (`{"text", "start"}`). Empty or untimed cues are dropped; the
-    joined text is what keyword Search matches.
-    """
-    segments: list[TranscriptSegment] = []
+def _parse_snippets(raw: Iterable[Any]) -> str:
+    """Join usable text from modern object or legacy mapping snippets."""
+    snippets: list[str] = []
     for snippet in raw:
-        text: object
-        start: object
         if isinstance(snippet, Mapping):
-            mapping = cast("Mapping[str, object]", snippet)
-            text = mapping.get("text")
-            start = mapping.get("start")
+            text = cast("Mapping[str, object]", snippet).get("text")
         else:
             text = getattr(snippet, "text", None)
-            start = getattr(snippet, "start", None)
-        if not isinstance(text, str):
-            continue
-        cleaned = text.strip()
-        if not cleaned:
-            continue
-        start_seconds = float(start) if isinstance(start, (int, float)) else 0.0
-        segments.append(TranscriptSegment(start_seconds=start_seconds, text=cleaned))
-    joined = " ".join(segment.text for segment in segments)
-    return joined, tuple(segments)
+        if isinstance(text, str) and (cleaned := text.strip()):
+            snippets.append(cleaned)
+    return " ".join(snippets)
 
 
 def _default_library_fetcher(languages: tuple[str, ...]) -> Callable[[str], Any]:
@@ -243,43 +194,18 @@ def _default_library_fetcher(languages: tuple[str, ...]) -> Callable[[str], Any]
 
 
 @dataclass(frozen=True, slots=True)
-class LibraryPassBudget:
-    """Per-pass throttling for the free `youtube-transcript-api` library.
+class TranscriptLibraryConfig:
+    """Request pacing for the blocking transcript-library adapter."""
 
-    `max_requests_per_pass` hard-caps real network calls within a single sync
-    pass (`None`, the default, is unlimited — the historical behaviour);
-    `min_request_interval` paces consecutive real calls, mirroring
-    `SupadataConfig.min_request_interval`. Both default to a no-op so existing
-    direct instantiations (tests, the in-memory fake) are unaffected."""
-
-    max_requests_per_pass: int | None = None
     min_request_interval: timedelta = _NO_PACING
 
 
-class YouTubeTranscriptApiProvider(TranscriptProvider):
-    """The fallback `TranscriptProvider` backed by `youtube-transcript-api`.
+class YouTubeTranscriptApiSource:
+    """Fetch free YouTube transcripts through the blocking community library.
 
-    Wider coverage than the captions API but IP-block-prone, so it is composed
-    *behind* the captions provider in `FallbackTranscriptProvider` and skipped
-    while the worker's global pause is in effect. The blocking library call runs in
-    a worker thread; failures are classified into the typed outcomes (notably the
-    distinct *blocked* signal that trips the global pause). It holds no *daily*
-    budget — the worker and on-demand path charge the daily quota before calling
-    `fetch` — but it does enforce its own strict, in-process guards against
-    hammering YouTube within a single sync pass (`budget`, a `LibraryPassBudget`):
-
-    * `max_requests_per_pass` hard-caps real network calls per pass. Once spent,
-      `fetch` returns a blocked failure immediately — no further network call —
-      so the worker's normal per-source pause/backoff takes over for the
-      rest of the pass.
-    * `min_request_interval` paces consecutive real calls.
-    * A "blocked this pass" latch: once a real IP block is observed, every further
-      call this pass short-circuits the same way the budget cap does, rather than
-      re-hitting an IP that is already blocked.
-
-    Both guards are reset by `begin_pass` — the worker calls
-    `reset_library_pass_budget` once at the start of each sync pass so the budget
-    (and the latch) start fresh every pass.
+    Calls run off the event loop, are paced in process, and return typed source
+    failures. Provider pauses and pass request limits remain in acquisition and
+    worker orchestration rather than leaking into this leaf adapter.
     """
 
     @property
@@ -292,32 +218,19 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
         fetcher: Callable[[str], Iterable[Any]] | None = None,
         *,
         languages: tuple[str, ...] = ("en",),
-        budget: LibraryPassBudget | None = None,
+        config: TranscriptLibraryConfig | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._fetcher: Callable[[str], Iterable[Any]] | None = fetcher
         self._languages: tuple[str, ...] = languages
-        self._budget: LibraryPassBudget = budget or LibraryPassBudget()
+        self._config: TranscriptLibraryConfig = config or TranscriptLibraryConfig()
         # Injectable so tests need not wait real seconds between paced calls.
         self._sleep: Callable[[float], Awaitable[None]] = sleep or asyncio.sleep
         # A monotonic clock (injectable for tests) drives the request-pacing gate;
         # the provider is long-lived, so it remembers the last call across fetches.
         self._monotonic: Callable[[], float] = monotonic or time.monotonic
         self._last_request_at: float | None = None
-        self._requests_this_pass: int = 0
-        self._blocked_this_pass: bool = False
-
-    def begin_pass(self) -> None:
-        """Refill the per-pass request budget and clear the block latch.
-
-        The worker's `reset_library_pass_budget` calls this once at the start of
-        every sync pass; the provider itself is long-lived across passes, so
-        without this reset a budget or a block observed in one pass would stay
-        exhausted/latched forever instead of just for the rest of that pass.
-        """
-        self._requests_this_pass = 0
-        self._blocked_this_pass = False
 
     def _ensure_fetcher(self) -> Callable[[str], Iterable[Any]]:
         if self._fetcher is None:
@@ -330,7 +243,7 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
         A no-op when pacing is disabled (zero interval, the default) or when the
         interval has already elapsed; the timestamp is stamped after any wait so
         it reflects the actual call time."""
-        interval = self._budget.min_request_interval.total_seconds()
+        interval = self._config.min_request_interval.total_seconds()
         if interval <= 0:
             return
         if self._last_request_at is not None:
@@ -339,70 +252,15 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
                 await self._sleep(wait)
         self._last_request_at = self._monotonic()
 
-    async def fetch(
-        self,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> TranscriptFetchResult:
-        """Fetch a transcript via the library or return a typed failure.
-
-        This *is* a blockable source, so `paused_sources` does not apply here — the
-        composite provider is what skips it while its pause is in effect. The
-        per-pass budget and block latch are enforced *before* `paused_sources`
-        would even matter, so they protect this provider whether it is composed
-        behind another primary, used as the primary itself, or run standalone
-        (no composite at all — the default shape once Supadata is disabled).
-        """
-        _ = (paused_sources, skip_sources)
-        if self._blocked_this_pass:
-            message = f"youtube-transcript-api already blocked this pass; deferring {video_id}"
-            return Err(TranscriptBlockedFailure(message=message, source=_SOURCE))
-        max_requests = self._budget.max_requests_per_pass
-        if max_requests is not None and self._requests_this_pass >= max_requests:
-            self._blocked_this_pass = True
-            message = (
-                f"youtube-transcript-api per-pass request budget ({max_requests}) "
-                f"reached; deferring {video_id}"
-            )
-            return Err(TranscriptBlockedFailure(message=message, source=_SOURCE))
-        self._requests_this_pass += 1
+    async def fetch(self, video_id: str) -> TranscriptFetchResult:
+        """Fetch a transcript via the blocking library boundary."""
         fetcher = self._ensure_fetcher()
         await self._throttle()
         try:
             raw = await asyncio.to_thread(fetcher, video_id)
         except Exception as e:
-            failure = _classify_library_error(video_id, e)
-            if isinstance(failure, TranscriptBlockedFailure):
-                self._blocked_this_pass = True
-            return Err(failure)
-        text, segments = _parse_snippets(raw)
+            return Err(_classify_library_error(video_id, e))
+        text = _parse_snippets(raw)
         if not text:
             return Err(TranscriptUnavailableFailure(video_id=video_id))
-        return Ok(FetchedTranscript(text=text, segments=segments, source=_SOURCE))
-
-
-def _iter_library_providers(
-    provider: TranscriptProvider,
-) -> Iterable[YouTubeTranscriptApiProvider]:
-    """Yield every `YouTubeTranscriptApiProvider` reachable from `provider`."""
-    if isinstance(provider, YouTubeTranscriptApiProvider):
-        yield provider
-    elif isinstance(provider, FallbackTranscriptProvider):
-        for child in provider.leaf_providers():
-            yield from _iter_library_providers(child)
-
-
-def reset_library_pass_budget(provider: TranscriptProvider) -> None:
-    """Reset every library provider's per-pass request budget and block latch.
-
-    Called once at the start of each transcript sync pass
-    (`TranscriptSyncService.sync`) so the hard per-pass cap and the "blocked this
-    pass" latch start fresh every pass, regardless of whether the library is
-    composed as a fallback, the chain's primary, or run standalone. A no-op when
-    the chain has no library provider, such as a Supadata-only chain or the
-    in-memory test fake.
-    """
-    for leaf in _iter_library_providers(provider):
-        leaf.begin_pass()
+        return Ok(FetchedTranscript(text=text, source=_SOURCE))

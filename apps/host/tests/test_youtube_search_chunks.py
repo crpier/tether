@@ -12,18 +12,18 @@ import time
 
 from snektest import assert_eq, assert_lt, assert_true, test
 
-from tether.transcripts.chunks import chunk_transcript
+from tether.youtube_search_chunks import chunk_youtube_text
 
 
 @test()
 def empty_or_blank_text_yields_no_chunks() -> None:
-    assert_eq(chunk_transcript(""), [])
-    assert_eq(chunk_transcript("   \n  \t "), [])
+    assert_eq(chunk_youtube_text(""), [])
+    assert_eq(chunk_youtube_text("   \n  \t "), [])
 
 
 @test()
 def text_within_budget_is_a_single_normalized_chunk() -> None:
-    chunks = chunk_transcript("hello   there\nworld", max_chars=2000)
+    chunks = chunk_youtube_text("hello   there\nworld", max_chars=2000)
     assert_eq(chunks, ["hello there world"])
 
 
@@ -31,7 +31,7 @@ def text_within_budget_is_a_single_normalized_chunk() -> None:
 def long_text_splits_into_multiple_bounded_chunks() -> None:
     words = [f"w{index}" for index in range(400)]
     text = " ".join(words)
-    chunks = chunk_transcript(text, max_chars=100, overlap_chars=20)
+    chunks = chunk_youtube_text(text, max_chars=100, overlap_chars=20)
     assert_true(len(chunks) > 1)
     for chunk in chunks:
         assert_true(len(chunk) <= 100)
@@ -40,7 +40,7 @@ def long_text_splits_into_multiple_bounded_chunks() -> None:
 @test()
 def consecutive_chunks_overlap_to_preserve_context() -> None:
     words = [f"w{index}" for index in range(400)]
-    chunks = chunk_transcript(" ".join(words), max_chars=100, overlap_chars=30)
+    chunks = chunk_youtube_text(" ".join(words), max_chars=100, overlap_chars=30)
     first_tail = chunks[0].split()[-1]
     assert_true(first_tail in chunks[1].split())
 
@@ -48,7 +48,7 @@ def consecutive_chunks_overlap_to_preserve_context() -> None:
 @test()
 def chunks_cover_every_word_in_order() -> None:
     words = [f"w{index}" for index in range(250)]
-    chunks = chunk_transcript(" ".join(words), max_chars=80, overlap_chars=15)
+    chunks = chunk_youtube_text(" ".join(words), max_chars=80, overlap_chars=15)
     seen: list[str] = []
     for chunk in chunks:
         for word in chunk.split():
@@ -60,7 +60,7 @@ def chunks_cover_every_word_in_order() -> None:
 @test()
 def a_single_oversized_token_becomes_its_own_chunk() -> None:
     giant = "x" * 50
-    chunks = chunk_transcript(f"{giant} tail", max_chars=20, overlap_chars=5)
+    chunks = chunk_youtube_text(f"{giant} tail", max_chars=20, overlap_chars=5)
     assert_eq(chunks[0], giant)
 
 
@@ -70,7 +70,7 @@ def large_transcript_chunks_within_cpu_budget() -> None:
     text = "word " * 1_000_000
 
     started_at = time.monotonic()
-    chunks = chunk_transcript(text)
+    chunks = chunk_youtube_text(text)
     elapsed_seconds = time.monotonic() - started_at
 
     assert_true(len(chunks) > 1)
@@ -81,6 +81,6 @@ def large_transcript_chunks_within_cpu_budget() -> None:
 def chunking_is_deterministic() -> None:
     text = " ".join(f"w{index}" for index in range(300))
     assert_eq(
-        chunk_transcript(text, max_chars=120, overlap_chars=25),
-        chunk_transcript(text, max_chars=120, overlap_chars=25),
+        chunk_youtube_text(text, max_chars=120, overlap_chars=25),
+        chunk_youtube_text(text, max_chars=120, overlap_chars=25),
     )

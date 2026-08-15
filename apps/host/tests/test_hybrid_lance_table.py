@@ -4,7 +4,7 @@
 LanceDB table shaped as `id` + optional string payload columns + FTS'd `content`
 + a fixed-size `vector`, with hybrid retrieval (native FTS fused with flat-scan
 cosine via RRF) and the self-healing `optimize`. `SearchIndex` and
-`TranscriptIndex` are thin domain projections over it, so every behavior proven
+`YouTubeSearchIndex` are thin domain projections over it, so every behavior proven
 here holds for both stores.
 
 Vectors are hand-built (not embedded) so the two retrieval arms can be probed

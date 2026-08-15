@@ -1,13 +1,10 @@
-"""The transcript chunker: one long plain-text transcript -> bounded windows.
+"""Split one saved video's searchable text into bounded overlapping windows.
 
-Transcripts run to thousands of tokens — far past the embedder's ~512-token
-window — so a single vector per video would silently truncate to the opening
-lines. This pure, deterministic seam splits a transcript into overlapping,
-char-budgeted windows so each indexes as its own vector with enough neighbouring
-context to stay coherent. Stored transcripts carry no segment timestamps, so it
-works on whitespace-delimited words alone and emits plain text.
+Combined title, description, and transcript text can exceed the embedder's input
+window. This pure deterministic seam emits character-budgeted, whitespace-clean
+chunks with enough neighbouring context to preserve boundary phrases.
 
->>> chunk_transcript("a b c d e", max_chars=4, overlap_chars=1)
+>>> chunk_youtube_text("a b c d e", max_chars=4, overlap_chars=1)
 ['a b', 'b c', 'c d', 'd e']
 """
 
@@ -26,7 +23,7 @@ def _measured(words: list[str]) -> int:
     return sum(len(word) for word in words) + (len(words) - 1)
 
 
-def chunk_transcript(
+def chunk_youtube_text(
     text: str,
     *,
     max_chars: int = _DEFAULT_MAX_CHARS,

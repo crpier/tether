@@ -1,16 +1,15 @@
-"""The transcript search read path: query -> ranked video matches with snippets.
+"""Semantic Search over saved-video title, description, and transcript text.
 
-`TranscriptSearchService` is the single collaborator `YouTubeService` talks to
-for semantic transcript search. It embeds the query, runs hybrid chunk retrieval
-through `TranscriptIndex`, and folds the chunk hits down to one match per video —
-keeping each video's best-scoring chunk as the snippet that explains the match.
+`YouTubeSearchService` embeds a query, retrieves hybrid text chunks through
+`YouTubeSearchIndex`, and folds hits down to one match per video while retaining
+the best snippet that explains each match.
 
 It over-fetches chunks (a single video can own several of the top hits), so the
 caller still gets `limit` distinct videos after dedup. Reached through a narrow
-`TranscriptQueryPort`, so the service is testable against a fake index with no
+`YouTubeSearchQueryPort`, so the service is testable against a fake index with no
 LanceDB.
 
->>> service = TranscriptSearchService(embedder=embedder, index=index)
+>>> service = YouTubeSearchService(embedder=embedder, index=index)
 >>> [m.video_id for m in await service.candidates("android signing", limit=10, logger=logger)]
 []
 """
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
 
     from tether.embeddings import Embedder
     from tether.structured_logging import Logger
-    from tether.transcripts.index import ChunkCandidate
+    from tether.youtube_search_index import ChunkCandidate
 
 # A single video can own several of the top chunk hits, so fetch this many chunks
 # per requested video to keep enough distinct videos after dedup.
@@ -41,26 +40,26 @@ class VideoMatch:
     score: float
 
 
-class TranscriptQueryPort(Protocol):
-    """The read slice of `TranscriptIndex` the search path needs."""
+class YouTubeSearchQueryPort(Protocol):
+    """The read slice of `YouTubeSearchIndex` the search path needs."""
 
     async def search(
         self, *, text: str, vector: Sequence[float], limit: int
     ) -> list[ChunkCandidate]: ...
 
 
-class TranscriptSearchService:
+class YouTubeSearchService:
     """Embeds the query, retrieves chunks, and dedupes them to ranked videos."""
 
     def __init__(
         self,
         *,
         embedder: Embedder,
-        index: TranscriptQueryPort,
+        index: YouTubeSearchQueryPort,
         overfetch: int = _DEFAULT_OVERFETCH,
     ) -> None:
         self.embedder: Embedder = embedder
-        self.index: TranscriptQueryPort = index
+        self.index: YouTubeSearchQueryPort = index
         self.overfetch: int = overfetch
 
     async def candidates(
@@ -73,7 +72,7 @@ class TranscriptSearchService:
         if not query.strip():
             return []
         logger.debug(
-            "Embedding transcript search query", query_length=len(query), limit=limit
+            "Embedding YouTube search query", query_length=len(query), limit=limit
         )
         vector = await self.embedder.embed_query(query)
         chunk_limit = max(limit * self.overfetch, limit)

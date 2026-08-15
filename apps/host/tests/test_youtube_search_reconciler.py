@@ -1,11 +1,11 @@
 """Behavior tests for the transcript-chunk reconciler.
 
-`TranscriptReconciler` is the sole writer that converges the transcript-chunk
+`YouTubeSearchReconciler` is the sole writer that converges the transcript-chunk
 LanceDB index with SQLite (the canonical `ingested_video` rows). It re-derives
 chunks from each active transcript, embeds only the chunk ids absent from the
 index, and drops orphans — so a fresh index embeds everything, an ignored video
 falls out, and a re-run is a no-op. These run against a real in-memory SQLite
-database with a `FakeTranscriptIndex` and a `CountingEmbedder`, no model download.
+database with a `FakeYouTubeSearchIndex` and a `CountingEmbedder`, no model download.
 """
 
 from __future__ import annotations
@@ -22,19 +22,19 @@ from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
 from tether.embeddings import Embedder, FakeEmbedder, Vector
 from tether.structured_logging import Logger
-from tether.transcripts.index import ChunkDocument
-from tether.transcripts.reconciler import TranscriptReconciler
 from tether.youtube import IngestedVideo, create_youtube_schema
+from tether.youtube_search_index import ChunkDocument
+from tether.youtube_search_reconciler import YouTubeSearchReconciler
 
 _DIM = 16
 
 
 def _logger() -> Logger:
-    return structlog.stdlib.get_logger("test.transcript_reconciler")
+    return structlog.stdlib.get_logger("test.youtube_search_reconciler")
 
 
-class FakeTranscriptIndex:
-    """In-memory stand-in for `TranscriptIndex`; records every write."""
+class FakeYouTubeSearchIndex:
+    """In-memory stand-in for `YouTubeSearchIndex`; records every write."""
 
     def __init__(self) -> None:
         self.docs: dict[UUID, ChunkDocument] = {}
@@ -83,9 +83,9 @@ class CountingEmbedder:
 
 @dataclass
 class Harness:
-    reconciler: TranscriptReconciler
+    reconciler: YouTubeSearchReconciler
     database: Database
-    index: FakeTranscriptIndex
+    index: FakeYouTubeSearchIndex
     embedder: CountingEmbedder
 
 
@@ -94,8 +94,8 @@ async def harness() -> AsyncGenerator[Harness]:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
     embedder = CountingEmbedder(FakeEmbedder(vector_dim=_DIM, model_name="fake-a"))
-    index = FakeTranscriptIndex()
-    reconciler = TranscriptReconciler(
+    index = FakeYouTubeSearchIndex()
+    reconciler = YouTubeSearchReconciler(
         database=db, index=index, embedder=embedder, chunk_max_chars=40
     )
     yield Harness(reconciler, db, index, embedder)
@@ -241,7 +241,7 @@ async def a_model_swap_re_embeds_the_whole_corpus() -> None:
     _ = await h.reconciler.reconcile(logger=_logger())
     original_ids = set(h.index.docs)
 
-    swapped = TranscriptReconciler(
+    swapped = YouTubeSearchReconciler(
         database=h.database,
         index=h.index,
         embedder=CountingEmbedder(FakeEmbedder(vector_dim=_DIM, model_name="fake-b")),

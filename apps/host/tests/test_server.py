@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from socket import AF_INET, SOCK_STREAM, socket
@@ -18,6 +19,7 @@ from tempfile import TemporaryDirectory
 import structlog
 from fastapi import FastAPI
 from httpx2 import AsyncClient
+from snekok import Err
 from snektest import (
     assert_eq,
     assert_false,
@@ -39,6 +41,11 @@ from tether.server import (
 )
 from tether.structured_logging import QUIET_LOGGERS, SILENCED_LOGGERS
 from tether.telemetry import TelemetryExporter, TelemetrySettings
+from tether.transcripts.contracts import (
+    TranscriptFetchResult,
+    TranscriptProviderChain,
+    TranscriptUnavailableFailure,
+)
 
 
 class CapturedStdout(StringIO):
@@ -425,6 +432,39 @@ def app_factory_returns_fastapi() -> None:
 
 
 @test()
+def app_lifespan_closes_transcript_provider_resources() -> None:
+    """Application shutdown closes reusable transcript HTTP resources."""
+
+    class ClosableSource:
+        source: str = "supadata"
+
+        def __init__(self) -> None:
+            self.closed: bool = False
+
+        async def fetch(self, video_id: str) -> TranscriptFetchResult:
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    source = ClosableSource()
+    app = server.create_app(
+        config=AppConfig(
+            app_password="test-app-password",
+            database_path=":memory:",
+            kb_root="unused",
+            session_secret="test-session-secret",
+            transcript_provider=TranscriptProviderChain([source]),
+        )
+    )
+
+    with TestClient(app):
+        pass
+
+    assert_true(source.closed)
+
+
+@test()
 def request_logs_include_trace_context() -> None:
     """Request logs include OpenTelemetry trace correlation fields."""
     with TemporaryDirectory() as directory, captured_logging() as stream:
@@ -667,9 +707,7 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
 
 @test()
 def transcript_rate_limit_defaults_are_strict() -> None:
-    """The shipped defaults are deliberately strict (issue #179): a small
-    per-pass budget, a few seconds of spacing, and a multi-hour initial cooldown
-    that escalates to a full day rather than 6 hours."""
+    """Defaults bound each pass, pace library calls, and back off real blocks."""
     settings = HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
@@ -683,8 +721,7 @@ def transcript_rate_limit_defaults_are_strict() -> None:
 
 @test()
 def app_config_from_settings_threads_the_block_pause_bounds() -> None:
-    """The transcript block-pause bounds come from env settings, not AppConfig's
-    own hardcoded defaults (a pre-existing wiring gap fixed alongside #179)."""
+    """Environment pause bounds become one acquisition configuration value."""
     settings = HostSettings(
         app_password="test-app-password",
         session_secret="test-session-secret",
@@ -695,8 +732,14 @@ def app_config_from_settings_threads_the_block_pause_bounds() -> None:
 
     config = server._app_config_from_settings(settings)
 
-    assert_eq(config.transcript_block_pause_base_seconds, 111)
-    assert_eq(config.transcript_block_pause_cap_seconds, 222)
+    assert_eq(
+        config.transcript_acquisition_config.block_pause_base,
+        timedelta(seconds=111),
+    )
+    assert_eq(
+        config.transcript_acquisition_config.block_pause_cap,
+        timedelta(seconds=222),
+    )
 
 
 @test()

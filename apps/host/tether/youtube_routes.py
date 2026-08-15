@@ -261,10 +261,11 @@ async def transcript_decisions(request: Request) -> Response:
 @_translate_domain_errors
 async def fetch_youtube_transcript(request: Request, video_id: str) -> Response:
     """Fetch and persist a transcript for an ingested video."""
-    result = await request.app.state.youtube_service.fetch_transcript(
+    outcome = await request.app.state.youtube_service.fetch_transcript(
         video_id,
         logger=get_request_logger(request),
     )
+    result = youtube_capabilities.unwrap_transcript_request(outcome)
     return JSONResponse(
         YouTubeTranscriptResponse.from_result(result).model_dump(mode="json")
     )

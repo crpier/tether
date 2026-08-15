@@ -173,15 +173,22 @@ from tether.todos import (
 )
 from tether.tools import SessionRegistry, internal_tool_routes
 from tether.trace_routes import trace_routes
-from tether.transcripts.index import TranscriptIndex
-from tether.transcripts.provider_composition import (
-    build_configured_transcript_provider,
-    resolve_transcript_provider,
+from tether.transcripts.acquisition import (
+    TranscriptAcquisitionConfig,
+    TranscriptAcquisitionService,
 )
-from tether.transcripts.reconciler import TranscriptReconciler
-from tether.transcripts.search import TranscriptSearchService
-from tether.transcripts.supadata import SupadataMode
-from tether.transcripts.worker import TranscriptSyncService
+from tether.transcripts.contracts import (
+    AsyncClosable,
+    TranscriptProviderChain,
+    TranscriptSource,
+)
+from tether.transcripts.source_composition import (
+    SupadataSourceConfig,
+    TranscriptLibrarySourceConfig,
+    TranscriptProviderConfig,
+    build_configured_transcript_provider,
+)
+from tether.transcripts.worker import TranscriptSyncConfig, TranscriptSyncService
 from tether.triage import TriageService
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
@@ -189,8 +196,6 @@ from tether.triggers import TriggerService, create_trigger_schema
 from tether.youtube import (
     DailyQuota,
     InMemoryYouTubeApi,
-    TranscriptProvider,
-    TranscriptSyncConfig,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeApiGate,
@@ -201,6 +206,9 @@ from tether.youtube import (
     create_youtube_schema,
 )
 from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
+from tether.youtube_search import YouTubeSearchService
+from tether.youtube_search_index import YouTubeSearchIndex
+from tether.youtube_search_reconciler import YouTubeSearchReconciler
 from tether.youtube_tools import internal_youtube_tool_routes
 
 
@@ -246,14 +254,15 @@ class AppConfig:
     youtube_likes_drift_alarm_margin: int = 5
     youtube_api_gate_pause_base_seconds: float = 15 * 60
     youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
-    transcript_provider: TranscriptProvider | None = None
+    transcript_acquisition_config: TranscriptAcquisitionConfig = field(
+        default_factory=TranscriptAcquisitionConfig
+    )
+    transcript_provider: TranscriptProviderChain | TranscriptSource | None = None
+    transcript_sync_config: TranscriptSyncConfig = field(
+        default_factory=TranscriptSyncConfig
+    )
     transcript_sync_enabled: bool = True
     transcript_sync_interval_seconds: float = 5 * 60
-    transcript_sync_recent_window: int = 50
-    transcript_retry_backoff_base_seconds: float = 10 * 60
-    transcript_retry_backoff_cap_seconds: float = 6 * 60 * 60
-    transcript_block_pause_base_seconds: float = 2 * 60 * 60
-    transcript_block_pause_cap_seconds: float = 24 * 60 * 60
     readwise_api_key: str = ""
     readwise_sync_enabled: bool = False
     readwise_sync_interval_seconds: float = 60 * 60
@@ -383,8 +392,8 @@ class HostSettings(BaseSettings):
     transcript_library_max_requests_per_pass: int = 5
     """Hard cap on real `youtube-transcript-api` network calls within a single
     transcript sync pass. Deliberately small and strict: the library gets the host
-    IP-blocked in bursts of roughly 10+ rapid requests (issue #179), so one pass
-    must never be allowed to fire dozens at it. Once the cap is spent the provider
+    IP-blocked in bursts of rapid requests, so one pass must never fire dozens
+    at it. Once the cap is spent the provider
     self-throttles for the rest of that pass (remaining candidates stay pending,
     picked up next pass) rather than making further real calls; a fresh pass gets
     a fresh budget. Applies to `youtube_transcript_api` only; Supadata's request
@@ -404,28 +413,18 @@ class HostSettings(BaseSettings):
     transcript_block_pause_cap_seconds: float = 24 * 60 * 60
     """Ceiling on the escalating per-source transcript-provider pause. Raised from
     6 hours to a full day: a source still getting blocked after several
-    escalations is very likely under a longer-lived IP ban, so backing off for up
-    to a day is worth the lost sync speed (explicitly an acceptable trade per
-    issue #179)."""
+    escalations is likely under a longer-lived IP ban, so backing off for up to a
+    day is worth the slower synchronization."""
     transcript_languages: str = "en,ro"
     """Comma-separated preferred transcript languages, most preferred first (ISO
     codes). Passed to the `youtube-transcript-api` library (which tries them in
     order) and to Supadata (which requests the most preferred track), replacing the
     old hardcoded English-only preference. The default is English primary, Romanian
     secondary."""
-    transcript_provider_order: str = "supadata,library"
-    """Comma-separated transcript sources, primary first, that compose the fetch
-    chain. Known names: `supadata` (paid, the reliable primary for third-party
-    videos), `library` (the free `youtube-transcript-api`), `captions` (the
-    owner-only Data API, dropped from the default order because it transcribes
-    almost none of the liked corpus). A named source that is unconfigured (Supadata
-    without a key, the library disabled) is skipped; an *unknown* name is rejected
-    at startup. The default leads with Supadata and trails with the free library."""
     supadata_enabled: bool = False
     """Whether to compose the paid Supadata provider. When enabled (and keyed) it
-    becomes the *primary* transcript source: it is the only source that reliably
-    transcribes third-party liked videos, so the owner-only captions API and the
-    free library trail it as best-effort fallbacks. Off by default and a no-op
+    becomes the *primary* transcript source, with the free transcript library as
+    its fallback. Off by default and a no-op
     unless `supadata_api_key` is also set, so enabling paid transcription is a
     deliberate, credentialed choice."""
     supadata_api_key: str = ""
@@ -444,10 +443,6 @@ class HostSettings(BaseSettings):
     videos back-to-back, so a low-rate plan returns `429 limit-exceeded` on the burst
     and pauses the source; spacing submits keeps them under that per-request rate. The
     1.0s default suits a modest plan; set 0 to disable pacing on a generous one."""
-    supadata_mode: SupadataMode = "native"
-    """Supadata transcript mode. `native` (the default) fetches an existing caption
-    track only — one use per call — so a caption-less video costs one lookup and
-    returns unavailable instead of the multi-use AI `generate` path."""
     search_enabled: bool = True
     """Whether the agent may call Tavily when an API key is configured."""
     search_api_key: str = ""
@@ -585,31 +580,20 @@ def _build_youtube_client(
     )
 
 
-def _build_transcript_sync_config(config: AppConfig) -> TranscriptSyncConfig:
-    """The shared transcript retry/backoff config for the worker and on-demand path."""
-    return TranscriptSyncConfig(
-        recent_window=config.transcript_sync_recent_window,
-        backoff_base=timedelta(seconds=config.transcript_retry_backoff_base_seconds),
-        backoff_cap=timedelta(seconds=config.transcript_retry_backoff_cap_seconds),
-        block_pause_base=timedelta(seconds=config.transcript_block_pause_base_seconds),
-        block_pause_cap=timedelta(seconds=config.transcript_block_pause_cap_seconds),
-    )
-
-
 async def _wire_youtube(
     app: Starlette,
     *,
     config: AppConfig,
     database: Database,
     event_publisher: EventHub,
-    transcript_search: TranscriptSearchService | None = None,
+    youtube_search: YouTubeSearchService | None = None,
 ) -> None:
     """Wire the YouTube service + likes/transcript background workers onto state.
 
     All three share one budgeted client over the configured upstream `YouTubeApi`
     (the in-memory fake when none is configured); the likes sync owns liked-list
-    traffic, the transcript worker drains transcripts through the
-    `TranscriptProvider`, and the service reads only the local ingested corpus.
+    traffic, the transcript worker drains the fixed source chain through shared
+    acquisition policy, and the service reads only the local ingested corpus.
     Each worker is activated only when its real upstream is configured; the
     shared Ingestion lifecycle owns deferred boot, readiness, and cancellation.
     """
@@ -617,24 +601,34 @@ async def _wire_youtube(
     tracer = cast("Telemetry", app.state.telemetry).tracer
     api = config.youtube_api or InMemoryYouTubeApi()
     client = _build_youtube_client(api, config, database)
-    provider = resolve_transcript_provider(
-        configured_provider=config.transcript_provider,
-        api=api,
-        client=client,
+    configured_provider = config.transcript_provider or (
+        api if isinstance(api, InMemoryYouTubeApi) else None
     )
-    transcript_config = _build_transcript_sync_config(config)
+    provider = (
+        configured_provider
+        if isinstance(configured_provider, TranscriptProviderChain)
+        else TranscriptProviderChain([configured_provider])
+        if configured_provider is not None
+        else None
+    )
+    acquisition = (
+        TranscriptAcquisitionService(
+            database=database,
+            provider=provider,
+            config=config.transcript_acquisition_config,
+            event_publisher=event_publisher,
+        )
+        if provider is not None
+        else None
+    )
     youtube_service = YouTubeService(
+        acquisition=acquisition,
         database=database,
         client=client,
-        provider=provider,
         event_publisher=event_publisher,
         tracer=tracer,
+        youtube_search=youtube_search,
     )
-    # Late-bind the on-demand retry config to the same one the worker uses, and
-    # the optional semantic-search collaborator (None when search is disabled,
-    # leaving the lexical LIKE fallback in place).
-    youtube_service.config = transcript_config
-    youtube_service.transcript_search = transcript_search
     app.state.youtube_service = youtube_service
     sync = YouTubeSyncService(
         database=database,
@@ -655,12 +649,15 @@ async def _wire_youtube(
         event_publisher=event_publisher,
     )
     app.state.youtube_sync = sync
-    transcript_sync = TranscriptSyncService(
-        database=database,
-        client=client,
-        provider=provider,
-        config=transcript_config,
-        event_publisher=event_publisher,
+    transcript_sync = (
+        TranscriptSyncService(
+            acquisition=acquisition,
+            clock=client,
+            database=database,
+            config=config.transcript_sync_config,
+        )
+        if acquisition is not None
+        else None
     )
     app.state.transcript_sync = transcript_sync
     (
@@ -681,7 +678,7 @@ def _activate_youtube_workers(
     ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     sync: YouTubeSyncService,
-    transcript_sync: TranscriptSyncService,
+    transcript_sync: TranscriptSyncService | None,
 ) -> tuple[asyncio.Event, asyncio.Event]:
     """Adapt YouTube's two source policies to the shared lifecycle owner."""
     likes_worker: CallbackIngestionWorker | None = None
@@ -700,7 +697,12 @@ def _activate_youtube_workers(
     youtube_boot_done = ingestion_lifecycle.activate("youtube-likes", likes_worker)
 
     transcript_worker: CallbackIngestionWorker | None = None
-    if config.transcript_provider is not None and config.transcript_sync_enabled:
+    if (
+        transcript_sync is not None
+        and config.youtube_api is not None
+        and config.transcript_provider is not None
+        and config.transcript_sync_enabled
+    ):
 
         async def _boot_transcripts() -> IngestionBootOutcome:
             _ = await transcript_sync.sync(logger=logger)
@@ -948,7 +950,7 @@ async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domai
     memory_service: MemoryService,
     proposal_service: ProposalService,
     todo_service: TodoService,
-    transcript_search: TranscriptSearchService | None,
+    youtube_search: YouTubeSearchService | None,
     trigger_service: TriggerService,
 ) -> None:
     """Compose every optional source adapter into one lifecycle owner."""
@@ -957,7 +959,7 @@ async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domai
         config=config,
         database=database,
         event_publisher=event_publisher,
-        transcript_search=transcript_search,
+        youtube_search=youtube_search,
     )
     await _wire_readwise(
         app, config=config, database=database, memory_service=memory_service
@@ -1312,27 +1314,29 @@ def _build_presentation_services(
     )
 
 
-async def _build_transcript_search(
+async def _build_youtube_search(
     *,
     database: Database,
     embedder: Embedder | None,
     index_dir: Path,
-) -> tuple[TranscriptSearchService | None, TranscriptReconciler | None]:
-    """Wire semantic transcript search when an embedder is supplied, else disable.
+) -> tuple[YouTubeSearchService | None, YouTubeSearchReconciler | None]:
+    """Wire semantic YouTube corpus Search when an embedder is supplied.
 
-    Opens the transcript-chunk index and returns the searcher `YouTubeService`
-    uses alongside the reconciler the lifespan drives on a periodic pass. Unlike
-    the Memory index there is no boot reconcile — a cold pass re-embeds the whole
-    transcript corpus and would block startup, so the periodic loop fills it. With
+    Opens the YouTube text-chunk index and returns the searcher `YouTubeService`
+    uses alongside the reconciler the lifespan drives periodically. Unlike the
+    Memory index there is no boot reconcile — a cold pass re-embeds the whole
+    saved-video corpus and would block startup, so the periodic loop fills it. With
     no embedder returns `(None, None)`: the index is never opened, search falls
     back to the lexical `LIKE` path, and no model loads."""
     if embedder is None:
         return None, None
-    index = await TranscriptIndex.open(
+    index = await YouTubeSearchIndex.open(
         index_dir=index_dir, vector_dim=embedder.vector_dim
     )
-    reconciler = TranscriptReconciler(database=database, index=index, embedder=embedder)
-    searcher = TranscriptSearchService(embedder=embedder, index=index)
+    reconciler = YouTubeSearchReconciler(
+        database=database, index=index, embedder=embedder
+    )
+    searcher = YouTubeSearchService(embedder=embedder, index=index)
     return searcher, reconciler
 
 
@@ -1340,7 +1344,7 @@ def _reconcile_loop_tasks(
     *,
     search_reconciler: SearchReconciler | None,
     bucket_item_reconciler: BucketItemReconciler | None,
-    transcript_reconciler: TranscriptReconciler | None,
+    youtube_search_reconciler: YouTubeSearchReconciler | None,
     interval_seconds: float,
     logger: Logger,
 ) -> list[asyncio.Task[None]]:
@@ -1348,8 +1352,8 @@ def _reconcile_loop_tasks(
 
     Each loop is the correctness backstop for its index — sweeping orphans and
     running `optimize()` while the host is up. The Memory and Bucket-item loops
-    complement their own boot reconcile; the transcript loop has no boot pass,
-    so it is what fills the transcript index shortly after startup. Any of the
+    complement their own boot reconcile; the YouTube Search loop has no boot pass,
+    so it fills that index shortly after startup. Any of the
     three is absent when its index was not wired (no embedder)."""
     tasks: list[asyncio.Task[None]] = []
     if search_reconciler is not None:
@@ -1368,10 +1372,10 @@ def _reconcile_loop_tasks(
                 )
             )
         )
-    if transcript_reconciler is not None:
+    if youtube_search_reconciler is not None:
         tasks.append(
             asyncio.create_task(
-                transcript_reconciler.reconcile_forever(
+                youtube_search_reconciler.reconcile_forever(
                     interval_seconds=interval_seconds, logger=logger
                 )
             )
@@ -1571,9 +1575,9 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 logger=app_logger,
             )
             (
-                transcript_searcher,
-                transcript_reconciler,
-            ) = await _build_transcript_search(
+                youtube_searcher,
+                youtube_search_reconciler,
+            ) = await _build_youtube_search(
                 database=db,
                 embedder=embedder,
                 index_dir=configured_kb_root / "transcript-index",
@@ -1687,7 +1691,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 _reconcile_loop_tasks(
                     search_reconciler=search_reconciler,
                     bucket_item_reconciler=bucket_item_reconciler,
-                    transcript_reconciler=transcript_reconciler,
+                    youtube_search_reconciler=youtube_search_reconciler,
                     interval_seconds=config.search_reconcile_seconds,
                     logger=app_logger,
                 )
@@ -1701,7 +1705,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                 memory_service=memory_service,
                 proposal_service=app.state.proposal_service,
                 todo_service=todo_service,
-                transcript_search=transcript_searcher,
+                youtube_search=youtube_searcher,
                 trigger_service=trigger_service,
             )
             try:
@@ -1714,7 +1718,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
                     runtime_registry=runtime_registry,
                     scheduler=scheduler,
                 )
-                await _close_gmail_transport(config)
+                await _close_app_transports(config)
                 telemetry.shutdown()
 
     return lifespan
@@ -1886,13 +1890,12 @@ def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
     )
 
 
-async def _close_gmail_transport(config: AppConfig) -> None:
-    """Close the held Gmail HTTP client at shutdown, if the gate is wired.
-
-    A no-op when the gate is unconfigured, or (in tests) a fake transport that
-    holds no real client to close."""
+async def _close_app_transports(config: AppConfig) -> None:
+    """Close configured HTTP transports that own reusable async clients."""
     if isinstance(config.gmail_transport, HttpGmailTransport):
         await config.gmail_transport.aclose()
+    if isinstance(config.transcript_provider, AsyncClosable):
+        await config.transcript_provider.aclose()
 
 
 def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport | None:
@@ -1963,6 +1966,35 @@ def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
     )
 
 
+def _transcript_provider_config(settings: HostSettings) -> TranscriptProviderConfig:
+    """Convert flat environment fields into one provider-composition value."""
+    languages = tuple(
+        language.strip()
+        for language in settings.transcript_languages.split(",")
+        if language.strip()
+    ) or ("en",)
+    return TranscriptProviderConfig(
+        languages=languages,
+        library=TranscriptLibrarySourceConfig(
+            enabled=settings.transcript_library_enabled,
+            min_request_interval=timedelta(
+                seconds=settings.transcript_library_min_request_interval_seconds
+            ),
+        ),
+        supadata=SupadataSourceConfig(
+            api_key=settings.supadata_api_key,
+            base_url=settings.supadata_base_url,
+            enabled=settings.supadata_enabled,
+            max_poll_attempts=settings.supadata_max_poll_attempts,
+            min_request_interval=timedelta(
+                seconds=settings.supadata_min_request_interval_seconds
+            ),
+            poll_interval=timedelta(seconds=settings.supadata_poll_interval_seconds),
+            timeout=timedelta(seconds=settings.supadata_timeout_seconds),
+        ),
+    )
+
+
 def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     """Build the `AppConfig` the app factory wires from environment settings.
 
@@ -2018,13 +2050,23 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         youtube_likes_rewalk_interval_days=settings.youtube_likes_rewalk_interval_days,
         youtube_likes_drift_alarm_margin=settings.youtube_likes_drift_alarm_margin,
         youtube_sync_enabled=settings.youtube_sync_enabled,
-        transcript_provider=build_configured_transcript_provider(settings),
+        transcript_acquisition_config=TranscriptAcquisitionConfig(
+            block_pause_base=timedelta(
+                seconds=settings.transcript_block_pause_base_seconds
+            ),
+            block_pause_cap=timedelta(
+                seconds=settings.transcript_block_pause_cap_seconds
+            ),
+        ),
+        transcript_provider=build_configured_transcript_provider(
+            _transcript_provider_config(settings)
+        ),
+        transcript_sync_config=TranscriptSyncConfig(
+            library_requests_per_pass=(
+                settings.transcript_library_max_requests_per_pass
+            )
+        ),
         transcript_sync_enabled=settings.transcript_sync_enabled,
-        # The escalating per-source pause bounds (issue #179): previously left at
-        # AppConfig's own hardcoded defaults with no env-var override at all, so
-        # threaded through here alongside the new library-specific knobs above.
-        transcript_block_pause_base_seconds=settings.transcript_block_pause_base_seconds,
-        transcript_block_pause_cap_seconds=settings.transcript_block_pause_cap_seconds,
     )
 
 

@@ -1,13 +1,10 @@
-"""The transcript reconciler: converges the chunk index with SQLite.
+"""Converge the derived YouTube corpus Search index with canonical SQLite rows.
 
-The transcript-chunk LanceDB projection is disposable and rebuildable; SQLite's
-`ingested_video.transcript` is canonical. This module is its sole writer. Unlike
-the Memory reconciler it stores *no* vectors in SQLite — chunks (and therefore
-vectors) are re-derived from the canonical transcript on demand, the "re-embed on
-rebuild" trade. What keeps that cheap is the deterministic, model-stamped chunk
-id (`transcripts.index.chunk_id`): a reconcile re-chunks every active transcript,
-but only embeds the chunk ids the index does not already hold, and drops the ids
-no live transcript still produces.
+Each active video's title, description, and fetched transcript form its searchable
+text. The LanceDB projection is disposable and rebuildable; this module is its
+sole writer. Chunks and vectors are re-derived on demand. Deterministic,
+model-stamped chunk ids let each pass embed only absent content and remove ids no
+active video still produces.
 
 That single `list_ids()` diff covers every case with no extra bookkeeping:
 
@@ -18,7 +15,7 @@ That single `list_ids()` diff covers every case with no extra bookkeeping:
 - *model swap* — the id folds in the model name + width, so every id changes:
   the corpus re-embeds under the new model and the old ids are dropped.
 
-The reconciler talks to the index only through `TranscriptIndexPort` and to the
+The reconciler talks to the index only through `YouTubeSearchIndexPort` and to the
 model only through `Embedder`, so it is fully testable against fakes of both.
 """
 
@@ -30,9 +27,9 @@ from typing import TYPE_CHECKING, Protocol
 from snekql.sqlite import select
 
 from tether.reconcile_loop import run_reconcile_loop
-from tether.transcripts.chunks import chunk_transcript
-from tether.transcripts.index import ChunkDocument, chunk_id
 from tether.youtube import IngestedVideo
+from tether.youtube_search_chunks import chunk_youtube_text
+from tether.youtube_search_index import ChunkDocument, chunk_id
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,8 +46,8 @@ if TYPE_CHECKING:
 _DEFAULT_EMBED_BATCH = 8
 
 
-class TranscriptIndexPort(Protocol):
-    """The slice of `TranscriptIndex` the reconciler writes through."""
+class YouTubeSearchIndexPort(Protocol):
+    """The slice of `YouTubeSearchIndex` the reconciler writes through."""
 
     async def upsert(self, documents: Sequence[ChunkDocument]) -> None: ...
     async def remove(self, ids: Sequence[UUID]) -> None: ...
@@ -68,7 +65,7 @@ class _ChunkSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class TranscriptReconcileReport:
+class YouTubeSearchReconcileReport:
     """What a reconcile pass did, for logging and tests."""
 
     indexed: int
@@ -79,20 +76,20 @@ class TranscriptReconcileReport:
     """Orphan chunk ids dropped (no live transcript produces them)."""
 
 
-class TranscriptReconciler:
-    """Converges the transcript-chunk index with SQLite; the sole writer."""
+class YouTubeSearchReconciler:
+    """Converge the YouTube text-chunk projection with canonical SQLite rows."""
 
     def __init__(
         self,
         *,
         database: Database,
-        index: TranscriptIndexPort,
+        index: YouTubeSearchIndexPort,
         embedder: Embedder,
         chunk_max_chars: int = 2000,
         chunk_overlap_chars: int = 200,
     ) -> None:
         self.database: Database = database
-        self.index: TranscriptIndexPort = index
+        self.index: YouTubeSearchIndexPort = index
         self.embedder: Embedder = embedder
         self.chunk_max_chars: int = chunk_max_chars
         self.chunk_overlap_chars: int = chunk_overlap_chars
@@ -100,8 +97,8 @@ class TranscriptReconciler:
         # knob; it bounds request size and never needs per-instance tuning.
         self.embed_batch_size: int = _DEFAULT_EMBED_BATCH
 
-    async def reconcile(self, *, logger: Logger) -> TranscriptReconcileReport:
-        """Bring the chunk index in step with the active transcripts; idempotent."""
+    async def reconcile(self, *, logger: Logger) -> YouTubeSearchReconcileReport:
+        """Bring the chunk index in step with active saved videos; idempotent."""
         specs = await self._desired_chunks()
         desired_ids = {spec.id for spec in specs}
         present = await self.index.list_ids()
@@ -116,13 +113,13 @@ class TranscriptReconciler:
             await self.index.remove(orphans)
         await self.index.optimize(logger=logger)
 
-        report = TranscriptReconcileReport(
+        report = YouTubeSearchReconcileReport(
             indexed=len(desired_ids),
             embedded=len(owed),
             removed=len(orphans),
         )
         logger.info(
-            "Transcript index reconciled",
+            "YouTube search index reconciled",
             indexed=report.indexed,
             embedded=report.embedded,
             removed=report.removed,
@@ -138,7 +135,7 @@ class TranscriptReconciler:
     ) -> None:
         """Run `reconcile` on a fixed interval until cancelled.
 
-        The transcript index has no boot reconcile (a cold pass re-embeds the
+        The YouTube index has no boot reconcile (a cold pass re-embeds the
         whole corpus and would block startup), so this loop is what fills and
         maintains it — the first pass runs shortly after boot (`initial_delay_
         seconds`, not a full interval) so transcripts become searchable quickly.
@@ -151,7 +148,7 @@ class TranscriptReconciler:
             interval_seconds=interval_seconds,
             initial_delay_seconds=initial_delay_seconds,
             logger=logger,
-            failure_message="Periodic transcript reconcile failed; retrying next tick",
+            failure_message="Periodic YouTube search reconcile failed; retrying next tick",
         )
 
     async def _desired_chunks(self) -> list[_ChunkSpec]:
@@ -172,7 +169,7 @@ class TranscriptReconciler:
                 for part in (video.title, video.description, video.transcript)
                 if part
             )
-            chunks = chunk_transcript(
+            chunks = chunk_youtube_text(
                 source,
                 max_chars=self.chunk_max_chars,
                 overlap_chars=self.chunk_overlap_chars,

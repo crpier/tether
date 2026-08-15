@@ -1,6 +1,6 @@
 """The shared periodic loop both reconcilers run their full passes on.
 
-`SearchReconciler` and `TranscriptReconciler` have domain-specific `reconcile`
+`SearchReconciler` and `YouTubeSearchReconciler` have domain-specific `reconcile`
 bodies (stored vectors + model marker vs. re-derive-from-canonical chunks), but
 the forever loop around them is identical: sleep, run a pass, log and swallow a
 failure so the next tick retries. This module owns that loop once. Other
