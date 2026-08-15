@@ -1,3 +1,5 @@
+"""Typed async Supadata transport and transcript-provider adapter."""
+
 from __future__ import annotations
 
 import asyncio
@@ -21,14 +23,14 @@ from snekok.types import NonBlankStr, NonEmptySecretStr, NonNegativeInt
 
 from tether.youtube import (
     FetchedTranscript,
-    TranscriptBlockedError,
+    TranscriptBlockedFailure,
+    TranscriptFetchResult,
     TranscriptProvider,
     TranscriptSegment,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
 )
 
-# TODO: want to move this inside a class, but need to do some consolidation first
 _SOURCE = "supadata"
 """The provenance tag stamped onto Supadata transcripts and its pause-state key."""
 _NO_PAUSED_SOURCES: frozenset[str] = frozenset()
@@ -219,15 +221,15 @@ def _extract_transcript(
     transcript: SupadataTranscript | SupadataJobCompleted,
     *,
     video_id: str,
-) -> Result[tuple[str, tuple[TranscriptSegment, ...]], TranscriptUnavailableError]:
+) -> Result[tuple[str, tuple[TranscriptSegment, ...]], TranscriptUnavailableFailure]:
     """Extract usable content or identify a transcript with no usable text."""
     if isinstance(transcript.content, str):
         cleaned = transcript.content.strip()
         if not cleaned:
-            return Err(TranscriptUnavailableError(video_id))
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
         return Ok((cleaned, ()))
     if not transcript.content:
-        return Err(TranscriptUnavailableError(video_id))
+        return Err(TranscriptUnavailableFailure(video_id=video_id))
     segments = tuple(
         TranscriptSegment(
             start_seconds=cue.offset / 1000.0,
@@ -246,18 +248,20 @@ def _as_fetched_transcript(
     return FetchedTranscript(text=text, segments=segments, source=_SOURCE)
 
 
-def _unfinished_error(
+def _unfinished_failure(
     video_id: str, job_id: str, attempts: int
-) -> TranscriptTransientError:
+) -> TranscriptTransientFailure:
     """Build the transient failure for a job exceeding its bounded poll budget."""
-    return TranscriptTransientError(
+    return TranscriptTransientFailure(
         f"supadata job {job_id} for {video_id} unfinished after {attempts} polls"
     )
 
 
 def _classify_failure(
     video_id: str, response: SupadataHttpFailure
-) -> TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError:
+) -> (
+    TranscriptBlockedFailure | TranscriptUnavailableFailure | TranscriptTransientFailure
+):
     """Map a non-success Supadata response onto a typed `TranscriptProvider` signal.
 
     Rate limits are the *blocked* outcome (carrying any retry-after hint so the
@@ -266,32 +270,33 @@ def _classify_failure(
     *transient*.
     """
     if _is_rate_limited(response):
-        return TranscriptBlockedError(
+        return TranscriptBlockedFailure(
             f"supadata rate-limited for {video_id}",
             retry_after=response.retry_after,
             source=_SOURCE,
         )
     if _is_unavailable(response):
-        return TranscriptUnavailableError(video_id)
-    return TranscriptTransientError(
+        return TranscriptUnavailableFailure(video_id=video_id)
+    return TranscriptTransientFailure(
         f"supadata fetch for {video_id} failed (status {response.status_code})"
     )
 
 
 def _classify_transport_failure(
     video_id: str, failure: SupadataTransportFailure
-) -> TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError:
+) -> (
+    TranscriptBlockedFailure | TranscriptUnavailableFailure | TranscriptTransientFailure
+):
     """Translate a transport failure into the provider's failure vocabulary."""
     if isinstance(failure, SupadataHttpFailure):
         return _classify_failure(video_id, failure)
-    return TranscriptTransientError(video_id)
+    return TranscriptTransientFailure(message=video_id)
 
 
 class SupadataTranscriptProvider(TranscriptProvider):
-    """The paid `TranscriptProvider` backed by Supadata (the primary when enabled).
+    """Fetch transcripts through Supadata's direct and asynchronous responses.
 
-    Enabled only when key + flag are set, in which case it leads the chain. It
-    submits a transcript request, returns immediately on a direct hit, and
+    It submits a transcript request, returns immediately on a direct hit, and
     otherwise polls the async job to completion within a bounded number of
     attempts. A rate limit is the distinct *blocked* signal that trips the worker's
     Supadata-specific pause; no transcript is *unavailable*; an exhausted-poll or
@@ -344,17 +349,12 @@ class SupadataTranscriptProvider(TranscriptProvider):
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> Result[
-        FetchedTranscript,
-        TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError,
-    ]:
+    ) -> TranscriptFetchResult:
         """Fetch a transcript via Supadata (direct or async job).
 
         Supadata is a leaf source the composite skips while paused or gated, so
         `paused_sources` and `skip_sources` are no-ops here.
-
         """
-        # TODO: oof
         _ = (paused_sources, skip_sources)
         # Pace submits to stay under the plan's per-request rate limit.
         await self._throttle()
@@ -374,10 +374,7 @@ class SupadataTranscriptProvider(TranscriptProvider):
 
     async def _poll_to_completion(
         self, video_id: str, job_id: str
-    ) -> Result[
-        FetchedTranscript,
-        TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError,
-    ]:
+    ) -> TranscriptFetchResult:
         """Poll an async job up to `max_poll_attempts`, resolving its terminal state.
 
         A completed job's content becomes the transcript; a failed or empty job is
@@ -396,13 +393,15 @@ class SupadataTranscriptProvider(TranscriptProvider):
                 case Ok(response):
                     pass
             if isinstance(response, SupadataJobFailed):
-                return Err(TranscriptUnavailableError(video_id))
+                return Err(TranscriptUnavailableFailure(video_id=video_id))
             if isinstance(response, SupadataJobCompleted):
                 return _extract_transcript(response, video_id=video_id).map(
                     _as_fetched_transcript
                 )
             # A validated pending state consumes one bounded poll attempt.
-        return Err(_unfinished_error(video_id, job_id, self._config.max_poll_attempts))
+        return Err(
+            _unfinished_failure(video_id, job_id, self._config.max_poll_attempts)
+        )
 
 
 def _is_http_failure(response: httpx2.Response) -> bool:

@@ -124,6 +124,7 @@ deprecateTypingAliases = true
 enableExperimentalFeatures = true
 reportMissingTypeStubs = "error"
 reportMissingModuleSource = "error"
+reportInvalidTypeForm = "error"
 reportMissingImports = "error"
 reportUndefinedVariable = "error"
 reportAssertAlwaysTrue = "error"

@@ -12,7 +12,8 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from snektest import assert_eq, assert_is_none, assert_raises, test
+from snekok import Err
+from snektest import assert_eq, assert_is_none, assert_isinstance, test
 
 from tether.transcripts.library import (
     LibraryPassBudget,
@@ -26,10 +27,10 @@ from tether.transcripts.library import (
 from tether.youtube import (
     FallbackTranscriptProvider,
     NullTranscriptProvider,
-    TranscriptBlockedError,
-    TranscriptExcludedError,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptBlockedFailure,
+    TranscriptExcludedFailure,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
 )
 
 # --- Stand-in error shapes (named like the real library's, never imported) ----
@@ -141,7 +142,7 @@ def classify_maps_request_blocked_to_blocked_with_retry_after() -> None:
     blocked = RequestBlocked("blocked")
     blocked.response = FakeResponse({"Retry-After": "300"})  # type: ignore[attr-defined]
     classified = _classify_library_error("v1", blocked)
-    assert isinstance(classified, TranscriptBlockedError)
+    assert isinstance(classified, TranscriptBlockedFailure)
     assert_eq(classified.retry_after, timedelta(seconds=300))
     # The source must be stamped here (not left for a composite fallback to fill
     # in): when the library runs standalone or as the chain's primary, nothing
@@ -155,28 +156,28 @@ def classify_maps_request_blocked_to_blocked_with_retry_after() -> None:
 def classify_maps_transcripts_disabled_to_unavailable() -> None:
     """Captions-disabled maps to the unavailable outcome."""
     classified = _classify_library_error("v1", TranscriptsDisabled("x"))
-    assert_eq(isinstance(classified, TranscriptUnavailableError), True)
+    assert_eq(isinstance(classified, TranscriptUnavailableFailure), True)
 
 
 @test()
 def classify_maps_no_transcript_found_to_unavailable() -> None:
     """No transcript in the requested languages maps to the unavailable outcome."""
     classified = _classify_library_error("v1", NoTranscriptFound("x"))
-    assert_eq(isinstance(classified, TranscriptUnavailableError), True)
+    assert_eq(isinstance(classified, TranscriptUnavailableFailure), True)
 
 
 @test()
 def classify_maps_age_restricted_to_excluded() -> None:
     """An age-restricted video maps to the excluded outcome."""
     classified = _classify_library_error("v1", AgeRestricted("x"))
-    assert_eq(isinstance(classified, TranscriptExcludedError), True)
+    assert_eq(isinstance(classified, TranscriptExcludedFailure), True)
 
 
 @test()
 def classify_maps_request_failed_to_transient() -> None:
     """A generic transport failure maps to the transient outcome."""
     classified = _classify_library_error("v1", YouTubeRequestFailed("x"))
-    assert_eq(isinstance(classified, TranscriptTransientError), True)
+    assert_eq(isinstance(classified, TranscriptTransientFailure), True)
 
 
 # --- Snippet parsing --------------------------------------------------------
@@ -210,7 +211,7 @@ async def provider_fetch_returns_transcript_from_snippets() -> None:
         return [Snippet("coroutines", 0.0), Snippet("await", 1.0)]
 
     provider = YouTubeTranscriptApiProvider(fetcher)
-    result = await provider.fetch("v1")
+    result = (await provider.fetch("v1")).unwrap()
     assert_eq(result.text, "coroutines await")
     assert_eq(result.source, "youtube_transcript_api")
 
@@ -224,8 +225,10 @@ async def provider_fetch_empty_transcript_is_unavailable() -> None:
         return []
 
     provider = YouTubeTranscriptApiProvider(fetcher)
-    with assert_raises(TranscriptUnavailableError):
-        _ = await provider.fetch("v1")
+
+    outcome = await provider.fetch("v1")
+
+    assert_eq(outcome, Err(TranscriptUnavailableFailure(video_id="v1")))
 
 
 @test()
@@ -237,8 +240,11 @@ async def provider_fetch_classifies_block() -> None:
         raise RequestBlocked("ip blocked")
 
     provider = YouTubeTranscriptApiProvider(fetcher)
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v1")
+
+    outcome = await provider.fetch("v1")
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptBlockedFailure)
 
 
 # --- Per-pass request budget: bound real calls a single sync pass can fire ---
@@ -280,11 +286,12 @@ async def budget_exhausted_blocks_without_calling_the_fetcher() -> None:
 
     _ = await provider.fetch("v1")
     _ = await provider.fetch("v2")
-    with assert_raises(TranscriptBlockedError) as caught:
-        _ = await provider.fetch("v3")
+    outcome = await provider.fetch("v3")
 
+    assert isinstance(outcome, Err)
+    failure = assert_isinstance(outcome.error, TranscriptBlockedFailure)
     assert_eq(fetcher.calls, 2)
-    assert_eq(caught.exception.source, "youtube_transcript_api")
+    assert_eq(failure.source, "youtube_transcript_api")
 
 
 @test()
@@ -297,11 +304,13 @@ async def budget_exhaustion_keeps_blocking_the_rest_of_the_pass() -> None:
     )
 
     _ = await provider.fetch("v1")
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v2")
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v3")
+    second = await provider.fetch("v2")
+    third = await provider.fetch("v3")
 
+    assert isinstance(second, Err)
+    _ = assert_isinstance(second.error, TranscriptBlockedFailure)
+    assert isinstance(third, Err)
+    _ = assert_isinstance(third.error, TranscriptBlockedFailure)
     assert_eq(fetcher.calls, 1)
 
 
@@ -314,8 +323,9 @@ async def begin_pass_refills_the_budget() -> None:
     )
 
     _ = await provider.fetch("v1")
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v2")
+    blocked = await provider.fetch("v2")
+    assert isinstance(blocked, Err)
+    _ = assert_isinstance(blocked.error, TranscriptBlockedFailure)
 
     provider.begin_pass()
     _ = await provider.fetch("v3")
@@ -343,13 +353,15 @@ async def a_real_block_latches_for_the_rest_of_the_pass() -> None:
         fetcher, budget=LibraryPassBudget(max_requests_per_pass=5)
     )
 
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v1")
-    with assert_raises(TranscriptBlockedError) as caught:
-        _ = await provider.fetch("v2")
+    first = await provider.fetch("v1")
+    second = await provider.fetch("v2")
 
+    assert isinstance(first, Err)
+    _ = assert_isinstance(first.error, TranscriptBlockedFailure)
+    assert isinstance(second, Err)
+    failure = assert_isinstance(second.error, TranscriptBlockedFailure)
     assert_eq(fetcher.calls, 1)
-    assert_eq(caught.exception.source, "youtube_transcript_api")
+    assert_eq(failure.source, "youtube_transcript_api")
 
 
 @test()
@@ -372,14 +384,16 @@ async def begin_pass_clears_the_block_latch_too() -> None:
         fetcher, budget=LibraryPassBudget(max_requests_per_pass=5)
     )
 
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v1")
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v2")
+    first = await provider.fetch("v1")
+    second = await provider.fetch("v2")
+    assert isinstance(first, Err)
+    _ = assert_isinstance(first.error, TranscriptBlockedFailure)
+    assert isinstance(second, Err)
+    _ = assert_isinstance(second.error, TranscriptBlockedFailure)
     assert_eq(fetcher.calls, 1)
 
     provider.begin_pass()
-    result = await provider.fetch("v3")
+    result = (await provider.fetch("v3")).unwrap()
 
     assert_eq(result.text, "hi")
     assert_eq(fetcher.calls, 2)
@@ -476,9 +490,10 @@ async def a_budget_exhausted_call_incurs_no_pacing_delay() -> None:
         monotonic=clock.monotonic,
     )
 
-    with assert_raises(TranscriptBlockedError):
-        _ = await provider.fetch("v1")
+    outcome = await provider.fetch("v1")
 
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptBlockedFailure)
     assert_eq(clock.sleeps, [])
     assert_eq(fetcher.calls, 0)
 

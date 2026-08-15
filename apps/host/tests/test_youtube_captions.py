@@ -12,13 +12,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from snektest import assert_eq, assert_raises, test
+from snekok import Err
+from snektest import assert_eq, assert_isinstance, test
 
 from tether.youtube import (
     FallbackTranscriptProvider,
     NullTranscriptProvider,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptQuotaExceededFailure,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
     YouTubeQuotaExceededError,
 )
 from tether.youtube_oauth import (
@@ -140,7 +142,7 @@ async def fetch_prefers_a_human_track_over_asr() -> None:
         download_result=SRT.encode("utf-8"),
     )
 
-    result = await provider(captions).fetch("v1")
+    result = (await provider(captions).fetch("v1")).unwrap()
 
     assert_eq(captions.download_ids, ["human-1"])
     assert_eq(result.source, "youtube_captions")
@@ -166,8 +168,9 @@ async def fetch_falls_back_to_first_track_when_all_asr() -> None:
 @test()
 async def fetch_with_no_tracks_is_unavailable() -> None:
     """No caption tracks maps to the permanent unavailable outcome."""
-    with assert_raises(TranscriptUnavailableError):
-        _ = await provider(FakeCaptions(list_items=[])).fetch("v1")
+    outcome = await provider(FakeCaptions(list_items=[])).fetch("v1")
+
+    assert_eq(outcome, Err(TranscriptUnavailableFailure(video_id="v1")))
 
 
 @test()
@@ -175,8 +178,9 @@ async def fetch_with_empty_download_is_unavailable() -> None:
     """A track that downloads to empty text is unavailable, not a crash."""
     captions = FakeCaptions(list_items=[track("t1")], download_result=b"")
 
-    with assert_raises(TranscriptUnavailableError):
-        _ = await provider(captions).fetch("v1")
+    outcome = await provider(captions).fetch("v1")
+
+    assert_eq(outcome, Err(TranscriptUnavailableFailure(video_id="v1")))
 
 
 @test()
@@ -184,8 +188,9 @@ async def fetch_maps_404_to_unavailable() -> None:
     """A 404 from the caption list is the unavailable outcome."""
     captions = FakeCaptions(list_error=FakeHttpError(404))
 
-    with assert_raises(TranscriptUnavailableError):
-        _ = await provider(captions).fetch("v1")
+    outcome = await provider(captions).fetch("v1")
+
+    assert_eq(outcome, Err(TranscriptUnavailableFailure(video_id="v1")))
 
 
 @test()
@@ -200,8 +205,9 @@ async def fetch_maps_403_to_unavailable() -> None:
     """
     captions = FakeCaptions(list_error=FakeHttpError(403))
 
-    with assert_raises(TranscriptUnavailableError):
-        _ = await provider(captions).fetch("v1")
+    outcome = await provider(captions).fetch("v1")
+
+    assert_eq(outcome, Err(TranscriptUnavailableFailure(video_id="v1")))
 
 
 @test()
@@ -209,8 +215,10 @@ async def fetch_maps_401_to_transient() -> None:
     """A 401 (expired/invalid credentials) is retryable, never a permanent purge."""
     captions = FakeCaptions(list_error=FakeHttpError(401))
 
-    with assert_raises(TranscriptTransientError):
-        _ = await provider(captions).fetch("v1")
+    outcome = await provider(captions).fetch("v1")
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptTransientFailure)
 
 
 @test()
@@ -218,8 +226,10 @@ async def fetch_maps_500_to_transient() -> None:
     """A 5xx on download is a retryable transient failure."""
     captions = FakeCaptions(list_items=[track("t1")], download_error=FakeHttpError(500))
 
-    with assert_raises(TranscriptTransientError):
-        _ = await provider(captions).fetch("v1")
+    outcome = await provider(captions).fetch("v1")
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptTransientFailure)
 
 
 @test()
@@ -227,7 +237,7 @@ async def provider_decodes_bytes_and_str_downloads() -> None:
     """A download returning str is parsed the same as one returning bytes."""
     captions = FakeCaptions(list_items=[track("t1")], download_result=SRT)
 
-    fetched = await provider(captions).fetch("v1")
+    fetched = (await provider(captions).fetch("v1")).unwrap()
 
     assert_eq(fetched.text.startswith("Async IO"), True)
 
@@ -249,7 +259,7 @@ async def fetch_charges_the_bound_daily_quota_before_the_live_call() -> None:
     result = provider(captions)
     result.charge = charge
 
-    fetched = await result.fetch("v1")
+    fetched = (await result.fetch("v1")).unwrap()
 
     assert_eq(calls, ["charged"])
     assert_eq(fetched.source, "youtube_captions")
@@ -266,8 +276,8 @@ async def fetch_with_no_bound_charge_is_a_no_op() -> None:
 
 
 @test()
-async def an_exhausted_charge_raises_before_any_live_call() -> None:
-    """A depleted daily budget raises from `charge` before list/download ever runs."""
+async def an_exhausted_charge_returns_failure_before_any_live_call() -> None:
+    """A depleted daily budget returns failure before list/download ever runs."""
     captions = FakeCaptions(list_items=[track("t1")], download_result=b"unused")
 
     async def charge() -> None:
@@ -276,8 +286,12 @@ async def an_exhausted_charge_raises_before_any_live_call() -> None:
     result = provider(captions)
     result.charge = charge
 
-    with assert_raises(YouTubeQuotaExceededError):
-        _ = await result.fetch("v1")
+    outcome = await result.fetch("v1")
+
+    assert_eq(
+        outcome,
+        Err(TranscriptQuotaExceededFailure(message="day exhausted")),
+    )
     assert_eq(captions.download_ids, [])
 
 
@@ -294,9 +308,9 @@ async def binding_the_charge_reaches_captions_inside_a_fallback_chain() -> None:
         calls.append("charged")
 
     bind_captions_daily_quota(chain, charge)
-    with assert_raises(TranscriptUnavailableError):
-        _ = await captions_provider.fetch("v1")
+    outcome = await captions_provider.fetch("v1")
 
+    assert_eq(outcome, Err(TranscriptUnavailableFailure(video_id="v1")))
     assert_eq(calls, ["charged"])
 
 

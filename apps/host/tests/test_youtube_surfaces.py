@@ -12,17 +12,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from snekok import Err
 from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 
 from tests.surfaces import call_tool, login, surface_client
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
-    FetchedTranscript,
     InMemoryYouTubeApi,
     RawYouTubeVideo,
-    TranscriptBlockedError,
+    TranscriptBlockedFailure,
+    TranscriptFetchResult,
     TranscriptProvider,
-    YouTubeQuotaExceededError,
+    TranscriptQuotaExceededFailure,
 )
 
 
@@ -175,9 +176,9 @@ def post_transcript_when_provider_blocked_is_503() -> None:
             *,
             paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
             skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        ) -> FetchedTranscript:
+        ) -> TranscriptFetchResult:
             _ = (paused_sources, skip_sources)
-            raise TranscriptBlockedError(f"blocked fetching {video_id}")
+            return Err(TranscriptBlockedFailure(message=f"blocked fetching {video_id}"))
 
     api = InMemoryYouTubeApi(liked=[video("v1", title="Talk")])
     with (
@@ -461,8 +462,8 @@ def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
 
     Only a Data-API-backed source (captions) spends the daily budget — see
     `test_youtube_transcript_sync.py` for that charging behaviour in full. This
-    exercises the surface-level translation with a fake provider that raises the
-    same typed error a depleted captions charge would.
+    exercises the surface-level translation with a fake provider returning the
+    same typed failure a depleted captions charge would.
     """
 
     class ExhaustedProvider(TranscriptProvider):
@@ -476,9 +477,13 @@ def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
             *,
             paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
             skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        ) -> FetchedTranscript:
+        ) -> TranscriptFetchResult:
             _ = (paused_sources, skip_sources)
-            raise YouTubeQuotaExceededError(f"day exhausted fetching {video_id}")
+            return Err(
+                TranscriptQuotaExceededFailure(
+                    message=f"day exhausted fetching {video_id}"
+                )
+            )
 
     api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
     with (

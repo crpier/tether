@@ -41,12 +41,7 @@ from tether.youtube import (
     load_all_provider_pauses,
     provider_pause_keys,
 )
-from tether.youtube_quota import (
-    YouTubeApiClient,
-    YouTubeQuotaExceededError,
-    state_get,
-    state_set,
-)
+from tether.youtube_quota import YouTubeApiClient, state_get, state_set
 
 # The empty default for a video with no caption-gated skip, mirrored from youtube's
 # module constant so the moved worker keeps its own local default rather than
@@ -159,22 +154,18 @@ class TranscriptSyncService:
         candidates = await self._eligible(self.client.now())
         for video in candidates:
             now = self.client.now()
-            # Only the captions provider spends the YouTube Data API daily budget
-            # (it charges itself before its own live call); a depleted day
-            # surfaces here as `YouTubeQuotaExceededError` from that provider
-            # rather than a pre-check, so a chain without captions (the default)
-            # never stops on it.
-            try:
-                attempt = await fetch_and_store_transcript(
-                    context,
-                    video_id=video.video_id,
-                    now=now,
-                    paused_sources=state.paused_sources,
-                    skip_sources=self._skip_sources_for(video),
-                )
-            except YouTubeQuotaExceededError as error:
+            # Only the captions provider spends the YouTube Data API daily budget.
+            # A chain without captions never returns the quota-exhausted outcome.
+            attempt = await fetch_and_store_transcript(
+                context,
+                video_id=video.video_id,
+                now=now,
+                paused_sources=state.paused_sources,
+                skip_sources=self._skip_sources_for(video),
+            )
+            if attempt.outcome == "quota_exhausted":
                 quota_exhausted = True
-                _debug(logger, "Transcript sync stopped on quota", error=str(error))
+                _debug(logger, "Transcript sync stopped on quota")
                 break
             await self._apply_attempt(
                 state, video=video, attempt=attempt, now=now, logger=logger

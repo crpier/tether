@@ -41,12 +41,11 @@ from tether.transcripts.supadata import (
     SupadataTransport,
     SupadataTransportFailure,
     _retry_after_seconds,
-    _submit_params,
 )
 from tether.youtube import (
-    TranscriptBlockedError,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptBlockedFailure,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
 )
 
 type _ScriptedSubmit = SupadataSubmitResponse | SupadataTransportFailure
@@ -248,6 +247,30 @@ async def http_transport_decodes_an_accepted_job() -> None:
 
 
 @test()
+async def http_transport_submit_sends_configured_parameters() -> None:
+    """Submit sends the canonical video URL, native mode, and preferred language."""
+    requests: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json={"content": "transcript"})
+
+    transport = HttpSupadataTransport(
+        _api_key(),
+        config=SupadataConfig(languages=("ro", "en"), mode="native"),
+        http_transport=httpx2.MockTransport(respond),
+    )
+
+    _ = await transport.submit("v1")
+    await transport.aclose()
+
+    assert_eq(len(requests), 1)
+    assert_eq(requests[0].url.params["url"], "https://www.youtube.com/watch?v=v1")
+    assert_eq(requests[0].url.params["mode"], "native")
+    assert_eq(requests[0].url.params["lang"], "ro")
+
+
+@test()
 async def http_transport_decodes_a_completed_job() -> None:
     """The poll boundary returns a typed completed transcript."""
 
@@ -428,7 +451,7 @@ async def malformed_success_payload_is_transient() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptTransientError)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
     await transport.aclose()
 
 
@@ -476,7 +499,7 @@ async def empty_content_is_unavailable() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptUnavailableError)
+    _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -487,7 +510,7 @@ async def not_found_is_unavailable() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptUnavailableError)
+    _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -505,7 +528,7 @@ async def partial_content_status_is_unavailable() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptUnavailableError)
+    _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -518,7 +541,7 @@ async def forbidden_is_unavailable() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptUnavailableError)
+    _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -536,7 +559,7 @@ async def rate_limit_is_blocked_with_retry_after_and_source() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    error = assert_isinstance(failure.error, TranscriptBlockedError)
+    error = assert_isinstance(failure.error, TranscriptBlockedFailure)
     assert_eq(error.source, "supadata")
     assert_eq(error.retry_after, timedelta(minutes=5))
 
@@ -556,7 +579,7 @@ async def quota_error_body_is_blocked() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptBlockedError)
+    _ = assert_isinstance(failure.error, TranscriptBlockedFailure)
 
 
 @test()
@@ -567,7 +590,7 @@ async def server_error_is_transient() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptTransientError)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
 
 
 @test()
@@ -580,7 +603,7 @@ async def a_read_timeout_on_submit_is_transient() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptTransientError)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
 
 
 @test()
@@ -594,7 +617,7 @@ async def a_connection_error_while_polling_is_transient() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptTransientError)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
 
 
 @test()
@@ -626,7 +649,7 @@ async def async_job_failed_is_unavailable() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptUnavailableError)
+    _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -640,7 +663,7 @@ async def async_job_completed_without_content_is_unavailable() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptUnavailableError)
+    _ = assert_isinstance(failure.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -654,7 +677,7 @@ async def async_job_over_poll_budget_is_transient() -> None:
     failure = await _provider(transport, max_poll_attempts=3).fetch("v1")
 
     assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptTransientError)
+    _ = assert_isinstance(failure.error, TranscriptTransientFailure)
     assert_eq(transport.poll_calls, 3)
 
 
@@ -674,7 +697,7 @@ async def rate_limit_while_polling_is_blocked() -> None:
     failure = await _provider(transport).fetch("v1")
 
     assert isinstance(failure, Err)
-    error = assert_isinstance(failure.error, TranscriptBlockedError)
+    error = assert_isinstance(failure.error, TranscriptBlockedFailure)
     assert_eq(error.source, "supadata")
 
 
@@ -690,33 +713,6 @@ def retry_after_parses_delta_seconds_only() -> None:
 def native_is_the_default_mode() -> None:
     """The config defaults to `native` — one use per call, never AI `generate`."""
     assert_eq(SupadataConfig().mode, "native")
-
-
-@test()
-def the_mode_rides_on_every_submit_param() -> None:
-    """The pinned mode is sent on the submit params so Supadata never auto-generates."""
-    assert_eq(
-        _submit_params("v1", "native"),
-        {"url": "https://www.youtube.com/watch?v=v1", "mode": "native"},
-    )
-
-
-@test()
-def the_preferred_language_rides_on_the_submit_param() -> None:
-    """The most preferred language is sent as `lang` so Supadata returns that track."""
-    assert_eq(
-        _submit_params("v1", "native", ("ro", "en")),
-        {"url": "https://www.youtube.com/watch?v=v1", "mode": "native", "lang": "ro"},
-    )
-
-
-@test()
-def no_language_leaves_the_lang_param_off() -> None:
-    """With no configured languages the `lang` param is omitted (Supadata's default)."""
-    assert_eq(
-        _submit_params("v1", "native", ()),
-        {"url": "https://www.youtube.com/watch?v=v1", "mode": "native"},
-    )
 
 
 # --- Request pacing: stay under the plan's per-request rate limit ------------

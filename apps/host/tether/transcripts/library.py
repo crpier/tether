@@ -14,10 +14,9 @@ resilience logic the worker's global pause depends on:
   provider's guidance.
 * A hard per-pass request budget (`max_requests_per_pass`) plus mandatory spacing
   (`min_request_interval`) between real calls, and a "blocked this pass" latch —
-  together these keep one sync pass from ever firing more than a handful of rapid
-  requests at this provider, which is what actually trips YouTube's IP-level rate
-  limit (see issue #179). `reset_library_pass_budget` is the worker's hook to
-  refill the budget at the start of each pass.
+  together these keep one sync pass from firing a burst that trips YouTube's
+  IP-level rate limit. `reset_library_pass_budget` refills the budget at the start
+  of each pass.
 
 Both classifiers are pure functions over exception shapes, unit-tested without
 ever importing the real library or touching a socket. The real library is
@@ -35,15 +34,19 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
+from snekok import Err, Ok
+
 from tether.youtube import (
     FallbackTranscriptProvider,
     FetchedTranscript,
-    TranscriptBlockedError,
-    TranscriptExcludedError,
+    TranscriptBlockedFailure,
+    TranscriptExcludedFailure,
+    TranscriptFailure,
+    TranscriptFetchResult,
     TranscriptProvider,
     TranscriptSegment,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
 )
 
 _SOURCE = "youtube_transcript_api"
@@ -157,8 +160,8 @@ def _parse_retry_after(error: Exception) -> timedelta | None:
     return _retry_after_to_timedelta(retry_after_header)
 
 
-def _classify_library_error(video_id: str, error: Exception) -> Exception:
-    """Map a `youtube-transcript-api` failure onto a typed `TranscriptProvider` signal.
+def _classify_library_error(video_id: str, error: Exception) -> TranscriptFailure:
+    """Map a `youtube-transcript-api` exception onto a provider failure value.
 
     An IP-block / rate-limit is the *blocked* outcome (carrying any retry-after
     hint); transcripts-disabled / not-found / gone is *unavailable* (terminal);
@@ -166,7 +169,7 @@ def _classify_library_error(video_id: str, error: Exception) -> Exception:
     — transport errors, request failures — is *transient* and retryable.
     """
     if _is_transcript_ip_block_error(error):
-        return TranscriptBlockedError(
+        return TranscriptBlockedFailure(
             f"youtube-transcript-api blocked for {video_id}: {error}",
             retry_after=_parse_retry_after(error),
             # Stamped here, not left for a composite to fill in: when this
@@ -174,15 +177,15 @@ def _classify_library_error(video_id: str, error: Exception) -> Exception:
             # when Supadata is disabled), nothing else ever stamps a source, and
             # the worker treats a `None` source as an already-deferred skip
             # rather than a fresh block — silently never tripping the persisted
-            # per-source pause (issue #179).
+            # per-source pause.
             source=_SOURCE,
         )
     names = _mro_names(error)
     if names & _UNAVAILABLE_NAMES:
-        return TranscriptUnavailableError(video_id)
+        return TranscriptUnavailableFailure(video_id=video_id)
     if names & _EXCLUDED_NAMES:
-        return TranscriptExcludedError(video_id)
-    return TranscriptTransientError(
+        return TranscriptExcludedFailure(video_id=video_id)
+    return TranscriptTransientFailure(
         f"youtube-transcript-api fetch for {video_id} failed: {error}"
     )
 
@@ -266,8 +269,8 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
     hammering YouTube within a single sync pass (`budget`, a `LibraryPassBudget`):
 
     * `max_requests_per_pass` hard-caps real network calls per pass. Once spent,
-      `fetch` raises the typed *blocked* signal immediately — no further network
-      call — so the worker's normal per-source pause/backoff takes over for the
+      `fetch` returns a blocked failure immediately — no further network call —
+      so the worker's normal per-source pause/backoff takes over for the
       rest of the pass.
     * `min_request_interval` paces consecutive real calls.
     * A "blocked this pass" latch: once a real IP block is observed, every further
@@ -342,8 +345,8 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> FetchedTranscript:
-        """Fetch a transcript via the library, or raise a typed signal.
+    ) -> TranscriptFetchResult:
+        """Fetch a transcript via the library or return a typed failure.
 
         This *is* a blockable source, so `paused_sources` does not apply here — the
         composite provider is what skips it while its pause is in effect. The
@@ -355,7 +358,7 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
         _ = (paused_sources, skip_sources)
         if self._blocked_this_pass:
             message = f"youtube-transcript-api already blocked this pass; deferring {video_id}"
-            raise TranscriptBlockedError(message, source=_SOURCE)
+            return Err(TranscriptBlockedFailure(message=message, source=_SOURCE))
         max_requests = self._budget.max_requests_per_pass
         if max_requests is not None and self._requests_this_pass >= max_requests:
             self._blocked_this_pass = True
@@ -363,21 +366,21 @@ class YouTubeTranscriptApiProvider(TranscriptProvider):
                 f"youtube-transcript-api per-pass request budget ({max_requests}) "
                 f"reached; deferring {video_id}"
             )
-            raise TranscriptBlockedError(message, source=_SOURCE)
+            return Err(TranscriptBlockedFailure(message=message, source=_SOURCE))
         self._requests_this_pass += 1
         fetcher = self._ensure_fetcher()
         await self._throttle()
         try:
             raw = await asyncio.to_thread(fetcher, video_id)
-        except Exception as error:
-            classified = _classify_library_error(video_id, error)
-            if isinstance(classified, TranscriptBlockedError):
+        except Exception as e:
+            failure = _classify_library_error(video_id, e)
+            if isinstance(failure, TranscriptBlockedFailure):
                 self._blocked_this_pass = True
-            raise classified from error
+            return Err(failure)
         text, segments = _parse_snippets(raw)
         if not text:
-            raise TranscriptUnavailableError(video_id)
-        return FetchedTranscript(text=text, segments=segments, source=_SOURCE)
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
+        return Ok(FetchedTranscript(text=text, segments=segments, source=_SOURCE))
 
 
 def _iter_library_providers(
