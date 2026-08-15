@@ -11,27 +11,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List every artifact's latest version as lightweight summaries. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ArtifactSummaryRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Artifacts
+     * @description List every artifact's latest version as lightweight summaries.
+     */
+    get: operations["list_artifacts_api_artifacts_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -47,29 +31,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Fetch an artifact's newest version, `html` included. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          artifact_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ArtifactRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Get Artifact
+     * @description Fetch an artifact's newest version, `html` included.
+     */
+    get: operations["get_artifact_api_artifacts__artifact_id__get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -85,57 +51,21 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List an artifact's events, oldest first. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          artifact_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ArtifactEventRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Artifact Events
+     * @description List an artifact's events, oldest first.
+     */
+    get: operations["list_artifact_events_api_artifacts__artifact_id__events_get"];
     put?: never;
-    /** Append one free-form event to an artifact's log. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          artifact_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["PostArtifactEventRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ArtifactEventRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Post Artifact Event
+     * @description Append one free-form event to an artifact's log.
+     *
+     *     The `postMessage` relay target: the viewer's `message` listener validates
+     *     `event.source` against the mounted iframe before calling this under the
+     *     browser's own session.
+     */
+    post: operations["post_artifact_event_api_artifacts__artifact_id__events_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -149,30 +79,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Fetch one specific past version of an artifact, `html` included. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          artifact_id: string;
-          version: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ArtifactRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Get Artifact Version
+     * @description Fetch one specific past version of an artifact, `html` included.
+     */
+    get: operations["get_artifact_version_api_artifacts__artifact_id__versions__version__get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -190,29 +101,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Authenticate with the app password and set a session cookie. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["LoginRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
+    /**
+     * Login
+     * @description Authenticate with the app password and set a session cookie.
+     */
+    post: operations["login_api_auth_login_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -228,25 +121,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Clear the app session cookie. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
+    /**
+     * Logout
+     * @description Clear the app session cookie.
+     */
+    post: operations["logout_api_auth_logout_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -260,27 +139,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Report whether the request carries a valid app session. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["SessionResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Session
+     * @description Report whether the request carries a valid app session.
+     */
+    get: operations["session_api_auth_session_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -296,55 +159,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List Bucket items in a lifecycle state (active list / retained history). */
-    get: {
-      parameters: {
-        query: {
-          state: components["schemas"]["BucketItemState"];
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["BucketItemRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * Browse Bucket Items
+     * @description List Bucket items in a lifecycle state (active list / retained history).
+     */
+    get: operations["browse_bucket_items_api_bucket_items_get"];
     put?: never;
-    /** Add a Bucket item; the response carries its dedup advisory. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["AddBucketItemRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["AddBucketItemResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Add Bucket Item
+     * @description Add a Bucket item; the response carries its dedup advisory.
+     */
+    post: operations["add_bucket_item_api_bucket_items_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -358,30 +183,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Keyword Search over active Bucket items. */
-    get: {
-      parameters: {
-        query: {
-          limit?: number;
-          q: string;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["BucketItemRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * Search Bucket Items
+     * @description Keyword Search over active Bucket items.
+     */
+    get: operations["search_bucket_items_api_bucket_items_search_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -397,27 +203,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Compute the read-only Triage report over the live active Bucket list. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TriageReport"];
-          };
-        };
-      };
-    };
+    /**
+     * Triage Bucket Items
+     * @description Compute the read-only Triage report over the live active Bucket list.
+     */
+    get: operations["triage_bucket_items_api_bucket_items_triage_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -436,31 +226,11 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Delete a Bucket item, moving it to terminal history. */
-    delete: {
-      parameters: {
-        query: {
-          version: number;
-        };
-        header?: never;
-        path: {
-          bucket_item_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["BucketItemRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Delete Bucket Item
+     * @description Delete a Bucket item, moving it to terminal history.
+     */
+    delete: operations["delete_bucket_item_api_bucket_items__bucket_item_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -475,33 +245,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Complete a Bucket item, moving it to terminal history. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          bucket_item_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["CompleteRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["BucketItemRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Complete Bucket Item
+     * @description Complete a Bucket item, moving it to terminal history.
+     */
+    post: operations["complete_bucket_item_api_bucket_items__bucket_item_id__complete_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -517,33 +265,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Record the human's current decision on a purchase item. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          bucket_item_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["PurchaseDecisionRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["BucketItemRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Set Purchase Decision
+     * @description Record the human's current decision on a purchase item.
+     */
+    post: operations["set_purchase_decision_api_bucket_items__bucket_item_id__purchase_decision_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -559,27 +285,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Transcribe an uploaded audio note and append it as a user chat turn. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["VoiceCaptureResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Capture Voice
+     * @description Transcribe an uploaded audio note and append it as a user chat turn.
+     */
+    post: operations["capture_voice_api_capture_voice_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -593,27 +303,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List host-owned conversations. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ConversationRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Conversations
+     * @description List host-owned conversations.
+     */
+    get: operations["list_conversations_api_conversations_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -629,57 +323,18 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List settled transcript rows for one conversation. */
-    get: {
-      parameters: {
-        query?: {
-          limit?: number | null;
-          before_seq?: number | null;
-        };
-        header?: never;
-        path: {
-          conversation_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MessageRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Messages
+     * @description List settled transcript rows for one conversation.
+     */
+    get: operations["list_messages_api_conversations__conversation_id__messages_get"];
     put?: never;
     post?: never;
-    /** Clear one conversation's transcript and rotate its pi session. */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          conversation_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ConversationRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Clear Messages
+     * @description Clear one conversation's transcript and rotate its pi session.
+     */
+    delete: operations["clear_messages_api_conversations__conversation_id__messages_delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -694,33 +349,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Select the model used for subsequent turns in one conversation. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          conversation_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["SetConversationModelRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ConversationRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Set Conversation Model
+     * @description Select the model used for subsequent turns in one conversation.
+     */
+    post: operations["set_conversation_model_api_conversations__conversation_id__model_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -736,31 +369,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Attach a human title to a document hash. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["LabelEbookRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["EbookDocumentRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Label Ebook
+     * @description Attach a human title to a document hash.
+     */
+    post: operations["label_ebook_api_ebooks_label_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -776,31 +389,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Label the document a filename hashes to, titled from the filename. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["MatchEbookFilenameRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["EbookDocumentRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Match Ebook Filename
+     * @description Label the document a filename hashes to, titled from the filename.
+     */
+    post: operations["match_ebook_filename_api_ebooks_match_filename_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -814,27 +407,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List every ebook Tether has progress for that is still unlabeled. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["EbookDocumentRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Unlabeled Ebooks
+     * @description List every ebook Tether has progress for that is still unlabeled.
+     */
+    get: operations["list_unlabeled_ebooks_api_ebooks_unlabeled_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -850,53 +427,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List live (unrevoked) grants, newest first. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["GrantRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Grants
+     * @description List live (unrevoked) grants, newest first.
+     */
+    get: operations["list_grants_api_grants_get"];
     put?: never;
-    /** Grant autonomy for a `(kind, scope)` category. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["CreateGrantRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["GrantRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Create Grant
+     * @description Grant autonomy for a `(kind, scope)` category.
+     */
+    post: operations["create_grant_api_grants_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -910,27 +451,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Read-time grant suggestions for ungranted categories with history. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["GrantSuggestionRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * Grant Suggestions
+     * @description Read-time grant suggestions for ungranted categories with history.
+     */
+    get: operations["grant_suggestions_api_grants_suggestions_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -949,27 +474,11 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Revoke a grant convergently; an absent/already-revoked id is a no-op. */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          grant_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
+    /**
+     * Revoke Grant
+     * @description Revoke a grant convergently; an absent/already-revoked id is a no-op.
+     */
+    delete: operations["revoke_grant_api_grants__grant_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -982,55 +491,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Filter the review queue (`loose`) or browse the corpus (`tethered`). */
-    get: {
-      parameters: {
-        query: {
-          state: components["schemas"]["MemoryState"];
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MemoryRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * Browse Memories
+     * @description Filter the review queue (`loose`) or browse the corpus (`tethered`).
+     */
+    get: operations["browse_memories_api_memories_get"];
     put?: never;
-    /** Capture a loose Memory. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["CaptureRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MemoryRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Capture Memory
+     * @description Capture a loose Memory.
+     */
+    post: operations["capture_memory_api_memories_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1044,30 +515,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Keyword Search over tethered Memories. */
-    get: {
-      parameters: {
-        query: {
-          limit?: number;
-          q: string;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MemoryRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * Search Memories
+     * @description Keyword Search over tethered Memories.
+     */
+    get: operations["search_memories_api_memories_search_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1086,60 +538,18 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Soft-delete (reject) a Memory. */
-    delete: {
-      parameters: {
-        query: {
-          version: number;
-        };
-        header?: never;
-        path: {
-          memory_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MemoryRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Reject Memory
+     * @description Soft-delete (reject) a Memory.
+     */
+    delete: operations["reject_memory_api_memories__memory_id__delete"];
     options?: never;
     head?: never;
-    /** Edit a Memory's `content`; a human edit keeps trust. */
-    patch: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          memory_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["EditRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MemoryRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Edit Memory
+     * @description Edit a Memory's `content`; a human edit keeps trust.
+     */
+    patch: operations["edit_memory_api_memories__memory_id__patch"];
     trace?: never;
   };
   "/api/memories/{memory_id}/tether": {
@@ -1151,33 +561,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Promote a loose Memory to tethered. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          memory_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["TetherRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MemoryRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Tether Memory
+     * @description Promote a loose Memory to tethered.
+     */
+    post: operations["tether_memory_api_memories__memory_id__tether_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1191,27 +579,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List host-enabled agent model choices. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ModelListRead"];
-          };
-        };
-      };
-    };
+    /**
+     * List Models
+     * @description List host-enabled agent model choices.
+     */
+    get: operations["list_models_api_models_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1227,48 +599,18 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List undismissed notifications, newest first. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["NotificationRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Notifications
+     * @description List undismissed notifications, newest first.
+     */
+    get: operations["list_notifications_api_notifications_get"];
     put?: never;
     post?: never;
-    /** Dismiss every live notification. */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
+    /**
+     * Clear Notifications
+     * @description Dismiss every live notification.
+     */
+    delete: operations["clear_notifications_api_notifications_delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1284,27 +626,11 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Dismiss one notification. */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          notification_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
+    /**
+     * Dismiss Notification
+     * @description Dismiss one notification.
+     */
+    delete: operations["dismiss_notification_api_notifications__notification_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1317,53 +643,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List live Synthetic panels in position order. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PanelRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Panels
+     * @description List live Synthetic panels in position order.
+     */
+    get: operations["list_panels_api_panels_get"];
     put?: never;
-    /** Create a Synthetic panel. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["CreatePanelRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PanelRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Create Panel
+     * @description Create a Synthetic panel.
+     */
+    post: operations["create_panel_api_panels_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1378,59 +668,17 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace a panel's definition at an observed version. */
-    put: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          panel_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["UpdatePanelRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PanelRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Update Panel
+     * @description Replace a panel's definition at an observed version.
+     */
+    put: operations["update_panel_api_panels__panel_id__put"];
     post?: never;
-    /** Delete a Synthetic panel. */
-    delete: {
-      parameters: {
-        query: {
-          version: number;
-        };
-        header?: never;
-        path: {
-          panel_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PanelRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Delete Panel
+     * @description Delete a Synthetic panel.
+     */
+    delete: operations["delete_panel_api_panels__panel_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1443,31 +691,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Run a panel's saved query, recomputed against the corpus right now. */
-    get: {
-      parameters: {
-        query?: {
-          limit?: number;
-        };
-        header?: never;
-        path: {
-          panel_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PanelResultsRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Panel Results
+     * @description Run a panel's saved query, recomputed against the corpus right now.
+     */
+    get: operations["panel_results_api_panels__panel_id__results_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1483,27 +711,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List proposals newest first, optionally filtered by state. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProposalRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Proposals
+     * @description List proposals newest first, optionally filtered by state.
+     */
+    get: operations["list_proposals_api_proposals_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1519,27 +731,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Count proposals for the queue and history tab labels. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProposalCountsRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Proposal Counts
+     * @description Count proposals for the queue and history tab labels.
+     */
+    get: operations["proposal_counts_api_proposals_counts_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1555,29 +751,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Fetch one proposal bundled with its actions. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          proposal_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProposalRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Get Proposal
+     * @description Fetch one proposal bundled with its actions.
+     */
+    get: operations["get_proposal_api_proposals__proposal_id__get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1595,33 +773,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Approve a pending proposal, then execute its approved actions. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          proposal_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["ApproveProposalRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProposalRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Approve Proposal
+     * @description Approve a pending proposal, then execute its approved actions.
+     */
+    post: operations["approve_proposal_api_proposals__proposal_id__approve_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1637,33 +793,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Reject a pending proposal (terminal), returning any revocable grants. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          proposal_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["RejectProposalRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["RejectionRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Reject Proposal
+     * @description Reject a pending proposal (terminal), returning any revocable grants.
+     */
+    post: operations["reject_proposal_api_proposals__proposal_id__reject_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1677,70 +811,22 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Check and refresh the server-owned OpenAI Codex credential. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProviderAuthRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Provider Auth Status
+     * @description Check and refresh the server-owned OpenAI Codex credential.
+     */
+    get: operations["provider_auth_status_api_provider_auth_openai_codex_get"];
     put?: never;
-    /** Start OpenAI Codex device-code authorization on the server. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        202: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProviderAuthRead"];
-          };
-        };
-      };
-    };
-    /** Cancel an active OpenAI Codex authorization attempt. */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["ProviderAuthRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Start Provider Auth
+     * @description Start OpenAI Codex device-code authorization on the server.
+     */
+    post: operations["start_provider_auth_api_provider_auth_openai_codex_post"];
+    /**
+     * Cancel Provider Auth
+     * @description Cancel an active OpenAI Codex authorization attempt.
+     */
+    delete: operations["cancel_provider_auth_api_provider_auth_openai_codex_delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1753,27 +839,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Expose the VAPID public key the browser needs to subscribe. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PushConfigRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Push Config
+     * @description Expose the VAPID public key the browser needs to subscribe.
+     */
+    get: operations["push_config_api_push_config_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1789,29 +859,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Report whether this browser (or any browser) is subscribed. */
-    get: {
-      parameters: {
-        query?: {
-          endpoint?: string | null;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PushStatusRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Push Status
+     * @description Report whether this browser (or any browser) is subscribed.
+     */
+    get: operations["push_status_api_push_status_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1829,56 +881,16 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Register (or refresh) this browser's push subscription. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["SubscribeRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PushSubscriptionRead"];
-          };
-        };
-      };
-    };
-    /** Remove this browser's push subscription. */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["UnsubscribeRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["PushStatusRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Subscribe Push
+     * @description Register (or refresh) this browser's push subscription.
+     */
+    post: operations["subscribe_push_api_push_subscriptions_post"];
+    /**
+     * Unsubscribe Push
+     * @description Remove this browser's push subscription.
+     */
+    delete: operations["unsubscribe_push_api_push_subscriptions_delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1891,27 +903,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List the recall prompts currently owed a review (the outstanding surface). */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["DuePromptRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Due Prompts
+     * @description List the recall prompts currently owed a review (the outstanding surface).
+     */
+    get: operations["list_due_prompts_api_recall_prompts_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1929,33 +925,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Answer a recall prompt, grading and rescheduling it (tethering on completion). */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          prompt_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["AnswerPromptRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["AnswerOutcomeRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Answer Prompt
+     * @description Answer a recall prompt, grading and rescheduling it (tethering on completion).
+     */
+    post: operations["answer_prompt_api_recall_prompts__prompt_id__answer_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1971,33 +945,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Propose a model grade for an essay answer, for the human to confirm. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          prompt_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["ProposeEssayGradeRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["EssayGradeProposalRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Propose Essay Grade
+     * @description Propose a model grade for an essay answer, for the human to confirm.
+     */
+    post: operations["propose_essay_grade_api_recall_prompts__prompt_id__grade_proposal_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2011,53 +963,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List every study item, newest-first. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["StudyItemRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Study Items
+     * @description List every study item, newest-first.
+     */
+    get: operations["list_study_items_api_recall_study_items_get"];
     put?: never;
-    /** Promote an ingested educational video into a study item under Recall. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["StartRecallRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["StudyItemRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Start Recall
+     * @description Promote an ingested educational video into a study item under Recall.
+     */
+    post: operations["start_recall_api_recall_study_items_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2071,33 +987,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged. */
-    get: {
-      parameters: {
-        query: {
-          limit?: number;
-          q: string;
-          sources?: components["schemas"]["SourceType"][] | null;
-          after?: string | null;
-          before?: string | null;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["FusedSearchResultRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * Search Fused
+     * @description Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged.
+     */
+    get: operations["search_fused_api_search_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2115,27 +1009,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Transcribe an uploaded audio clip and return the transcript text only. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TranscriptionResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Transcribe Audio
+     * @description Transcribe an uploaded audio clip and return the transcript text only.
+     */
+    post: operations["transcribe_audio_api_stt_transcriptions_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2151,30 +1029,8 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["HealthConnectBatchRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["HealthConnectBatchRead"];
-          };
-        };
-      };
-    };
+    /** Ingest Health Connect Batch */
+    post: operations["ingest_health_connect_batch_api_telemetry_health_connect_batches_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2188,29 +1044,8 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get: {
-      parameters: {
-        query: {
-          installation_id: string;
-          record_types: string;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["HealthConnectSyncStateRead"];
-          };
-        };
-      };
-    };
+    /** Read Health Connect Sync State */
+    get: operations["read_health_connect_sync_state_api_telemetry_health_connect_sync_state_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2228,30 +1063,8 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["StartHealthConnectBaselineRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["HealthConnectSyncStateRead"];
-          };
-        };
-      };
-    };
+    /** Start Health Connect Baseline */
+    post: operations["start_health_connect_baseline_api_telemetry_health_connect_sync_state_baselines_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2267,31 +1080,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Reconcile bounded baseline absence and unlock live change pages. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["CompleteHealthConnectBaselineRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["HealthConnectBaselineCompletionRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Complete Health Connect Baseline
+     * @description Reconcile bounded baseline absence and unlock live change pages.
+     */
+    post: operations["complete_health_connect_baseline_api_telemetry_health_connect_sync_state_baselines_complete_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2305,27 +1098,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List the active Todos split into ready and waiting. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TodoReadinessRead"];
-          };
-        };
-      };
-    };
+    /**
+     * List Todos
+     * @description List the active Todos split into ready and waiting.
+     */
+    get: operations["list_todos_api_todos_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2343,33 +1120,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Transition a Todo to a new status at an observed version. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          todo_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["SetTodoStatusRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TodoRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Set Todo Status
+     * @description Transition a Todo to a new status at an observed version.
+     */
+    post: operations["set_todo_status_api_todos__todo_id__status_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2383,53 +1138,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List live Scheduled triggers, soonest next fire first. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TriggerRead"][];
-          };
-        };
-      };
-    };
+    /**
+     * List Triggers
+     * @description List live Scheduled triggers, soonest next fire first.
+     */
+    get: operations["list_triggers_api_triggers_get"];
     put?: never;
-    /** Create a Scheduled trigger. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["CreateTriggerRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TriggerRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Create Trigger
+     * @description Create a Scheduled trigger.
+     */
+    post: operations["create_trigger_api_triggers_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2444,59 +1163,17 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace a trigger's definition, re-arming it from its next occurrence. */
-    put: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          trigger_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["UpdateTriggerRequest"];
-        };
-      };
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TriggerRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Update Trigger
+     * @description Replace a trigger's definition, re-arming it from its next occurrence.
+     */
+    put: operations["update_trigger_api_triggers__trigger_id__put"];
     post?: never;
-    /** Delete a Scheduled trigger. */
-    delete: {
-      parameters: {
-        query: {
-          version: number;
-        };
-        header?: never;
-        path: {
-          trigger_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TriggerRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Delete Trigger
+     * @description Delete a Scheduled trigger.
+     */
+    delete: operations["delete_trigger_api_triggers__trigger_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -2509,30 +1186,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List active ingested videos, optionally filtered by topic and source. */
-    get: {
-      parameters: {
-        query?: {
-          topic?: string | null;
-          source?: components["schemas"]["YouTubeSource"] | null;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["YouTubeVideoListResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Browse Youtube
+     * @description List active ingested videos, optionally filtered by topic and source.
+     */
+    get: operations["browse_youtube_api_youtube_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2548,29 +1206,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Keyword Search across saved content and transcript text. */
-    get: {
-      parameters: {
-        query: {
-          q: string;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["YouTubeVideoListResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Search Youtube
+     * @description Keyword Search across saved content and transcript text.
+     */
+    get: operations["search_youtube_api_youtube_search_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2586,27 +1226,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Report the background ingestion's progress and health (local read only). */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["YouTubeSyncStatusRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Youtube Sync Status
+     * @description Report the background ingestion's progress and health (local read only).
+     */
+    get: operations["youtube_sync_status_api_youtube_status_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2622,27 +1246,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List transcript failures awaiting a human decision. */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TranscriptDecisionListResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Transcript Decisions
+     * @description List transcript failures awaiting a human decision.
+     */
+    get: operations["transcript_decisions_api_youtube_transcript_decisions_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2660,29 +1268,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Purge a video from ingestion. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          video_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["YouTubeVideoRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Ignore Youtube Video
+     * @description Purge a video from ingestion.
+     */
+    post: operations["ignore_youtube_video_api_youtube__video_id__ignore_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2698,29 +1288,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Un-ignore a previously purged video. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          video_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["YouTubeVideoRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Retry Youtube Video
+     * @description Un-ignore a previously purged video.
+     */
+    post: operations["retry_youtube_video_api_youtube__video_id__retry_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2736,29 +1308,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Fetch and persist a transcript for an ingested video. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          video_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["YouTubeTranscriptResponse"];
-          };
-        };
-      };
-    };
+    /**
+     * Fetch Youtube Transcript
+     * @description Fetch and persist a transcript for an ingested video.
+     */
+    post: operations["fetch_youtube_transcript_api_youtube__video_id__transcript_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2774,29 +1328,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Confirm that a review-needed video has no transcript worth pursuing. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          video_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TranscriptDecisionOutcomeRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Give Up Transcript
+     * @description Confirm that a review-needed video has no transcript worth pursuing.
+     */
+    post: operations["give_up_transcript_api_youtube__video_id__transcript_decision_give_up_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2812,29 +1348,11 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Return a review-needed transcript to pending acquisition. */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          video_id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["TranscriptDecisionOutcomeRead"];
-          };
-        };
-      };
-    };
+    /**
+     * Keep Trying Transcript
+     * @description Return a review-needed transcript to pending acquisition.
+     */
+    post: operations["keep_trying_transcript_api_youtube__video_id__transcript_decision_keep_trying_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2861,7 +1379,7 @@ export interface components {
     AddBucketItemRequest: {
       /** Data */
       data: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: unknown;
       };
       intent_context: components["schemas"]["IntentContext"];
       item_type: components["schemas"]["ItemType"];
@@ -2919,23 +1437,14 @@ export interface components {
      *     0
      */
     AnswerPromptRequest: {
-      /**
-       * Answer Text
-       * @default null
-       */
-      answer_text: string | null;
-      /**
-       * Confirmed Correct
-       * @default null
-       */
-      confirmed_correct: boolean | null;
+      /** Answer Text */
+      answer_text?: string | null;
+      /** Confirmed Correct */
+      confirmed_correct?: boolean | null;
       /** Response Ms */
       response_ms: number;
-      /**
-       * Selected Index
-       * @default null
-       */
-      selected_index: number | null;
+      /** Selected Index */
+      selected_index?: number | null;
     };
     /**
      * ApproveProposalRequest
@@ -2975,7 +1484,7 @@ export interface components {
       id: string;
       /** Payload */
       payload: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: unknown;
       };
     };
     /**
@@ -3030,11 +1539,8 @@ export interface components {
     AuthoritativeScanRange: {
       /** End Time */
       end_time: number;
-      /**
-       * Seen Record Ids
-       * @default null
-       */
-      seen_record_ids: string[] | null;
+      /** Seen Record Ids */
+      seen_record_ids?: string[] | null;
       /** Start Time */
       start_time: number;
     };
@@ -3068,7 +1574,7 @@ export interface components {
       created_at: string;
       /** Data */
       data: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: unknown;
       };
       /** Deleted At */
       deleted_at: string | null;
@@ -3237,11 +1743,8 @@ export interface components {
     CreateGrantRequest: {
       /** Kind */
       kind: string;
-      /**
-       * Scope
-       * @default null
-       */
-      scope: string | null;
+      /** Scope */
+      scope?: string | null;
     };
     /**
      * CreatePanelRequest
@@ -3264,23 +1767,14 @@ export interface components {
        * @default 0
        */
       position: number;
-      /**
-       * Query
-       * @default null
-       */
-      query: string | null;
+      /** Query */
+      query?: string | null;
       /** @default table */
       render_kind: components["schemas"]["PanelRenderKind"];
-      /**
-       * Vega Lite Spec
-       * @default null
-       */
-      vega_lite_spec: string | null;
-      /**
-       * Window Days
-       * @default null
-       */
-      window_days: number | null;
+      /** Vega Lite Spec */
+      vega_lite_spec?: string | null;
+      /** Window Days */
+      window_days?: number | null;
     };
     /**
      * CreateTriggerRequest
@@ -3288,29 +1782,17 @@ export interface components {
      */
     CreateTriggerRequest: {
       action_kind: components["schemas"]["TriggerActionKind"];
-      /**
-       * Fire At
-       * @default null
-       */
-      fire_at: string | null;
+      /** Fire At */
+      fire_at?: string | null;
       /** Payload */
       payload: string;
       recurrence: components["schemas"]["TriggerRecurrence"];
-      /**
-       * Time Of Day
-       * @default null
-       */
-      time_of_day: string | null;
-      /**
-       * Timezone
-       * @default null
-       */
-      timezone: string | null;
-      /**
-       * Weekday
-       * @default null
-       */
-      weekday: number | null;
+      /** Time Of Day */
+      time_of_day?: string | null;
+      /** Timezone */
+      timezone?: string | null;
+      /** Weekday */
+      weekday?: number | null;
     };
     /**
      * DecayedIntentContext
@@ -3344,21 +1826,12 @@ export interface components {
      * @description Nullable Health Connect writing-device metadata.
      */
     Device: {
-      /**
-       * Manufacturer
-       * @default null
-       */
-      manufacturer: string | null;
-      /**
-       * Model
-       * @default null
-       */
-      model: string | null;
-      /**
-       * Type
-       * @default null
-       */
-      type: number | null;
+      /** Manufacturer */
+      manufacturer?: string | null;
+      /** Model */
+      model?: string | null;
+      /** Type */
+      type?: number | null;
     };
     /**
      * DuePromptRead
@@ -3501,39 +1974,25 @@ export interface components {
      *     'bucket_item'
      */
     FusedSearchResultRead: {
-      /** @default null */
-      bucket_item: components["schemas"]["BucketItemRead"] | null;
-      /** @default null */
-      memory: components["schemas"]["MemoryRead"] | null;
+      bucket_item?: components["schemas"]["BucketItemRead"] | null;
+      memory?: components["schemas"]["MemoryRead"] | null;
       source: components["schemas"]["SourceType"];
     };
     /** GenericRecord */
     GenericRecord: {
-      /**
-       * End Time
-       * @default null
-       */
-      end_time: number | null;
-      /**
-       * End Zone Offset Seconds
-       * @default null
-       */
-      end_zone_offset_seconds: number | null;
+      /** End Time */
+      end_time?: number | null;
+      /** End Zone Offset Seconds */
+      end_zone_offset_seconds?: number | null;
       metadata: components["schemas"]["RecordMetadata"];
       /** Payload */
       payload?: {
         [key: string]: unknown;
       };
-      /**
-       * Start Time
-       * @default null
-       */
-      start_time: number | null;
-      /**
-       * Start Zone Offset Seconds
-       * @default null
-       */
-      start_zone_offset_seconds: number | null;
+      /** Start Time */
+      start_time?: number | null;
+      /** Start Zone Offset Seconds */
+      start_zone_offset_seconds?: number | null;
     };
     /**
      * GrantRead
@@ -3574,6 +2033,11 @@ export interface components {
       scope: string | null;
       /** Seen */
       seen: number;
+    };
+    /** HTTPValidationError */
+    HTTPValidationError: {
+      /** Detail */
+      detail?: components["schemas"]["ValidationError"][];
     };
     /**
      * HealthConnectBaselineCompletionRead
@@ -3900,7 +2364,6 @@ export interface components {
     IntentContext: string;
     /** @enum {string} */
     ItemType: "movie" | "place" | "book" | "travel" | "purchase";
-    JsonValue: unknown;
     /**
      * LabelEbookRequest
      * @description Body for attaching a human title to a document hash.
@@ -4004,13 +2467,13 @@ export interface components {
       seq: number;
       /** Tool Args */
       tool_args: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: unknown;
       } | null;
       /** Tool Name */
       tool_name: string | null;
       /** Tool Result */
       tool_result: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: unknown;
       } | null;
     };
     /** @enum {string} */
@@ -4115,7 +2578,7 @@ export interface components {
     PostArtifactEventRequest: {
       /** Payload */
       payload: {
-        [key: string]: components["schemas"]["JsonValue"];
+        [key: string]: unknown;
       };
     };
     /**
@@ -4354,11 +2817,8 @@ export interface components {
      * @description Body for rejecting a proposal at an observed version.
      */
     RejectProposalRequest: {
-      /**
-       * Reason
-       * @default null
-       */
-      reason: string | null;
+      /** Reason */
+      reason?: string | null;
       /** Version */
       version: number;
     };
@@ -4825,25 +3285,16 @@ export interface components {
        * @default 0
        */
       position: number;
-      /**
-       * Query
-       * @default null
-       */
-      query: string | null;
+      /** Query */
+      query?: string | null;
       /** @default table */
       render_kind: components["schemas"]["PanelRenderKind"];
-      /**
-       * Vega Lite Spec
-       * @default null
-       */
-      vega_lite_spec: string | null;
+      /** Vega Lite Spec */
+      vega_lite_spec?: string | null;
       /** Version */
       version: number;
-      /**
-       * Window Days
-       * @default null
-       */
-      window_days: number | null;
+      /** Window Days */
+      window_days?: number | null;
     };
     /**
      * UpdateTriggerRequest
@@ -4851,31 +3302,32 @@ export interface components {
      */
     UpdateTriggerRequest: {
       action_kind: components["schemas"]["TriggerActionKind"];
-      /**
-       * Fire At
-       * @default null
-       */
-      fire_at: string | null;
+      /** Fire At */
+      fire_at?: string | null;
       /** Payload */
       payload: string;
       recurrence: components["schemas"]["TriggerRecurrence"];
-      /**
-       * Time Of Day
-       * @default null
-       */
-      time_of_day: string | null;
-      /**
-       * Timezone
-       * @default null
-       */
-      timezone: string | null;
+      /** Time Of Day */
+      time_of_day?: string | null;
+      /** Timezone */
+      timezone?: string | null;
       /** Version */
       version: number;
-      /**
-       * Weekday
-       * @default null
-       */
-      weekday: number | null;
+      /** Weekday */
+      weekday?: number | null;
+    };
+    /** ValidationError */
+    ValidationError: {
+      /** Context */
+      ctx?: Record<string, never>;
+      /** Input */
+      input?: unknown;
+      /** Location */
+      loc: (string | number)[];
+      /** Message */
+      msg: string;
+      /** Error Type */
+      type: string;
     };
     /**
      * VoiceCaptureResponse
@@ -5018,4 +3470,2291 @@ export interface components {
   pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+  list_artifacts_api_artifacts_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactSummaryRead"][];
+        };
+      };
+    };
+  };
+  get_artifact_api_artifacts__artifact_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        artifact_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_artifact_events_api_artifacts__artifact_id__events_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        artifact_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactEventRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  post_artifact_event_api_artifacts__artifact_id__events_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        artifact_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PostArtifactEventRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactEventRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_artifact_version_api_artifacts__artifact_id__versions__version__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        artifact_id: string;
+        version: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ArtifactRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  login_api_auth_login_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LoginRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  logout_api_auth_logout_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  session_api_auth_session_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionResponse"];
+        };
+      };
+    };
+  };
+  browse_bucket_items_api_bucket_items_get: {
+    parameters: {
+      query: {
+        state: components["schemas"]["BucketItemState"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BucketItemRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  add_bucket_item_api_bucket_items_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AddBucketItemRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AddBucketItemResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  search_bucket_items_api_bucket_items_search_get: {
+    parameters: {
+      query: {
+        limit?: number;
+        q: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BucketItemRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  triage_bucket_items_api_bucket_items_triage_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TriageReport"];
+        };
+      };
+    };
+  };
+  delete_bucket_item_api_bucket_items__bucket_item_id__delete: {
+    parameters: {
+      query: {
+        version: number;
+      };
+      header?: never;
+      path: {
+        bucket_item_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BucketItemRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  complete_bucket_item_api_bucket_items__bucket_item_id__complete_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bucket_item_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CompleteRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BucketItemRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  set_purchase_decision_api_bucket_items__bucket_item_id__purchase_decision_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bucket_item_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PurchaseDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BucketItemRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  capture_voice_api_capture_voice_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VoiceCaptureResponse"];
+        };
+      };
+    };
+  };
+  list_conversations_api_conversations_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"][];
+        };
+      };
+    };
+  };
+  list_messages_api_conversations__conversation_id__messages_get: {
+    parameters: {
+      query?: {
+        limit?: number | null;
+        before_seq?: number | null;
+      };
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MessageRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  clear_messages_api_conversations__conversation_id__messages_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  set_conversation_model_api_conversations__conversation_id__model_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SetConversationModelRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  label_ebook_api_ebooks_label_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LabelEbookRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EbookDocumentRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  match_ebook_filename_api_ebooks_match_filename_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MatchEbookFilenameRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EbookDocumentRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_unlabeled_ebooks_api_ebooks_unlabeled_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EbookDocumentRead"][];
+        };
+      };
+    };
+  };
+  list_grants_api_grants_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GrantRead"][];
+        };
+      };
+    };
+  };
+  create_grant_api_grants_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateGrantRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GrantRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  grant_suggestions_api_grants_suggestions_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GrantSuggestionRead"][];
+        };
+      };
+    };
+  };
+  revoke_grant_api_grants__grant_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        grant_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  browse_memories_api_memories_get: {
+    parameters: {
+      query: {
+        state: components["schemas"]["MemoryState"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  capture_memory_api_memories_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CaptureRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  search_memories_api_memories_search_get: {
+    parameters: {
+      query: {
+        limit?: number;
+        q: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_memory_api_memories__memory_id__delete: {
+    parameters: {
+      query: {
+        version: number;
+      };
+      header?: never;
+      path: {
+        memory_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  edit_memory_api_memories__memory_id__patch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        memory_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EditRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  tether_memory_api_memories__memory_id__tether_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        memory_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TetherRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_models_api_models_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ModelListRead"];
+        };
+      };
+    };
+  };
+  list_notifications_api_notifications_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationRead"][];
+        };
+      };
+    };
+  };
+  clear_notifications_api_notifications_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  dismiss_notification_api_notifications__notification_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        notification_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_panels_api_panels_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PanelRead"][];
+        };
+      };
+    };
+  };
+  create_panel_api_panels_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreatePanelRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PanelRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_panel_api_panels__panel_id__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        panel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdatePanelRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PanelRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_panel_api_panels__panel_id__delete: {
+    parameters: {
+      query: {
+        version: number;
+      };
+      header?: never;
+      path: {
+        panel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PanelRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  panel_results_api_panels__panel_id__results_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        panel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PanelResultsRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_proposals_api_proposals_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalRead"][];
+        };
+      };
+    };
+  };
+  proposal_counts_api_proposals_counts_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalCountsRead"];
+        };
+      };
+    };
+  };
+  get_proposal_api_proposals__proposal_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_proposal_api_proposals__proposal_id__approve_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApproveProposalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_proposal_api_proposals__proposal_id__reject_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RejectProposalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RejectionRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  provider_auth_status_api_provider_auth_openai_codex_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProviderAuthRead"];
+        };
+      };
+    };
+  };
+  start_provider_auth_api_provider_auth_openai_codex_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProviderAuthRead"];
+        };
+      };
+    };
+  };
+  cancel_provider_auth_api_provider_auth_openai_codex_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProviderAuthRead"];
+        };
+      };
+    };
+  };
+  push_config_api_push_config_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PushConfigRead"];
+        };
+      };
+    };
+  };
+  push_status_api_push_status_get: {
+    parameters: {
+      query?: {
+        endpoint?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PushStatusRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  subscribe_push_api_push_subscriptions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SubscribeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PushSubscriptionRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  unsubscribe_push_api_push_subscriptions_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UnsubscribeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PushStatusRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_due_prompts_api_recall_prompts_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DuePromptRead"][];
+        };
+      };
+    };
+  };
+  answer_prompt_api_recall_prompts__prompt_id__answer_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        prompt_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AnswerPromptRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AnswerOutcomeRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  propose_essay_grade_api_recall_prompts__prompt_id__grade_proposal_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        prompt_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ProposeEssayGradeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EssayGradeProposalRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_study_items_api_recall_study_items_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StudyItemRead"][];
+        };
+      };
+    };
+  };
+  start_recall_api_recall_study_items_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartRecallRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StudyItemRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  search_fused_api_search_get: {
+    parameters: {
+      query: {
+        limit?: number;
+        q: string;
+        sources?: components["schemas"]["SourceType"][] | null;
+        after?: string | null;
+        before?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FusedSearchResultRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  transcribe_audio_api_stt_transcriptions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TranscriptionResponse"];
+        };
+      };
+    };
+  };
+  ingest_health_connect_batch_api_telemetry_health_connect_batches_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HealthConnectBatchRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthConnectBatchRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_health_connect_sync_state_api_telemetry_health_connect_sync_state_get: {
+    parameters: {
+      query: {
+        installation_id: string;
+        record_types: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthConnectSyncStateRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  start_health_connect_baseline_api_telemetry_health_connect_sync_state_baselines_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartHealthConnectBaselineRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthConnectSyncStateRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  complete_health_connect_baseline_api_telemetry_health_connect_sync_state_baselines_complete_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CompleteHealthConnectBaselineRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthConnectBaselineCompletionRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_todos_api_todos_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TodoReadinessRead"];
+        };
+      };
+    };
+  };
+  set_todo_status_api_todos__todo_id__status_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        todo_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SetTodoStatusRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TodoRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_triggers_api_triggers_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TriggerRead"][];
+        };
+      };
+    };
+  };
+  create_trigger_api_triggers_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateTriggerRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TriggerRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_trigger_api_triggers__trigger_id__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        trigger_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateTriggerRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TriggerRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_trigger_api_triggers__trigger_id__delete: {
+    parameters: {
+      query: {
+        version: number;
+      };
+      header?: never;
+      path: {
+        trigger_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TriggerRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  browse_youtube_api_youtube_get: {
+    parameters: {
+      query?: {
+        topic?: string | null;
+        source?: components["schemas"]["YouTubeSource"] | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["YouTubeVideoListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  search_youtube_api_youtube_search_get: {
+    parameters: {
+      query: {
+        q: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["YouTubeVideoListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  youtube_sync_status_api_youtube_status_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["YouTubeSyncStatusRead"];
+        };
+      };
+    };
+  };
+  transcript_decisions_api_youtube_transcript_decisions_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TranscriptDecisionListResponse"];
+        };
+      };
+    };
+  };
+  ignore_youtube_video_api_youtube__video_id__ignore_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        video_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["YouTubeVideoRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  retry_youtube_video_api_youtube__video_id__retry_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        video_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["YouTubeVideoRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  fetch_youtube_transcript_api_youtube__video_id__transcript_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        video_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["YouTubeTranscriptResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  give_up_transcript_api_youtube__video_id__transcript_decision_give_up_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        video_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TranscriptDecisionOutcomeRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  keep_trying_transcript_api_youtube__video_id__transcript_decision_keep_trying_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        video_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TranscriptDecisionOutcomeRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+}

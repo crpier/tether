@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import ClassVar
 from uuid import UUID, uuid7
 
+from fastapi import APIRouter
 from pydantic import UUID7, BaseModel
 from snekql.sqlite import (
     CurrentTimestamp,
@@ -43,10 +44,8 @@ from snekql.sqlite import (
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.openapi import EndpointRoute, endpoint
 
 DEFAULT_LIST_LIMIT = 50
 """How many recent notifications the panel loads by default."""
@@ -203,9 +202,8 @@ class NotificationRead(BaseModel):
         )
 
 
-def _path_notification_id(request: Request) -> UUID:
+def _path_notification_id(raw_id: str) -> UUID:
     """Parse the `{notification_id}` path segment, treating a bad id as absent."""
-    raw_id = request.path_params["notification_id"]
     try:
         return UUID(raw_id)
     except ValueError:
@@ -214,7 +212,10 @@ def _path_notification_id(request: Request) -> UUID:
         return UUID(int=0)
 
 
-@endpoint(response=NotificationRead, response_is_list=True)
+router = APIRouter()
+
+
+@router.get("/api/notifications", response_model=list[NotificationRead])
 async def list_notifications(request: Request) -> Response:
     """List undismissed notifications, newest first."""
     notifications = await request.app.state.notification_service.list_recent()
@@ -226,26 +227,17 @@ async def list_notifications(request: Request) -> Response:
     )
 
 
-@endpoint(status=204)
-async def dismiss_notification(request: Request) -> Response:
+@router.delete("/api/notifications/{notification_id}", status_code=204)
+async def dismiss_notification(request: Request, notification_id: str) -> Response:
     """Dismiss one notification."""
-    await request.app.state.notification_service.dismiss(_path_notification_id(request))
+    await request.app.state.notification_service.dismiss(
+        _path_notification_id(notification_id)
+    )
     return Response(status_code=204)
 
 
-@endpoint(status=204)
+@router.delete("/api/notifications", status_code=204)
 async def clear_notifications(request: Request) -> Response:
     """Dismiss every live notification."""
     _ = await request.app.state.notification_service.clear()
     return Response(status_code=204)
-
-
-notification_routes: list[Route] = [
-    EndpointRoute("/api/notifications", list_notifications, methods=["GET"]),
-    EndpointRoute("/api/notifications", clear_notifications, methods=["DELETE"]),
-    EndpointRoute(
-        "/api/notifications/{notification_id}",
-        dismiss_notification,
-        methods=["DELETE"],
-    ),
-]

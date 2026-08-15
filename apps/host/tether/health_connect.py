@@ -6,8 +6,9 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Literal, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from snekql.sqlite import (
     PENDING_GENERATION,
@@ -28,9 +29,7 @@ from snekql.sqlite import (
 )
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
-from tether.openapi import EndpointRoute, endpoint
 from tether.structured_logging import Logger
 
 HealthRecordType = Literal[
@@ -1925,9 +1924,15 @@ async def create_health_connect_schema(database: Database) -> None:
     await database.verify(_MODELS)
 
 
-@endpoint(query=HealthConnectSyncStateQuery, response=HealthConnectSyncStateRead)
+router = APIRouter()
+
+
+@router.get(
+    "/api/telemetry/health-connect/sync-state",
+    response_model=HealthConnectSyncStateRead,
+)
 async def read_health_connect_sync_state(
-    request: Request, query: HealthConnectSyncStateQuery
+    request: Request, query: Annotated[HealthConnectSyncStateQuery, Query()]
 ) -> Response:
     try:
         record_types = _parse_record_types(query.record_types)
@@ -1941,10 +1946,10 @@ async def read_health_connect_sync_state(
     )
 
 
-@endpoint(
-    request_body=StartHealthConnectBaselineRequest,
-    response=HealthConnectSyncStateRead,
-    status=201,
+@router.post(
+    "/api/telemetry/health-connect/sync-state/baselines",
+    response_model=HealthConnectSyncStateRead,
+    status_code=201,
 )
 async def start_health_connect_baseline(
     request: Request, body: StartHealthConnectBaselineRequest
@@ -1970,9 +1975,9 @@ async def start_health_connect_baseline(
     return JSONResponse(state.model_dump(mode="json"), status_code=201)
 
 
-@endpoint(
-    request_body=CompleteHealthConnectBaselineRequest,
-    response=HealthConnectBaselineCompletionRead,
+@router.post(
+    "/api/telemetry/health-connect/sync-state/baselines/complete",
+    response_model=HealthConnectBaselineCompletionRead,
 )
 async def complete_health_connect_baseline(
     request: Request, body: CompleteHealthConnectBaselineRequest
@@ -2000,7 +2005,9 @@ async def complete_health_connect_baseline(
     return JSONResponse(report.model_dump(mode="json"))
 
 
-@endpoint(request_body=HealthConnectBatchRequest, response=HealthConnectBatchRead)
+@router.post(
+    "/api/telemetry/health-connect/batches", response_model=HealthConnectBatchRead
+)
 async def ingest_health_connect_batch(
     request: Request, body: HealthConnectBatchRequest
 ) -> Response:
@@ -2027,27 +2034,3 @@ async def ingest_health_connect_batch(
         skipped=report.skipped,
     )
     return JSONResponse(report.model_dump(mode="json"))
-
-
-health_connect_routes: list[Route] = [
-    EndpointRoute(
-        "/api/telemetry/health-connect/sync-state/baselines",
-        start_health_connect_baseline,
-        methods=["POST"],
-    ),
-    EndpointRoute(
-        "/api/telemetry/health-connect/sync-state/baselines/complete",
-        complete_health_connect_baseline,
-        methods=["POST"],
-    ),
-    EndpointRoute(
-        "/api/telemetry/health-connect/sync-state",
-        read_health_connect_sync_state,
-        methods=["GET"],
-    ),
-    EndpointRoute(
-        "/api/telemetry/health-connect/batches",
-        ingest_health_connect_batch,
-        methods=["POST"],
-    ),
-]

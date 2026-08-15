@@ -16,6 +16,7 @@ from socket import AF_INET, SOCK_STREAM, socket
 from tempfile import TemporaryDirectory
 
 import structlog
+from fastapi import FastAPI
 from httpx2 import AsyncClient
 from snektest import (
     assert_eq,
@@ -406,6 +407,21 @@ def environment_app_factory_requires_app_password_and_session_secret() -> None:
     assert_true(completed.returncode != 0)
     assert_in("app_password", completed.stderr)
     assert_in("session_secret", completed.stderr)
+
+
+@test()
+def app_factory_returns_fastapi() -> None:
+    """The host's public ASGI application is FastAPI."""
+    app = server.create_app(
+        config=AppConfig(
+            app_password="test-app-password",
+            database_path=":memory:",
+            kb_root="unused",
+            session_secret="test-session-secret",
+        )
+    )
+
+    assert_eq(app.__class__, FastAPI)
 
 
 @test()

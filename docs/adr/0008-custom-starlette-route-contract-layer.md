@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0020
+---
+
 # The host API contract is generated from Pydantic by a small custom Starlette layer
 
 Tether serves its HTTP API on Starlette, but binds typed handlers, Pydantic request validation and response serialization, and OpenAPI 3.1 generation through a small **custom contract layer** of its own rather than adopting a batteries-included framework. Handlers stay plain typed async callables; their request and response shapes are Pydantic models, and the OpenAPI document is derived from those same models so the schema can never drift from what the code validates at runtime. The API-contract models are kept distinct from the persistence and service models, so the wire format is free to evolve without dragging storage with it.

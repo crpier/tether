@@ -21,7 +21,7 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 ## Components
 
-**Python host** — the spine. Owns all state and business logic, the review/candidate gates, Search, the scheduler, and the internal tool API. Built on **Starlette**, fully async (no blocking IO). **WebSocket** for the chat surface (bidirectional, matches pi's mid-turn `steer`/`abort`); plain **REST** for everything else (memory CRUD, review queue, triage, bucket items, KB browse). Targets Python ≥3.14 (snekql floor).
+**Python host** — the spine. Owns all state and business logic, the review/candidate gates, Search, the scheduler, and the internal tool API. Built on **FastAPI**, fully async (no blocking IO). **WebSocket** for the chat surface (bidirectional, matches pi's mid-turn `steer`/`abort`); plain **REST** for everything else (memory CRUD, review queue, triage, bucket items, KB browse). Targets Python ≥3.14 (snekql floor).
 
 **pi (agent runtime)** — earendil-works/pi in RPC mode, driven as a host-spawned subprocess. "One agent" is a *definition* (one tool belt, prompt, extensions), realized as multiple processes: one long-lived for foreground chat, ephemeral ones for background work. pi runs with built-in tools disabled — a **closed tool world** whose only surface is Tether's tools. See ADR 0002, ADR 0005.
 
@@ -70,8 +70,9 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host.
 - **0006** — search is recomputed at the moment of use, never cached across actions.
 - **0007** — knowledge-base filenames are the Memory's UUIDv7 (opaque id), not a title slug.
-- **0008** — custom Starlette route contract layer.
+- **0008** — custom Starlette route contract layer (superseded by 0020).
 - **0009** — hybrid Search is an embedded LanceDB projection, not FTS5 + sqlite-vec (refines 0003's retrieval-index clause).
+- **0020** — FastAPI owns REST validation, routing, and OpenAPI generation.
 
 ## Build order
 

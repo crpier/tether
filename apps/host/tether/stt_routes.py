@@ -19,12 +19,11 @@ from __future__ import annotations
 
 from typing import cast
 
+from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
-from tether.openapi import EndpointRoute, endpoint
 from tether.stt import SttClient, SttError
 from tether.voice_http import read_audio_upload, transcription_error_response
 
@@ -39,7 +38,12 @@ class TranscriptionResponse(BaseModel):
     transcript: str
 
 
-@endpoint(response=TranscriptionResponse, status=201)
+router = APIRouter()
+
+
+@router.post(
+    "/api/stt/transcriptions", response_model=TranscriptionResponse, status_code=201
+)
 async def transcribe_audio(request: Request) -> Response:
     """Transcribe an uploaded audio clip and return the transcript text only."""
     stt_client = cast("SttClient", request.app.state.stt_client)
@@ -55,8 +59,3 @@ async def transcribe_audio(request: Request) -> Response:
             {"detail": "no speech detected in the audio"}, status_code=422
         )
     return JSONResponse({"transcript": transcript}, status_code=201)
-
-
-stt_routes: list[Route] = [
-    EndpointRoute("/api/stt/transcriptions", transcribe_audio, methods=["POST"]),
-]

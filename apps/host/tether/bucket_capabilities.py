@@ -30,7 +30,6 @@ from tether.bucket_items import (
     Fetched,
     InvalidItemDataError,
     ItemType,
-    JsonValue,
     NotPurchaseItemError,
     PurchaseData,
     PurchaseDecision,
@@ -78,7 +77,7 @@ class BucketItemRead(BaseModel):
     item_type: ItemType
     state: BucketItemState
     title: str
-    data: dict[str, JsonValue]
+    data: dict[str, Any]
     intent_context: str
     version: PositiveInt
     created_at: datetime
@@ -184,7 +183,7 @@ def _many(items: list[BucketItem[Fetched]]) -> CapabilityOutcome:
 async def add(
     request: Request,
     item_type: ItemType,
-    data: dict[str, JsonValue],
+    data: dict[str, Any],
     intent_context: str | None,
 ) -> CapabilityOutcome:
     """Add a Bucket item; the outcome carries its dedup advisory."""
@@ -258,7 +257,7 @@ async def add_purchase(
     intent_context: str | None,
 ) -> CapabilityOutcome:
     """Add a `purchase` Bucket item with the context available so far."""
-    data: dict[str, JsonValue] = purchase.model_dump(mode="json")
+    data: dict[str, Any] = purchase.model_dump(mode="json")
     return await add(request, "purchase", data, intent_context)
 
 

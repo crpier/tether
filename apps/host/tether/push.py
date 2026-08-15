@@ -24,9 +24,10 @@ import asyncio
 import importlib
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 from uuid import uuid7
 
+from fastapi import APIRouter, Query
 from pydantic import UUID7, BaseModel
 from snekql.sqlite import (
     CurrentTimestamp,
@@ -44,10 +45,8 @@ from snekql.sqlite import (
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.openapi import EndpointRoute, endpoint
 
 
 class PushSubscription[S = Pending](Model[S, "PushSubscription[Fetched]"]):
@@ -351,7 +350,10 @@ class PushConfigRead(BaseModel):
     vapid_public_key: str
 
 
-@endpoint(response=PushConfigRead)
+router = APIRouter()
+
+
+@router.get("/api/push/config", response_model=PushConfigRead)
 async def push_config(request: Request) -> Response:
     """Expose the VAPID public key the browser needs to subscribe."""
     return JSONResponse(
@@ -361,7 +363,9 @@ async def push_config(request: Request) -> Response:
     )
 
 
-@endpoint(request_body=SubscribeRequest, response=PushSubscriptionRead, status=201)
+@router.post(
+    "/api/push/subscriptions", response_model=PushSubscriptionRead, status_code=201
+)
 async def subscribe_push(request: Request, body: SubscribeRequest) -> Response:
     """Register (or refresh) this browser's push subscription."""
     subscription = await request.app.state.push_service.subscribe(
@@ -373,7 +377,7 @@ async def subscribe_push(request: Request, body: SubscribeRequest) -> Response:
     )
 
 
-@endpoint(request_body=UnsubscribeRequest, response=PushStatusRead)
+@router.delete("/api/push/subscriptions", response_model=PushStatusRead)
 async def unsubscribe_push(request: Request, body: UnsubscribeRequest) -> Response:
     """Remove this browser's push subscription."""
     await request.app.state.push_service.unsubscribe(body.endpoint)
@@ -381,16 +385,10 @@ async def unsubscribe_push(request: Request, body: UnsubscribeRequest) -> Respon
     return JSONResponse(PushStatusRead.from_status(status).model_dump(mode="json"))
 
 
-@endpoint(query=StatusQuery, response=PushStatusRead)
-async def push_status(request: Request, query: StatusQuery) -> Response:
+@router.get("/api/push/status", response_model=PushStatusRead)
+async def push_status(
+    request: Request, query: Annotated[StatusQuery, Query()]
+) -> Response:
     """Report whether this browser (or any browser) is subscribed."""
     status = await request.app.state.push_service.status(query.endpoint)
     return JSONResponse(PushStatusRead.from_status(status).model_dump(mode="json"))
-
-
-push_routes: list[Route] = [
-    EndpointRoute("/api/push/config", push_config, methods=["GET"]),
-    EndpointRoute("/api/push/subscriptions", subscribe_push, methods=["POST"]),
-    EndpointRoute("/api/push/subscriptions", unsubscribe_push, methods=["DELETE"]),
-    EndpointRoute("/api/push/status", push_status, methods=["GET"]),
-]

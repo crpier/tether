@@ -15,14 +15,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import APIRouter
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import Route
 
 from tether import todo_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.openapi import EndpointRoute, endpoint
 from tether.todo_capabilities import TODO_ERRORS, TodoRead, TodoReadinessRead
 from tether.todos import TodoNotFoundError, TodoStatus
 
@@ -38,9 +37,8 @@ class SetTodoStatusRequest(BaseModel):
     version: PositiveInt
 
 
-def _path_todo_id(request: Request) -> UUID:
+def _path_todo_id(raw_id: str) -> UUID:
     """Parse the `{todo_id}` path segment, treating a bad id as absent."""
-    raw_id = request.path_params["todo_id"]
     try:
         return UUID(raw_id)
     except ValueError as error:
@@ -50,23 +48,22 @@ def _path_todo_id(request: Request) -> UUID:
 _translate_domain_errors = translate_domain_errors(TODO_ERRORS)
 
 
-@endpoint(response=TodoReadinessRead)
+router = APIRouter()
+
+
+@router.get("/api/todos", response_model=TodoReadinessRead)
 async def list_todos(request: Request) -> Response:
     """List the active Todos split into ready and waiting."""
     return rest_response(await todo_capabilities.list_todos(request))
 
 
-@endpoint(request_body=SetTodoStatusRequest, response=TodoRead)
+@router.post("/api/todos/{todo_id}/status", response_model=TodoRead)
 @_translate_domain_errors
-async def set_todo_status(request: Request, body: SetTodoStatusRequest) -> Response:
+async def set_todo_status(
+    request: Request, body: SetTodoStatusRequest, todo_id: str
+) -> Response:
     """Transition a Todo to a new status at an observed version."""
     outcome = await todo_capabilities.set_status(
-        request, _path_todo_id(request), body.version, body.status
+        request, _path_todo_id(todo_id), body.version, body.status
     )
     return rest_response(outcome)
-
-
-todo_routes: list[Route] = [
-    EndpointRoute("/api/todos", list_todos, methods=["GET"]),
-    EndpointRoute("/api/todos/{todo_id}/status", set_todo_status, methods=["POST"]),
-]

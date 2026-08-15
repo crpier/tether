@@ -74,8 +74,8 @@ export class FakeTriggersHost implements TriggersHost {
       recurrence: body.recurrence,
       timezone: body.timezone ?? "UTC",
       version: body.version + 1,
-      wall_time: body.time_of_day,
-      weekday: body.weekday,
+      wall_time: body.time_of_day ?? null,
+      weekday: body.weekday ?? null,
     };
     this.serverTriggerVersions[triggerId] = updated.version;
     this.storedTriggers = this.storedTriggers.map((existing) =>

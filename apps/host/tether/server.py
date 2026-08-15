@@ -1,4 +1,4 @@
-"""Starlette server for the Tether host: wires the Memory service over HTTP.
+"""FastAPI server for the Tether host: wires the Memory service over HTTP.
 
 >>> # Run the host with `python -m tether`.
 """
@@ -17,6 +17,7 @@ from typing import Literal, cast
 
 import uvicorn
 from anyio import Path as AsyncPath
+from fastapi import FastAPI
 from opentelemetry.trace import Tracer
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -89,8 +90,7 @@ from tether.memories import (
 )
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.notifications import NotificationService, create_notification_schema
-from tether.openapi import openapi_routes
-from tether.openapi_export import public_api_routes
+from tether.openapi_export import public_api_router
 from tether.panel_tools import internal_panel_tool_routes
 from tether.panels import PanelService, create_panel_schema
 from tether.proposal_tools import internal_proposal_tool_routes
@@ -206,7 +206,7 @@ from tether.youtube_tools import internal_youtube_tool_routes
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
-    """In-process configuration for one Starlette app instance.
+    """In-process configuration for one FastAPI app instance.
 
     ```python
     config = AppConfig(app_password="pw", session_secret="secret")
@@ -731,7 +731,7 @@ def _activate_youtube_workers(
 
 
 async def _wire_readwise(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -767,7 +767,7 @@ async def _wire_readwise(
 
 
 async def _wire_reader(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -858,7 +858,7 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
 
 
 async def _wire_gmail_purge(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -911,7 +911,7 @@ async def _wire_gmail_purge(
 
 
 async def _wire_ebook_stats(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -949,7 +949,7 @@ async def _wire_ebook_stats(
 
 
 async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domain
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -1030,7 +1030,7 @@ def _ephemeral_pi_config(
 
 
 def _build_scheduler(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -1095,7 +1095,7 @@ def _build_scheduler(
 
 
 def _build_proposal_service(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -1129,7 +1129,7 @@ def _build_proposal_service(
 
 
 def _build_recall_service(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -1255,7 +1255,7 @@ def _build_bucket_item_and_fusion_services(
 
 
 async def _build_todo_service(  # noqa: PLR0913 - each param is an independent wiring dependency
-    app: Starlette,
+    app: FastAPI,
     *,
     database: Database,
     event_hub: EventHub,
@@ -1284,7 +1284,7 @@ async def _build_todo_service(  # noqa: PLR0913 - each param is an independent w
 
 
 def _build_presentation_services(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
@@ -1408,7 +1408,7 @@ process group as the outer backstop for that.
 
 
 def _wire_provider_auth(
-    app: Starlette,
+    app: FastAPI,
     *,
     config: AppConfig,
     runtime_registry: ConversationRuntimeRegistry,
@@ -1502,7 +1502,7 @@ async def _open_databases(
         yield main_database, telemetry_database
 
 
-def _wire_web_search(app: Starlette, config: AppConfig, database: Database) -> None:
+def _wire_web_search(app: FastAPI, config: AppConfig, database: Database) -> None:
     """Attach configured search and its persisted monthly spend guard."""
     if isinstance(config.search_provider, TavilySearchProvider):
         config.search_provider.spend_guard = PersistentSearchSpendGuard(
@@ -1520,7 +1520,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
     config: AppConfig,
     telemetry_settings: TelemetrySettings,
     embedder: Embedder | None = None,
-) -> Callable[[Starlette], AbstractAsyncContextManager[None, bool | None]]:
+) -> Callable[[FastAPI], AbstractAsyncContextManager[None, bool | None]]:
     """Create lifespan wiring for a configured SQLite DB and KB root.
 
     `embedder` defaults to the in-host `FastEmbedder` (loads the ONNX model on
@@ -1528,7 +1528,7 @@ def _lifespan(  # noqa: PLR0915 - one linear boot/shutdown sequence for every wi
     gate without a model download."""
 
     @asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncGenerator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         """Build the Memory service for the app lifetime and close it after."""
         app_logger = configure_logging(
             config.logging_level,
@@ -1792,22 +1792,29 @@ def create_app(
     telemetry_settings: TelemetrySettings | None = None,
     tool_secret: str | None = None,
     embedder: Embedder | None = None,
-) -> Starlette:
-    """Construct the Starlette application with Memory routes and lifespan wiring.
+) -> FastAPI:
+    """Construct the FastAPI application with Memory routes and lifespan wiring.
 
-    The public REST routes are also handed to `openapi_routes` so `/openapi.json`
-    and `/docs` describe exactly the API that is mounted. By default, both the
+    FastAPI derives `/openapi.json` and `/docs` from the mounted public router.
+    By default, both the
     SQLite database and markdown Knowledge base live under `.tether`. `embedder`
     defaults to the in-host `FastEmbedder`; tests pass a `FakeEmbedder` to drive
     the search path without downloading a model.
     """
-    api_routes = public_api_routes()
-    docs = openapi_routes(api_routes, title="Tether", version="0.1.0")
     configured_telemetry = telemetry_settings or TelemetrySettings()
     spa_mount = _spa_mount(config.web_dist) if config.web_dist is not None else None
-    app = Starlette(
-        routes=[
-            *api_routes,
+    app = FastAPI(
+        title="Tether",
+        version="0.1.0",
+        lifespan=_lifespan(
+            config=config,
+            telemetry_settings=configured_telemetry,
+            embedder=embedder,
+        ),
+    )
+    app.include_router(public_api_router())
+    app.router.routes.extend(
+        [
             *trace_routes(),
             *internal_tool_routes(),
             *internal_bucket_tool_routes(),
@@ -1823,9 +1830,6 @@ def create_app(
             *internal_kosync_tool_routes(),
             *internal_health_connect_tool_routes(),
             *internal_proposal_tool_routes(),
-            # The device-facing kosync protocol is mounted only when configured
-            # (username + userkey set): a disabled install leaves `/kosync/*`
-            # unhandled, so it answers 404 rather than a live-but-empty gate.
             *(
                 kosync_protocol_routes()
                 if config.kosync_enabled
@@ -1834,17 +1838,9 @@ def create_app(
                 else []
             ),
             *websocket_routes,
-            *docs,
-            # The SPA catch-all mounts at "/", so it must come last — every API,
-            # WS, and docs route above is matched before requests fall through to
-            # the static shell. Absent in dev/test (no build configured).
+            # The SPA catch-all mounts at "/", so it must come last.
             *([spa_mount] if spa_mount is not None else []),
-        ],
-        lifespan=_lifespan(
-            config=config,
-            telemetry_settings=configured_telemetry,
-            embedder=embedder,
-        ),
+        ]
     )
     app.state.app_password = config.app_password
     app.state.secure_cookies = config.secure_cookies
@@ -2043,7 +2039,7 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     )
 
 
-def create_app_from_environment() -> Starlette:
+def create_app_from_environment() -> FastAPI:
     """Create the ASGI app from `TETHER_` environment variables.
 
     ```python
