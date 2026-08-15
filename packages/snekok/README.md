@@ -19,9 +19,9 @@ match parse_port("8080"):
         print(error)
 ```
 
-The `Result` API deliberately contains only `Ok`, `Err`, and `Result`. Concrete
-consumer needs will drive additional operations rather than snekok anticipating
-a large functional-programming framework.
+The `Result` API deliberately stays small: `Ok`, `Err`, `Result`, and the
+`map`, `map_error`, and `and_then` composition methods required by concrete
+consumers. It does not attempt to provide a functional-programming framework.
 
 ## Validated scalar classes
 

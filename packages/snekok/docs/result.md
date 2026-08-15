@@ -16,10 +16,11 @@ def read_count(raw: str) -> Result[int, str]:
 
 - `Ok(value)` contains a successful `T` in `.value`.
 - `Err(error)` contains a failed `E` in `.error`.
-- `Result[T, E]` is the union `Ok[T] | Err[E]`.
+- `Result[T, E]` is the union `Ok[T, E] | Err[T, E]`.
 
-Both variants are immutable, slotted value types. Their type parameters are
-covariant, so each channel can widen without reconstructing the result.
+Both variants are immutable, slotted value types. Each carries a phantom type
+for the absent channel, allowing transformations to preserve and widen both
+covariant channels without reconstructing an enclosing result.
 
 ## Consumption
 
@@ -44,6 +45,36 @@ outcome = read_count(raw)
 if isinstance(outcome, Err):
     report(outcome.error)
 ```
+
+## Composition
+
+Use `map` to transform a success while preserving any error:
+
+```python
+label = read_count(raw).map(lambda count: f"count={count}")
+```
+
+Use `map_error` to translate an expected error while preserving a success:
+
+```python
+identified = read_count(raw).map_error(lambda message: ("invalid_count", message))
+```
+
+Use `and_then` to continue with another fallible operation. Existing and newly
+introduced error channels are combined:
+
+```python
+def require_positive(count: int) -> Result[int, ValueError]:
+    if count <= 0:
+        return Err(ValueError("count must be positive"))
+    return Ok(count)
+
+
+positive = read_count(raw).and_then(require_positive)
+```
+
+Transform callbacks are ordinary Python calls. Exceptions raised by them are not
+caught or converted into `Err` values.
 
 ## Exception boundary
 

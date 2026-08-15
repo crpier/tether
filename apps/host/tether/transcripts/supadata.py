@@ -1,38 +1,3 @@
-"""The paid, flag-gated `TranscriptProvider` backed by Supadata.
-
-The OAuth captions Data API is owner-only — it 403s for nearly every third-party
-(liked) video — and the free `youtube-transcript-api` library is IP-block-prone,
-so on their own they transcribe almost none of the liked corpus. Supadata is an
-HTTP transcript API (with an API key, billed per call) that reliably does, so when
-it is configured it becomes the *primary* source (see
-`tether.transcripts.provider_composition`); the free providers trail it as
-best-effort fallbacks.
-
-This wraps Supadata behind the `TranscriptProvider` port so the composite
-(`FallbackTranscriptProvider`) slots it in with no structural change to the
-worker. Three pieces of resilience matter:
-
-* It is gated — composed into the chain only when an API key is configured *and*
-  the feature flag is on, so the default install never spends and stays
-  offline-friendly.
-* It reuses the per-source provider-pause pattern with its own ``"supadata"``
-  source key: a Supadata rate limit maps to the *blocked* outcome (carrying any
-  retry-after hint), so hitting Supadata's limits pauses *only* Supadata while the
-  free providers keep working.
-* A `SupadataSpendGuard` enforces a hard, persisted cap on total uses: each call
-  reserves one use before spending, and an exhausted cap raises the same *blocked*
-  outcome, so a bounded plan (e.g. 100 uses) stops the background sweep instead of
-  overspending. `mode=native` keeps every call to a single, cheap lookup — never
-  the multi-use AI `generate` path.
-
-Supadata serves long videos via an async job model (submit returns a `jobId`,
-poll it to completion), so `fetch` submits, then polls at a bounded interval up to
-a max attempt count rather than blocking the worker indefinitely. The HTTP layer
-is a `SupadataTransport` seam faked in tests, so no test spends money or hits the
-network; the submit/poll/extract logic is pure over the response payloads and is
-unit-tested against fixtures.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -40,6 +5,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Annotated, Literal, Protocol
 
 import httpx2
@@ -103,10 +69,6 @@ SupadataMode = Literal["native", "generate"]
 use); `generate` runs multi-use AI transcription. Tether pins `native`."""
 
 
-class SupadataConfigurationError(Exception):
-    """The Supadata provider was built without a usable API key."""
-
-
 class _SupadataPayload(BaseModel):
     """Strict, immutable base for trusted Supadata response payloads."""
 
@@ -165,6 +127,10 @@ class _SupadataErrorPayload(_SupadataPayload):
     error: str | None = None
 
 
+SupadataOperation = Literal["poll", "submit"]
+"""A Supadata transport operation exposed in typed transport failures."""
+
+
 @dataclass(frozen=True, slots=True)
 class SupadataHttpFailure:
     """A non-success Supadata response with normalized classification data."""
@@ -174,28 +140,42 @@ class SupadataHttpFailure:
     retry_after: timedelta | None = None
 
 
-type SupadataSubmitResponse = (
-    SupadataTranscript | SupadataJobAccepted | SupadataHttpFailure
-)
+@dataclass(frozen=True, slots=True)
+class SupadataNetworkFailure:
+    """A network fault prevented Supadata from returning an HTTP response."""
+
+    operation: SupadataOperation
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class SupadataProtocolFailure:
+    """A successful Supadata response did not satisfy the expected schema."""
+
+    operation: SupadataOperation
+
+
+type SupadataSubmitResponse = SupadataTranscript | SupadataJobAccepted
 type SupadataPollResponse = (
-    SupadataJobPending | SupadataJobCompleted | SupadataJobFailed | SupadataHttpFailure
+    SupadataJobPending | SupadataJobCompleted | SupadataJobFailed
 )
+type SupadataTransportFailure = (
+    SupadataHttpFailure | SupadataNetworkFailure | SupadataProtocolFailure
+)
+type SupadataSubmitResult = Result[SupadataSubmitResponse, SupadataTransportFailure]
+type SupadataPollResult = Result[SupadataPollResponse, SupadataTransportFailure]
 
 
 class SupadataTransport(Protocol):
     """The typed Supadata HTTP boundary driven by the transcript provider."""
 
-    async def submit(self, video_id: str) -> SupadataSubmitResponse:
+    async def submit(self, video_id: str) -> SupadataSubmitResult:
         """Request an immediate transcript or an asynchronous job."""
         ...
 
-    async def poll(self, job_id: str) -> SupadataPollResponse:
+    async def poll(self, job_id: str) -> SupadataPollResult:
         """Read the current state of an asynchronous transcript job."""
         ...
-
-
-class SupadataProtocolError(Exception):
-    """Supadata returned a successful HTTP response with an invalid payload."""
 
 
 _SUBMIT_RESPONSE_ADAPTER: TypeAdapter[SupadataTranscript | SupadataJobAccepted] = (
@@ -267,13 +247,17 @@ def _is_unavailable(response: SupadataHttpFailure) -> bool:
 
 def _extract_transcript(
     transcript: SupadataTranscript | SupadataJobCompleted,
-) -> tuple[str, tuple[TranscriptSegment, ...]] | None:
-    """Convert one validated Supadata transcript into Tether's domain shape."""
+    *,
+    video_id: str,
+) -> Result[tuple[str, tuple[TranscriptSegment, ...]], TranscriptUnavailableError]:
+    """Extract usable content or identify a transcript with no usable text."""
     if isinstance(transcript.content, str):
         cleaned = transcript.content.strip()
-        return (cleaned, ()) if cleaned else None
+        if not cleaned:
+            return Err(TranscriptUnavailableError(video_id))
+        return Ok((cleaned, ()))
     if not transcript.content:
-        return None
+        return Err(TranscriptUnavailableError(video_id))
     segments = tuple(
         TranscriptSegment(
             start_seconds=cue.offset / 1000.0,
@@ -281,7 +265,15 @@ def _extract_transcript(
         )
         for cue in transcript.content
     )
-    return " ".join(segment.text for segment in segments), segments
+    return Ok((" ".join(segment.text for segment in segments), segments))
+
+
+def _as_fetched_transcript(
+    extracted: tuple[str, tuple[TranscriptSegment, ...]],
+) -> FetchedTranscript:
+    """Stamp extracted Supadata content with its trusted provenance."""
+    text, segments = extracted
+    return FetchedTranscript(text=text, segments=segments, source=_SOURCE)
 
 
 def _unfinished_error(
@@ -295,9 +287,7 @@ def _unfinished_error(
 
 def _classify_failure(
     video_id: str, response: SupadataHttpFailure
-) -> Err[
-    TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError
-]:
+) -> TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError:
     """Map a non-success Supadata response onto a typed `TranscriptProvider` signal.
 
     Rate limits are the *blocked* outcome (carrying any retry-after hint so the
@@ -306,20 +296,25 @@ def _classify_failure(
     *transient*.
     """
     if _is_rate_limited(response):
-        return Err(
-            TranscriptBlockedError(
-                f"supadata rate-limited for {video_id}",
-                retry_after=response.retry_after,
-                source=_SOURCE,
-            )
+        return TranscriptBlockedError(
+            f"supadata rate-limited for {video_id}",
+            retry_after=response.retry_after,
+            source=_SOURCE,
         )
     if _is_unavailable(response):
-        return Err(TranscriptUnavailableError(video_id))
-    return Err(
-        TranscriptTransientError(
-            f"supadata fetch for {video_id} failed (status {response.status_code})"
-        )
+        return TranscriptUnavailableError(video_id)
+    return TranscriptTransientError(
+        f"supadata fetch for {video_id} failed (status {response.status_code})"
     )
+
+
+def _classify_transport_failure(
+    video_id: str, failure: SupadataTransportFailure
+) -> TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError:
+    """Translate a transport failure into the provider's failure vocabulary."""
+    if isinstance(failure, SupadataHttpFailure):
+        return _classify_failure(video_id, failure)
+    return TranscriptTransientError(video_id)
 
 
 class SupadataBudgetExhaustedError(Exception):
@@ -363,7 +358,7 @@ class SupadataSpendGuard:
         self._clock: Clock = clock or SystemClock()
 
     async def charge(self) -> Result[None, SupadataBudgetExhaustedError]:
-        """Reserve one use within the month's cap, or raise when it is exhausted."""
+        """Reserve one use within the month's cap."""
         now = self._clock.now()
         month_key = _month_key(now)
 
@@ -513,7 +508,7 @@ class SupadataTranscriptProvider(TranscriptProvider):
         FetchedTranscript,
         TranscriptBlockedError | TranscriptUnavailableError | TranscriptTransientError,
     ]:
-        """Fetch a transcript via Supadata (direct or async job), or raise a signal.
+        """Fetch a transcript via Supadata (direct or async job).
 
         Supadata is a leaf source the composite skips while paused or gated, so
         `paused_sources` and `skip_sources` are no-ops here.
@@ -540,21 +535,19 @@ class SupadataTranscriptProvider(TranscriptProvider):
                 )
         # Pace the billed submit to stay under the plan's per-request rate limit.
         await self._throttle()
-        try:
-            response = await self._transport.submit(video_id)
-        except httpx2.RequestError, SupadataProtocolError:
-            # Transport faults and upstream schema drift are retryable. Neither
-            # proves that this video permanently lacks a transcript.
-            return Err(TranscriptTransientError(video_id))
-        if isinstance(response, SupadataHttpFailure):
-            return _classify_failure(video_id, response)
+        submission = (await self._transport.submit(video_id)).map_error(
+            partial(_classify_transport_failure, video_id)
+        )
+        match submission:
+            case Err(failure):
+                return Err(failure)
+            case Ok(response):
+                pass
         if isinstance(response, SupadataJobAccepted):
             return await self._poll_to_completion(video_id, response.job_id)
-        extracted = _extract_transcript(response)
-        if extracted is None:
-            return Err(TranscriptUnavailableError(video_id))
-        text, segments = extracted
-        return Ok(FetchedTranscript(text=text, segments=segments, source=_SOURCE))
+        return _extract_transcript(response, video_id=video_id).map(
+            _as_fetched_transcript
+        )
 
     async def _poll_to_completion(
         self, video_id: str, job_id: str
@@ -571,21 +564,19 @@ class SupadataTranscriptProvider(TranscriptProvider):
         """
         for _ in range(self._config.max_poll_attempts):
             await self._sleep(self._config.poll_interval.total_seconds())
-            try:
-                response = await self._transport.poll(job_id)
-            except httpx2.RequestError, SupadataProtocolError:
-                return Err(TranscriptTransientError(video_id))
-            if isinstance(response, SupadataHttpFailure):
-                return _classify_failure(video_id, response)
+            polling = (await self._transport.poll(job_id)).map_error(
+                partial(_classify_transport_failure, video_id)
+            )
+            match polling:
+                case Err(failure):
+                    return Err(failure)
+                case Ok(response):
+                    pass
             if isinstance(response, SupadataJobFailed):
                 return Err(TranscriptUnavailableError(video_id))
             if isinstance(response, SupadataJobCompleted):
-                extracted = _extract_transcript(response)
-                if extracted is None:
-                    return Err(TranscriptUnavailableError(video_id))
-                text, segments = extracted
-                return Ok(
-                    FetchedTranscript(text=text, segments=segments, source=_SOURCE)
+                return _extract_transcript(response, video_id=video_id).map(
+                    _as_fetched_transcript
                 )
             # A validated pending state consumes one bounded poll attempt.
         return Err(_unfinished_error(video_id, job_id, self._config.max_poll_attempts))
@@ -627,18 +618,26 @@ def _http_failure(response: httpx2.Response) -> SupadataHttpFailure:
     )
 
 
+def _classify_http_response(
+    response: httpx2.Response,
+) -> Result[httpx2.Response, SupadataHttpFailure]:
+    """Keep successful HTTP responses and normalize non-success responses."""
+    if _is_http_failure(response):
+        return Err(_http_failure(response))
+    return Ok(response)
+
+
 def _decode_success[T](
     response: httpx2.Response,
     *,
     adapter: TypeAdapter[T],
-    operation: str,
-) -> T:
+    operation: SupadataOperation,
+) -> Result[T, SupadataProtocolFailure]:
     """Validate a successful response or report upstream schema drift."""
     try:
-        return adapter.validate_json(response.content, strict=True)
-    except ValidationError as error:
-        message = f"Supadata {operation} returned an invalid success payload"
-        raise SupadataProtocolError(message) from error
+        return Ok(adapter.validate_json(response.content, strict=True))
+    except ValidationError:
+        return Err(SupadataProtocolFailure(operation=operation))
 
 
 class HttpSupadataTransport(SupadataTransport):
@@ -651,42 +650,46 @@ class HttpSupadataTransport(SupadataTransport):
         config: SupadataConfig | None = None,
         http_transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
-        revealed_api_key = api_key.get_secret_value()
-        if not revealed_api_key:
-            message = "Supadata API key is required to build the HTTP transport"
-            raise SupadataConfigurationError(message)
         selected_config = config or SupadataConfig()
         self._config: SupadataConfig = selected_config
         self._client: httpx2.AsyncClient = httpx2.AsyncClient(
             base_url=selected_config.base_url,
-            headers={"x-api-key": revealed_api_key},
+            headers={"x-api-key": api_key.get_secret_value()},
             timeout=selected_config.timeout.total_seconds(),
             transport=http_transport,
         )
 
-    async def submit(self, video_id: str) -> SupadataSubmitResponse:
+    async def submit(self, video_id: str) -> SupadataSubmitResult:
         """Submit and decode either a direct transcript or accepted job."""
-        response = await self._client.get(
-            "/transcript",
-            params=_submit_params(video_id, self._config.mode, self._config.languages),
-        )
-        if _is_http_failure(response):
-            return _http_failure(response)
-        return _decode_success(
-            response,
-            adapter=_SUBMIT_RESPONSE_ADAPTER,
-            operation="submit",
+        try:
+            response = await self._client.get(
+                "/transcript",
+                params=_submit_params(
+                    video_id, self._config.mode, self._config.languages
+                ),
+            )
+        except httpx2.RequestError as e:
+            return Err(SupadataNetworkFailure(operation="submit", message=str(e)))
+        return _classify_http_response(response).and_then(
+            partial(
+                _decode_success,
+                adapter=_SUBMIT_RESPONSE_ADAPTER,
+                operation="submit",
+            )
         )
 
-    async def poll(self, job_id: str) -> SupadataPollResponse:
+    async def poll(self, job_id: str) -> SupadataPollResult:
         """Poll and decode one known asynchronous job state."""
-        response = await self._client.get(f"/transcript/{job_id}")
-        if _is_http_failure(response):
-            return _http_failure(response)
-        return _decode_success(
-            response,
-            adapter=_POLL_RESPONSE_ADAPTER,
-            operation="poll",
+        try:
+            response = await self._client.get(f"/transcript/{job_id}")
+        except httpx2.RequestError as e:
+            return Err(SupadataNetworkFailure(operation="poll", message=str(e)))
+        return _classify_http_response(response).and_then(
+            partial(
+                _decode_success,
+                adapter=_POLL_RESPONSE_ADAPTER,
+                operation="poll",
+            )
         )
 
     async def aclose(self) -> None:

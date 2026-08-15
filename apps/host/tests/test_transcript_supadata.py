@@ -16,33 +16,33 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import httpx2
-from pydantic import SecretStr, TypeAdapter
+from pydantic import TypeAdapter
 from snekok import Err, NonEmptySecretStr, Ok, Result
 from snekok.types import NonBlankStr, NonNegativeInt
 from snekql.sqlite import Config, Database
-from snektest import assert_eq, assert_is_none, assert_isinstance, assert_raises, test
+from snektest import assert_eq, assert_is_none, assert_isinstance, test
 
 from tether.transcripts.supadata import (
     HttpSupadataTransport,
     SupadataBudgetExhaustedError,
     SupadataConfig,
-    SupadataConfigurationError,
     SupadataCue,
     SupadataHttpFailure,
     SupadataJobAccepted,
     SupadataJobCompleted,
     SupadataJobFailed,
     SupadataJobPending,
+    SupadataNetworkFailure,
     SupadataPollResponse,
-    SupadataProtocolError,
+    SupadataProtocolFailure,
     SupadataSpendGuard,
     SupadataSubmitResponse,
     SupadataTranscript,
     SupadataTranscriptProvider,
     SupadataTransport,
+    SupadataTransportFailure,
     _retry_after_seconds,
     _submit_params,
     bind_supadata_spend_guard,
@@ -58,61 +58,90 @@ from tether.youtube import (
     transcript_provider_usage,
 )
 
+type _ScriptedSubmit = SupadataSubmitResponse | SupadataTransportFailure
+type _ScriptedPoll = SupadataPollResponse | SupadataTransportFailure
+
 
 class FakeSupadataTransport:
-    """A scripted `SupadataTransport` with queued submit and poll responses."""
+    """A scripted `SupadataTransport` with queued submit and poll outcomes."""
 
     def __init__(
         self,
         *,
-        submit: Sequence[SupadataSubmitResponse],
-        poll: Sequence[SupadataPollResponse] | None = None,
+        submit: Sequence[_ScriptedSubmit],
+        poll: Sequence[_ScriptedPoll] | None = None,
     ) -> None:
-        self._submit: list[SupadataSubmitResponse] = list(submit)
-        self._poll: list[SupadataPollResponse] = list(poll or [])
+        self._submit: list[_ScriptedSubmit] = list(submit)
+        self._poll: list[_ScriptedPoll] = list(poll or [])
         self.submit_calls: int = 0
         self.poll_calls: int = 0
 
-    async def submit(self, video_id: str) -> SupadataSubmitResponse:
+    async def submit(
+        self, video_id: str
+    ) -> Result[SupadataSubmitResponse, SupadataTransportFailure]:
         _ = video_id
         self.submit_calls += 1
-        return self._submit.pop(0) if len(self._submit) > 1 else self._submit[0]
+        outcome = self._submit.pop(0) if len(self._submit) > 1 else self._submit[0]
+        if isinstance(
+            outcome,
+            SupadataHttpFailure | SupadataNetworkFailure | SupadataProtocolFailure,
+        ):
+            return Err(outcome)
+        return Ok(outcome)
 
-    async def poll(self, job_id: str) -> SupadataPollResponse:
+    async def poll(
+        self, job_id: str
+    ) -> Result[SupadataPollResponse, SupadataTransportFailure]:
         _ = job_id
         self.poll_calls += 1
-        return self._poll.pop(0) if len(self._poll) > 1 else self._poll[0]
+        outcome = self._poll.pop(0) if len(self._poll) > 1 else self._poll[0]
+        if isinstance(
+            outcome,
+            SupadataHttpFailure | SupadataNetworkFailure | SupadataProtocolFailure,
+        ):
+            return Err(outcome)
+        return Ok(outcome)
 
 
-class RaisingSupadataTransport:
-    """A `SupadataTransport` whose operations raise a raw `httpx2` error."""
+class FailingSupadataTransport:
+    """A `SupadataTransport` whose operations return a scripted failure."""
 
-    def __init__(self, error: Exception) -> None:
-        self._error: Exception = error
+    def __init__(self, failure: SupadataTransportFailure) -> None:
+        self._failure: SupadataTransportFailure = failure
 
-    async def submit(self, video_id: str) -> SupadataSubmitResponse:
+    async def submit(
+        self, video_id: str
+    ) -> Result[SupadataSubmitResponse, SupadataTransportFailure]:
         _ = video_id
-        raise self._error
+        return Err(self._failure)
 
-    async def poll(self, job_id: str) -> SupadataPollResponse:
+    async def poll(
+        self, job_id: str
+    ) -> Result[SupadataPollResponse, SupadataTransportFailure]:
         _ = job_id
-        raise self._error
+        return Err(self._failure)
 
 
-class SubmitsThenRaisesOnPollTransport:
+class SubmitsThenFailsOnPollTransport:
     """A transport that accepts a job before its poll operation fails."""
 
-    def __init__(self, job_response: SupadataJobAccepted, error: Exception) -> None:
+    def __init__(
+        self, job_response: SupadataJobAccepted, failure: SupadataTransportFailure
+    ) -> None:
         self._job_response: SupadataJobAccepted = job_response
-        self._error: Exception = error
+        self._failure: SupadataTransportFailure = failure
 
-    async def submit(self, video_id: str) -> SupadataSubmitResponse:
+    async def submit(
+        self, video_id: str
+    ) -> Result[SupadataSubmitResponse, SupadataTransportFailure]:
         _ = video_id
-        return self._job_response
+        return Ok(self._job_response)
 
-    async def poll(self, job_id: str) -> SupadataPollResponse:
+    async def poll(
+        self, job_id: str
+    ) -> Result[SupadataPollResponse, SupadataTransportFailure]:
         _ = job_id
-        raise self._error
+        return Err(self._failure)
 
 
 async def _no_sleep(seconds: float) -> None:
@@ -197,9 +226,10 @@ async def http_transport_decodes_a_timed_transcript() -> None:
     response = await transport.submit("v1")
     await transport.aclose()
 
-    assert isinstance(response, SupadataTranscript)
+    assert isinstance(response, Ok)
+    assert isinstance(response.value, SupadataTranscript)
     assert_eq(
-        response.content,
+        response.value.content,
         (
             SupadataCue(
                 text=NonBlankStr("hello"),
@@ -226,7 +256,7 @@ async def http_transport_decodes_an_accepted_job() -> None:
     response = await transport.submit("v1")
     await transport.aclose()
 
-    assert_eq(response, SupadataJobAccepted(job_id="job-1"))
+    assert_eq(response, Ok(SupadataJobAccepted(job_id="job-1")))
 
 
 @test()
@@ -249,7 +279,7 @@ async def http_transport_decodes_a_completed_job() -> None:
 
     assert_eq(
         response,
-        SupadataJobCompleted(status="completed", content="done body"),
+        Ok(SupadataJobCompleted(status="completed", content="done body")),
     )
 
 
@@ -273,9 +303,11 @@ async def http_transport_treats_partial_poll_content_as_a_failure() -> None:
 
     assert_eq(
         response,
-        SupadataHttpFailure(
-            status_code=206,
-            error="transcript-unavailable",
+        Err(
+            SupadataHttpFailure(
+                status_code=206,
+                error="transcript-unavailable",
+            )
         ),
     )
 
@@ -301,10 +333,12 @@ async def http_transport_normalizes_an_error_response() -> None:
 
     assert_eq(
         response,
-        SupadataHttpFailure(
-            status_code=429,
-            error="rate-limit",
-            retry_after=timedelta(seconds=30),
+        Err(
+            SupadataHttpFailure(
+                status_code=429,
+                error="rate-limit",
+                retry_after=timedelta(seconds=30),
+            )
         ),
     )
 
@@ -324,9 +358,10 @@ async def http_transport_rejects_a_malformed_success_payload() -> None:
         _api_key(), http_transport=httpx2.MockTransport(respond)
     )
 
-    with assert_raises(SupadataProtocolError):
-        _ = await transport.submit("v1")
+    response = await transport.submit("v1")
     await transport.aclose()
+
+    assert_eq(response, Err(SupadataProtocolFailure(operation="submit")))
 
 
 @test()
@@ -344,9 +379,50 @@ async def http_transport_rejects_blank_cues() -> None:
         _api_key(), http_transport=httpx2.MockTransport(respond)
     )
 
-    with assert_raises(SupadataProtocolError):
-        _ = await transport.submit("v1")
+    response = await transport.submit("v1")
     await transport.aclose()
+
+    assert_eq(response, Err(SupadataProtocolFailure(operation="submit")))
+
+
+@test()
+async def http_transport_returns_submit_network_failures() -> None:
+    """A submit network fault is returned through the transport failure channel."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout("timed out", request=request)
+
+    transport = HttpSupadataTransport(
+        _api_key(), http_transport=httpx2.MockTransport(respond)
+    )
+
+    response = await transport.submit("v1")
+    await transport.aclose()
+
+    assert_eq(
+        response,
+        Err(SupadataNetworkFailure(operation="submit", message="timed out")),
+    )
+
+
+@test()
+async def http_transport_returns_poll_network_failures() -> None:
+    """A poll network fault is returned through the transport failure channel."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection reset", request=request)
+
+    transport = HttpSupadataTransport(
+        _api_key(), http_transport=httpx2.MockTransport(respond)
+    )
+
+    response = await transport.poll("job-1")
+    await transport.aclose()
+
+    assert_eq(
+        response,
+        Err(SupadataNetworkFailure(operation="poll", message="connection reset")),
+    )
 
 
 @test()
@@ -509,7 +585,9 @@ async def server_error_is_transient() -> None:
 @test()
 async def a_read_timeout_on_submit_is_transient() -> None:
     """A network fault on submit maps to transient."""
-    transport = RaisingSupadataTransport(httpx2.ReadTimeout("timed out"))
+    transport = FailingSupadataTransport(
+        SupadataNetworkFailure(operation="submit", message="timed out")
+    )
 
     failure = await _provider(transport).fetch("v1")
 
@@ -520,9 +598,9 @@ async def a_read_timeout_on_submit_is_transient() -> None:
 @test()
 async def a_connection_error_while_polling_is_transient() -> None:
     """A network fault while polling maps to transient."""
-    transport = SubmitsThenRaisesOnPollTransport(
+    transport = SubmitsThenFailsOnPollTransport(
         SupadataJobAccepted(job_id="job-1"),
-        httpx2.ConnectError("connection reset"),
+        SupadataNetworkFailure(operation="poll", message="connection reset"),
     )
 
     failure = await _provider(transport).fetch("v1")
@@ -610,15 +688,6 @@ async def rate_limit_while_polling_is_blocked() -> None:
     assert isinstance(failure, Err)
     error = assert_isinstance(failure.error, TranscriptBlockedError)
     assert_eq(error.source, "supadata")
-
-
-@test()
-def http_transport_requires_an_api_key() -> None:
-    """Building the production transport without a key fails loudly (no silent no-op)."""
-    invalid_key = cast("NonEmptySecretStr", SecretStr(""))
-
-    with assert_raises(SupadataConfigurationError):
-        _ = HttpSupadataTransport(invalid_key)
 
 
 @test()

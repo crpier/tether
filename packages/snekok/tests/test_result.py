@@ -38,6 +38,42 @@ def err_exposes_its_error_through_structural_matching() -> None:
 
 
 @test(mark="fast")
+def ok_map_transforms_the_success_value() -> None:
+    """`map` applies its transform to an `Ok` value."""
+    assert_eq(Ok(2).map(lambda number: number * 3), Ok(6))
+
+
+@test(mark="fast")
+def err_map_preserves_the_error() -> None:
+    """`map` leaves an `Err` unchanged."""
+    assert_eq(Err("invalid").map(lambda _: "unused"), Err("invalid"))
+
+
+@test(mark="fast")
+def ok_map_error_preserves_the_success() -> None:
+    """`map_error` leaves an `Ok` unchanged."""
+    assert_eq(Ok(2).map_error(lambda _: "unused"), Ok(2))
+
+
+@test(mark="fast")
+def err_map_error_transforms_the_error() -> None:
+    """`map_error` applies its transform to an `Err` value."""
+    assert_eq(Err("invalid").map_error(str.upper), Err("INVALID"))
+
+
+@test(mark="fast")
+def ok_and_then_continues_with_the_next_result() -> None:
+    """`and_then` applies a fallible continuation to an `Ok` value."""
+    assert_eq(Ok(2).and_then(lambda number: Ok(number * 3)), Ok(6))
+
+
+@test(mark="fast")
+def err_and_then_preserves_the_error() -> None:
+    """`and_then` does not run its continuation for an `Err` value."""
+    assert_eq(Err("invalid").and_then(lambda _: Ok("unused")), Err("invalid"))
+
+
+@test(mark="fast")
 def ok_is_immutable() -> None:
     """An `Ok` value cannot change after construction."""
     success = Ok(42)
