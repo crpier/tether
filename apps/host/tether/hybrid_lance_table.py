@@ -3,7 +3,7 @@
 This module is the *sole* importer of `lancedb`/`pyarrow` in the host. It owns
 a single table at `<index_dir>/` shaped as `id` + optional string payload
 columns + `content` + a fixed-size `vector`, and exposes the small async
-surface the domain projections (`SearchIndex` for Memories, `TranscriptIndex`
+surface the domain projections (`SearchIndex` for Memories, `YouTubeSearchIndex`
 for transcript chunks) re-shape into their own document/candidate types:
 
 - `upsert` / `remove` / `rebuild` keep the projection in step with SQLite

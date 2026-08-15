@@ -172,9 +172,10 @@ async def _search(
 
 async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcome:
     """Fetch and persist a transcript for an ingested video."""
-    result = await request.app.state.youtube_service.fetch_transcript(
+    outcome = await request.app.state.youtube_service.fetch_transcript(
         video_id, logger=get_request_logger(request)
     )
+    result = youtube_capabilities.unwrap_transcript_request(outcome)
     return CapabilityOutcome(
         result={
             "video": YouTubeVideoRead.from_video(

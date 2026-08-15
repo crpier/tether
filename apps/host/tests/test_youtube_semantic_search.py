@@ -1,6 +1,6 @@
 """Tests for `YouTubeService.search`'s semantic path.
 
-When a `TranscriptSearchService` is wired, `search` ranks videos by the injected
+When a `YouTubeSearchService` is wired, `search` ranks videos by the injected
 match order, attaches each match's snippet, and drops matches whose video has
 since been ignored (index drift the next reconcile would clean up). With no
 searcher it falls back to the lexical `LIKE` query. These drive the service with
@@ -18,7 +18,6 @@ from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.structured_logging import Logger
-from tether.transcripts.search import VideoMatch
 from tether.youtube import (
     DailyQuota,
     IngestedVideo,
@@ -27,13 +26,14 @@ from tether.youtube import (
     YouTubeService,
     create_youtube_schema,
 )
+from tether.youtube_search import VideoMatch
 
 
 def _logger() -> Logger:
     return structlog.stdlib.get_logger("test.youtube_semantic_search")
 
 
-class StubTranscriptSearch:
+class StubYouTubeSearch:
     """Returns canned video matches, recording the query and limit it saw."""
 
     def __init__(self, matches: list[VideoMatch]) -> None:
@@ -97,14 +97,18 @@ async def semantic_search_orders_by_match_and_attaches_snippets() -> None:
     env = await load_fixture(make_env())
     await _add_video(env.db, "vid1")
     await _add_video(env.db, "vid2")
-    searcher = StubTranscriptSearch(
+    searcher = StubYouTubeSearch(
         [
             VideoMatch(video_id="vid2", snippet="strong hit", score=0.9),
             VideoMatch(video_id="vid1", snippet="weaker hit", score=0.4),
         ]
     )
-    service = YouTubeService(database=env.db, client=env.client, tracer=_tracer())
-    service.transcript_search = searcher  # pyright: ignore[reportAttributeAccessIssue]
+    service = YouTubeService(
+        database=env.db,
+        client=env.client,
+        tracer=_tracer(),
+        youtube_search=searcher,
+    )
 
     result = await service.search("android", limit=10, logger=_logger())
 
@@ -119,14 +123,18 @@ async def semantic_search_drops_matches_for_ignored_videos() -> None:
     env = await load_fixture(make_env())
     await _add_video(env.db, "vid1")
     await _add_video(env.db, "gone", ignored=True)
-    searcher = StubTranscriptSearch(
+    searcher = StubYouTubeSearch(
         [
             VideoMatch(video_id="gone", snippet="ignored", score=0.9),
             VideoMatch(video_id="vid1", snippet="kept", score=0.4),
         ]
     )
-    service = YouTubeService(database=env.db, client=env.client, tracer=_tracer())
-    service.transcript_search = searcher  # pyright: ignore[reportAttributeAccessIssue]
+    service = YouTubeService(
+        database=env.db,
+        client=env.client,
+        tracer=_tracer(),
+        youtube_search=searcher,
+    )
 
     result = await service.search("android", limit=10, logger=_logger())
 
@@ -138,8 +146,12 @@ async def semantic_search_drops_matches_for_ignored_videos() -> None:
 async def no_matches_returns_an_empty_result() -> None:
     env = await load_fixture(make_env())
     await _add_video(env.db, "vid1")
-    service = YouTubeService(database=env.db, client=env.client, tracer=_tracer())
-    service.transcript_search = StubTranscriptSearch([])  # pyright: ignore[reportAttributeAccessIssue]
+    service = YouTubeService(
+        database=env.db,
+        client=env.client,
+        tracer=_tracer(),
+        youtube_search=StubYouTubeSearch([]),
+    )
 
     result = await service.search("nothing", limit=10, logger=_logger())
 

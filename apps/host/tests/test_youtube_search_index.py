@@ -1,6 +1,6 @@
-"""Projection tests for the TranscriptIndex over HybridLanceTable.
+"""Projection tests for the YouTubeSearchIndex over HybridLanceTable.
 
-`TranscriptIndex` is a thin chunk-shaped projection of `HybridLanceTable`
+`YouTubeSearchIndex` is a thin chunk-shaped projection of `HybridLanceTable`
 (`ChunkDocument` in, `ChunkCandidate` out; a `video_id` payload column and the
 chunk text surfaced as a snippet). The generic retrieval, lifecycle, and
 salvage behaviors are proven once in `test_hybrid_lance_table.py`; these tests
@@ -15,7 +15,7 @@ from uuid import uuid4
 from anyio import TemporaryDirectory
 from snektest import assert_eq, assert_gt, test
 
-from tether.transcripts.index import ChunkDocument, TranscriptIndex
+from tether.youtube_search_index import ChunkDocument, YouTubeSearchIndex
 
 _DIM = 4
 
@@ -26,7 +26,7 @@ async def a_hit_carries_its_video_id_and_snippet() -> None:
     video, the chunk text as a snippet, and the RRF score — so the search path
     can dedupe chunks to videos and show why each matched."""
     async with TemporaryDirectory() as tmp:
-        index = await TranscriptIndex.open(
+        index = await YouTubeSearchIndex.open(
             index_dir=Path(tmp) / "index", vector_dim=_DIM
         )
         chunk = ChunkDocument(
@@ -49,7 +49,7 @@ async def a_hit_carries_its_video_id_and_snippet() -> None:
 async def multiple_chunks_can_share_one_video_id() -> None:
     """Chunk rows are keyed by chunk id, so one video maps to many rows."""
     async with TemporaryDirectory() as tmp:
-        index = await TranscriptIndex.open(
+        index = await YouTubeSearchIndex.open(
             index_dir=Path(tmp) / "index", vector_dim=_DIM
         )
         await index.upsert(

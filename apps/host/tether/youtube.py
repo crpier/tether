@@ -31,11 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from functools import partial
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
@@ -58,13 +57,22 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.escalating_pause import (
-    PauseKeys,
-    PauseState,
-    load_pause_state,
-)
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
+from tether.transcripts.contracts import (
+    FetchedTranscript,
+    TranscriptAcquisitionDeferred,
+    TranscriptAcquisitionPort,
+    TranscriptExplicitlyUnavailable,
+    TranscriptFetchResult,
+    TranscriptNeedsReview,
+    TranscriptProviderBlocked,
+    TranscriptRequestFailure,
+    TranscriptRetryScheduled,
+    TranscriptStored,
+    TranscriptUnavailableFailure,
+)
+from tether.transcripts.provider_health import load_all_provider_pauses
 
 # `Clock`, `DailyQuota`, `SystemClock`, `YouTubeApiGate` and `YouTubeApiGateConfig`
 # are not otherwise referenced in this module; the `as`-aliases are explicit
@@ -88,7 +96,7 @@ from tether.youtube_quota import (
 )
 
 if TYPE_CHECKING:
-    from tether.transcripts.search import TranscriptSearchService
+    from tether.youtube_search import VideoMatch
 
 # `Clock`, `DailyQuota`, `SystemClock`, `YouTubeApiGate`, and `YouTubeApiGateConfig`
 # live in `tether.youtube_quota` (#203) and are not otherwise referenced in this
@@ -111,19 +119,9 @@ Later playlist, so liked videos are the sole ingestion source today."""
 type IngestState = Literal["active", "ignored"]
 """Whether an ingested video is live in browse/search or purged from it."""
 
-# The empty default for `TranscriptProvider.fetch`'s `paused_sources`, hoisted to a
-# module constant so the value is not constructed in a parameter default expression.
-_NO_PAUSED_SOURCES: frozenset[str] = frozenset()
-
 # Cap on videos returned by semantic search when the caller passes no explicit
 # limit, keeping assistant-facing results within the model's context.
 _DEFAULT_SEMANTIC_LIMIT = 50
-
-# Transcript sources skipped by default for a video with no manual captions. Only
-# Supadata's paid `native` lookup is gated — it would spend a use to return nothing
-# for a caption-less video — while the free library still runs (auto-captions can
-# exist when the manual-caption flag is false).
-_DEFAULT_CAPTION_GATED_SOURCES: frozenset[str] = frozenset({"supadata"})
 
 
 def _empty_snippets() -> dict[str, str]:
@@ -162,68 +160,6 @@ class TranscriptBlockedError(Exception):
         self.source: str | None = source
 
 
-@dataclass(frozen=True, slots=True)
-class TranscriptBlockedFailure:
-    """A provider-level block that pauses one transcript source."""
-
-    message: str = ""
-    retry_after: timedelta | None = None
-    source: str | None = None
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptExcludedFailure:
-    """A video this provider can never transcribe."""
-
-    video_id: str
-
-    def __str__(self) -> str:
-        return self.video_id
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptQuotaExceededFailure:
-    """The local YouTube Data API budget cannot cover a transcript request."""
-
-    message: str
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptTransientFailure:
-    """A retryable per-video transcript acquisition failure."""
-
-    message: str
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptUnavailableFailure:
-    """A provider has no usable transcript for one video."""
-
-    video_id: str
-
-    def __str__(self) -> str:
-        return self.video_id
-
-
-type TranscriptFailure = (
-    TranscriptBlockedFailure
-    | TranscriptExcludedFailure
-    | TranscriptQuotaExceededFailure
-    | TranscriptTransientFailure
-    | TranscriptUnavailableFailure
-)
-"""An expected transcript acquisition failure handled by callers."""
-
-
 class EmptyYouTubeSearchQueryError(Exception):
     """Raised when a keyword Search is asked to run on a blank query."""
 
@@ -240,16 +176,15 @@ class CacheMeta(BaseModel):
 
 
 class InMemoryYouTubeApi(YouTubeApi):
-    """A seedable in-memory `YouTubeApi` + `TranscriptProvider` test double.
+    """A seedable in-memory YouTube API and transcript-source test double.
 
     Seeded with an ordered liked list (newest first), it serves fixed-size pages
     with synthetic cursors and counts its calls so tests can prove ingestion
     stays within budget. `fetch_video_metadata` returns the seeded objects with
     `liked_at` stripped, matching the live `videos.list` call, which has no
     playlist context and so never carries a liked timestamp — that field only
-    arrives on liked-page items. It also satisfies `TranscriptProvider`
-    via `fetch`, returning a seeded transcript or signalling unavailability — so
-    one fake backs both the list/metadata surface and the transcript port.
+    arrives on liked-page items. Its `fetch` method returns seeded transcript
+    text or typed unavailability, so one fake backs both boundaries.
 
     >>> import asyncio
     >>> api = InMemoryYouTubeApi(transcripts={"v1": "hello"})
@@ -302,256 +237,23 @@ class InMemoryYouTubeApi(YouTubeApi):
         self.metadata_calls += 1
         return {vid: self._by_id[vid] for vid in video_ids if vid in self._by_id}
 
-    async def fetch(
-        self,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> TranscriptFetchResult:
+    async def fetch(self, video_id: str) -> TranscriptFetchResult:
         """Return a seeded transcript or an unavailable failure."""
-        _ = (paused_sources, skip_sources)  # the fake has no blockable source
         self.transcript_calls += 1
         text = self._transcripts.get(video_id)
         if text is None:
             return Err(TranscriptUnavailableFailure(video_id=video_id))
-        return Ok(FetchedTranscript(text=text, segments=(), source="in_memory"))
+        return Ok(FetchedTranscript(text=text, source="in_memory"))
 
 
-@dataclass(frozen=True, slots=True)
-class TranscriptSegment:
-    """One timed line of a transcript: its start offset and text.
+class YouTubeSearchPort(Protocol):
+    """Rank transcript-bearing videos for `YouTubeService.search`."""
 
-    >>> TranscriptSegment(start_seconds=1.5, text="hello").text
-    'hello'
-    """
-
-    start_seconds: float
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class FetchedTranscript:
-    """A transcript a provider produced: text, timed segments, and provenance.
-
-    >>> FetchedTranscript(text="hi", segments=(), source="captions").source
-    'captions'
-    """
-
-    text: str
-    segments: tuple[TranscriptSegment, ...]
-    source: str
-
-
-type TranscriptFetchResult = Result[FetchedTranscript, TranscriptFailure]
-"""The success or expected failure returned by every transcript provider."""
-
-
-@runtime_checkable
-class TranscriptProvider(Protocol):
-    """Fetch transcripts while returning every expected acquisition failure.
-
-    `fetch` returns `TranscriptFetchResult`: success carries a
-    `FetchedTranscript`; failure carries an unavailable, excluded, transient, or
-    blocked value. Provider implementations translate upstream exceptions at their
-    boundaries, leaving callers to compose and persist explicit domain outcomes.
-
-    `source` is the provenance tag a provider stamps onto the transcripts it
-    produces (e.g. `"youtube_captions"`, `"youtube_transcript_api"`,
-    `"supadata"`); the composite uses it to skip a specific paused fallback and
-    the worker uses it to key each blockable source's independent pause.
-
-    `paused_sources` is the worker's pause hook: the set of blockable provider
-    sources currently in cooldown. A composite provider skips any fallback whose
-    `source` is in the set and runs only the reachable ones (e.g. the captions API,
-    or Supadata while the free library is paused). Leaf providers ignore it.
-
-    `skip_sources` is the worker's per-video exclusion hook: sources to drop from
-    this fetch entirely, as if unconfigured (used to skip Supadata for a video with
-    no captions, saving its paid budget). Unlike a pause it never defers — the
-    remaining sources decide the outcome — so a video with every reachable source
-    unavailable still reaches review. Leaf providers ignore it.
-    """
-
-    @property
-    def source(self) -> str:
-        """The provenance tag this provider stamps onto the transcripts it produces."""
+    async def candidates(
+        self, query: str, *, limit: int, logger: Logger
+    ) -> Sequence[VideoMatch]:
+        """Return ranked video matches for one query."""
         ...
-
-    async def fetch(
-        self,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> TranscriptFetchResult:
-        """Return a fetched transcript or an expected acquisition failure."""
-        ...
-
-
-class NullTranscriptProvider(TranscriptProvider):
-    """A provider that reports every video as unavailable.
-
-    The default when no captions/OAuth-backed provider is configured: on-demand
-    fetch surfaces a clean "unavailable" rather than crashing, and the background
-    worker never runs (the wiring only starts it for a real provider).
-    """
-
-    @property
-    def source(self) -> str:
-        """The provenance tag for the null provider."""
-        return "null"
-
-    async def fetch(
-        self,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> TranscriptFetchResult:
-        """Always return absence because no transcript source is configured."""
-        _ = (paused_sources, skip_sources)  # nothing blockable to skip
-        return Err(TranscriptUnavailableFailure(video_id=video_id))
-
-
-class FallbackTranscriptProvider(TranscriptProvider):
-    """Compose providers behind one port: try a primary, fall back on *unavailable*.
-
-    The `primary` (the higher-quality captions API) is tried first and is never
-    blockable; on its *unavailable* outcome each `fallbacks` provider (the wider
-    but IP-block-prone library, then the paid Supadata last resort) is tried in
-    order until one yields a transcript. Any *excluded*, *transient*, or *blocked*
-    outcome surfaces immediately — only *unavailable* falls through — so the worker
-    still sees the single best outcome. A video is conclusively *unavailable* only
-    when the primary **and** every fallback report unavailable.
-
-    `paused_sources` is the worker's pause hook: a fallback whose `source` is in
-    the set is skipped (its provider is in cooldown). The remaining reachable
-    fallbacks still run, so while the free library is paused Supadata is still
-    tried, and vice versa. A real block from a reached fallback returns immediately,
-    stamped with that fallback's `source` so the worker pauses the right provider.
-    If every remaining source is unavailable but at least one blockable fallback
-    was skipped, the composite returns a source-less blocked failure (a deferral),
-    so the worker keeps the video pending rather than requesting review based on a
-    source it never tried.
-
-    `skip_sources` (e.g. Supadata gated off a caption-less video) deprioritizes
-    rather than excludes: a gated source is dropped from the normal pass so a
-    clean *unavailable* from the rest of the chain still requests review without
-    spending it (the cost-avoidance intent). But when the *only* reason nothing
-    else succeeded is that a real fallback was paused (not cleanly unavailable),
-    a gated source that is itself reachable (not also paused) is tried as a
-    genuine last resort instead of leaving the video deferring forever.
-    """
-
-    def __init__(
-        self,
-        primary: TranscriptProvider,
-        *,
-        fallbacks: Sequence[TranscriptProvider],
-    ) -> None:
-        self._primary: TranscriptProvider = primary
-        self._fallbacks: tuple[TranscriptProvider, ...] = tuple(fallbacks)
-
-    @property
-    def source(self) -> str:
-        """The composite's own tag is the primary's — sub-providers stamp their own."""
-        return self._primary.source
-
-    def leaf_providers(self) -> tuple[TranscriptProvider, ...]:
-        """The composed providers (primary first) for wiring to walk and late-bind."""
-        return (self._primary, *self._fallbacks)
-
-    async def _attempt(
-        self,
-        provider: TranscriptProvider,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str],
-        skip_sources: frozenset[str],
-    ) -> TranscriptFetchResult:
-        """Fetch once, stamping a source-less blocked failure with its provider."""
-        outcome = await provider.fetch(
-            video_id, paused_sources=paused_sources, skip_sources=skip_sources
-        )
-        match outcome:
-            case Err(TranscriptBlockedFailure(source=None) as failure):
-                return Err(replace(failure, source=provider.source))
-            case _:
-                return outcome
-
-    @staticmethod
-    def _unavailable_failure(
-        outcome: TranscriptFetchResult,
-    ) -> TranscriptUnavailableFailure | None:
-        """Extract the only failure that permits trying another provider."""
-        match outcome:
-            case Err(TranscriptUnavailableFailure() as failure):
-                return failure
-            case _:
-                return None
-
-    async def fetch(
-        self,
-        video_id: str,
-        *,
-        paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> TranscriptFetchResult:
-        """Try the primary, then each reachable fallback, returning the best outcome.
-
-        A source in `skip_sources` is dropped from the normal pass — the primary
-        included — deprioritizing it rather than excluding it outright: it is
-        retried as a last resort (see below) before this ever defers or concludes
-        unavailability. A source in `paused_sources` is skipped and keeps the video
-        pending rather than requesting review.
-        """
-        last_unavailable: TranscriptUnavailableFailure | None = None
-        skipped_paused = False
-        # Gated (skip_sources) providers that are still reachable (not also
-        # paused) — tried only as a last resort, after the normal chain below.
-        gated_last_resort: list[TranscriptProvider] = []
-        # The primary and fallbacks are one ordered chain for skip/pause handling;
-        # only the primary is exempt from the pause skip (it is never blockable).
-        for provider in (self._primary, *self._fallbacks):
-            if provider.source in skip_sources:
-                if provider.source not in paused_sources:
-                    gated_last_resort.append(provider)
-                continue
-            if provider is not self._primary and provider.source in paused_sources:
-                skipped_paused = True
-                continue
-            outcome = await self._attempt(
-                provider,
-                video_id,
-                paused_sources=paused_sources,
-                skip_sources=skip_sources,
-            )
-            unavailable = self._unavailable_failure(outcome)
-            if unavailable is None:
-                return outcome
-            last_unavailable = unavailable
-        # Every non-gated reachable source was unavailable. If a paused fallback
-        # was skipped, a gated-but-reachable source (e.g. Supadata, normally
-        # deprioritized to save its paid use) is the only way left to make
-        # progress, so try it now as a genuine last resort rather than leaving
-        # the video deferring indefinitely behind the paused fallback's cooldown.
-        if skipped_paused:
-            for provider in gated_last_resort:
-                outcome = await self._attempt(
-                    provider,
-                    video_id,
-                    paused_sources=paused_sources,
-                    skip_sources=skip_sources,
-                )
-                unavailable = self._unavailable_failure(outcome)
-                if unavailable is None:
-                    return outcome
-                last_unavailable = unavailable
-            if not gated_last_resort:
-                message = f"provider paused; skipped blockable fallbacks for {video_id}"
-                return Err(TranscriptBlockedFailure(message=message))
-        return Err(last_unavailable or TranscriptUnavailableFailure(video_id=video_id))
 
 
 class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
@@ -568,11 +270,6 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     """Saved-content text searched alongside the transcript."""
     transcript: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
     """The transcript, present only once explicitly fetched."""
-    transcript_segments_json: IngestedVideo.Col[str | None] = Text(
-        default=None, nullable=True
-    )
-    """The transcript's timed segments as JSON, alongside the joined `transcript`;
-    null for a text-only fetch or a video never transcribed."""
     transcript_source: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
     """Which provider produced the stored transcript (e.g. `supadata`,
     `youtube_transcript_api`); null until one is fetched."""
@@ -631,16 +328,11 @@ class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
     __indexes__: ClassVar = [Index(topic)]
 
 
+type TranscriptPersistedStatus = Literal["retrying", "needs_review", "unavailable"]
 type TranscriptStatus = Literal[
     "pending", "retrying", "needs_review", "available", "unavailable"
 ]
-"""The persisted per-video transcript state.
-
-A video with no row is *pending* (eligible to fetch); ``available`` once its
-transcript is stored; ``retrying`` while a transient failure backs off;
-``needs_review`` when providers are exhausted and the Inbox owes a decision; and
-``unavailable`` once the human chooses to give up.
-"""
+"""Public transcript acquisition state derived from content and failure state."""
 
 
 class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetched]"]):
@@ -652,13 +344,12 @@ class YouTubeTranscriptState[S = Pending](Model[S, "YouTubeTranscriptState[Fetch
     """
 
     video_id: YouTubeTranscriptState.Col[str] = Text(primary_key=True)
-    status: YouTubeTranscriptState.Col[TranscriptStatus] = Text(nullable=False)
+    status: YouTubeTranscriptState.Col[TranscriptPersistedStatus] = Text(nullable=False)
     attempts: YouTubeTranscriptState.Col[int] = Integer(default=0)
-    next_attempt_at: YouTubeTranscriptState.Col[str | None] = Text(
+    next_attempt_at: YouTubeTranscriptState.Col[UtcDatetime | None] = Text(
         default=None, nullable=True
     )
-    """When the next retry becomes due, as an ISO-8601 UTC string; null unless
-    `status` is ``retrying``."""
+    """When the next retry becomes due; null unless `status` is `retrying`."""
     last_error: YouTubeTranscriptState.Col[str | None] = Text(
         default=None, nullable=True
     )
@@ -679,21 +370,6 @@ _BACKFILL_COMPLETED_AT_KEY = "likes_backfill_completed_at"
 # drift alarm can fold this known, un-ingestable gap into its formula and fire only
 # on genuine data loss; an id is dropped once the video later becomes fetchable.
 _KNOWN_SKIPPED_IDS_KEY = "likes_known_skipped_ids"
-# Provider-level transcript pause, persisted per blockable source in the sync-state
-# store so it survives restarts: the instant that source may be tried again, and
-# the consecutive-block streak its cooldown escalates with. Each blockable source
-# (the free `youtube_transcript_api` library, the paid Supadata) pauses
-# independently, so its key carries the source suffix.
-_TRANSCRIPT_PAUSED_UNTIL_PREFIX = "transcript_provider_paused_until:"
-_TRANSCRIPT_BLOCK_STREAK_PREFIX = "transcript_provider_block_streak:"
-
-
-def provider_pause_keys(source: str) -> PauseKeys:
-    """The sync-state keys one blockable transcript source's pause persists under."""
-    return PauseKeys(
-        paused_until=f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}{source}",
-        streak=f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}{source}",
-    )
 
 
 async def _read_last_run_at(database: Database) -> datetime | None:
@@ -758,6 +434,9 @@ class TranscriptResult:
     quota: QuotaMeta
 
 
+type TranscriptRequestResult = Result[TranscriptResult, TranscriptRequestFailure]
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptDecision:
     """A provider-exhausted video awaiting the human's transcript decision."""
@@ -810,42 +489,16 @@ class TranscriptProviderPause:
     paused_until: datetime
 
 
-def iter_transcript_provider_leaves(
-    provider: TranscriptProvider,
-) -> Iterator[TranscriptProvider]:
-    """Walk `provider`'s tree and yield every non-composite leaf, primary first.
-
-    The shared walk lets composition wiring find matching leaves without copying
-    the recursion over `FallbackTranscriptProvider.leaf_providers()`.
-    """
-    if isinstance(provider, FallbackTranscriptProvider):
-        for child in provider.leaf_providers():
-            yield from iter_transcript_provider_leaves(child)
-    else:
-        yield provider
-
-
-def find_transcript_provider_leaves(
-    provider: TranscriptProvider, *, source: str
-) -> Iterator[TranscriptProvider]:
-    """Yield every leaf reachable from `provider` whose `.source` is `source`."""
-    return (
-        leaf
-        for leaf in iter_transcript_provider_leaves(provider)
-        if leaf.source == source
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class YouTubeSyncStatus:
     """A snapshot of the background ingestion's progress and health.
 
     The transcript counts partition the active corpus: every active video is
     transcribed, still pending/retrying, awaiting a human decision, or explicitly
-    unavailable; their sum is ``videos_total``. `last_synced_at`
+    unavailable; their sum is `videos_total`. `last_synced_at`
     is when the likes sync last ran, `quota` the day's YouTube Data API budget
-    (only actual Data API usage — captions.list/download and the liked-list/
-    metadata calls — counts against it), and the two pause fields explain a stall
+    (only liked-list and metadata calls count against it), and the two pause fields
+    explain a stall
     (a live Data API block, or a per-source transcript provider block).
     """
 
@@ -890,82 +543,6 @@ class YouTubeSyncConfig:
     drifted and restarted. Deleted, private, and members-only videos are tracked by
     id and folded into the comparison precisely, so this margin only absorbs
     transient races (a like landing mid-pass); a larger shortfall trips the alarm."""
-
-
-type TranscriptOutcome = Literal[
-    "done", "unavailable", "excluded", "transient", "blocked", "quota_exhausted"
-]
-"""How one transcript fetch attempt resolved (the worker tallies these)."""
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptAttempt:
-    """The result of fetching + persisting one video's transcript.
-
-    `video` and `text` are present only on a `done` outcome; the five failure
-    outcomes carry just the classification, which both the worker (continue) and
-    the on-demand path (translate to an error) act on. A `blocked` outcome leaves
-    the per-video state untouched (it is a provider-level signal) and carries any
-    `retry_after` hint plus the `source` whose limit tripped, so the worker pauses
-    that provider's source independently. A `blocked` with `source` `None` is a
-    deferral (the composite skipped an already-paused fallback) — nothing to
-    escalate.
-    """
-
-    outcome: TranscriptOutcome
-    video: IngestedVideo[Fetched] | None = None
-    text: str | None = None
-    retry_after: timedelta | None = None
-    source: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptSyncConfig:
-    """Tunables for the background transcript worker (gentle on quota).
-
-    `recent_window` caps how many of the newest still-untranscribed videos one
-    pass considers; `backoff_base`/`backoff_cap` bound the exponential per-video
-    retry delay a transient failure schedules. `block_pause_base`/`block_pause_cap`
-    bound the **global** provider pause an IP block trips: the cooldown grows
-    exponentially in the consecutive-block streak, clamped to the cap, and is
-    raised to any provider-supplied retry-after hint.
-    """
-
-    recent_window: int = 50
-    backoff_base: timedelta = timedelta(minutes=10)
-    backoff_cap: timedelta = timedelta(hours=6)
-    block_pause_base: timedelta = timedelta(minutes=30)
-    block_pause_cap: timedelta = timedelta(hours=6)
-    transient_storm_threshold: int = 8
-    """How many *consecutive* transient failures halt the pass. A systematic fault
-    (a misshaped request every provider 400s on, a provider outage) otherwise
-    marches through the whole `recent_window`, spending a call — and, for a paid
-    source like Supadata, a billed credit — on every candidate before anything
-    pauses it. Stopping after a short run bounds that waste; the next scheduled pass
-    retries, so a transient fault still recovers on its own. A success, or any
-    non-transient outcome, resets the run (see the worker loop)."""
-    caption_gated_sources: frozenset[str] = _DEFAULT_CAPTION_GATED_SOURCES
-    """Transcript sources to skip for a video the Data API marks as having no manual
-    captions (`caption_available` false). Supadata's `native` mode only fetches an
-    existing caption track, so it would spend a paid use to return nothing; skipping
-    it there preserves the cap. The library still runs (auto-captions can exist even
-    when the manual-caption flag is false), so the skip is not a hard terminal."""
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptSyncReport:
-    """The outcome of one transcript worker pass."""
-
-    fetched: int
-    unavailable: int
-    excluded: int
-    retried: int
-    quota_exhausted: bool
-    blocked: int = 0
-    paused: bool = False
-    transient_storm: bool = False
-    """Set when the pass stopped early on a run of consecutive transient failures
-    (the storm breaker) rather than draining the candidate window."""
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -1558,10 +1135,10 @@ async def _transcript_state(
 class _StateWrite:
     """The mutable fields of one transcript-state transition."""
 
-    status: TranscriptStatus
     attempts: int
-    next_attempt_at: str | None
     last_error: str | None
+    next_attempt_at: datetime | None
+    status: TranscriptPersistedStatus
 
 
 async def _write_transcript_state(
@@ -1593,268 +1170,21 @@ async def _write_transcript_state(
     )
 
 
-def _next_attempt_at(now: datetime, attempts: int, config: TranscriptSyncConfig) -> str:
-    """Return the ISO time of the next retry: `base * 2**(attempts-1)`, capped.
-
-    `attempts` is the post-increment count (>= 1), so the first retry waits one
-    base interval and each subsequent one doubles up to the cap.
-    """
-    exponent = max(0, attempts - 1)
-    delay = min(config.backoff_base * (2**exponent), config.backoff_cap)
-    return (now + delay).isoformat()
-
-
-async def _load_provider_pause(database: Database, source: str) -> PauseState:
-    """Read one source's persisted pause (defaulting to not-paused, streak 0)."""
-    return await load_pause_state(
-        partial(state_get, database), keys=provider_pause_keys(source)
-    )
-
-
-async def load_all_provider_pauses(
-    database: Database,
-) -> dict[str, PauseState]:
-    """Read every blockable source's persisted pause, keyed by source.
-
-    Discovers sources from the persisted keys themselves (rather than a hardcoded
-    list) so any provider that has ever blocked is reconstructed without the worker
-    needing to know the chain's composition.
-    """
-    async with database.transaction() as tx:
-        until_rows = await tx.fetch_all(
-            select(YouTubeSyncState).where(
-                YouTubeSyncState.key.like(f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}%")
-            )
-        )
-        streak_rows = await tx.fetch_all(
-            select(YouTubeSyncState).where(
-                YouTubeSyncState.key.like(f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}%")
-            )
-        )
-    sources = {
-        row.key.removeprefix(_TRANSCRIPT_PAUSED_UNTIL_PREFIX) for row in until_rows
-    } | {row.key.removeprefix(_TRANSCRIPT_BLOCK_STREAK_PREFIX) for row in streak_rows}
-    return {source: await _load_provider_pause(database, source) for source in sources}
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptFetchContext:
-    """The collaborators one transcript fetch+persist needs, bundled.
-
-    Built once by the worker and inline by the on-demand path, so both drive the
-    same provider and persistence with the same retry/backoff config.
-    """
-
-    database: Database
-    provider: TranscriptProvider
-    config: TranscriptSyncConfig
-    event_publisher: EventPublisher
-
-
-async def fetch_and_store_transcript(
-    context: TranscriptFetchContext,
-    *,
-    video_id: str,
-    now: datetime,
-    paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-) -> TranscriptAttempt:
-    """Run one provider fetch for a video and persist the resulting state.
-
-    The single code path shared by the background worker and on-demand fetch maps
-    provider outcomes onto storage. Success stores the transcript and marks the
-    state `available`; unavailable/excluded become `needs_review`; transient
-    schedules a backed-off retry; blocked and quota-exhausted leave per-video state
-    untouched for their callers to handle. Expected provider failures never raise
-    here; each becomes a typed `TranscriptAttempt`.
-
-    `paused_sources` is forwarded to the provider so the worker can run only the
-    reachable sources while some blockable provider is in cooldown.
-    """
-    database = context.database
-    outcome = await context.provider.fetch(
-        video_id, paused_sources=paused_sources, skip_sources=skip_sources
-    )
-    match outcome:
-        case Err(failure):
-            match failure:
-                case TranscriptUnavailableFailure():
-                    await _mark_needs_review(database, video_id, error=str(failure))
-                    await context.event_publisher.publish(
-                        InvalidateEvent(keys=["youtube"])
-                    )
-                    return TranscriptAttempt(outcome="unavailable")
-                case TranscriptExcludedFailure():
-                    await _mark_needs_review(database, video_id, error=str(failure))
-                    await context.event_publisher.publish(
-                        InvalidateEvent(keys=["youtube"])
-                    )
-                    return TranscriptAttempt(outcome="excluded")
-                case TranscriptBlockedFailure():
-                    return TranscriptAttempt(
-                        outcome="blocked",
-                        retry_after=failure.retry_after,
-                        source=failure.source,
-                    )
-                case TranscriptQuotaExceededFailure():
-                    return TranscriptAttempt(outcome="quota_exhausted")
-                case TranscriptTransientFailure():
-                    await _record_retry(
-                        database,
-                        video_id,
-                        now=now,
-                        config=context.config,
-                        error=str(failure),
-                    )
-                    return TranscriptAttempt(outcome="transient")
-        case Ok(fetched):
-            updated = await _store_transcript(database, video_id, fetched)
-            await context.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
-            return TranscriptAttempt(
-                outcome="done",
-                video=updated,
-                text=fetched.text,
-                source=fetched.source,
-            )
-
-
-def _segments_to_json(segments: tuple[TranscriptSegment, ...]) -> str | None:
-    """Encode timed transcript segments as a JSON array, or None when there are none.
-
-    Text-only providers yield no segments, so a null column distinguishes "not
-    timed" from an empty list; the joined `transcript` still carries the text."""
-    if not segments:
-        return None
-    return json.dumps(
-        [
-            {"start_seconds": segment.start_seconds, "text": segment.text}
-            for segment in segments
-        ]
-    )
-
-
-async def _store_transcript(
-    database: Database, video_id: str, fetched: FetchedTranscript
-) -> IngestedVideo[Fetched]:
-    """Persist a fetched transcript, its segments, and its source; mark state done."""
-
-    async def _store(tx: Transaction) -> IngestedVideo[Fetched] | None:
-        existing = await _transcript_state(tx, video_id)
-        attempts = existing.attempts if existing is not None else 0
-        _ = await tx.execute(
-            update(IngestedVideo)
-            .set(IngestedVideo.transcript.to(fetched.text))
-            .set(
-                IngestedVideo.transcript_segments_json.to(
-                    _segments_to_json(fetched.segments)
-                )
-            )
-            .set(IngestedVideo.transcript_source.to(fetched.source))
-            .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-            .where(IngestedVideo.video_id.eq(video_id))
-        )
-        await _write_transcript_state(
-            tx,
-            video_id,
-            _StateWrite(
-                status="available",
-                attempts=attempts,
-                next_attempt_at=None,
-                last_error=None,
-            ),
-        )
-        return await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
-        )
-
-    async with database.transaction(mode="immediate") as tx:
-        updated = await _store(tx)
-    if updated is None:
-        raise YouTubeVideoNotFoundError(video_id)
-    return updated
-
-
-async def _mark_needs_review(database: Database, video_id: str, *, error: str) -> None:
-    """Pause transcript acquisition until the human decides in Inbox."""
-
-    async def _mark(tx: Transaction) -> None:
-        existing = await _transcript_state(tx, video_id)
-        attempts = existing.attempts if existing is not None else 0
-        await _write_transcript_state(
-            tx,
-            video_id,
-            _StateWrite(
-                status="needs_review",
-                attempts=attempts,
-                next_attempt_at=None,
-                last_error=error,
-            ),
-        )
-
-    async with database.transaction(mode="immediate") as tx:
-        await _mark(tx)
-
-
-async def _record_retry(
-    database: Database,
-    video_id: str,
-    *,
-    now: datetime,
-    config: TranscriptSyncConfig,
-    error: str,
-) -> None:
-    """Increment a video's attempt count and schedule a backed-off retry."""
-
-    async def _retry(tx: Transaction) -> None:
-        existing = await _transcript_state(tx, video_id)
-        attempts = (existing.attempts if existing is not None else 0) + 1
-        await _write_transcript_state(
-            tx,
-            video_id,
-            _StateWrite(
-                status="retrying",
-                attempts=attempts,
-                next_attempt_at=_next_attempt_at(now, attempts, config),
-                last_error=error,
-            ),
-        )
-
-    async with database.transaction(mode="immediate") as tx:
-        await _retry(tx)
-
-
+@dataclass
 class YouTubeService:
     """Capability surface for the local YouTube ingested corpus.
 
     Browse and Search read only `IngestedVideo` (instant, no quota). Transcript
-    fetch is the one capability that still calls upstream — through the
-    `TranscriptProvider` port, guarded by the daily budget and short-circuited
-    once a transcript is stored. Each mutation owns its transaction.
+    requests delegate to the shared acquisition service and short-circuit once
+    text is stored. Each mutation owns its transaction.
     """
 
-    def __init__(
-        self,
-        database: Database,
-        client: YouTubeApiClient,
-        tracer: Tracer,
-        *,
-        provider: TranscriptProvider | None = None,
-        event_publisher: EventPublisher | None = None,
-    ) -> None:
-        self.database: Database = database
-        self.client: YouTubeApiClient = client
-        self.tracer: Tracer = tracer
-        self.provider: TranscriptProvider = provider or NullTranscriptProvider()
-        self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
-        # The retry/backoff config the on-demand fetch persists its transient retry
-        # with. Defaults here and is late-bound by the composition root to the same
-        # config the background worker uses, so both schedule retries on one cadence.
-        self.config: TranscriptSyncConfig = TranscriptSyncConfig()
-        # Optional, late-bound search collaborator (wired by the composition root
-        # after construction). When set, semantic transcript search replaces the
-        # lexical fallback; left None (search disabled), `search` keeps the SQLite
-        # LIKE behaviour.
-        self.transcript_search: TranscriptSearchService | None = None
+    database: Database
+    client: YouTubeApiClient
+    tracer: Tracer
+    acquisition: TranscriptAcquisitionPort | None = None
+    event_publisher: EventPublisher = field(default_factory=NullEventPublisher)
+    youtube_search: YouTubeSearchPort | None = None
 
     async def browse(
         self,
@@ -2047,7 +1377,7 @@ class YouTubeService:
     ) -> SearchResult:
         """Search saved content and transcript text (local only).
 
-        When semantic transcript search is wired (`transcript_search`), the query
+        When semantic transcript search is wired (`youtube_search`), the query
         is embedded and matched against the transcript-chunk index, ranking videos
         by relevance and returning the best-matching snippet per video. With
         search disabled it falls back to the lexical SQLite `LIKE` path: each
@@ -2057,7 +1387,7 @@ class YouTubeService:
         if not query.split():
             message = "keyword Search requires a non-empty query"
             raise EmptyYouTubeSearchQueryError(message)
-        if self.transcript_search is not None:
+        if self.youtube_search is not None:
             return await self._semantic_search(query, limit=limit, logger=logger)
         return await self._lexical_search(query, limit=limit, logger=logger)
 
@@ -2065,10 +1395,10 @@ class YouTubeService:
         self, query: str, *, limit: int | None, logger: Logger
     ) -> SearchResult:
         """Embed the query, rank videos by transcript relevance, attach snippets."""
-        assert self.transcript_search is not None
+        assert self.youtube_search is not None
         video_limit = limit if limit is not None else _DEFAULT_SEMANTIC_LIMIT
         _debug(logger, "Searching YouTube transcripts semantically", limit=video_limit)
-        matches = await self.transcript_search.candidates(
+        matches = await self.youtube_search.candidates(
             query, limit=video_limit, logger=logger
         )
         if not matches:
@@ -2141,64 +1471,48 @@ class YouTubeService:
 
     async def fetch_transcript(
         self, video_id: str, *, logger: Logger
-    ) -> TranscriptResult:
-        """Fetch and persist a transcript for an ingested video.
-
-        The video must already be ingested (sync runs first). A stored transcript
-        short-circuits with no provider call; otherwise the fetch runs through the
-        same `TranscriptProvider` port and persistence the background worker uses,
-        so manual and background fetches share one code path. Only the captions
-        provider spends the YouTube Data API daily budget (it charges itself,
-        right before its own live call — see `CaptionsTranscriptProvider`); a
-        depleted day surfaces as `YouTubeQuotaExceededError` from the provider
-        call below (translated to 429 at the boundary) rather than a pre-check
-        here, so a chain without captions (the default) never spends or blocks on
-        it. Provider failure values become the established application exceptions
-        at this on-demand boundary.
-        """
+    ) -> TranscriptRequestResult:
+        """Return a stored transcript or a typed expected request failure."""
         _debug(logger, "Fetching YouTube transcript", video_id=video_id)
         video = await self.get_video(video_id)
         transcript_status = await self.transcript_status(video_id)
+        request_result: TranscriptRequestResult
         if transcript_status == "needs_review":
-            raise TranscriptNeedsReviewError(video_id)
-        if transcript_status == "unavailable":
-            raise TranscriptUnavailableError(video_id)
-        if video.transcript is not None:
-            return TranscriptResult(
-                video=video,
-                transcript=video.transcript,
-                cache=CacheMeta(hit=True, source="cache"),
-                quota=await self.client.snapshot(),
+            request_result = Err(TranscriptNeedsReview(video_id=video_id))
+        elif transcript_status == "unavailable":
+            request_result = Err(TranscriptExplicitlyUnavailable(video_id=video_id))
+        elif video.transcript is not None:
+            request_result = Ok(
+                TranscriptResult(
+                    video=video,
+                    transcript=video.transcript,
+                    cache=CacheMeta(hit=True, source="cache"),
+                    quota=await self.client.snapshot(),
+                )
             )
-        context = TranscriptFetchContext(
-            database=self.database,
-            provider=self.provider,
-            config=self.config,
-            event_publisher=self.event_publisher,
-        )
-        attempt = await fetch_and_store_transcript(
-            context, video_id=video_id, now=self.client.now()
-        )
-        if attempt.outcome in ("unavailable", "excluded"):
-            raise TranscriptNeedsReviewError(video_id)
-        if attempt.outcome == "quota_exhausted":
-            message = f"transcript quota exhausted while fetching {video_id}"
-            raise YouTubeQuotaExceededError(message)
-        if attempt.outcome == "blocked":
-            message = f"transcript provider blocked while fetching {video_id}"
-            raise TranscriptBlockedError(message, retry_after=attempt.retry_after)
-        if attempt.outcome == "transient":
-            message = f"transcript fetch for {video_id} failed transiently"
-            raise TranscriptTransientError(message)
-        # The `done` outcome always carries the stored video and its text.
-        assert attempt.video is not None and attempt.text is not None
-        _info(logger, "YouTube transcript fetched", video_id=video_id)
-        return TranscriptResult(
-            video=attempt.video,
-            transcript=attempt.text,
-            cache=CacheMeta(hit=False, source="live"),
-            quota=await self.client.snapshot(),
-        )
+        elif self.acquisition is None:
+            request_result = Err(TranscriptNeedsReview(video_id=video_id))
+        else:
+            outcome = await self.acquisition.acquire(video_id, now=self.client.now())
+            match outcome:
+                case TranscriptStored(text=text):
+                    _info(logger, "YouTube transcript fetched", video_id=video_id)
+                    request_result = Ok(
+                        TranscriptResult(
+                            video=await self.get_video(video_id),
+                            transcript=text,
+                            cache=CacheMeta(hit=False, source="live"),
+                            quota=await self.client.snapshot(),
+                        )
+                    )
+                case (
+                    TranscriptNeedsReview()
+                    | TranscriptProviderBlocked()
+                    | TranscriptRetryScheduled()
+                    | TranscriptAcquisitionDeferred()
+                ) as failure:
+                    request_result = Err(failure)
+        return request_result
 
     async def ignore(self, video_id: str, *, logger: Logger) -> IngestedVideo[Fetched]:
         """Purge a video from ingestion so browse/search no longer surface it."""
@@ -2336,8 +1650,8 @@ def _youtube_migrations() -> dict[str, str]:
         "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
         ") STRICT"
     )
-    # Transcript provenance: the timed segments and the producing provider, stored
-    # alongside the joined `transcript` on every new fetch.
+    # Historical timed-cue storage remains in the frozen migration chain for
+    # existing databases; current acquisition stores only text and provenance.
     migrations["009_ingested_video_transcript_segments_json"] = (
         'ALTER TABLE "ingested_video" ADD COLUMN "transcript_segments_json" TEXT'
     )
@@ -2358,6 +1672,9 @@ def _youtube_migrations() -> dict[str, str]:
         '"updated_at", '
         "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
         ")"
+    )
+    migrations["012_remove_duplicate_available_transcript_state"] = (
+        'DELETE FROM "you_tube_transcript_state" WHERE "status" = \'available\''
     )
     return migrations
 

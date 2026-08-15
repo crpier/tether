@@ -201,14 +201,12 @@ async def client_live_quota_error_pauses_every_call() -> None:
     with assert_raises(YouTubeQuotaExceededError):
         _ = await client.list_liked_page(page_token=None, page_size=2)
 
-    # The live call happened exactly once; the gate now closed, so the next list
-    # and the (shared) transcript spend both raise before reaching upstream.
+    # The live call happened exactly once; the closed gate rejects later calls
+    # before reaching upstream.
     assert_eq(api.list_calls, 1)
     with assert_raises(YouTubeQuotaExceededError):
         _ = await client.list_liked_page(page_token=None, page_size=2)
     assert_eq(api.list_calls, 1)
-    with assert_raises(YouTubeQuotaExceededError):
-        await client.charge_transcript()
     await db.close()
 
 
@@ -231,6 +229,4 @@ async def client_clears_gate_after_a_recovered_call() -> None:
     page = await client.list_liked_page(page_token=None, page_size=2)
 
     assert_eq(page.next_page_token, None)
-    # The gate is clear: the shared transcript spend now passes too.
-    await client.charge_transcript()
     await db.close()

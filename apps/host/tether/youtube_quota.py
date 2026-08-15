@@ -360,10 +360,6 @@ class YouTubeApiClient:
     # Per-call quota cost. The Data API charges one unit for each of
     # playlistItems.list and videos.list, so both are 1.
     _CALL_COST: ClassVar[int] = 1
-    # A transcript fetch (captions.list + captions.download) is charged as one
-    # budgeted unit here; the worker and on-demand path both spend it before
-    # calling the provider, so an exhausted budget never reaches the provider.
-    _TRANSCRIPT_COST: ClassVar[int] = 1
 
     def __init__(
         self,
@@ -376,8 +372,7 @@ class YouTubeApiClient:
         self._api: YouTubeApi = api
         self._quota: DailyQuota = quota
         self._clock: Clock = clock or SystemClock()
-        # One gate guards every live call, so a quota block tripped by the metadata
-        # sync also pauses transcript spend (and vice versa).
+        # One gate guards every live YouTube Data API call.
         self._gate: YouTubeApiGate = gate or YouTubeApiGate(quota.database)
 
     def now(self) -> datetime:
@@ -418,18 +413,6 @@ class YouTubeApiClient:
         await self._gate.ensure_open(now=now)
         await self._quota.spend(self._CALL_COST, now=now)
         return await self._guarded(self._api.fetch_video_metadata(video_ids), now=now)
-
-    async def charge_transcript(self) -> None:
-        """Spend one guarded transcript unit, or raise if the day is exhausted.
-
-        The transcript text itself comes from the `TranscriptProvider`; this only
-        guards the budget so a depleted day stops before the provider is called.
-        Passes through the shared gate, so a live quota block (tripped by the
-        metadata sync) pauses transcript spend too.
-        """
-        now = self._clock.now()
-        await self._gate.ensure_open(now=now)
-        await self._quota.spend(self._TRANSCRIPT_COST, now=now)
 
     async def _guarded[T](self, call: Awaitable[T], *, now: datetime) -> T:
         """Run a live upstream call, escalating the gate on a quota error.

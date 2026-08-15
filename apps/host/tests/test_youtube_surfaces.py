@@ -13,18 +13,15 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from snekok import Err
-from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
+from snektest import assert_eq, assert_in, assert_not_in, test
 
 from tests.surfaces import call_tool, login, surface_client
-from tether.youtube import (
-    _NO_PAUSED_SOURCES,
-    InMemoryYouTubeApi,
-    RawYouTubeVideo,
+from tether.transcripts.contracts import (
     TranscriptBlockedFailure,
     TranscriptFetchResult,
-    TranscriptProvider,
-    TranscriptQuotaExceededFailure,
+    TranscriptSource,
 )
+from tether.youtube import InMemoryYouTubeApi, RawYouTubeVideo
 
 
 def video(
@@ -50,7 +47,7 @@ def make_client(
     api: InMemoryYouTubeApi,
     *,
     quota_limit: int = 1000,
-    provider: TranscriptProvider | None = None,
+    provider: TranscriptSource | None = None,
 ) -> Any:
     """A dual-surface app whose YouTube service is backed by the in-memory API.
 
@@ -165,20 +162,18 @@ def post_transcript_for_unknown_video_is_404() -> None:
 def post_transcript_when_provider_blocked_is_503() -> None:
     """A provider IP-block surfaces as 503 (retry later), not an unhandled 500."""
 
-    class BlockedProvider(TranscriptProvider):
+    class BlockedProvider:
         @property
         def source(self) -> str:
             return "fake"
 
-        async def fetch(
-            self,
-            video_id: str,
-            *,
-            paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-            skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        ) -> TranscriptFetchResult:
-            _ = (paused_sources, skip_sources)
-            return Err(TranscriptBlockedFailure(message=f"blocked fetching {video_id}"))
+        async def fetch(self, video_id: str) -> TranscriptFetchResult:
+            return Err(
+                TranscriptBlockedFailure(
+                    message=f"blocked fetching {video_id}",
+                    source="fake",
+                )
+            )
 
     api = InMemoryYouTubeApi(liked=[video("v1", title="Talk")])
     with (
@@ -454,47 +449,6 @@ def tool_rows_distinguish_review_needed_from_confirmed_unavailable() -> None:
     assert_eq(unavailable["transcript_status"], "unavailable")
     assert_eq(stopped["error"]["code"], "transcript_unavailable")
     assert_eq(api.transcript_calls, 1)
-
-
-@test()
-def exhausting_quota_on_a_transcript_yields_a_quota_exceeded_envelope() -> None:
-    """A depleted daily budget surfaces as a well-formed quota_exceeded envelope.
-
-    Only a Data-API-backed source (captions) spends the daily budget — see
-    `test_youtube_transcript_sync.py` for that charging behaviour in full. This
-    exercises the surface-level translation with a fake provider returning the
-    same typed failure a depleted captions charge would.
-    """
-
-    class ExhaustedProvider(TranscriptProvider):
-        @property
-        def source(self) -> str:
-            return "fake"
-
-        async def fetch(
-            self,
-            video_id: str,
-            *,
-            paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-            skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-        ) -> TranscriptFetchResult:
-            _ = (paused_sources, skip_sources)
-            return Err(
-                TranscriptQuotaExceededFailure(
-                    message=f"day exhausted fetching {video_id}"
-                )
-            )
-
-    api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
-    with (
-        TemporaryDirectory() as directory,
-        make_client(Path(directory), api, provider=ExhaustedProvider()) as client,
-    ):
-        envelope = call_tool(client, "fetch_youtube_transcript", video_id="v1")
-
-    assert_eq(envelope["success"], False)
-    assert_eq(envelope["error"]["code"], "quota_exceeded")
-    assert_is_none(envelope["result"])
 
 
 @test()

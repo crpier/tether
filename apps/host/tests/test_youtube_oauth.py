@@ -77,12 +77,10 @@ class FakeResource:
         channels: Sequence[dict[str, Any]] = (),
         playlist_items: Sequence[dict[str, Any]] = (),
         videos: Sequence[dict[str, Any]] = (),
-        captions: Sequence[dict[str, Any]] = (),
     ) -> None:
         self.channels_collection = FakeCollection(channels)
         self.playlist_items_collection = FakeCollection(playlist_items)
         self.videos_collection = FakeCollection(videos)
-        self.captions_collection = FakeCollection(captions)
 
     def channels(self) -> FakeCollection:
         return self.channels_collection
@@ -92,12 +90,6 @@ class FakeResource:
 
     def videos(self) -> FakeCollection:
         return self.videos_collection
-
-    # Typed `Any` so the resource satisfies `_YouTubeResource.captions` without
-    # the OAuth adapter tests needing a download-capable captions collection; the
-    # captions provider is exercised in `test_youtube_captions.py`.
-    def captions(self) -> Any:
-        return self.captions_collection
 
 
 class _FakeResp:
@@ -576,7 +568,7 @@ async def load_credentials_rejects_token_missing_a_required_scope() -> None:
     """A token missing a required scope fails loudly up front, before sync."""
     async with TemporaryDirectory() as tmp:
         path = write_token(tmp)
-        creds = FakeCredentials(valid=True, scopes=(REQUIRED_SCOPES[0],))
+        creds = FakeCredentials(valid=True, scopes=())
 
         with assert_raises(YouTubeAuthError):
             _ = load_credentials(

@@ -1,7 +1,7 @@
 """The BucketItemIndex adapter: the Bucket-item-shaped projection of
 `HybridLanceTable`.
 
-A sibling of `SearchIndex` (Memories) and `TranscriptIndex` (transcript chunks)
+A sibling of `SearchIndex` (Memories) and `YouTubeSearchIndex` (transcript chunks)
 over the same generic hybrid retriever in `tether.hybrid_lance_table`, which
 owns the LanceDB mechanics (native FTS + flat-scan cosine fused by RRF,
 merge-insert upserts, the self-healing `optimize`). This module fixes the

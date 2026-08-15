@@ -1,6 +1,6 @@
 """Tests for the transcript search read path.
 
-`TranscriptSearchService` embeds the query, runs hybrid chunk search, and folds
+`YouTubeSearchService` embeds the query, runs hybrid chunk search, and folds
 the chunk hits down to one ranked match per video — keeping each video's
 best-scoring chunk as the snippet. It over-fetches chunks so dedup still yields
 enough distinct videos. Driven by a fake index returning canned chunk
@@ -17,12 +17,12 @@ from snektest import assert_eq, test
 
 from tether.embeddings import FakeEmbedder
 from tether.structured_logging import Logger
-from tether.transcripts.index import ChunkCandidate
-from tether.transcripts.search import TranscriptSearchService
+from tether.youtube_search import YouTubeSearchService
+from tether.youtube_search_index import ChunkCandidate
 
 
 def _logger() -> Logger:
-    return structlog.stdlib.get_logger("test.transcript_search")
+    return structlog.stdlib.get_logger("test.youtube_search")
 
 
 class FakeIndex:
@@ -55,7 +55,7 @@ async def folds_chunks_to_one_ranked_match_per_video() -> None:
             _chunk("vid1", "another android chunk", 0.3),
         ]
     )
-    service = TranscriptSearchService(embedder=FakeEmbedder(), index=index)
+    service = YouTubeSearchService(embedder=FakeEmbedder(), index=index)
 
     matches = await service.candidates("android", limit=10, logger=_logger())
 
@@ -69,7 +69,7 @@ async def caps_results_at_the_video_limit() -> None:
     index = FakeIndex(
         [_chunk(f"vid{n}", f"snippet {n}", 1.0 - n / 100) for n in range(20)]
     )
-    service = TranscriptSearchService(embedder=FakeEmbedder(), index=index)
+    service = YouTubeSearchService(embedder=FakeEmbedder(), index=index)
 
     matches = await service.candidates("query", limit=3, logger=_logger())
 
@@ -79,7 +79,7 @@ async def caps_results_at_the_video_limit() -> None:
 @test()
 async def over_fetches_chunks_to_survive_dedup() -> None:
     index = FakeIndex([_chunk("vid1", "snippet", 0.9)])
-    service = TranscriptSearchService(embedder=FakeEmbedder(), index=index, overfetch=5)
+    service = YouTubeSearchService(embedder=FakeEmbedder(), index=index, overfetch=5)
 
     _ = await service.candidates("query", limit=4, logger=_logger())
 
@@ -89,7 +89,7 @@ async def over_fetches_chunks_to_survive_dedup() -> None:
 @test()
 async def an_empty_query_yields_no_matches() -> None:
     index = FakeIndex([_chunk("vid1", "snippet", 0.9)])
-    service = TranscriptSearchService(embedder=FakeEmbedder(), index=index)
+    service = YouTubeSearchService(embedder=FakeEmbedder(), index=index)
 
     matches = await service.candidates("   ", limit=10, logger=_logger())
 

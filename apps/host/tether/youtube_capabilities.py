@@ -14,10 +14,18 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import UUID7, BaseModel
+from snekok import Err, Ok
 from starlette.requests import Request
 
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
+from tether.transcripts.contracts import (
+    TranscriptAcquisitionDeferred,
+    TranscriptExplicitlyUnavailable,
+    TranscriptNeedsReview,
+    TranscriptProviderBlocked,
+    TranscriptRetryScheduled,
+)
 from tether.youtube import (
     EmptyYouTubeSearchQueryError,
     Fetched,
@@ -25,6 +33,8 @@ from tether.youtube import (
     IngestState,
     TranscriptBlockedError,
     TranscriptNeedsReviewError,
+    TranscriptRequestResult,
+    TranscriptResult,
     TranscriptStatus,
     TranscriptTransientError,
     TranscriptUnavailableError,
@@ -66,6 +76,33 @@ An unknown video is ``not_found``; provider exhaustion is
 a blank Search is invalid input; depleted quota is 429; transient/provider blocks
 are 503.
 """
+
+
+class YouTubeCapabilityInvariantError(Exception):
+    """Raised when a typed capability result violates its closed result union."""
+
+
+def unwrap_transcript_request(outcome: TranscriptRequestResult) -> TranscriptResult:
+    """Translate typed transcript request failures at an application boundary."""
+    match outcome:
+        case Ok(result):
+            return result
+        case Err(TranscriptNeedsReview(video_id=video_id)):
+            raise TranscriptNeedsReviewError(video_id)
+        case Err(TranscriptExplicitlyUnavailable(video_id=video_id)):
+            raise TranscriptUnavailableError(video_id)
+        case Err(TranscriptProviderBlocked(source=source)):
+            message = f"transcript provider {source} is blocked"
+            raise TranscriptBlockedError(message, source=source)
+        case Err(TranscriptRetryScheduled()):
+            message = "transcript acquisition is temporarily unavailable"
+            raise TranscriptTransientError(message)
+        case Err(TranscriptAcquisitionDeferred()):
+            message = "transcript acquisition is temporarily unavailable"
+            raise TranscriptTransientError(message)
+        case _:
+            message = "unhandled transcript request result"
+            raise YouTubeCapabilityInvariantError(message)
 
 
 class YouTubeVideoRead(BaseModel):

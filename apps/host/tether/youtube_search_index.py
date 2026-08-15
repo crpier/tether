@@ -1,15 +1,15 @@
-"""The TranscriptIndex adapter: the chunk-shaped projection of `HybridLanceTable`.
+"""Chunk-shaped YouTube corpus Search projection over `HybridLanceTable`.
 
 A sibling of `SearchIndex` (Memories) over the same generic hybrid retriever in
 `tether.hybrid_lance_table`, which owns the LanceDB mechanics (native FTS +
 flat-scan cosine fused by RRF, merge-insert upserts, the self-healing
-`optimize`). This module fixes the transcript column set — `id` (a chunk uuid),
+`optimize`). This module fixes the YouTube text column set — `id` (a chunk UUID),
 a `video_id` payload column, `content`, and the vector — and translates at the
 boundary: `ChunkDocument` in, `ChunkCandidate` out. A hit returns the parent
 `video_id` plus the chunk text as a snippet, so the search path can dedupe
-chunks to videos and show why each matched without re-fetching the transcript.
+chunks to videos and show why each matched without re-fetching the source row.
 
->>> index = await TranscriptIndex.open(index_dir=Path(".tether/yt-index"), vector_dim=384)
+>>> index = await YouTubeSearchIndex.open(index_dir=Path(".tether/yt-index"), vector_dim=384)
 >>> await index.upsert([ChunkDocument(id=chunk_id, video_id="abc", content=text, vector=vec)])
 >>> hits = await index.search(text="android signing", vector=query_vec, limit=10)
 """
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from tether.structured_logging import Logger
 
 _TABLE = "transcript_chunks"
-"""The single table name inside the transcript index dataset."""
+"""Existing physical table name retained so the disposable projection is reused."""
 
 _VIDEO_COLUMN = "video_id"
 """Payload column carrying each chunk's parent video id."""
@@ -55,7 +55,7 @@ def chunk_id(
 
 @dataclass(frozen=True, slots=True)
 class ChunkDocument:
-    """A transcript chunk to (re)index: id, parent video, text, embedding."""
+    """A YouTube corpus chunk to index: id, parent video, text, embedding."""
 
     id: UUID
     video_id: str
@@ -74,7 +74,7 @@ class ChunkCandidate:
 
 
 def _to_table_document(document: ChunkDocument) -> TableDocument:
-    """Project a transcript chunk onto the generic table row shape."""
+    """Project a YouTube text chunk onto the generic table row shape."""
     return TableDocument(
         id=document.id,
         content=document.content,
@@ -83,7 +83,7 @@ def _to_table_document(document: ChunkDocument) -> TableDocument:
     )
 
 
-class TranscriptIndex:
+class YouTubeSearchIndex:
     """Async hybrid retriever over the embedded LanceDB table of chunks."""
 
     def __init__(self, *, table: HybridLanceTable) -> None:
@@ -95,7 +95,7 @@ class TranscriptIndex:
         return self._table.vector_dim
 
     @classmethod
-    async def open(cls, *, index_dir: Path, vector_dim: int) -> TranscriptIndex:
+    async def open(cls, *, index_dir: Path, vector_dim: int) -> YouTubeSearchIndex:
         """Open the index at `index_dir`, creating the table if it is absent.
 
         Idempotent: an existing dataset is reused as-is. If its vector width
