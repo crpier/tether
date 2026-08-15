@@ -20,6 +20,7 @@ import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from snekok import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,
@@ -38,12 +39,15 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
-from tether.readwise import (
-    ReaderClient,
-    ReaderSyncService,
+from tether.reader import ReaderClient, ReaderSyncService
+from tether.readwise_http import (
+    ReadwiseAuthenticationFailure,
+    ReadwiseHttpFailure,
+    ReadwiseNetworkFailure,
+    ReadwiseProtocolFailure,
     ReadwiseResponse,
-    create_readwise_schema,
 )
+from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger
 
 
@@ -82,13 +86,16 @@ class FakeReaderTransport:
     pages: dict[str, list[ReadwiseResponse]]
     calls: list[ListCall] = field(default_factory=list["ListCall"])
 
+    async def aclose(self) -> None:
+        """Release no resources in the in-memory transport."""
+
     async def fetch_list(
         self,
         *,
         updated_after: object,
         category: str,
         page_cursor: str | None,
-    ) -> ReadwiseResponse:
+    ) -> Result[ReadwiseResponse, ReadwiseNetworkFailure]:
         self.calls.append(
             ListCall(
                 updated_after=updated_after,
@@ -98,8 +105,8 @@ class FakeReaderTransport:
         )
         queue = self.pages.get(category, [])
         if queue:
-            return queue.pop(0)
-        return list_response([])
+            return Ok(queue.pop(0))
+        return Ok(list_response([]))
 
 
 def reader_document(  # noqa: PLR0913 (a builder mirroring the list API's shape)
@@ -220,8 +227,48 @@ async def fetch_documents_polls_each_category() -> None:
         transport=transport, sleep=_noop_sleep
     ).fetch_documents(updated_after=None, logger=test_logger())
 
-    assert_eq([document.document_id for document in documents], ["e1", "p1"])
+    assert isinstance(documents, Ok)
+    assert_eq([document.document_id for document in documents.value], ["e1", "p1"])
     assert_eq([call.category for call in transport.calls], ["epub", "pdf"])
+
+
+@test()
+async def an_unauthorized_reader_page_is_an_authentication_failure() -> None:
+    """A rejected Reader token remains a typed provider failure."""
+    transport = FakeReaderTransport(
+        pages={"epub": [list_response([], status_code=401)]}
+    )
+
+    documents = await ReaderClient(
+        transport=transport, sleep=_noop_sleep
+    ).fetch_documents(updated_after=None, logger=test_logger())
+
+    assert isinstance(documents, Err)
+    assert_eq(
+        documents.error,
+        ReadwiseAuthenticationFailure(operation="list", status_code=401),
+    )
+
+
+@test()
+async def a_malformed_reader_result_is_a_protocol_failure() -> None:
+    """An invalid document entry cannot be silently skipped past the cursor."""
+    transport = FakeReaderTransport(
+        pages={
+            "epub": [
+                ReadwiseResponse(
+                    payload={"results": ["invalid"], "nextPageCursor": None}
+                )
+            ]
+        }
+    )
+
+    documents = await ReaderClient(
+        transport=transport, sleep=_noop_sleep
+    ).fetch_documents(updated_after=None, logger=test_logger())
+
+    assert isinstance(documents, Err)
+    assert_eq(documents.error, ReadwiseProtocolFailure(operation="list"))
 
 
 @test()
@@ -240,7 +287,8 @@ async def fetch_documents_follows_the_next_page_cursor() -> None:
         transport=transport, sleep=_noop_sleep
     ).fetch_documents(updated_after=None, logger=test_logger())
 
-    assert_eq([document.document_id for document in documents], ["e1", "e2"])
+    assert isinstance(documents, Ok)
+    assert_eq([document.document_id for document in documents.value], ["e1", "e2"])
     assert_eq(transport.calls[1].page_cursor, "cursor-2")
 
 
@@ -260,7 +308,25 @@ async def a_rate_limited_page_is_retried_after_backoff() -> None:
         transport=transport, sleep=_noop_sleep
     ).fetch_documents(updated_after=None, logger=test_logger())
 
-    assert_eq([document.document_id for document in documents], ["e1"])
+    assert isinstance(documents, Ok)
+    assert_eq([document.document_id for document in documents.value], ["e1"])
+
+
+@test()
+async def a_failed_reader_sync_returns_the_provider_failure() -> None:
+    """An expected list outage does not escape the ingestion service."""
+    env = await load_fixture(reader_env())
+    transport = FakeReaderTransport(
+        pages={"epub": [list_response([], status_code=503)]}
+    )
+
+    report = await env.sync_service(transport).sync(logger=env.logger)
+
+    assert isinstance(report, Err)
+    assert_eq(
+        report.error,
+        ReadwiseHttpFailure(operation="list", retry_after=None, status_code=503),
+    )
 
 
 @test()

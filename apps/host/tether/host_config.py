@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from tether.gmail import GmailTransport
 from tether.model_selection import AgentModelConfig
 from tether.provider_auth import ProviderAuthBackend
+from tether.readwise_http import ReaderTransport, ReadwiseTransport
 from tether.recall import AnswerGrader, StudyItemGenerator
 from tether.search_tools import SearchProvider
 from tether.stt import SttClient
@@ -79,8 +80,10 @@ class AppConfig:
     readwise_api_key: str = ""
     readwise_sync_enabled: bool = False
     readwise_sync_interval_seconds: float = 60 * 60
+    readwise_transport: ReadwiseTransport | None = None
     readwise_reader_sync_enabled: bool = False
     readwise_reader_sync_interval_seconds: float = 60 * 60
+    reader_transport: ReaderTransport | None = None
     gmail_transport: GmailTransport | None = None
     gmail_sync_enabled: bool = False
     gmail_sync_interval_seconds: float = 15 * 60
