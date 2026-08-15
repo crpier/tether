@@ -488,8 +488,7 @@ async def a_budget_exhausted_call_incurs_no_pacing_delay() -> None:
 
 @test()
 def reset_library_pass_budget_resets_a_nested_provider() -> None:
-    """The reset walker finds a `YouTubeTranscriptApiProvider` nested behind a
-    `FallbackTranscriptProvider` (mirrors `bind_supadata_spend_guard`'s walk)."""
+    """The reset walker finds a library provider nested in a fallback chain."""
     fetcher = _CountingFetcher()
     library = YouTubeTranscriptApiProvider(
         fetcher, budget=LibraryPassBudget(max_requests_per_pass=1)

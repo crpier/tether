@@ -787,50 +787,12 @@ class TranscriptProviderPause:
     paused_until: datetime
 
 
-@dataclass(frozen=True, slots=True)
-class SourceUsage:
-    """A snapshot of one transcript source's own metered-use budget.
-
-    Distinct from `QuotaMeta` (the YouTube Data API's per-*day* budget, shared by
-    every source that calls it): some transcript sources (Supadata) are separate
-    paid APIs with their own cap, reset cadence, and spend, so mixing them into
-    one number would be meaningless. `period` is a free-form label for the
-    reporting window (Supadata's UTC calendar month, e.g. `"2026-07"`); a source
-    with no natural period concept leaves it empty.
-    """
-
-    used: int
-    limit: int
-    remaining: int
-    period: str = ""
-
-
-@runtime_checkable
-class UsageReportingProvider(Protocol):
-    """A transcript-provider leaf that can report its own usage against a cap.
-
-    Opt-in: most providers (the free library, captions charged against the
-    shared YouTube daily quota) have no per-source cap of their own and don't
-    implement this. Only a leaf with its own metered budget (Supadata) does, so
-    `transcript_provider_usage` silently skips every other leaf it walks past.
-    """
-
-    source: str
-
-    async def usage_snapshot(self, *, now: datetime) -> SourceUsage | None:
-        """This source's current usage without charging it, or None if uncapped."""
-        ...
-
-
 def iter_transcript_provider_leaves(
     provider: TranscriptProvider,
 ) -> Iterator[TranscriptProvider]:
     """Walk `provider`'s tree and yield every non-composite leaf, primary first.
 
-    The one generic replacement for a bind helper's own bespoke isinstance
-    tree-walk: composing a new provider, or wiring a new per-source capability
-    (a spend guard, a quota charge, a usage reader), needs only this shared walk
-    plus a `source` (or type) filter on the yielded leaves — not its own copy of
+    The shared walk lets composition wiring find matching leaves without copying
     the recursion over `FallbackTranscriptProvider.leaf_providers()`.
     """
     if isinstance(provider, FallbackTranscriptProvider):
@@ -851,26 +813,6 @@ def find_transcript_provider_leaves(
     )
 
 
-async def transcript_provider_usage(
-    provider: TranscriptProvider, *, now: datetime
-) -> dict[str, SourceUsage]:
-    """The per-source usage map for every metered leaf reachable from `provider`.
-
-    Walks the whole tree (bare leaf or composite alike) and collects a snapshot
-    from each leaf that implements `UsageReportingProvider`, keyed by its
-    `source`. A leaf with no cap (or that doesn't report usage at all) is
-    silently absent from the result — the map is empty when nothing in the
-    chain is metered, so a bare status read costs no extra query in that case.
-    """
-    usage: dict[str, SourceUsage] = {}
-    for leaf in iter_transcript_provider_leaves(provider):
-        if isinstance(leaf, UsageReportingProvider):
-            snapshot = await leaf.usage_snapshot(now=now)
-            if snapshot is not None:
-                usage[leaf.source] = snapshot
-    return usage
-
-
 @dataclass(frozen=True, slots=True)
 class YouTubeSyncStatus:
     """A snapshot of the background ingestion's progress and health.
@@ -880,11 +822,8 @@ class YouTubeSyncStatus:
     unavailable; their sum is ``videos_total``. `last_synced_at`
     is when the likes sync last ran, `quota` the day's YouTube Data API budget
     (only actual Data API usage — captions.list/download and the liked-list/
-    metadata calls — counts against it), `usage` a per-source map of any
-    transcript source's own separate metered budget (e.g. Supadata's monthly
-    cap; empty when no configured source is metered), and the two pause fields
-    explain a stall (a live Data API block, or a per-source transcript provider
-    block).
+    metadata calls — counts against it), and the two pause fields explain a stall
+    (a live Data API block, or a per-source transcript provider block).
     """
 
     videos_total: int
@@ -896,7 +835,6 @@ class YouTubeSyncStatus:
     quota: QuotaMeta
     api_paused_until: datetime | None
     transcript_providers_paused: list[TranscriptProviderPause]
-    usage: Mapping[str, SourceUsage] = field(default_factory=dict[str, SourceUsage])
 
 
 @dataclass(frozen=True, slots=True)
@@ -2047,7 +1985,6 @@ class YouTubeService:
             for source, pause in sorted(pauses.items())
             if pause.is_paused(now) and pause.paused_until is not None
         ]
-        usage = await transcript_provider_usage(self.provider, now=now)
         status = YouTubeSyncStatus(
             videos_total=total,
             transcripts_done=done_count,
@@ -2058,7 +1995,6 @@ class YouTubeService:
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
             transcript_providers_paused=providers_paused,
-            usage=usage,
         )
         _debug(
             logger,

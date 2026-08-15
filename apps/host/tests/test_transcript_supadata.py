@@ -15,18 +15,16 @@ key/`Retry-After` handling. The flag/key gating is asserted against the
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import httpx2
 from pydantic import TypeAdapter
 from snekok import Err, NonEmptySecretStr, Ok, Result
 from snekok.types import NonBlankStr, NonNegativeInt
-from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_is_none, assert_isinstance, test
 
 from tether.transcripts.supadata import (
     HttpSupadataTransport,
-    SupadataBudgetExhaustedError,
     SupadataConfig,
     SupadataCue,
     SupadataHttpFailure,
@@ -37,7 +35,6 @@ from tether.transcripts.supadata import (
     SupadataNetworkFailure,
     SupadataPollResponse,
     SupadataProtocolFailure,
-    SupadataSpendGuard,
     SupadataSubmitResponse,
     SupadataTranscript,
     SupadataTranscriptProvider,
@@ -45,17 +42,11 @@ from tether.transcripts.supadata import (
     SupadataTransportFailure,
     _retry_after_seconds,
     _submit_params,
-    bind_supadata_spend_guard,
 )
 from tether.youtube import (
-    FallbackTranscriptProvider,
-    NullTranscriptProvider,
-    SourceUsage,
     TranscriptBlockedError,
     TranscriptTransientError,
     TranscriptUnavailableError,
-    create_youtube_schema,
-    transcript_provider_usage,
 )
 
 type _ScriptedSubmit = SupadataSubmitResponse | SupadataTransportFailure
@@ -155,9 +146,7 @@ def _provider(
     config = SupadataConfig(
         poll_interval=timedelta(seconds=0), max_poll_attempts=max_poll_attempts
     )
-    return SupadataTranscriptProvider(
-        transport, config=config, sleep=_no_sleep, spend_guard=_CountingGuard()
-    )
+    return SupadataTranscriptProvider(transport, config=config, sleep=_no_sleep)
 
 
 class _FakeClock:
@@ -192,7 +181,6 @@ def _paced_provider(
         config=config,
         sleep=clock.sleep,
         monotonic=clock.monotonic,
-        spend_guard=_CountingGuard(),
     )
 
 
@@ -698,31 +686,6 @@ def retry_after_parses_delta_seconds_only() -> None:
     assert_is_none(_retry_after_seconds({"Retry-After": "soon"}))
 
 
-class _CountingGuard(SupadataSpendGuard):
-    """A guard that counts charges and can be scripted to exhaust after N uses."""
-
-    def __init__(self, *, cap: int | None = None) -> None:
-        self._cap: int | None = cap
-        self.charges: int = 0
-
-    async def charge(self) -> Result[None, SupadataBudgetExhaustedError]:
-        if self._cap is not None and self.charges >= self._cap:
-            return Err(SupadataBudgetExhaustedError(self.charges, self._cap))
-        self.charges += 1
-        return Ok(None)
-
-    async def snapshot(self, *, now: datetime) -> SourceUsage | None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        _ = now
-        if self._cap is None:
-            return None
-        return SourceUsage(
-            used=self.charges,
-            limit=self._cap,
-            remaining=max(0, self._cap - self.charges),
-            period="2026-07",
-        )
-
-
 @test()
 def native_is_the_default_mode() -> None:
     """The config defaults to `native` — one use per call, never AI `generate`."""
@@ -754,191 +717,6 @@ def no_language_leaves_the_lang_param_off() -> None:
         _submit_params("v1", "native", ()),
         {"url": "https://www.youtube.com/watch?v=v1", "mode": "native"},
     )
-
-
-@test()
-async def an_exhausted_use_cap_is_blocked_without_billing_a_call() -> None:
-    """At the cap, fetch returns blocked and never calls the transport."""
-    transport = FakeSupadataTransport(submit=[SupadataTranscript(content="hi")])
-    provider = _provider(transport)
-    provider.spend_guard = _CountingGuard(cap=0)
-
-    failure = await provider.fetch("v1")
-
-    assert isinstance(failure, Err)
-    error = assert_isinstance(failure.error, TranscriptBlockedError)
-    assert_eq(error.source, "supadata")
-    assert_eq(transport.submit_calls, 0)
-
-
-@test()
-async def a_use_is_reserved_before_the_billed_call() -> None:
-    """A healthy fetch charges the guard once before reaching the transport."""
-    transport = FakeSupadataTransport(submit=[SupadataTranscript(content="hi")])
-    provider = _provider(transport)
-    guard = _CountingGuard()
-    provider.spend_guard = guard
-
-    result = (await provider.fetch("v1")).unwrap()
-    assert_eq(result.source, "supadata")
-    assert_eq(guard.charges, 1)
-    assert_eq(transport.submit_calls, 1)
-
-
-@test()
-async def the_persisted_cap_allows_exactly_max_uses_charges() -> None:
-    """The DB-backed guard permits `max_uses` charges, then returns an error."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    guard = SupadataSpendGuard(db, max_uses=2)
-
-    assert_eq(await guard.charge(), Ok(None))
-    assert_eq(await guard.charge(), Ok(None))
-    failure = await guard.charge()
-
-    assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, SupadataBudgetExhaustedError)
-    await db.close()
-
-
-@test()
-async def the_persisted_cap_survives_a_restart() -> None:
-    """A fresh guard reads the persisted count, so the cap holds across a restart."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    assert_eq(await SupadataSpendGuard(db, max_uses=1).charge(), Ok(None))
-
-    reborn = SupadataSpendGuard(db, max_uses=1)
-    failure = await reborn.charge()
-
-    assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, SupadataBudgetExhaustedError)
-    await db.close()
-
-
-class FakeClock:
-    """A controllable clock so monthly-cap tests can cross a month boundary."""
-
-    def __init__(self, now: datetime) -> None:
-        self._now = now
-
-    def now(self) -> datetime:
-        return self._now
-
-    def advance(self, delta: timedelta) -> None:
-        self._now += delta
-
-
-@test()
-async def the_monthly_cap_resets_at_the_next_utc_month() -> None:
-    """An exhausted month's cap starts fresh once the clock rolls into a new month."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    clock = FakeClock(datetime(2026, 7, 20, 12, 0, tzinfo=UTC))
-    guard = SupadataSpendGuard(db, max_uses=1, clock=clock)
-    assert_eq(await guard.charge(), Ok(None))
-
-    clock.advance(timedelta(days=20))  # into August
-    assert_eq(await guard.charge(), Ok(None))
-    await db.close()
-
-
-@test()
-async def an_exhausted_cap_reports_the_wait_until_the_month_boundary() -> None:
-    """The exhausted-cap error carries the time until the monthly budget resets."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    clock = FakeClock(datetime(2026, 7, 31, 23, 0, tzinfo=UTC))
-    guard = SupadataSpendGuard(db, max_uses=1, clock=clock)
-    assert_eq(await guard.charge(), Ok(None))
-
-    failure = await guard.charge()
-
-    assert isinstance(failure, Err)
-    error = assert_isinstance(failure.error, SupadataBudgetExhaustedError)
-    # One hour remains until 2026-08-01T00:00Z, when the cap resets.
-    assert_eq(error.retry_after, timedelta(hours=1))
-    await db.close()
-
-
-@test()
-async def binding_the_cap_reaches_supadata_inside_a_fallback_chain() -> None:
-    """`bind_supadata_spend_guard` walks a composite to bind the Supadata leaf."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    supadata = _provider(FakeSupadataTransport(submit=[SupadataTranscript(content="")]))
-    chain = FallbackTranscriptProvider(supadata, fallbacks=[NullTranscriptProvider()])
-
-    bind_supadata_spend_guard(chain, db, max_uses=5)
-    await db.close()
-
-
-# --- Monthly usage snapshot (separate from the YouTube daily quota) ---------
-
-
-@test()
-async def guard_snapshot_reports_used_limit_and_month_without_charging() -> None:
-    """`snapshot` reads the month's usage but never reserves a use."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    clock = FakeClock(datetime(2026, 7, 20, 12, 0, tzinfo=UTC))
-    guard = SupadataSpendGuard(db, max_uses=3000, clock=clock)
-    await guard.charge()
-    await guard.charge()
-
-    usage = await guard.snapshot(now=clock.now())
-
-    assert_eq(usage.used, 2)
-    assert_eq(usage.limit, 3000)
-    assert_eq(usage.remaining, 2998)
-    assert_eq(usage.period, "2026-07")
-    # A snapshot never spends: a further charge still counts from 2, not 3.
-    await guard.charge()
-    assert_eq((await guard.snapshot(now=clock.now())).used, 3)
-    await db.close()
-
-
-@test()
-async def guard_snapshot_reports_zero_used_with_no_prior_charge() -> None:
-    """A month with no charges yet snapshots as fully unused, not an error."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    guard = SupadataSpendGuard(db, max_uses=10)
-
-    usage = await guard.snapshot(now=datetime(2026, 7, 1, tzinfo=UTC))
-
-    assert_eq(usage.used, 0)
-    assert_eq(usage.remaining, 10)
-    await db.close()
-
-
-@test()
-async def usage_finds_the_bound_supadata_leaf_inside_a_chain() -> None:
-    """`transcript_provider_usage` finds Supadata inside a fallback chain, keyed
-    by its `"supadata"` source — the generic replacement for
-    `ProviderSupadataUsageReader`."""
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
-    supadata = _provider(FakeSupadataTransport(submit=[SupadataTranscript(content="")]))
-    chain = FallbackTranscriptProvider(supadata, fallbacks=[NullTranscriptProvider()])
-    bind_supadata_spend_guard(chain, db, max_uses=100)
-
-    usage = await transcript_provider_usage(chain, now=datetime(2026, 7, 1, tzinfo=UTC))
-
-    assert "supadata" in usage
-    assert_eq(usage["supadata"].used, 0)
-    assert_eq(usage["supadata"].limit, 100)
-    await db.close()
-
-
-@test()
-async def usage_is_empty_with_no_supadata_in_the_chain() -> None:
-    """A chain with no Supadata leaf (e.g. captions/library only) reports no usage."""
-    usage = await transcript_provider_usage(
-        NullTranscriptProvider(), now=datetime(2026, 7, 1, tzinfo=UTC)
-    )
-
-    assert_eq(usage, {})
 
 
 # --- Request pacing: stay under the plan's per-request rate limit ------------
@@ -990,19 +768,3 @@ async def pacing_is_off_when_the_interval_is_zero() -> None:
     _ = await provider.fetch("v2")
 
     assert_eq(clock.sleeps, [])
-
-
-@test()
-async def an_exhausted_budget_incurs_no_pacing_delay() -> None:
-    """Pacing wraps only the billed submit: a call blocked at the cap never waits."""
-    clock = _FakeClock()
-    transport = FakeSupadataTransport(submit=[SupadataTranscript(content="body")])
-    provider = _paced_provider(transport, clock, interval_seconds=2)
-    provider.spend_guard = _CountingGuard(cap=0)
-
-    failure = await provider.fetch("v1")
-
-    assert isinstance(failure, Err)
-    _ = assert_isinstance(failure.error, TranscriptBlockedError)
-    assert_eq(clock.sleeps, [])
-    assert_eq(transport.submit_calls, 0)

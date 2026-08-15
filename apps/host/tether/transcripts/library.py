@@ -398,8 +398,8 @@ def reset_library_pass_budget(provider: TranscriptProvider) -> None:
     (`TranscriptSyncService.sync`) so the hard per-pass cap and the "blocked this
     pass" latch start fresh every pass, regardless of whether the library is
     composed as a fallback, the chain's primary, or run standalone. A no-op when
-    the chain has no library provider (e.g. Supadata-only, or the in-memory test
-    fake) — mirrors `bind_supadata_spend_guard`'s walk of the same provider tree.
+    the chain has no library provider, such as a Supadata-only chain or the
+    in-memory test fake.
     """
     for leaf in _iter_library_providers(provider):
         leaf.begin_pass()

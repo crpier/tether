@@ -247,7 +247,6 @@ class AppConfig:
     youtube_api_gate_pause_base_seconds: float = 15 * 60
     youtube_api_gate_pause_cap_seconds: float = 6 * 60 * 60
     transcript_provider: TranscriptProvider | None = None
-    transcript_supadata_max_uses: int = 3_000
     transcript_sync_enabled: bool = True
     transcript_sync_interval_seconds: float = 5 * 60
     transcript_sync_recent_window: int = 50
@@ -388,9 +387,8 @@ class HostSettings(BaseSettings):
     must never be allowed to fire dozens at it. Once the cap is spent the provider
     self-throttles for the rest of that pass (remaining candidates stay pending,
     picked up next pass) rather than making further real calls; a fresh pass gets
-    a fresh budget. Applies to `youtube_transcript_api` only — Supadata's own
-    budget (`supadata_max_uses`) and pacing (`supadata_min_request_interval_seconds`)
-    are unaffected."""
+    a fresh budget. Applies to `youtube_transcript_api` only; Supadata's request
+    pacing is unaffected."""
     transcript_library_min_request_interval_seconds: float = 5.0
     """Minimum spacing between consecutive real `youtube-transcript-api` calls.
     Mirrors `supadata_min_request_interval_seconds`: back-to-back requests read as
@@ -450,10 +448,6 @@ class HostSettings(BaseSettings):
     """Supadata transcript mode. `native` (the default) fetches an existing caption
     track only — one use per call — so a caption-less video costs one lookup and
     returns unavailable instead of the multi-use AI `generate` path."""
-    supadata_max_uses: int = 3_000
-    """Hard cap on total Supadata uses, persisted across restarts. The background
-    sweep stops calling Supadata once this many are spent (remaining videos stay
-    pending), bounding spend to a limited plan. Raise it after topping up."""
     search_enabled: bool = True
     """Whether the agent may call Tavily when an API key is configured."""
     search_api_key: str = ""
@@ -626,9 +620,7 @@ async def _wire_youtube(
     provider = resolve_transcript_provider(
         configured_provider=config.transcript_provider,
         api=api,
-        database=database,
         client=client,
-        supadata_max_uses=config.transcript_supadata_max_uses,
     )
     transcript_config = _build_transcript_sync_config(config)
     youtube_service = YouTubeService(
@@ -640,9 +632,7 @@ async def _wire_youtube(
     )
     # Late-bind the on-demand retry config to the same one the worker uses, and
     # the optional semantic-search collaborator (None when search is disabled,
-    # leaving the lexical LIKE fallback in place). Per-source usage (e.g.
-    # Supadata's monthly spend) is read straight off `provider` by the status
-    # surface — no separate late-bound reader needed.
+    # leaving the lexical LIKE fallback in place).
     youtube_service.config = transcript_config
     youtube_service.transcript_search = transcript_search
     app.state.youtube_service = youtube_service
@@ -2029,7 +2019,6 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         youtube_likes_drift_alarm_margin=settings.youtube_likes_drift_alarm_margin,
         youtube_sync_enabled=settings.youtube_sync_enabled,
         transcript_provider=build_configured_transcript_provider(settings),
-        transcript_supadata_max_uses=settings.supadata_max_uses,
         transcript_sync_enabled=settings.transcript_sync_enabled,
         # The escalating per-source pause bounds (issue #179): previously left at
         # AppConfig's own hardcoded defaults with no env-var override at all, so

@@ -770,7 +770,7 @@ async def a_caption_less_video_tries_supadata_as_last_resort_while_library_is_pa
 ):
     """A caption-less video whose library is paused this pass still gets Supadata as
     a last resort, instead of staying stuck pending behind the library's cooldown
-    forever despite Supadata being healthy and under its cap (issue #182)."""
+    forever despite Supadata being healthy."""
     # v_block trips the library pause (processed first, newest-liked-first); v1 is
     # then processed in the *same* pass with the library already paused, so it
     # exercises the gated-last-resort path rather than needing a second pass.

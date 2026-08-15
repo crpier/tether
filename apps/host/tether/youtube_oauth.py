@@ -810,8 +810,8 @@ def bind_captions_daily_quota(
 ) -> None:
     """Late-bind the YouTube Data API daily-quota charge onto every captions leaf.
 
-    Mirrors `bind_supadata_spend_guard`: the provider tree is built from settings
-    before the budgeted `YouTubeApiClient` exists, so the charge callback (its
+    The provider tree is built from settings before the budgeted
+    `YouTubeApiClient` exists, so the charge callback (its
     `charge_transcript`) is attached here at wire time, using the generic
     `find_transcript_provider_leaves` walk (by the `"youtube_captions"` source
     tag) rather than a bespoke isinstance tree-walk. A no-op when the chain has

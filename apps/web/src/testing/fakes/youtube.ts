@@ -10,7 +10,6 @@ export class FakeYouTubeHost implements YouTubeHost {
     api_paused_until: null,
     last_synced_at: null,
     quota: { limit: 10000, remaining: 10000, used: 0 },
-    usage: {},
     transcript_providers_paused: [],
     transcripts_done: 0,
     transcripts_needs_review: 0,
