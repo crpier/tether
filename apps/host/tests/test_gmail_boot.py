@@ -22,9 +22,10 @@ from snektest import assert_true, test
 from starlette.applications import Starlette
 
 from tether.gmail import GmailResponse, create_gmail_schema
+from tether.host_composition import _wire_gmail
+from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.memories import KnowledgeBaseService, MemoryService, create_memory_schema
-from tether.server import AppConfig, _wire_gmail
 from tether.todos import TodoService, create_todo_schema
 from tether.triggers import TriggerService, create_trigger_schema
 

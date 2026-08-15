@@ -19,8 +19,9 @@ from snektest import assert_false, assert_true, fixture, load_fixture, test
 from starlette.applications import Starlette
 
 from tether.events import EventHub
+from tether.host_composition import _wire_youtube
+from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
-from tether.server import AppConfig, _wire_youtube
 from tether.youtube import (
     InMemoryYouTubeApi,
     LikedPage,
