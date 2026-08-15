@@ -18,15 +18,17 @@ from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.structured_logging import Logger
-from tether.youtube import (
+from tether.youtube import YouTubeService
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import (
     DailyQuota,
-    IngestedVideo,
-    InMemoryYouTubeApi,
     YouTubeApiClient,
-    YouTubeService,
-    create_youtube_schema,
 )
 from tether.youtube_search import VideoMatch
+from tether.youtube_store import (
+    IngestedVideo,
+    create_youtube_schema,
+)
 
 
 def _logger() -> Logger:

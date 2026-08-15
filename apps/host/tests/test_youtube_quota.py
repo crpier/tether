@@ -11,16 +11,17 @@ from datetime import UTC, datetime, timedelta
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_raises, test
 
-from tether.youtube import RawYouTubeVideo, create_youtube_schema
 from tether.youtube_quota import (
     DailyQuota,
     LikedPage,
+    RawYouTubeVideo,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeApiGate,
     YouTubeApiGateConfig,
     YouTubeQuotaExceededError,
 )
+from tether.youtube_store import create_youtube_schema
 
 
 class FakeClock:

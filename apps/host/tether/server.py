@@ -37,7 +37,7 @@ from tether.gmail_oauth import (
     HttpGmailTransport,
 )
 from tether.health_connect_tools import internal_health_connect_tool_routes
-from tether.host_composition import HOST_QUIET_LOGGERS, app_lifespan
+from tether.host_composition import HOST_QUIET_LOGGERS, HostBootstrap, app_lifespan
 from tether.host_config import AppConfig, HostSettings
 from tether.kosync_routes import kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
@@ -77,10 +77,8 @@ from tether.transcripts.source_composition import (
 from tether.transcripts.worker import TranscriptSyncConfig
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
-from tether.youtube import (
-    YouTubeApi,
-)
 from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
+from tether.youtube_quota import YouTubeApi
 from tether.youtube_tools import internal_youtube_tool_routes
 
 
@@ -89,8 +87,7 @@ def _resolve_stt_client(config: AppConfig) -> SttClient:
 
     An injected `stt_client` (tests, a custom wiring) wins outright. Otherwise a
     live client is built from `stt_api_key`/`stt_base_url`/`stt_model`. STT is a
-    required host dependency (ADR 0018) — `app.state.stt_client` is always set,
-    never `None`.
+    required host dependency and is never `None`.
     """
     if config.stt_client is not None:
         return config.stt_client
@@ -157,10 +154,19 @@ def create_app(
     """
     configured_telemetry = telemetry_settings or TelemetrySettings()
     spa_mount = _spa_mount(config.web_dist) if config.web_dist is not None else None
+    bootstrap = HostBootstrap(
+        session_registry=SessionRegistry(),
+        stt_client=_resolve_stt_client(config),
+        tool_secret=tool_secret
+        if tool_secret is not None
+        else secrets.token_urlsafe(32),
+        trace_recorder=AgentTraceRecorder(),
+    )
     app = FastAPI(
         title="Tether",
         version="0.1.0",
         lifespan=app_lifespan(
+            bootstrap=bootstrap,
             config=config,
             telemetry_settings=configured_telemetry,
             embedder=embedder,
@@ -196,16 +202,6 @@ def create_app(
             *([spa_mount] if spa_mount is not None else []),
         ]
     )
-    app.state.app_password = config.app_password
-    app.state.secure_cookies = config.secure_cookies
-    app.state.vapid_public_key = config.vapid_public_key
-    app.state.session_registry = SessionRegistry()
-    app.state.trace_recorder = AgentTraceRecorder()
-    app.state.session_secret = config.session_secret
-    app.state.tool_secret = (
-        tool_secret if tool_secret is not None else secrets.token_urlsafe(32)
-    )
-    app.state.stt_client = _resolve_stt_client(config)
     app.add_middleware(ContextLoggerMiddleware)
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(

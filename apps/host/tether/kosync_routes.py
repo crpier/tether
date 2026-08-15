@@ -24,7 +24,7 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import cast
+from typing import Protocol, cast
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -57,6 +57,18 @@ class KosyncAuth:
     userkey: str
 
 
+class _KosyncRuntime(Protocol):
+    """Kosync dependencies available while the host serves requests."""
+
+    kosync_auth: KosyncAuth
+    kosync_service: KosyncService
+
+
+def _runtime(request: Request) -> _KosyncRuntime:
+    """Read kosync dependencies from the canonical host runtime."""
+    return cast("_KosyncRuntime", request.app.state.runtime)
+
+
 def _kosync_error(code: int, message: str, status_code: int) -> JSONResponse:
     """Render a kosync error body: `{code, message}` at the matching status."""
     return JSONResponse({"code": code, "message": message}, status_code=status_code)
@@ -68,7 +80,7 @@ def _authorized(request: Request) -> bool:
     Both header comparisons are constant-time; a device is authorised only when
     both the username and the pre-hashed key match the pre-provisioned user.
     """
-    auth = cast("KosyncAuth", request.app.state.kosync_auth)
+    auth = _runtime(request).kosync_auth
     offered_user = request.headers.get("x-auth-user", "")
     offered_key = request.headers.get("x-auth-key", "")
     return hmac.compare_digest(offered_user, auth.username) and hmac.compare_digest(
@@ -78,7 +90,7 @@ def _authorized(request: Request) -> bool:
 
 def _service(request: Request) -> KosyncService:
     """The `KosyncService` wired onto app state for the whole process."""
-    return cast("KosyncService", request.app.state.kosync_service)
+    return _runtime(request).kosync_service
 
 
 async def create_user(_request: Request) -> Response:

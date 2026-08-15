@@ -23,6 +23,7 @@ from tether.bucket_items import (
     BucketItem,
     BucketItemConflictError,
     BucketItemNotFoundError,
+    BucketItemService,
     BucketItemState,
     DedupSeverity,
     EmptyBucketSearchQueryError,
@@ -37,6 +38,12 @@ from tether.bucket_items import (
 )
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
+
+
+def _service(request: Request) -> BucketItemService:
+    """Read the Bucket service from the canonical host runtime."""
+    return cast("BucketItemService", request.app.state.runtime.bucket_item_service)
+
 
 BUCKET_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule(
@@ -187,7 +194,7 @@ async def add(
     intent_context: str | None,
 ) -> CapabilityOutcome:
     """Add a Bucket item; the outcome carries its dedup advisory."""
-    outcome = await request.app.state.bucket_item_service.add(
+    outcome = await _service(request).add(
         item_type,
         data,
         intent_context,
@@ -263,7 +270,7 @@ async def add_purchase(
 
 async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:
     """List Bucket items in a lifecycle state (active list / retained history)."""
-    items = await request.app.state.bucket_item_service.browse_by_state(
+    items = await _service(request).browse_by_state(
         state,
         logger=get_request_logger(request),
     )
@@ -272,7 +279,7 @@ async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:
 
 async def search(request: Request, q: str, limit: int = 50) -> CapabilityOutcome:
     """Keyword Search over active Bucket items."""
-    items = await request.app.state.bucket_item_service.search(
+    items = await _service(request).search(
         q,
         limit=limit,
         logger=get_request_logger(request),
@@ -284,7 +291,7 @@ async def complete(
     request: Request, bucket_item_id: UUID, version: PositiveInt
 ) -> CapabilityOutcome:
     """Complete a Bucket item, moving it to terminal history."""
-    item = await request.app.state.bucket_item_service.complete(
+    item = await _service(request).complete(
         _bucket_item_reference(bucket_item_id, version),
         logger=get_request_logger(request),
     )
@@ -295,7 +302,7 @@ async def delete(
     request: Request, bucket_item_id: UUID, version: PositiveInt
 ) -> CapabilityOutcome:
     """Delete a Bucket item, moving it to terminal history."""
-    item = await request.app.state.bucket_item_service.delete(
+    item = await _service(request).delete(
         _bucket_item_reference(bucket_item_id, version),
         logger=get_request_logger(request),
     )
@@ -309,7 +316,7 @@ async def set_purchase_decision(
     decision: PurchaseDecision,
 ) -> CapabilityOutcome:
     """Record a buy, wait, or need-more-info decision on a purchase."""
-    item = await request.app.state.bucket_item_service.set_purchase_decision(
+    item = await _service(request).set_purchase_decision(
         _bucket_item_reference(bucket_item_id, version),
         decision,
         logger=get_request_logger(request),
@@ -328,7 +335,7 @@ async def set_bucket_item_intent(
     The one way to record a reason after Add — e.g. the item was Added without
     one and the human supplies it moments later.
     """
-    item = await request.app.state.bucket_item_service.set_intent(
+    item = await _service(request).set_intent(
         _bucket_item_reference(bucket_item_id, version),
         intent_context,
         logger=get_request_logger(request),

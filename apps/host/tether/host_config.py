@@ -22,7 +22,7 @@ from tether.telemetry import TelemetryExporter, TelemetrySettings
 from tether.transcripts.acquisition import TranscriptAcquisitionConfig
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.worker import TranscriptSyncConfig
-from tether.youtube import YouTubeApi
+from tether.youtube_quota import YouTubeApi
 
 
 @dataclass(frozen=True, slots=True)

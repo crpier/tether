@@ -19,7 +19,8 @@ from starlette.testclient import TestClient
 
 from tests.surfaces import SESSION, call_tool, login, surface_client
 from tether.recall import EssayGradeProposal, GeneratedPrompt, GeneratedStudyItem
-from tether.youtube import InMemoryYouTubeApi, RawYouTubeVideo
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import RawYouTubeVideo
 
 
 class FakeGenerator:

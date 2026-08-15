@@ -31,7 +31,11 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
-from tether.youtube import LikedPage, RawYouTubeVideo, YouTubeQuotaExceededError
+from tether.youtube_quota import (
+    LikedPage,
+    RawYouTubeVideo,
+    YouTubeQuotaExceededError,
+)
 
 YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 """Read access to the user's account, including the liked-videos playlist."""

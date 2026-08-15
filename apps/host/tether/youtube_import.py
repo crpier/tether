@@ -48,11 +48,8 @@ from snekql.sqlite import (
 )
 
 from tether.structured_logging import Logger
-from tether.youtube import (
-    IngestedVideo,
-    RawYouTubeVideo,
-    upsert_ingested_video,
-)
+from tether.youtube_quota import RawYouTubeVideo
+from tether.youtube_store import IngestedVideo, upsert_ingested_video
 
 _DEFAULT_TOPIC = "youtube"
 """Topic assigned when a backup liked video carries no topic signal at all."""

@@ -2,13 +2,11 @@
 
 `_wire_youtube` used to `await` the likes/transcript boot pass inside the ASGI
 lifespan startup, so uvicorn only bound its port once a full (potentially slow)
-sync finished — the `just dev` hang of #119/#122. These tests pin the boot pass
-to a background task: wiring returns promptly even when the upstream blocks, and
-a `youtube_boot_done` barrier on app state lets callers await boot completion.
+sync finished. These tests pin the boot pass to a background task: wiring returns
+promptly even when the upstream blocks, and the component exposes readiness.
 """
 
 import asyncio
-import types
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -16,18 +14,17 @@ import structlog
 from opentelemetry import trace
 from snekql.sqlite import Config, Database
 from snektest import assert_false, assert_true, fixture, load_fixture, test
-from starlette.applications import Starlette
 
 from tether.events import EventHub
-from tether.host_composition import _wire_youtube
+from tether.host_composition import YouTubeComponent, _wire_youtube
 from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
-from tether.youtube import (
-    InMemoryYouTubeApi,
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import (
     LikedPage,
     RawYouTubeVideo,
-    create_youtube_schema,
 )
+from tether.youtube_store import create_youtube_schema
 
 
 def video(video_id: str) -> RawYouTubeVideo:
@@ -58,26 +55,30 @@ class BlockingLikedApi(InMemoryYouTubeApi):
 @fixture
 async def wired_app(
     api: InMemoryYouTubeApi,
-) -> AsyncGenerator[tuple[Starlette, IngestionLifecycle]]:
+) -> AsyncGenerator[tuple[YouTubeComponent, IngestionLifecycle]]:
     """Run `_wire_youtube` over a fresh in-memory DB with the given upstream."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
-    app = Starlette()
-    app.state.logger = structlog.stdlib.get_logger("test.youtube_boot")
-    ingestion_lifecycle = IngestionLifecycle(app.state.logger)
-    app.state.ingestion_lifecycle = ingestion_lifecycle
-    app.state.telemetry = types.SimpleNamespace(tracer=trace.get_tracer("test"))
+    logger = structlog.stdlib.get_logger("test.youtube_boot")
+    ingestion_lifecycle = IngestionLifecycle(logger)
     config = AppConfig(
         app_password="test-app-password",
         session_secret="test-session-secret",
         database_path=Path(":memory:"),
         youtube_api=api,
     )
-    await asyncio.wait_for(
-        _wire_youtube(app, config=config, database=db, event_publisher=EventHub()),
+    component = await asyncio.wait_for(
+        _wire_youtube(
+            config=config,
+            database=db,
+            event_publisher=EventHub(),
+            ingestion_lifecycle=ingestion_lifecycle,
+            logger=logger,
+            tracer=trace.get_tracer("test"),
+        ),
         timeout=1.0,
     )
-    yield app, ingestion_lifecycle
+    yield component, ingestion_lifecycle
     await ingestion_lifecycle.stop()
     await db.close()
 
@@ -92,11 +93,11 @@ async def wiring_returns_before_a_blocked_boot_pass_completes() -> None:
     """
     release = asyncio.Event()
     api = BlockingLikedApi(liked=[video("v1")], release=release)
-    app, _tasks = await load_fixture(wired_app(api))
+    component, _lifecycle = await load_fixture(wired_app(api))
 
-    assert_false(app.state.youtube_boot_done.is_set())
+    assert_false(component.likes_ready.is_set())
 
     # Releasing the upstream lets the deferred boot pass run to completion.
     release.set()
-    await asyncio.wait_for(app.state.youtube_boot_done.wait(), timeout=1.0)
-    assert_true(app.state.youtube_boot_done.is_set())
+    await asyncio.wait_for(component.likes_ready.wait(), timeout=1.0)
+    assert_true(component.likes_ready.is_set())

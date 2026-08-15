@@ -9,15 +9,14 @@ endpoint has no unconfigured/503 path.
 
 from __future__ import annotations
 
-from typing import cast
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from tether.app_runtime import app_runtime
 from tether.conversations import MessageDraft, MessageRead
-from tether.stt import SttClient, SttError
+from tether.stt import SttError
 from tether.voice_http import read_audio_upload, transcription_error_response
 
 
@@ -34,7 +33,7 @@ router = APIRouter()
 @router.post("/api/capture/voice", response_model=VoiceCaptureResponse, status_code=201)
 async def capture_voice(request: Request) -> Response:
     """Transcribe an uploaded audio note and append it as a user chat turn."""
-    stt_client = cast("SttClient", request.app.state.stt_client)
+    stt_client = app_runtime(request.app).stt_client
     audio = await read_audio_upload(request)
     if isinstance(audio, JSONResponse):
         return audio
@@ -47,10 +46,10 @@ async def capture_voice(request: Request) -> Response:
         return JSONResponse(
             {"detail": "no speech detected in the audio"}, status_code=422
         )
-    conversation = (await request.app.state.conversation_service.list_conversations())[
-        0
-    ]
-    message = await request.app.state.conversation_service.append_message(
+    conversation = (
+        await app_runtime(request.app).conversation_service.list_conversations()
+    )[0]
+    message = await app_runtime(request.app).conversation_service.append_message(
         MessageDraft(
             content=normalised_transcript,
             conversation_id=conversation.id,

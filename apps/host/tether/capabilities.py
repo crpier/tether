@@ -31,7 +31,8 @@ from starlette.responses import JSONResponse, Response
 
 from tether.bucket_items import BucketItemProvenance
 from tether.memories import MemoryProvenance
-from tether.youtube import CacheMeta, QuotaMeta
+from tether.youtube import CacheMeta
+from tether.youtube_quota import QuotaMeta
 
 type ToolErrorCode = Literal[
     "invalid_input",

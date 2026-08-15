@@ -17,23 +17,23 @@ and whether the result was served live or from cache (story 71).
 from __future__ import annotations
 
 from pydantic import BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 from starlette.routing import Route
 
 from tether import youtube_capabilities
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.structured_logging import get_request_logger
 from tether.tools import ToolSpec
-from tether.youtube import (
-    BrowseResult,
-    Fetched,
+from tether.youtube import BrowseResult, SearchResult
+from tether.youtube_capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
+from tether.youtube_store import (
     IngestedVideo,
-    SearchResult,
     TranscriptStatus,
     YouTubeSource,
     derive_ingest_state,
 )
-from tether.youtube_capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
 
 # Assistant-facing browse/search default page size. Caps how many rows a single
 # tool call can pour into the model's context (the corpus can hold thousands).
@@ -151,7 +151,7 @@ async def _browse(
     limit: int = _DEFAULT_LIST_LIMIT,
 ) -> CapabilityOutcome:
     """Browse ingested videos, optionally filtered by topic and source."""
-    result = await request.app.state.youtube_service.browse(
+    result = await app_runtime(request.app).youtube_service.browse(
         topic=topic,
         source=source,
         limit=limit,
@@ -164,7 +164,7 @@ async def _search(
     request: Request, q: str, limit: int = _DEFAULT_LIST_LIMIT
 ) -> CapabilityOutcome:
     """Keyword Search across saved content and transcript text."""
-    result = await request.app.state.youtube_service.search(
+    result = await app_runtime(request.app).youtube_service.search(
         q, limit=limit, logger=get_request_logger(request)
     )
     return _compact_videos(result)
@@ -172,7 +172,7 @@ async def _search(
 
 async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcome:
     """Fetch and persist a transcript for an ingested video."""
-    outcome = await request.app.state.youtube_service.fetch_transcript(
+    outcome = await app_runtime(request.app).youtube_service.fetch_transcript(
         video_id, logger=get_request_logger(request)
     )
     result = youtube_capabilities.unwrap_transcript_request(outcome)

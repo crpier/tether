@@ -18,10 +18,10 @@ from snektest import assert_eq, assert_len, assert_not_in, assert_true, test
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from tether.app_runtime import app_runtime
 from tether.conversations import ConversationService, Message, MessageDraft
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
-from tether.tools import SessionRegistry
 
 SECRET = "test-process-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"
@@ -81,7 +81,7 @@ def _seed(client: TestClient) -> tuple[str, str]:
     `session_id` is the conversation's current `pi_session_id`.
     """
     app = cast("Starlette", client.app)
-    service = cast("ConversationService", app.state.conversation_service)
+    service = app_runtime(app).conversation_service
     portal = client.portal
     assert portal is not None
 
@@ -125,7 +125,7 @@ def _seed(client: TestClient) -> tuple[str, str]:
         _ = portal.call(service.append_message, draft)
 
     session_id = str(conversation.pi_session_id)
-    cast("SessionRegistry", app.state.session_registry).register(session_id)
+    app_runtime(app).session_registry.register(session_id)
     return session_id, str(conversation_id)
 
 
@@ -162,7 +162,7 @@ def read_conversation_history_returns_empty_when_the_conversation_never_rotated(
     """No cold gap means the whole transcript is the live session."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         app = cast("Starlette", client.app)
-        service = cast("ConversationService", app.state.conversation_service)
+        service = app_runtime(app).conversation_service
         portal = client.portal
         assert portal is not None
         conversation = portal.call(service.list_conversations)[0]
@@ -171,7 +171,7 @@ def read_conversation_history_returns_empty_when_the_conversation_never_rotated(
             MessageDraft(content="hello", conversation_id=conversation.id, role="user"),
         )
         session_id = str(conversation.pi_session_id)
-        cast("SessionRegistry", app.state.session_registry).register(session_id)
+        app_runtime(app).session_registry.register(session_id)
 
         envelope = call(client, session_id, "read_conversation_history")
 
@@ -219,7 +219,7 @@ def read_conversation_history_truncates_long_content() -> None:
     """A very long user/assistant row is capped, not returned in full."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         app = cast("Starlette", client.app)
-        service = cast("ConversationService", app.state.conversation_service)
+        service = app_runtime(app).conversation_service
         portal = client.portal
         assert portal is not None
         conversation = portal.call(service.list_conversations)[0]
@@ -239,7 +239,7 @@ def read_conversation_history_truncates_long_content() -> None:
             ),
         )
         session_id = str(conversation.pi_session_id)
-        cast("SessionRegistry", app.state.session_registry).register(session_id)
+        app_runtime(app).session_registry.register(session_id)
 
         envelope = call(client, session_id, "read_conversation_history")
 
@@ -267,7 +267,7 @@ def _seed_four_prior_rows(client: TestClient) -> str:
     assert on content order without any rows being filtered out.
     """
     app = cast("Starlette", client.app)
-    service = cast("ConversationService", app.state.conversation_service)
+    service = app_runtime(app).conversation_service
     portal = client.portal
     assert portal is not None
 
@@ -284,7 +284,7 @@ def _seed_four_prior_rows(client: TestClient) -> str:
         MessageDraft(content="live turn", conversation_id=conversation_id, role="user"),
     )
     session_id = str(conversation.pi_session_id)
-    cast("SessionRegistry", app.state.session_registry).register(session_id)
+    app_runtime(app).session_registry.register(session_id)
     return session_id
 
 

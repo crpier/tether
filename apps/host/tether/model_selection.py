@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol, cast
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -133,13 +133,24 @@ class ModelListRead(BaseModel):
     models: list[AgentModelRead]
 
 
+class _ModelSelectionRuntime(Protocol):
+    """Model catalog available while the host serves requests."""
+
+    model_catalog: AgentModelCatalog
+
+
+def _runtime(request: Request) -> _ModelSelectionRuntime:
+    """Read model selection from the canonical host runtime."""
+    return cast("_ModelSelectionRuntime", request.app.state.runtime)
+
+
 router = APIRouter()
 
 
 @router.get("/api/models", response_model=ModelListRead)
 async def list_models(request: Request) -> Response:
     """List host-enabled agent model choices."""
-    catalog = request.app.state.model_catalog
+    catalog = _runtime(request).model_catalog
     return JSONResponse(
         ModelListRead(
             default_model=catalog.default_model,

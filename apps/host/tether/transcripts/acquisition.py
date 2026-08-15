@@ -38,11 +38,11 @@ from tether.transcripts.provider_health import (
     TranscriptProviderHealth,
     load_all_provider_pauses,
 )
-from tether.youtube import (
+from tether.youtube import YouTubeVideoNotFoundError
+from tether.youtube_store import (
     IngestedVideo,
     TranscriptPersistedStatus,
     YouTubeTranscriptState,
-    YouTubeVideoNotFoundError,
 )
 
 _SUPADATA_SOURCE = "supadata"

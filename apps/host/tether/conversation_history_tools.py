@@ -31,6 +31,7 @@ from snekql.sqlite import Fetched
 from starlette.requests import Request
 from starlette.routing import Route
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.conversations import ConversationNotFoundError, Message, MessageRole
 from tether.tools import ToolSpec
@@ -108,7 +109,7 @@ async def read_conversation_history(
     it currently belongs to.
     """
     session_id = cast("str", request.state.session_id)
-    service = request.app.state.conversation_service
+    service = app_runtime(request.app).conversation_service
     try:
         conversation = await service.fetch_conversation_by_pi_session_id(
             UUID(session_id)

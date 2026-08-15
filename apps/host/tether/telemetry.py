@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -62,6 +62,17 @@ class Telemetry:
         self.tracer_provider.shutdown()
 
 
+class _TelemetryRuntime(Protocol):
+    """Tracing dependency available while the host serves requests."""
+
+    telemetry: Telemetry
+
+
+def _runtime(request: Request) -> _TelemetryRuntime:
+    """Read tracing from the canonical host runtime."""
+    return cast("_TelemetryRuntime", request.app.state.runtime)
+
+
 def configure_telemetry(settings: TelemetrySettings) -> Telemetry:
     """Configure OpenTelemetry tracing without vendor-specific exporters.
 
@@ -99,7 +110,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        telemetry = cast("Telemetry", request.app.state.telemetry)
+        telemetry = _runtime(request).telemetry
         with telemetry.tracer.start_as_current_span(
             f"HTTP {request.method} {request.url.path}",
             kind=SpanKind.SERVER,

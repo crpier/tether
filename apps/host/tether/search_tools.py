@@ -343,7 +343,7 @@ async def _web_search(
     search_depth: SearchDepth = SearchDepth.BASIC,
 ) -> CapabilityOutcome:
     """Execute one provider-backed web search for the calling agent."""
-    provider: SearchProvider | None = request.app.state.search_provider
+    provider = cast("SearchProvider | None", request.app.state.runtime.search_provider)
     if provider is None:
         raise SearchDisabledError
     response = await provider.search(

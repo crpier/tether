@@ -20,6 +20,7 @@ from uuid import UUID
 from pydantic import UUID7, BaseModel
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.recall import (
     AnswerOutcome,
@@ -186,11 +187,11 @@ class AnswerOutcomeRead(BaseModel):
 
 async def start_recall(request: Request, video_id: str) -> CapabilityOutcome:
     """Promote an ingested educational video into a study item under Recall."""
-    video = await request.app.state.youtube_service.get_video(video_id)
+    video = await app_runtime(request.app).youtube_service.get_video(video_id)
     if video.transcript is None:
         message = f"video {video_id} has no fetched transcript to distil"
         raise TranscriptNotReadyError(message)
-    study_item = await request.app.state.recall_service.start_recall(
+    study_item = await app_runtime(request.app).recall_service.start_recall(
         source_video_id=video.video_id,
         source_title=video.title,
         transcript=video.transcript,
@@ -204,7 +205,7 @@ async def start_recall(request: Request, video_id: str) -> CapabilityOutcome:
 
 async def list_study_items(request: Request) -> CapabilityOutcome:
     """List every study item, newest-first."""
-    items = await request.app.state.recall_service.list_study_items(
+    items = await app_runtime(request.app).recall_service.list_study_items(
         logger=get_request_logger(request),
     )
     return CapabilityOutcome(
@@ -219,7 +220,7 @@ async def list_due_prompts(
     request: Request, limit: int | None = None
 ) -> CapabilityOutcome:
     """List the recall prompts currently owed a review (the outstanding surface)."""
-    due = await request.app.state.recall_service.list_due_prompts(
+    due = await app_runtime(request.app).recall_service.list_due_prompts(
         datetime.now(UTC),
         limit=limit,
         logger=get_request_logger(request),
@@ -238,7 +239,7 @@ async def answer_prompt(
     choice, `answer_text` for short answers, and `answer_text` plus the
     human-confirmed `confirmed_correct` for essays.
     """
-    service = request.app.state.recall_service
+    service = app_runtime(request.app).recall_service
     prompt = await service.fetch_prompt(prompt_id)
     outcome = await service.answer_prompt(
         prompt,
@@ -255,7 +256,7 @@ async def propose_essay_grade(
     request: Request, prompt_id: UUID, answer_text: str
 ) -> CapabilityOutcome:
     """Propose a model grade for an essay answer, for the human to confirm."""
-    service = request.app.state.recall_service
+    service = app_runtime(request.app).recall_service
     prompt = await service.fetch_prompt(prompt_id)
     proposal = await service.propose_essay_grade(
         prompt,

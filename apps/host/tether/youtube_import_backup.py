@@ -23,12 +23,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 
 from tether.structured_logging import Logger
-from tether.youtube import create_youtube_schema
 from tether.youtube_import import (
     ImportReport,
     SqliteLikesBackupReader,
     import_backup,
 )
+from tether.youtube_store import create_youtube_schema
 
 
 class ImportSettings(BaseSettings):
