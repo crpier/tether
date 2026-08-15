@@ -20,6 +20,7 @@ import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from snekok import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched
 from snektest import (
     assert_eq,
@@ -38,12 +39,16 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
-from tether.readwise import (
-    ReadwiseClient,
+from tether.readwise import ReadwiseClient, ReadwiseSyncService
+from tether.readwise_http import (
+    ReadwiseAuthenticationFailure,
+    ReadwiseHttpFailure,
+    ReadwiseNetworkFailure,
+    ReadwiseProtocolFailure,
+    ReadwiseRateLimitFailure,
     ReadwiseResponse,
-    ReadwiseSyncService,
-    create_readwise_schema,
 )
+from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger
 
 
@@ -83,13 +88,16 @@ class FakeReadwiseTransport:
     auth_status: int = 204
     export_calls: list[ExportCall] = field(default_factory=list[ExportCall])
 
+    async def aclose(self) -> None:
+        """Release no resources in the in-memory transport."""
+
     async def fetch_export(
         self,
         *,
         updated_after: datetime | None,
         page_cursor: str | None,
         include_deleted: bool,
-    ) -> ReadwiseResponse:
+    ) -> Result[ReadwiseResponse, ReadwiseNetworkFailure]:
         self.export_calls.append(
             ExportCall(
                 updated_after=updated_after,
@@ -97,10 +105,12 @@ class FakeReadwiseTransport:
                 include_deleted=include_deleted,
             )
         )
-        return self.export_responses.pop(0)
+        return Ok(self.export_responses.pop(0))
 
-    async def verify_token(self) -> ReadwiseResponse:
-        return ReadwiseResponse(status_code=self.auth_status, payload={})
+    async def verify_token(
+        self,
+    ) -> Result[ReadwiseResponse, ReadwiseNetworkFailure]:
+        return Ok(ReadwiseResponse(status_code=self.auth_status, payload={}))
 
 
 def highlight_payload(  # noqa: PLR0913 (a builder mirroring the export API's shape)
@@ -212,7 +222,9 @@ async def token_check_passes_on_a_204() -> None:
         sleep=_noop_sleep,
     )
 
-    assert_true(await client.verify_token(logger=test_logger()))
+    token = await client.verify_token(logger=test_logger())
+
+    assert isinstance(token, Ok)
 
 
 @test()
@@ -223,7 +235,34 @@ async def token_check_fails_on_a_non_204() -> None:
         sleep=_noop_sleep,
     )
 
-    assert_false(await client.verify_token(logger=test_logger()))
+    token = await client.verify_token(logger=test_logger())
+
+    assert isinstance(token, Err)
+    assert_eq(
+        token.error,
+        ReadwiseAuthenticationFailure(operation="verify-token", status_code=401),
+    )
+
+
+@test()
+async def an_unauthorized_export_is_an_authentication_failure() -> None:
+    """A rejected export token remains a typed provider failure."""
+    client = ReadwiseClient(
+        transport=FakeReadwiseTransport(
+            export_responses=[export_response([], status_code=401)]
+        ),
+        sleep=_noop_sleep,
+    )
+
+    books = await client.fetch_export(
+        updated_after=None, include_deleted=False, logger=test_logger()
+    )
+
+    assert isinstance(books, Err)
+    assert_eq(
+        books.error,
+        ReadwiseAuthenticationFailure(operation="export", status_code=401),
+    )
 
 
 @test()
@@ -244,7 +283,8 @@ async def export_follows_the_next_page_cursor() -> None:
         updated_after=None, include_deleted=False, logger=test_logger()
     )
 
-    assert_eq(len(books), 2)
+    assert isinstance(books, Ok)
+    assert_eq(len(books.value), 2)
 
 
 @test()
@@ -262,7 +302,119 @@ async def export_retries_after_a_rate_limit() -> None:
         updated_after=None, include_deleted=False, logger=test_logger()
     )
 
-    assert_eq(books[0].highlights[0].text, "after backoff")
+    assert isinstance(books, Ok)
+    assert_eq(books.value[0].highlights[0].text, "after backoff")
+
+
+@test()
+async def a_malformed_successful_export_is_a_protocol_failure() -> None:
+    """Successful status cannot hide an invalid export contract."""
+    client = ReadwiseClient(
+        transport=FakeReadwiseTransport(
+            export_responses=[
+                ReadwiseResponse(status_code=200, payload={"results": "invalid"})
+            ]
+        ),
+        sleep=_noop_sleep,
+    )
+
+    books = await client.fetch_export(
+        updated_after=None, include_deleted=False, logger=test_logger()
+    )
+
+    assert isinstance(books, Err)
+    assert_eq(books.error, ReadwiseProtocolFailure(operation="export"))
+
+
+@test()
+async def a_malformed_export_result_is_a_protocol_failure() -> None:
+    """An invalid book entry cannot be silently skipped past the cursor."""
+    client = ReadwiseClient(
+        transport=FakeReadwiseTransport(
+            export_responses=[
+                ReadwiseResponse(
+                    status_code=200,
+                    payload={"results": ["invalid"], "nextPageCursor": None},
+                )
+            ]
+        ),
+        sleep=_noop_sleep,
+    )
+
+    books = await client.fetch_export(
+        updated_after=None, include_deleted=False, logger=test_logger()
+    )
+
+    assert isinstance(books, Err)
+    assert_eq(books.error, ReadwiseProtocolFailure(operation="export"))
+
+
+@test()
+async def an_upstream_export_failure_preserves_status_and_retry_hint() -> None:
+    """A non-authentication HTTP failure remains operational data."""
+    client = ReadwiseClient(
+        transport=FakeReadwiseTransport(
+            export_responses=[
+                export_response([], status_code=503, retry_after_seconds=7)
+            ]
+        ),
+        sleep=_noop_sleep,
+    )
+
+    books = await client.fetch_export(
+        updated_after=None, include_deleted=False, logger=test_logger()
+    )
+
+    assert isinstance(books, Err)
+    assert_eq(
+        books.error,
+        ReadwiseHttpFailure(
+            operation="export",
+            retry_after=timedelta(seconds=7),
+            status_code=503,
+        ),
+    )
+
+
+@test()
+async def an_export_that_exhausts_rate_limit_retries_is_typed() -> None:
+    """Persistent throttling remains retryable provider data."""
+    client = ReadwiseClient(
+        transport=FakeReadwiseTransport(
+            export_responses=[
+                export_response([], status_code=429, retry_after_seconds=1)
+                for _ in range(5)
+            ]
+        ),
+        sleep=_noop_sleep,
+    )
+
+    books = await client.fetch_export(
+        updated_after=None, include_deleted=False, logger=test_logger()
+    )
+
+    assert isinstance(books, Err)
+    assert_eq(
+        books.error,
+        ReadwiseRateLimitFailure(operation="export", retry_after=timedelta(seconds=1)),
+    )
+
+
+@test()
+async def a_failed_sync_returns_the_provider_failure() -> None:
+    """An expected export outage does not escape the ingestion service."""
+    env = await load_fixture(readwise_env())
+    transport = FakeReadwiseTransport(
+        export_responses=[export_response([], status_code=503)]
+    )
+
+    report = await env.sync_service(transport).sync(logger=env.logger)
+
+    assert isinstance(report, Err)
+    assert_eq(
+        report.error,
+        ReadwiseHttpFailure(operation="export", retry_after=None, status_code=503),
+    )
 
 
 @test()
@@ -283,7 +435,8 @@ async def first_sync_creates_one_memory_per_highlight() -> None:
 
     report = await env.sync_service(transport).sync(logger=env.logger)
 
-    assert_eq(report.created, 2)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.created, 2)
     assert_eq(len(await env.tethered_memories()), 2)
 
 
@@ -392,7 +545,8 @@ async def a_discarded_highlight_is_not_ingested() -> None:
 
     report = await env.sync_service(transport).sync(logger=env.logger)
 
-    assert_eq(report.created, 0)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.created, 0)
     assert_eq(await env.tethered_memories(), [])
 
 
@@ -465,7 +619,8 @@ async def an_edited_highlight_updates_the_memory_in_place() -> None:
     report = await service.sync(logger=env.logger)
 
     memories = await env.tethered_memories()
-    assert_eq(report.updated, 1)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.updated, 1)
     assert_eq([memory.content for memory in memories], ["after"])
 
 
@@ -485,7 +640,8 @@ async def an_unchanged_highlight_is_skipped_on_reexport() -> None:
     report = await service.sync(logger=env.logger)
 
     memory = (await env.tethered_memories())[0]
-    assert_eq(report.skipped, 1)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.skipped, 1)
     assert_eq(memory.version, 1)
 
 
@@ -517,7 +673,8 @@ async def a_deleted_highlight_removes_the_memory() -> None:
     _ = await service.sync(logger=env.logger)
     report = await service.sync(logger=env.logger)
 
-    assert_eq(report.deleted, 1)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.deleted, 1)
     assert_eq(await env.tethered_memories(), [])
 
 
@@ -549,5 +706,6 @@ async def discarding_a_previously_ingested_highlight_removes_it() -> None:
     _ = await service.sync(logger=env.logger)
     report = await service.sync(logger=env.logger)
 
-    assert_eq(report.deleted, 1)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.deleted, 1)
     assert_eq(await env.tethered_memories(), [])

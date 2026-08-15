@@ -13,6 +13,7 @@ from pathlib import Path
 from anyio import Path as AsyncPath
 from fastapi import FastAPI
 from opentelemetry.trace import Tracer
+from snekok import Err
 from snekql.sqlite import Config, Database
 
 from tether.action_registry import (
@@ -74,15 +75,14 @@ from tether.push import (
     VapidWebPushTransport,
     create_push_schema,
 )
-from tether.readwise import (
+from tether.reader import ReaderClient, ReaderSyncService
+from tether.readwise import ReadwiseClient, ReadwiseSyncService
+from tether.readwise_http import (
     HttpReaderTransport,
     HttpReadwiseTransport,
-    ReaderClient,
-    ReaderSyncService,
-    ReadwiseClient,
-    ReadwiseSyncService,
-    create_readwise_schema,
+    ReadwiseAuthenticationFailure,
 )
+from tether.readwise_store import create_readwise_schema
 from tether.recall import (
     AnswerGrader,
     PiAnswerGrader,
@@ -353,28 +353,50 @@ def _activate_youtube_workers(
     )
 
 
-async def _wire_readwise(
+async def _wire_readwise(  # noqa: PLR0913 - composition owns every dependency
     *,
     config: AppConfig,
     database: Database,
     ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     memory_service: MemoryService,
+    resources: contextlib.AsyncExitStack,
 ) -> None:
     """Compose the optional Readwise export adapter into Ingestion lifecycle."""
-    if not config.readwise_sync_enabled or not config.readwise_api_key:
+    if not config.readwise_sync_enabled or (
+        config.readwise_transport is None and not config.readwise_api_key
+    ):
         _ = ingestion_lifecycle.activate("readwise")
         return
-    client = ReadwiseClient(transport=HttpReadwiseTransport(config.readwise_api_key))
+    transport = config.readwise_transport or HttpReadwiseTransport(
+        config.readwise_api_key
+    )
+    _ = resources.push_async_callback(transport.aclose)
+    client = ReadwiseClient(transport=transport)
     sync = ReadwiseSyncService(
         database=database, client=client, memory_service=memory_service
     )
 
     async def _boot_readwise() -> IngestionBootOutcome:
-        if not await client.verify_token(logger=logger):
-            logger.warning("Readwise token invalid; ingestion gate disabled")
-            return IngestionBootOutcome.STOP
-        _ = await sync.sync(logger=logger)
+        token = await client.verify_token(logger=logger)
+        if isinstance(token, Err):
+            logger.warning(
+                "Readwise token check failed",
+                failure=type(token.error).__name__,
+                operation=token.error.operation,
+            )
+            return (
+                IngestionBootOutcome.STOP
+                if isinstance(token.error, ReadwiseAuthenticationFailure)
+                else IngestionBootOutcome.REPEAT
+            )
+        report = await sync.sync(logger=logger)
+        if isinstance(report, Err):
+            logger.warning(
+                "Readwise boot sync failed",
+                failure=type(report.error).__name__,
+                operation=report.error.operation,
+            )
         return IngestionBootOutcome.REPEAT
 
     async def _repeat_readwise() -> None:
@@ -387,26 +409,39 @@ async def _wire_readwise(
     )
 
 
-async def _wire_reader(
+async def _wire_reader(  # noqa: PLR0913 - composition owns every dependency
     *,
     config: AppConfig,
     database: Database,
     ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     memory_service: MemoryService,
+    resources: contextlib.AsyncExitStack,
 ) -> None:
     """Compose the optional Reader progress adapter into Ingestion lifecycle."""
-    if not config.readwise_reader_sync_enabled or not config.readwise_api_key:
+    if not config.readwise_reader_sync_enabled or (
+        config.reader_transport is None and not config.readwise_api_key
+    ):
         _ = ingestion_lifecycle.activate("readwise-reader")
         return
+    transport = config.reader_transport or HttpReaderTransport(config.readwise_api_key)
+    _ = resources.push_async_callback(transport.aclose)
     sync = ReaderSyncService(
         database=database,
-        client=ReaderClient(transport=HttpReaderTransport(config.readwise_api_key)),
+        client=ReaderClient(transport=transport),
         memory_service=memory_service,
     )
 
     async def _boot_reader() -> IngestionBootOutcome:
-        _ = await sync.sync(logger=logger)
+        report = await sync.sync(logger=logger)
+        if isinstance(report, Err):
+            logger.warning(
+                "Reader boot sync failed",
+                failure=type(report.error).__name__,
+                operation=report.error.operation,
+            )
+            if isinstance(report.error, ReadwiseAuthenticationFailure):
+                return IngestionBootOutcome.STOP
         return IngestionBootOutcome.REPEAT
 
     async def _repeat_reader() -> None:
@@ -561,6 +596,7 @@ async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domai
     memory_service: MemoryService,
     model_catalog: AgentModelCatalog,
     proposal_service: ProposalService,
+    resources: contextlib.AsyncExitStack,
     todo_service: TodoService,
     tracer: Tracer,
     trigger_service: TriggerService,
@@ -582,6 +618,7 @@ async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domai
         ingestion_lifecycle=ingestion_lifecycle,
         logger=logger,
         memory_service=memory_service,
+        resources=resources,
     )
     await _wire_reader(
         config=config,
@@ -589,6 +626,7 @@ async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domai
         ingestion_lifecycle=ingestion_lifecycle,
         logger=logger,
         memory_service=memory_service,
+        resources=resources,
     )
     await _wire_gmail(
         bootstrap=bootstrap,
@@ -1364,6 +1402,9 @@ async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
         background_tasks,
         logger=foundations.logger,
     )
+    ingestion_resources = await resources.enter_async_context(
+        contextlib.AsyncExitStack()
+    )
     _ = resources.push_async_callback(foundations.ingestion_lifecycle.stop)
     youtube_service = await _wire_ingestion_gates(
         bootstrap=bootstrap,
@@ -1376,6 +1417,7 @@ async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
         memory_service=memory_service,
         model_catalog=model_catalog,
         proposal_service=proposal_service,
+        resources=ingestion_resources,
         todo_service=todo_service,
         tracer=foundations.telemetry.tracer,
         trigger_service=trigger_service,
