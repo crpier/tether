@@ -31,14 +31,18 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
+from snekok import Err, Ok
+
 from tether.youtube import (
     FetchedTranscript,
     LikedPage,
     RawYouTubeVideo,
+    TranscriptFetchResult,
     TranscriptProvider,
+    TranscriptQuotaExceededFailure,
     TranscriptSegment,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
     YouTubeQuotaExceededError,
     find_transcript_provider_leaves,
 )
@@ -668,13 +672,15 @@ _HTTP_UNAUTHORIZED = 401
 _HTTP_FORBIDDEN = 403
 
 
-def _classify_caption_error(video_id: str, error: Exception) -> Exception:
-    """Map a caption API failure onto a typed `TranscriptProvider` signal.
+def _classify_caption_error(
+    video_id: str, error: Exception
+) -> TranscriptUnavailableFailure | TranscriptTransientFailure:
+    """Map a caption API exception onto a provider failure value.
 
     A 404 (no such captions) and a 403 are both *unavailable*: the captions Data
     API is owner-only, so it 403s for nearly every liked (third-party) video. That
     is "this provider can't serve it", not a global property of the video — so it
-    must fall through to the library/Supadata fallbacks rather than raise the
+    must fall through to the library/Supadata fallbacks rather than return the
     *excluded* outcome, which would mark the video terminal and purge it from
     ingestion before any fallback runs. A 401 (expired/invalid credentials) is
     *transient* and retryable; everything else — rate limits, 5xx, transport
@@ -682,12 +688,12 @@ def _classify_caption_error(video_id: str, error: Exception) -> Exception:
     """
     status = _http_status(error)
     if status in (_HTTP_NOT_FOUND, _HTTP_FORBIDDEN):
-        return TranscriptUnavailableError(video_id)
+        return TranscriptUnavailableFailure(video_id=video_id)
     if status == _HTTP_UNAUTHORIZED:
-        return TranscriptTransientError(
+        return TranscriptTransientFailure(
             f"caption fetch for {video_id} unauthorized (credentials): {error}"
         )
-    return TranscriptTransientError(f"caption fetch for {video_id} failed: {error}")
+    return TranscriptTransientFailure(f"caption fetch for {video_id} failed: {error}")
 
 
 async def _no_charge() -> None:
@@ -710,8 +716,8 @@ class CaptionsTranscriptProvider(TranscriptProvider):
     separate paid HTTP API, so neither should count against it). It charges the
     budget itself, right before its own live call, via `charge` — a callback
     late-bound by `bind_captions_daily_quota` once the budgeted client exists (the
-    provider tree is built from settings first, mirroring how Supadata's spend
-    guard is late-bound). Unbound (e.g. in tests), `charge` is a no-op.
+    provider tree is built from settings first). Unbound (e.g. in tests),
+    `charge` is a no-op.
     """
 
     @property
@@ -750,8 +756,8 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> FetchedTranscript:
-        """Fetch and parse the best caption track, or raise a typed signal.
+    ) -> TranscriptFetchResult:
+        """Fetch and parse the best caption track or return a typed failure.
 
         Charges the daily Data API budget first (raising `YouTubeQuotaExceededError`
         before any live call when the day is exhausted); the free library and
@@ -760,28 +766,32 @@ class CaptionsTranscriptProvider(TranscriptProvider):
         # The captions API is never blockable, so the worker's pause hook is a
         # no-op here; the composite provider is what skips its blockable sources.
         _ = (paused_sources, skip_sources)
-        await self.charge()
-        items = await asyncio.to_thread(self._list_captions, video_id)
+        try:
+            await self.charge()
+        except YouTubeQuotaExceededError as e:
+            return Err(TranscriptQuotaExceededFailure(message=str(e)))
+        try:
+            items = await asyncio.to_thread(self._list_captions, video_id)
+        except Exception as e:
+            return Err(_classify_caption_error(video_id, e))
         track_id = _select_caption_track(items)
         if track_id is None:
-            raise TranscriptUnavailableError(video_id)
-        payload = await asyncio.to_thread(self._download_caption, video_id, track_id)
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
+        try:
+            payload = await asyncio.to_thread(self._download_caption, track_id)
+        except Exception as e:
+            return Err(_classify_caption_error(video_id, e))
         text, segments = parse_srt_transcript(payload)
         if not text:
-            raise TranscriptUnavailableError(video_id)
-        return FetchedTranscript(
-            text=text, segments=segments, source="youtube_captions"
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
+        return Ok(
+            FetchedTranscript(text=text, segments=segments, source="youtube_captions")
         )
 
     def _list_captions(self, video_id: str) -> list[Mapping[str, object]]:
-        try:
-            response = (
-                self._resource.captions()
-                .list(part="snippet", videoId=video_id)
-                .execute()
-            )
-        except Exception as error:
-            raise _classify_caption_error(video_id, error) from error
+        response = (
+            self._resource.captions().list(part="snippet", videoId=video_id).execute()
+        )
         items = response.get("items", [])
         if not isinstance(items, list):
             return []
@@ -791,15 +801,12 @@ class CaptionsTranscriptProvider(TranscriptProvider):
             if isinstance(item, dict)
         ]
 
-    def _download_caption(self, video_id: str, track_id: str) -> str:
-        try:
-            raw = (
-                self._resource.captions()
-                .download(id=track_id, tfmt=_CAPTION_SRT_FORMAT)
-                .execute()
-            )
-        except Exception as error:
-            raise _classify_caption_error(video_id, error) from error
+    def _download_caption(self, track_id: str) -> str:
+        raw = (
+            self._resource.captions()
+            .download(id=track_id, tfmt=_CAPTION_SRT_FORMAT)
+            .execute()
+        )
         if isinstance(raw, bytes):
             return raw.decode("utf-8", errors="replace")
         return raw
@@ -810,8 +817,8 @@ def bind_captions_daily_quota(
 ) -> None:
     """Late-bind the YouTube Data API daily-quota charge onto every captions leaf.
 
-    Mirrors `bind_supadata_spend_guard`: the provider tree is built from settings
-    before the budgeted `YouTubeApiClient` exists, so the charge callback (its
+    The provider tree is built from settings before the budgeted
+    `YouTubeApiClient` exists, so the charge callback (its
     `charge_transcript`) is attached here at wire time, using the generic
     `find_transcript_provider_leaves` walk (by the `"youtube_captions"` source
     tag) rather than a bespoke isinstance tree-walk. A no-op when the chain has

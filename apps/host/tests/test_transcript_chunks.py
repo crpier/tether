@@ -12,7 +12,7 @@ import time
 
 from snektest import assert_eq, assert_lt, assert_true, test
 
-from tether.transcript_chunks import chunk_transcript
+from tether.transcripts.chunks import chunk_transcript
 
 
 @test()

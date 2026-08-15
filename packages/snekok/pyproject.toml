@@ -1,0 +1,47 @@
+[project]
+name = "snekok"
+version = "0.1.0"
+description = "Small, typed tools for treating expected failures as values"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pydantic>=2.13.4",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.410",
+    "ruff>=0.15.18",
+    "snektest",
+]
+
+[tool.uv.sources]
+snektest = { git = "ssh://git@github.com/crpier/snektest", rev = "b6ff08544eade05804a2fdfd894c2c854145e537" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+reportMatchNotExhaustive = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.ruff.lint]
+select = [
+    "A", "ANN", "ARG", "ASYNC", "B", "BLE", "C4", "C90", "COM", "DTZ",
+    "E", "EM", "ERA", "EXE", "F", "FBT", "FURB", "G", "I", "INP", "ISC",
+    "LOG", "N", "PERF", "PGH", "PIE", "PL", "PLE", "PLR", "PLW", "PTH",
+    "PYI", "Q", "RET", "RSE", "RUF", "S", "SIM", "SLF", "SLOT", "T10",
+    "T20", "TC", "TID", "TRY", "UP", "W",
+]
+ignore = [
+    "COM812", # Conflicts with the formatter.
+    "E501",   # The formatter handles ordinary line length.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "PLW3201", # Exercise frozen dataclass assignment through its public runtime behavior.
+]

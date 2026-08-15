@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from snekok import Err
+from snekok import Ok as ResultOk
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,
@@ -36,8 +38,8 @@ from snektest import (
 )
 
 from tether.structured_logging import Logger
-from tether.transcript_library import LibraryPassBudget, YouTubeTranscriptApiProvider
-from tether.transcript_worker import TranscriptSyncService
+from tether.transcripts.library import LibraryPassBudget, YouTubeTranscriptApiProvider
+from tether.transcripts.worker import TranscriptSyncService
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
     DailyQuota,
@@ -45,11 +47,15 @@ from tether.youtube import (
     FetchedTranscript,
     IngestedVideo,
     InMemoryYouTubeApi,
-    TranscriptExcludedError,
+    TranscriptExcludedFailure,
+    TranscriptFetchResult,
+    TranscriptQuotaExceededFailure,
     TranscriptSegment,
     TranscriptSyncConfig,
     TranscriptTransientError,
+    TranscriptTransientFailure,
     TranscriptUnavailableError,
+    TranscriptUnavailableFailure,
     YouTubeApiClient,
     YouTubeQuotaExceededError,
     YouTubeService,
@@ -134,23 +140,28 @@ class FakeTranscriptProvider:
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> FetchedTranscript:
+    ) -> TranscriptFetchResult:
         _ = (paused_sources, skip_sources)  # this fake has no blockable source
-        await self.charge()
+        try:
+            await self.charge()
+        except YouTubeQuotaExceededError as e:
+            return Err(TranscriptQuotaExceededFailure(message=str(e)))
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
-            raise TranscriptUnavailableError(video_id)
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
         token = script.pop(0) if len(script) > 1 else script[0]
         if isinstance(token, Ok):
-            return FetchedTranscript(
-                text=token.text, segments=token.segments, source=token.source
+            return ResultOk(
+                FetchedTranscript(
+                    text=token.text, segments=token.segments, source=token.source
+                )
             )
         if token == EXCLUDED:
-            raise TranscriptExcludedError(video_id)
+            return Err(TranscriptExcludedFailure(video_id=video_id))
         if token == TRANSIENT:
-            raise TranscriptTransientError(video_id)
-        raise TranscriptUnavailableError(video_id)
+            return Err(TranscriptTransientFailure(message=video_id))
+        return Err(TranscriptUnavailableFailure(video_id=video_id))
 
 
 @dataclass
@@ -492,7 +503,7 @@ class _RaisingProvider:
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> FetchedTranscript:
+    ) -> TranscriptFetchResult:
         _ = (video_id, paused_sources, skip_sources)
         self.calls += 1
         raise self._error

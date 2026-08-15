@@ -3724,35 +3724,6 @@
         ],
         "type": "string"
       },
-      "SourceUsageRead": {
-        "description": "HTTP representation of one transcript source's own metered-use budget.\n\nDistinct from `quota` (the YouTube Data API's per-day budget, shared by\nevery source that calls it): a source with its own cap (e.g. Supadata's\nmonthly budget) reports one of these, keyed by its source name on\n`YouTubeSyncStatusRead.usage`. `period` is the UTC calendar month\n(`YYYY-MM`) Supadata's `used`/`remaining` apply to; a source with no\nnatural period concept leaves it empty.",
-        "properties": {
-          "limit": {
-            "title": "Limit",
-            "type": "integer"
-          },
-          "period": {
-            "default": "",
-            "title": "Period",
-            "type": "string"
-          },
-          "remaining": {
-            "title": "Remaining",
-            "type": "integer"
-          },
-          "used": {
-            "title": "Used",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "used",
-          "limit",
-          "remaining"
-        ],
-        "title": "SourceUsageRead",
-        "type": "object"
-      },
       "StaleItem": {
         "description": "An active item old enough to reconsider, with its decayed intent context.",
         "properties": {
@@ -4694,7 +4665,7 @@
         "type": "string"
       },
       "YouTubeSyncStatusRead": {
-        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_needs_review=0,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n...     usage={},\n... )\n>>> read.videos_total\n3",
+        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_needs_review=0,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n... )\n>>> read.videos_total\n3",
         "properties": {
           "api_paused_until": {
             "anyOf": [
@@ -4745,14 +4716,6 @@
           "transcripts_unavailable": {
             "title": "Transcripts Unavailable",
             "type": "integer"
-          },
-          "usage": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/SourceUsageRead"
-            },
-            "default": {},
-            "title": "Usage",
-            "type": "object"
           },
           "videos_total": {
             "title": "Videos Total",

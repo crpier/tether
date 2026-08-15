@@ -2889,30 +2889,6 @@ export interface components {
     /** @enum {string} */
     SourceType: "memory" | "bucket_item";
     /**
-     * SourceUsageRead
-     * @description HTTP representation of one transcript source's own metered-use budget.
-     *
-     *     Distinct from `quota` (the YouTube Data API's per-day budget, shared by
-     *     every source that calls it): a source with its own cap (e.g. Supadata's
-     *     monthly budget) reports one of these, keyed by its source name on
-     *     `YouTubeSyncStatusRead.usage`. `period` is the UTC calendar month
-     *     (`YYYY-MM`) Supadata's `used`/`remaining` apply to; a source with no
-     *     natural period concept leaves it empty.
-     */
-    SourceUsageRead: {
-      /** Limit */
-      limit: number;
-      /**
-       * Period
-       * @default
-       */
-      period: string;
-      /** Remaining */
-      remaining: number;
-      /** Used */
-      used: number;
-    };
-    /**
      * StaleItem
      * @description An active item old enough to reconsider, with its decayed intent context.
      */
@@ -3354,7 +3330,6 @@ export interface components {
      *     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
      *     ...     api_paused_until=None,
      *     ...     transcript_providers_paused=[],
-     *     ...     usage={},
      *     ... )
      *     >>> read.videos_total
      *     3
@@ -3375,13 +3350,6 @@ export interface components {
       transcripts_pending: number;
       /** Transcripts Unavailable */
       transcripts_unavailable: number;
-      /**
-       * Usage
-       * @default {}
-       */
-      usage: {
-        [key: string]: components["schemas"]["SourceUsageRead"];
-      };
       /** Videos Total */
       videos_total: number;
     };

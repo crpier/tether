@@ -22,18 +22,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from snekok import Err
+from snekok import Ok as ResultOk
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,
     assert_is_none,
-    assert_raises,
+    assert_isinstance,
     fixture,
     load_fixture,
     test,
 )
 
 from tether.structured_logging import Logger
-from tether.transcript_worker import TranscriptSyncService
+from tether.transcripts.worker import TranscriptSyncService
 from tether.youtube import (
     _NO_PAUSED_SOURCES,
     DailyQuota,
@@ -41,12 +43,13 @@ from tether.youtube import (
     FetchedTranscript,
     IngestedVideo,
     InMemoryYouTubeApi,
-    TranscriptBlockedError,
-    TranscriptExcludedError,
+    TranscriptBlockedFailure,
+    TranscriptExcludedFailure,
+    TranscriptFetchResult,
     TranscriptProvider,
     TranscriptSyncConfig,
-    TranscriptTransientError,
-    TranscriptUnavailableError,
+    TranscriptTransientFailure,
+    TranscriptUnavailableFailure,
     YouTubeApiClient,
     YouTubeTranscriptState,
     _load_provider_pause,
@@ -118,22 +121,28 @@ class FakeSource(TranscriptProvider):
         *,
         paused_sources: frozenset[str] = _NO_PAUSED_SOURCES,
         skip_sources: frozenset[str] = _NO_PAUSED_SOURCES,
-    ) -> FetchedTranscript:
+    ) -> TranscriptFetchResult:
         _ = (paused_sources, skip_sources)
         self.calls[video_id] = self.calls.get(video_id, 0) + 1
         script = self._scripts.get(video_id)
         if not script:
-            raise TranscriptUnavailableError(video_id)
+            return Err(TranscriptUnavailableFailure(video_id=video_id))
         token = script.pop(0) if len(script) > 1 else script[0]
         if isinstance(token, Ok):
-            return FetchedTranscript(text=token.text, segments=(), source=self.name)
+            return ResultOk(
+                FetchedTranscript(text=token.text, segments=(), source=self.name)
+            )
         if isinstance(token, Blocked):
-            raise TranscriptBlockedError(video_id, retry_after=token.retry_after)
+            return Err(
+                TranscriptBlockedFailure(
+                    message=video_id, retry_after=token.retry_after
+                )
+            )
         if token == EXCLUDED:
-            raise TranscriptExcludedError(video_id)
+            return Err(TranscriptExcludedFailure(video_id=video_id))
         if token == TRANSIENT:
-            raise TranscriptTransientError(video_id)
-        raise TranscriptUnavailableError(video_id)
+            return Err(TranscriptTransientFailure(message=video_id))
+        return Err(TranscriptUnavailableFailure(video_id=video_id))
 
 
 # --- Composite unit tests ---------------------------------------------------
@@ -146,7 +155,7 @@ async def composite_prefers_primary() -> None:
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    result = await composite.fetch("v1")
+    result = (await composite.fetch("v1")).unwrap()
 
     assert_eq(result.text, "captions")
     assert_eq(library.calls.get("v1"), None)
@@ -159,7 +168,7 @@ async def composite_falls_through_on_unavailable() -> None:
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    result = await composite.fetch("v1")
+    result = (await composite.fetch("v1")).unwrap()
 
     assert_eq(result.text, "library")
     assert_eq(result.source, "library")
@@ -172,8 +181,10 @@ async def composite_unavailable_only_when_all_unavailable() -> None:
     library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    with assert_raises(TranscriptUnavailableError):
-        _ = await composite.fetch("v1")
+    outcome = await composite.fetch("v1")
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptUnavailableFailure)
 
 
 @test()
@@ -183,8 +194,10 @@ async def composite_surfaces_excluded_without_fallback() -> None:
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    with assert_raises(TranscriptExcludedError):
-        _ = await composite.fetch("v1")
+    outcome = await composite.fetch("v1")
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptExcludedFailure)
     assert_eq(library.calls.get("v1"), None)
 
 
@@ -195,8 +208,10 @@ async def composite_skips_paused_source_and_defers() -> None:
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    with assert_raises(TranscriptBlockedError):
-        _ = await composite.fetch("v1", paused_sources=frozenset({"library"}))
+    outcome = await composite.fetch("v1", paused_sources=frozenset({"library"}))
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptBlockedFailure)
     # The paused fallback was never consulted.
     assert_eq(library.calls.get("v1"), None)
 
@@ -209,7 +224,9 @@ async def composite_runs_an_unpaused_source_while_another_is_paused() -> None:
     supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
 
-    result = await composite.fetch("v1", paused_sources=frozenset({"library"}))
+    result = (
+        await composite.fetch("v1", paused_sources=frozenset({"library"}))
+    ).unwrap()
 
     assert_eq(result.text, "supadata")
     assert_eq(result.source, "supadata")
@@ -224,7 +241,9 @@ async def composite_primary_still_runs_when_paused() -> None:
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    result = await composite.fetch("v1", paused_sources=frozenset({"library"}))
+    result = (
+        await composite.fetch("v1", paused_sources=frozenset({"library"}))
+    ).unwrap()
 
     assert_eq(result.text, "captions")
     assert_eq(library.calls.get("v1"), None)
@@ -237,9 +256,11 @@ async def composite_stamps_block_with_the_fallback_source() -> None:
     library = FakeSource({"v1": [Blocked()]}, name="library")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library])
 
-    with assert_raises(TranscriptBlockedError) as caught:
-        _ = await composite.fetch("v1")
-    assert_eq(caught.exception.source, "library")
+    outcome = await composite.fetch("v1")
+
+    assert isinstance(outcome, Err)
+    failure = assert_isinstance(outcome.error, TranscriptBlockedFailure)
+    assert_eq(failure.source, "library")
 
 
 @test()
@@ -249,7 +270,9 @@ async def composite_skips_a_gated_primary_and_uses_the_next_source() -> None:
     library = FakeSource({"v1": [Ok("library")]}, name="library")
     composite = FallbackTranscriptProvider(supadata, fallbacks=[library])
 
-    result = await composite.fetch("v1", skip_sources=frozenset({"supadata"}))
+    result = (
+        await composite.fetch("v1", skip_sources=frozenset({"supadata"}))
+    ).unwrap()
 
     assert_eq(result.text, "library")
     # The gated Supadata primary was never billed.
@@ -263,8 +286,10 @@ async def composite_goes_terminal_when_only_gated_and_unavailable_remain() -> No
     library = FakeSource({"v1": [UNAVAILABLE]}, name="library")
     composite = FallbackTranscriptProvider(supadata, fallbacks=[library])
 
-    with assert_raises(TranscriptUnavailableError):
-        _ = await composite.fetch("v1", skip_sources=frozenset({"supadata"}))
+    outcome = await composite.fetch("v1", skip_sources=frozenset({"supadata"}))
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptUnavailableFailure)
     assert_eq(supadata.calls.get("v1"), None)
 
 
@@ -280,11 +305,13 @@ async def composite_tries_a_gated_source_as_last_resort_when_the_fallback_is_pau
     supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
 
-    result = await composite.fetch(
-        "v1",
-        paused_sources=frozenset({"library"}),
-        skip_sources=frozenset({"supadata"}),
-    )
+    result = (
+        await composite.fetch(
+            "v1",
+            paused_sources=frozenset({"library"}),
+            skip_sources=frozenset({"supadata"}),
+        )
+    ).unwrap()
 
     assert_eq(result.text, "supadata")
     assert_eq(result.source, "supadata")
@@ -303,12 +330,14 @@ async def composite_preserves_a_gated_last_resort_unavailable_outcome() -> None:
     supadata = FakeSource({"v1": [UNAVAILABLE]}, name="supadata")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
 
-    with assert_raises(TranscriptUnavailableError):
-        _ = await composite.fetch(
-            "v1",
-            paused_sources=frozenset({"library"}),
-            skip_sources=frozenset({"supadata"}),
-        )
+    outcome = await composite.fetch(
+        "v1",
+        paused_sources=frozenset({"library"}),
+        skip_sources=frozenset({"supadata"}),
+    )
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptUnavailableFailure)
     assert_eq(supadata.calls.get("v1"), 1)
 
 
@@ -321,12 +350,14 @@ async def composite_still_defers_when_the_gated_last_resort_is_also_paused() -> 
     supadata = FakeSource({"v1": [Ok("supadata")]}, name="supadata")
     composite = FallbackTranscriptProvider(primary, fallbacks=[library, supadata])
 
-    with assert_raises(TranscriptBlockedError):
-        _ = await composite.fetch(
-            "v1",
-            paused_sources=frozenset({"library", "supadata"}),
-            skip_sources=frozenset({"supadata"}),
-        )
+    outcome = await composite.fetch(
+        "v1",
+        paused_sources=frozenset({"library", "supadata"}),
+        skip_sources=frozenset({"supadata"}),
+    )
+
+    assert isinstance(outcome, Err)
+    _ = assert_isinstance(outcome.error, TranscriptBlockedFailure)
     assert_eq(supadata.calls.get("v1"), None)
 
 
@@ -770,7 +801,7 @@ async def a_caption_less_video_tries_supadata_as_last_resort_while_library_is_pa
 ):
     """A caption-less video whose library is paused this pass still gets Supadata as
     a last resort, instead of staying stuck pending behind the library's cooldown
-    forever despite Supadata being healthy and under its cap (issue #182)."""
+    forever despite Supadata being healthy."""
     # v_block trips the library pause (processed first, newest-liked-first); v1 is
     # then processed in the *same* pass with the library already paused, so it
     # exercises the gated-last-resort path rather than needing a second pass.

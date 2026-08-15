@@ -15,7 +15,7 @@ from uuid import uuid4
 from anyio import TemporaryDirectory
 from snektest import assert_eq, assert_gt, test
 
-from tether.transcript_index import ChunkDocument, TranscriptIndex
+from tether.transcripts.index import ChunkDocument, TranscriptIndex
 
 _DIM = 4
 

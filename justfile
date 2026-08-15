@@ -177,6 +177,7 @@ youtube-reset-backfill:
 # sync/install all deps
 install:
     uv sync
+    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv sync
     pnpm -C apps/web install
     pnpm -C apps/agent install
 
@@ -218,6 +219,19 @@ host-lint:
 host-format-check:
     uv run ruff format --check .
 
+# standalone snekok package checks
+snekok-test:
+    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run python -m snektest tests/
+
+snekok-typecheck:
+    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run pyright
+
+snekok-lint:
+    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run ruff check .
+
+snekok-format-check:
+    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run ruff format --check .
+
 # agent tests
 agent-test:
     pnpm -C apps/agent test
@@ -235,16 +249,16 @@ agent-format-check:
     pnpm -C apps/agent format:check
 
 # all tests
-test: host-test agent-test
+test: host-test snekok-test agent-test
 
 # all type checks
-typecheck: host-typecheck agent-typecheck
+typecheck: host-typecheck snekok-typecheck agent-typecheck
 
 # all lint checks
-lint: host-lint agent-lint
+lint: host-lint snekok-lint agent-lint
 
 # all format checks
-format-check: host-format-check agent-format-check
+format-check: host-format-check snekok-format-check agent-format-check
 
 # validate a compose env file before starting the app
 validate-env env_file=".env":

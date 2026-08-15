@@ -22,8 +22,8 @@ from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
 from tether.embeddings import Embedder, FakeEmbedder, Vector
 from tether.structured_logging import Logger
-from tether.transcript_index import ChunkDocument
-from tether.transcript_reconciler import TranscriptReconciler
+from tether.transcripts.index import ChunkDocument
+from tether.transcripts.reconciler import TranscriptReconciler
 from tether.youtube import IngestedVideo, create_youtube_schema
 
 _DIM = 16

@@ -30,12 +30,10 @@ from tether.structured_logging import Logger
 from tether.youtube import (
     DailyQuota,
     EmptyYouTubeSearchQueryError,
-    FetchedTranscript,
     IngestedVideo,
     InMemoryYouTubeApi,
     LikedPage,
     RawYouTubeVideo,
-    SourceUsage,
     TranscriptStatus,
     TranscriptUnavailableError,
     YouTubeApiClient,
@@ -1163,51 +1161,6 @@ async def sync_status_last_synced_at_matches_last_run_at_decoding() -> None:
 
     assert_eq(last_run, datetime(2026, 1, 1, tzinfo=UTC))
     assert_eq(status.last_synced_at, last_run)
-
-
-@test()
-async def sync_status_usage_is_empty_when_the_provider_reports_none() -> None:
-    """The default (no metered source configured) reports an empty usage map."""
-    env = await load_fixture(make_env(InMemoryYouTubeApi()))
-
-    status = await env.service.sync_status(logger=test_logger())
-
-    assert_eq(status.usage, {})
-
-
-@test()
-async def sync_status_reports_the_wired_providers_own_usage() -> None:
-    """A provider's own `usage_snapshot` surfaces on the status, keyed by source —
-    reading straight off `self.provider` (no separate late-bound reader)."""
-    env = await load_fixture(make_env(InMemoryYouTubeApi()))
-
-    no_paused_sources: frozenset[str] = frozenset()
-
-    class _FakeUsageReportingProvider:
-        source: str = "supadata"
-
-        async def fetch(
-            self,
-            video_id: str,
-            *,
-            paused_sources: frozenset[str] = no_paused_sources,
-            skip_sources: frozenset[str] = no_paused_sources,
-        ) -> FetchedTranscript:
-            _ = (paused_sources, skip_sources)
-            raise TranscriptUnavailableError(video_id)
-
-        async def usage_snapshot(self, *, now: datetime) -> SourceUsage:
-            _ = now
-            return SourceUsage(used=7, limit=3000, remaining=2993, period="2026-07")
-
-    env.service.provider = _FakeUsageReportingProvider()
-
-    status = await env.service.sync_status(logger=test_logger())
-
-    assert "supadata" in status.usage
-    assert_eq(status.usage["supadata"].used, 7)
-    assert_eq(status.usage["supadata"].limit, 3000)
-    assert_eq(status.usage["supadata"].period, "2026-07")
 
 
 @test()

@@ -76,18 +76,6 @@ export function YouTubeSyncPanel(props: { api: YouTubeHost }) {
                 <span class="text-muted-foreground text-xs">Daily quota</span>
                 <span>{`${String(status().quota.used)} / ${String(status().quota.limit)}`}</span>
               </div>
-              <For each={Object.entries(status().usage)}>
-                {([source, usage]) => (
-                  <div class="flex items-baseline justify-between">
-                    <span class="text-muted-foreground text-xs">
-                      {source === "supadata"
-                        ? "Supadata (monthly)"
-                        : `${source} usage`}
-                    </span>
-                    <span>{`${String(usage.used)} / ${String(usage.limit)}`}</span>
-                  </div>
-                )}
-              </For>
               <Show when={status().api_paused_until}>
                 {(until) => (
                   <p class="text-destructive text-xs" role="status">

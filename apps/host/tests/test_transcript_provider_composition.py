@@ -16,8 +16,8 @@ from pathlib import Path
 from snektest import assert_eq, assert_raises, assert_true, test
 
 from tether.server import HostSettings
-from tether.transcript_library import YouTubeTranscriptApiProvider
-from tether.transcript_provider_composition import (
+from tether.transcripts.library import YouTubeTranscriptApiProvider
+from tether.transcripts.provider_composition import (
     TranscriptProviderConfigError,
     _build_library_provider,
     _build_supadata_provider,
@@ -26,7 +26,7 @@ from tether.transcript_provider_composition import (
     _parse_transcript_provider_order,
     build_configured_transcript_provider,
 )
-from tether.transcript_supadata import SupadataTranscriptProvider
+from tether.transcripts.supadata import SupadataTranscriptProvider
 from tether.youtube import (
     FallbackTranscriptProvider,
     NullTranscriptProvider,

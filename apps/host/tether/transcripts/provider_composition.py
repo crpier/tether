@@ -1,14 +1,9 @@
-"""Compose the transcript-provider chain from settings and bind its late budgets.
+"""Compose the transcript-provider chain and finish its runtime wiring.
 
-Provider *selection* (which sources compose the chain, in what order, validated
-against typos and unconfigured-everything) and the on-demand wiring path's late
-budget binds belong beside the adapters they assemble, not in the ASGI
-composition root (`tether.server`) — every new provider or knob otherwise forces
-a `server.py` edit (issue #202). `server.py` only calls `build_configured_
-transcript_provider` (settings -> provider, or `None` with no OAuth token) and
-`resolve_transcript_provider` (the on-demand wiring path: pick a provider and
-late-bind its persisted budgets/caps once the database/client exist) and passes
-the result to `YouTubeService`/`TranscriptSyncService`.
+Provider selection and the captions adapter's late YouTube quota binding belong
+beside the adapters they assemble, not in the ASGI composition root. `server.py`
+calls `build_configured_transcript_provider` for settings-driven composition and
+`resolve_transcript_provider` once the shared YouTube API client exists.
 
 ```python
 provider = build_configured_transcript_provider(settings)  # None with no token
@@ -22,15 +17,15 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Protocol
 
-from snekql.sqlite import Database
+from pydantic import TypeAdapter
+from snekok import NonEmptySecretStr
 
-from tether.transcript_library import LibraryPassBudget, YouTubeTranscriptApiProvider
-from tether.transcript_supadata import (
+from tether.transcripts.library import LibraryPassBudget, YouTubeTranscriptApiProvider
+from tether.transcripts.supadata import (
     HttpSupadataTransport,
     SupadataConfig,
     SupadataMode,
     SupadataTranscriptProvider,
-    bind_supadata_spend_guard,
 )
 from tether.youtube import (
     FallbackTranscriptProvider,
@@ -50,6 +45,9 @@ _KNOWN_TRANSCRIPT_SOURCES: frozenset[str] = frozenset(
     {"supadata", "captions", "library"}
 )
 """The transcript source names accepted in `TETHER_TRANSCRIPT_PROVIDER_ORDER`."""
+_SUPADATA_API_KEY_ADAPTER: TypeAdapter[NonEmptySecretStr] = TypeAdapter(
+    NonEmptySecretStr
+)
 
 
 class TranscriptProviderConfigError(Exception):
@@ -125,8 +123,6 @@ def build_configured_transcript_provider(
     none of the corpus. With no token, returns `None` so the on-demand path falls
     back to a null provider and the background transcript worker stays off.
 
-    The per-call Supadata use cap is late-bound at wire time (it needs the
-    database), so it is not applied here.
     """
     if not settings.youtube_token_path.exists():
         return None
@@ -229,7 +225,8 @@ def _build_supadata_provider(
             seconds=settings.supadata_min_request_interval_seconds
         ),
     )
-    transport = HttpSupadataTransport(settings.supadata_api_key, config=config)
+    api_key = _SUPADATA_API_KEY_ADAPTER.validate_python(settings.supadata_api_key)
+    transport = HttpSupadataTransport(api_key, config=config)
     return SupadataTranscriptProvider(transport, config=config)
 
 
@@ -237,28 +234,18 @@ def resolve_transcript_provider(
     *,
     configured_provider: TranscriptProvider | None,
     api: YouTubeApi,
-    database: Database,
     client: YouTubeApiClient,
-    supadata_max_uses: int,
 ) -> TranscriptProvider:
-    """Pick the transcript provider and bind its persisted budgets/caps.
+    """Pick the transcript provider and bind the captions API quota charge.
 
     The on-demand fetch path always needs a provider: prefer the explicitly
-    configured one (the composed captions/Supadata chain in production), else reuse
-    the upstream fake when it doubles as a `TranscriptProvider` (the in-memory test
-    double), else a null provider that reports every video unavailable. Two things
-    are late-bound here — the provider tree is built from settings before the
-    database/client exist:
-
-    * The Supadata monthly use cap (a no-op when the chain has no Supadata).
-    * The YouTube Data API daily-quota charge, onto any captions provider in the
-      chain (a no-op when the chain has no captions — the default order). Only
-      captions calls consume the Data API's daily budget; the free library and
-      Supadata never do, so they are never bound to it.
+    configured one, else reuse the upstream fake when it doubles as a
+    `TranscriptProvider`, else use a null provider. The provider tree is built
+    before the YouTube API client exists, so its daily-quota charge is attached
+    here to every captions provider in the chain.
     """
     provider = configured_provider or (
         api if isinstance(api, InMemoryYouTubeApi) else NullTranscriptProvider()
     )
-    bind_supadata_spend_guard(provider, database, max_uses=supadata_max_uses)
     bind_captions_daily_quota(provider, client.charge_transcript)
     return provider
