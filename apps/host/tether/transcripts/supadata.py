@@ -405,21 +405,6 @@ class SupadataTranscriptProvider(TranscriptProvider):
         return Err(_unfinished_error(video_id, job_id, self._config.max_poll_attempts))
 
 
-def _video_url(video_id: str) -> str:
-    """Build the canonical YouTube watch URL Supadata requires."""
-    return f"https://www.youtube.com/watch?v={video_id}"
-
-
-def _submit_params(
-    video_id: str, mode: SupadataMode, languages: tuple[str, ...] = ()
-) -> dict[str, str]:
-    """Build the explicit billed mode and preferred-language submit parameters."""
-    params = {"url": _video_url(video_id), "mode": mode}
-    if languages:
-        params["lang"] = languages[0]
-    return params
-
-
 def _is_http_failure(response: httpx2.Response) -> bool:
     """Treat Supadata's special 206 unavailable status as a failure everywhere."""
     return (
@@ -484,12 +469,16 @@ class HttpSupadataTransport(SupadataTransport):
 
     async def submit(self, video_id: str) -> SupadataSubmitResult:
         """Submit and decode either a direct transcript or accepted job."""
+        params = {
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "mode": self._config.mode,
+        }
+        if self._config.languages:
+            params["lang"] = self._config.languages[0]
         try:
             response = await self._client.get(
                 "/transcript",
-                params=_submit_params(
-                    video_id, self._config.mode, self._config.languages
-                ),
+                params=params,
             )
         except httpx2.RequestError as e:
             return Err(SupadataNetworkFailure(operation="submit", message=str(e)))
