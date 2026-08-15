@@ -17,16 +17,16 @@ a panel execution is a Search, never cached (ADR 0006).
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import Route
 
 from tether import panel_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.openapi import EndpointRoute, endpoint
 from tether.panel_capabilities import (
     PANEL_ERRORS,
     PanelRead,
@@ -66,9 +66,8 @@ class PanelResultsQuery(BaseModel):
     limit: PositiveInt = EXECUTE_DEFAULT_LIMIT
 
 
-def _path_panel_id(request: Request) -> UUID:
+def _path_panel_id(raw_id: str) -> UUID:
     """Parse the `{panel_id}` path segment, treating a bad id as absent."""
-    raw_id = request.path_params["panel_id"]
     try:
         return UUID(raw_id)
     except ValueError as error:
@@ -78,7 +77,10 @@ def _path_panel_id(request: Request) -> UUID:
 _translate_domain_errors = translate_domain_errors(PANEL_ERRORS)
 
 
-@endpoint(request_body=CreatePanelRequest, response=PanelRead, status=201)
+router = APIRouter()
+
+
+@router.post("/api/panels", response_model=PanelRead, status_code=201)
 @_translate_domain_errors
 async def create_panel(request: Request, body: CreatePanelRequest) -> Response:
     """Create a Synthetic panel."""
@@ -86,46 +88,43 @@ async def create_panel(request: Request, body: CreatePanelRequest) -> Response:
     return rest_response(outcome, status_code=201)
 
 
-@endpoint(response=PanelRead, response_is_list=True)
+@router.get("/api/panels", response_model=list[PanelRead])
 async def list_panels(request: Request) -> Response:
     """List live Synthetic panels in position order."""
     return rest_response(await panel_capabilities.list_panels(request))
 
 
-@endpoint(request_body=UpdatePanelRequest, response=PanelRead)
+@router.put("/api/panels/{panel_id}", response_model=PanelRead)
 @_translate_domain_errors
-async def update_panel(request: Request, body: UpdatePanelRequest) -> Response:
+async def update_panel(
+    request: Request, body: UpdatePanelRequest, panel_id: str
+) -> Response:
     """Replace a panel's definition at an observed version."""
     outcome = await panel_capabilities.update(
-        request, _path_panel_id(request), body.to_spec(), body.version
+        request, _path_panel_id(panel_id), body.to_spec(), body.version
     )
     return rest_response(outcome)
 
 
-@endpoint(query=DeletePanelQuery, response=PanelRead)
+@router.delete("/api/panels/{panel_id}", response_model=PanelRead)
 @_translate_domain_errors
-async def delete_panel(request: Request, query: DeletePanelQuery) -> Response:
+async def delete_panel(
+    request: Request, query: Annotated[DeletePanelQuery, Query()], panel_id: str
+) -> Response:
     """Delete a Synthetic panel."""
     outcome = await panel_capabilities.delete(
-        request, _path_panel_id(request), query.version
+        request, _path_panel_id(panel_id), query.version
     )
     return rest_response(outcome)
 
 
-@endpoint(query=PanelResultsQuery, response=PanelResultsRead)
+@router.get("/api/panels/{panel_id}/results", response_model=PanelResultsRead)
 @_translate_domain_errors
-async def panel_results(request: Request, query: PanelResultsQuery) -> Response:
+async def panel_results(
+    request: Request, query: Annotated[PanelResultsQuery, Query()], panel_id: str
+) -> Response:
     """Run a panel's saved query, recomputed against the corpus right now."""
     outcome = await panel_capabilities.execute(
-        request, _path_panel_id(request), query.limit
+        request, _path_panel_id(panel_id), query.limit
     )
     return rest_response(outcome)
-
-
-panel_routes: list[Route] = [
-    EndpointRoute("/api/panels", create_panel, methods=["POST"]),
-    EndpointRoute("/api/panels", list_panels, methods=["GET"]),
-    EndpointRoute("/api/panels/{panel_id}", update_panel, methods=["PUT"]),
-    EndpointRoute("/api/panels/{panel_id}", delete_panel, methods=["DELETE"]),
-    EndpointRoute("/api/panels/{panel_id}/results", panel_results, methods=["GET"]),
-]

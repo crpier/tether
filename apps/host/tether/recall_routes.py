@@ -14,14 +14,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import APIRouter
 from pydantic import BaseModel, NonNegativeInt
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import Route
 
 from tether import recall_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.openapi import EndpointRoute, endpoint
 from tether.recall import PromptAnswer, RecallPromptNotFoundError
 from tether.recall_capabilities import (
     RECALL_ERRORS,
@@ -79,9 +78,8 @@ class ProposeEssayGradeRequest(BaseModel):
     answer_text: str
 
 
-def _path_prompt_id(request: Request) -> UUID:
+def _path_prompt_id(raw_id: str) -> UUID:
     """Parse the `{prompt_id}` path segment, treating a bad id as absent."""
-    raw_id = request.path_params["prompt_id"]
     try:
         return UUID(raw_id)
     except ValueError as error:
@@ -91,7 +89,10 @@ def _path_prompt_id(request: Request) -> UUID:
 _translate_domain_errors = translate_domain_errors(RECALL_ERRORS)
 
 
-@endpoint(request_body=StartRecallRequest, response=StudyItemRead, status=201)
+router = APIRouter()
+
+
+@router.post("/api/recall/study-items", response_model=StudyItemRead, status_code=201)
 @_translate_domain_errors
 async def start_recall(request: Request, body: StartRecallRequest) -> Response:
     """Promote an ingested educational video into a study item under Recall."""
@@ -99,52 +100,44 @@ async def start_recall(request: Request, body: StartRecallRequest) -> Response:
     return rest_response(outcome, status_code=201)
 
 
-@endpoint(response=StudyItemRead, response_is_list=True)
+@router.get("/api/recall/study-items", response_model=list[StudyItemRead])
 async def list_study_items(request: Request) -> Response:
     """List every study item, newest-first."""
     return rest_response(await recall_capabilities.list_study_items(request))
 
 
-@endpoint(response=DuePromptRead, response_is_list=True)
+@router.get("/api/recall/prompts", response_model=list[DuePromptRead])
 async def list_due_prompts(request: Request) -> Response:
     """List the recall prompts currently owed a review (the outstanding surface)."""
     return rest_response(await recall_capabilities.list_due_prompts(request))
 
 
-@endpoint(request_body=AnswerPromptRequest, response=AnswerOutcomeRead)
+@router.post("/api/recall/prompts/{prompt_id}/answer", response_model=AnswerOutcomeRead)
 @_translate_domain_errors
-async def answer_prompt(request: Request, body: AnswerPromptRequest) -> Response:
+async def answer_prompt(
+    request: Request, body: AnswerPromptRequest, prompt_id: str
+) -> Response:
     """Answer a recall prompt, grading and rescheduling it (tethering on completion)."""
     outcome = await recall_capabilities.answer_prompt(
-        request, _path_prompt_id(request), body.to_answer()
+        request, _path_prompt_id(prompt_id), body.to_answer()
     )
     return rest_response(outcome)
 
 
-@endpoint(request_body=ProposeEssayGradeRequest, response=EssayGradeProposalRead)
+@router.post(
+    "/api/recall/prompts/{prompt_id}/grade-proposal",
+    response_model=EssayGradeProposalRead,
+)
 @_translate_domain_errors
 async def propose_essay_grade(
-    request: Request, body: ProposeEssayGradeRequest
+    request: Request, body: ProposeEssayGradeRequest, prompt_id: str
 ) -> Response:
     """Propose a model grade for an essay answer, for the human to confirm."""
     outcome = await recall_capabilities.propose_essay_grade(
-        request, _path_prompt_id(request), body.answer_text
+        request, _path_prompt_id(prompt_id), body.answer_text
     )
     return rest_response(outcome)
 
 
 # `/api/recall/prompts` precedes `/api/recall/prompts/{prompt_id}/answer` so the
 # literal collection path wins over the parameterised one.
-recall_routes: list[Route] = [
-    EndpointRoute("/api/recall/study-items", start_recall, methods=["POST"]),
-    EndpointRoute("/api/recall/study-items", list_study_items, methods=["GET"]),
-    EndpointRoute("/api/recall/prompts", list_due_prompts, methods=["GET"]),
-    EndpointRoute(
-        "/api/recall/prompts/{prompt_id}/answer", answer_prompt, methods=["POST"]
-    ),
-    EndpointRoute(
-        "/api/recall/prompts/{prompt_id}/grade-proposal",
-        propose_essay_grade,
-        methods=["POST"],
-    ),
-]

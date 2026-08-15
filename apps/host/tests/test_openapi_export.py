@@ -22,5 +22,5 @@ def write_openapi_document_emits_the_public_api_surface() -> None:
     assert_in("/api/auth/session", document["paths"])
     assert_in("/api/memories", document["paths"])
     assert_in("/api/bucket-items", document["paths"])
-    assert_eq(document["components"]["schemas"]["JsonValue"], {})
+    assert_in("HTTPValidationError", document["components"]["schemas"])
     assert_true(all(path.startswith("/api/") for path in document["paths"]))

@@ -12,7 +12,7 @@ set dotenv-load := true
 default:
     @just --list
 
-# Python host (Starlette, auto-reload)
+# Python host (FastAPI, auto-reload)
 host:
     TETHER_RELOAD=true TETHER_APP_PASSWORD=dev TETHER_SESSION_SECRET=dev-session-secret uv run python -m tether
 

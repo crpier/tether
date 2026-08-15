@@ -1,7 +1,7 @@
 """HTTP routes for the Memory Review spine.
 
-Each route adapts one Memory capability to HTTP: `endpoint` validates the
-request body or query string with Pydantic, the handler binds the validated
+Each FastAPI route validates its request body or query string with Pydantic,
+then binds the validated
 input (plus any path id) onto the capability execute in
 `tether.memory_capabilities`, and the outcome is served as `MemoryRead` JSON.
 Domain exceptions translate to status codes through the domain's `ErrorRule`
@@ -14,24 +14,23 @@ version that has moved on surfaces as a 409. The capability packages the path
 id and that version into a detached `Memory` reference for the service, which
 owns the row lookup and the conflict decision.
 
-The same `endpoint` decoration records each handler's request/response model so
-`build_openapi` can describe the API without a second source of truth.
+FastAPI derives OpenAPI from the same request and response models used at runtime.
 """
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import Route
 
 from tether import memory_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.memories import MemoryNotFoundError, MemoryState
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent, MemoryRead
-from tether.openapi import EndpointRoute, endpoint
 
 
 class CaptureRequest(BaseModel):
@@ -96,9 +95,8 @@ class SearchQuery(BaseModel):
     q: str
 
 
-def _path_memory_id(request: Request) -> UUID:
+def _path_memory_id(raw_memory_id: str) -> UUID:
     """Parse the `{memory_id}` path segment, treating a malformed id as absent."""
-    raw_memory_id = request.path_params["memory_id"]
     try:
         return UUID(raw_memory_id)
     except ValueError as error:
@@ -108,63 +106,66 @@ def _path_memory_id(request: Request) -> UUID:
 _translate_domain_errors = translate_domain_errors(MEMORY_ERRORS)
 
 
-@endpoint(request_body=CaptureRequest, response=MemoryRead, status=201)
+router = APIRouter()
+
+
+@router.post("/api/memories", response_model=MemoryRead, status_code=201)
 async def capture_memory(request: Request, body: CaptureRequest) -> Response:
     """Capture a loose Memory."""
     outcome = await memory_capabilities.capture(request, body.content)
     return rest_response(outcome, status_code=201)
 
 
-@endpoint(query=BrowseQuery, response=MemoryRead, response_is_list=True)
-async def browse_memories(request: Request, query: BrowseQuery) -> Response:
+@router.get("/api/memories", response_model=list[MemoryRead])
+async def browse_memories(
+    request: Request, query: Annotated[BrowseQuery, Query()]
+) -> Response:
     """Filter the review queue (`loose`) or browse the corpus (`tethered`)."""
     return rest_response(await memory_capabilities.browse(request, query.state))
 
 
-@endpoint(query=SearchQuery, response=MemoryRead, response_is_list=True)
+@router.get("/api/memories/search", response_model=list[MemoryRead])
 @_translate_domain_errors
-async def search_memories(request: Request, query: SearchQuery) -> Response:
+async def search_memories(
+    request: Request, query: Annotated[SearchQuery, Query()]
+) -> Response:
     """Keyword Search over tethered Memories."""
     outcome = await memory_capabilities.search(request, query.q, limit=query.limit)
     return rest_response(outcome)
 
 
-@endpoint(request_body=EditRequest, response=MemoryRead)
+@router.patch("/api/memories/{memory_id}", response_model=MemoryRead)
 @_translate_domain_errors
-async def edit_memory(request: Request, body: EditRequest) -> Response:
+async def edit_memory(request: Request, body: EditRequest, memory_id: str) -> Response:
     """Edit a Memory's `content`; a human edit keeps trust."""
     outcome = await memory_capabilities.edit(
-        request, _path_memory_id(request), body.content, body.version
+        request, _path_memory_id(memory_id), body.content, body.version
     )
     return rest_response(outcome)
 
 
-@endpoint(request_body=TetherRequest, response=MemoryRead)
+@router.post("/api/memories/{memory_id}/tether", response_model=MemoryRead)
 @_translate_domain_errors
-async def tether_memory(request: Request, body: TetherRequest) -> Response:
+async def tether_memory(
+    request: Request, body: TetherRequest, memory_id: str
+) -> Response:
     """Promote a loose Memory to tethered."""
     outcome = await memory_capabilities.tether(
-        request, _path_memory_id(request), body.version
+        request, _path_memory_id(memory_id), body.version
     )
     return rest_response(outcome)
 
 
-@endpoint(query=RejectQuery, response=MemoryRead)
+@router.delete("/api/memories/{memory_id}", response_model=MemoryRead)
 @_translate_domain_errors
-async def reject_memory(request: Request, query: RejectQuery) -> Response:
+async def reject_memory(
+    request: Request, query: Annotated[RejectQuery, Query()], memory_id: str
+) -> Response:
     """Soft-delete (reject) a Memory."""
     outcome = await memory_capabilities.reject(
-        request, _path_memory_id(request), query.version
+        request, _path_memory_id(memory_id), query.version
     )
     return rest_response(outcome)
 
 
 # `/api/memories/search` precedes `/api/memories/{memory_id}` so the literal path wins.
-routes: list[Route] = [
-    EndpointRoute("/api/memories", capture_memory, methods=["POST"]),
-    EndpointRoute("/api/memories", browse_memories, methods=["GET"]),
-    EndpointRoute("/api/memories/search", search_memories, methods=["GET"]),
-    EndpointRoute("/api/memories/{memory_id}", edit_memory, methods=["PATCH"]),
-    EndpointRoute("/api/memories/{memory_id}", reject_memory, methods=["DELETE"]),
-    EndpointRoute("/api/memories/{memory_id}/tether", tether_memory, methods=["POST"]),
-]

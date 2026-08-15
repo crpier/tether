@@ -5,12 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
-
-from tether.openapi import EndpointRoute, endpoint
 
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
 """Reasoning-effort levels the pi `set_thinking_level` RPC accepts."""
@@ -135,7 +133,10 @@ class ModelListRead(BaseModel):
     models: list[AgentModelRead]
 
 
-@endpoint(response=ModelListRead)
+router = APIRouter()
+
+
+@router.get("/api/models", response_model=ModelListRead)
 async def list_models(request: Request) -> Response:
     """List host-enabled agent model choices."""
     catalog = request.app.state.model_catalog
@@ -145,6 +146,3 @@ async def list_models(request: Request) -> Response:
             models=[AgentModelRead.from_config(model) for model in catalog.models],
         ).model_dump(mode="json")
     )
-
-
-model_routes: list[Route] = [EndpointRoute("/api/models", list_models, methods=["GET"])]

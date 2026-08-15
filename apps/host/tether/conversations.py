@@ -6,9 +6,10 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
-from typing import Literal, cast
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid7
 
+from fastapi import APIRouter, Query
 from pydantic import UUID7, BaseModel, PositiveInt
 from snekql.sqlite import (
     CurrentTimestamp,
@@ -28,14 +29,12 @@ from snekql.sqlite import (
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
 from tether.model_selection import (
     AgentModelCatalog,
     AgentModelConfig,
     ModelNotAllowedError,
 )
-from tether.openapi import EndpointRoute, endpoint
 from tether.pi_runtime import PiRuntimeError
 
 type MessageRole = Literal["user", "assistant", "tool", "reasoning"]
@@ -154,9 +153,9 @@ class MessageRead(BaseModel):
     pi_message_id: str | None
     role: MessageRole
     seq: PositiveInt
-    tool_args: dict[str, JsonValue] | None
+    tool_args: dict[str, Any] | None
     tool_name: str | None
-    tool_result: dict[str, JsonValue] | None
+    tool_result: dict[str, Any] | None
 
     @classmethod
     def from_message(cls, message: Message[Fetched]) -> MessageRead:
@@ -173,7 +172,7 @@ class MessageRead(BaseModel):
             if message.tool_args is not None
             else None,
             tool_name=message.tool_name,
-            tool_result=cast("dict[str, JsonValue]", json.loads(message.tool_result))
+            tool_result=json.loads(message.tool_result)
             if message.tool_result is not None
             else None,
         )
@@ -502,7 +501,10 @@ async def create_conversation_schema(database: Database) -> None:
     await database.migrate(migrations)
 
 
-@endpoint(response=ConversationRead, response_is_list=True)
+router = APIRouter()
+
+
+@router.get("/api/conversations", response_model=list[ConversationRead])
 async def list_conversations(request: Request) -> Response:
     """List host-owned conversations."""
     service = request.app.state.conversation_service
@@ -553,15 +555,18 @@ async def _messages_response(
     )
 
 
-@endpoint(request_body=SetConversationModelRequest, response=ConversationRead)
+@router.post(
+    "/api/conversations/{conversation_id}/model", response_model=ConversationRead
+)
 async def set_conversation_model(
     request: Request,
     body: SetConversationModelRequest,
+    conversation_id: str,
 ) -> Response:
     """Select the model used for subsequent turns in one conversation."""
-    raw_conversation_id = request.path_params["conversation_id"]
+    raw_conversation_id = conversation_id
     try:
-        conversation_id = UUID(raw_conversation_id)
+        parsed_conversation_id = UUID(raw_conversation_id)
     except ValueError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     try:
@@ -569,7 +574,7 @@ async def set_conversation_model(
             conversation,
             selected_model,
         ) = await request.app.state.conversation_service.set_selected_model(
-            conversation_id,
+            parsed_conversation_id,
             body.selected_model,
         )
     except ConversationNotFoundError:
@@ -586,33 +591,39 @@ async def set_conversation_model(
     return JSONResponse(read.model_dump(mode="json"))
 
 
-@endpoint(query=MessagesQuery, response=MessageRead, response_is_list=True)
-async def list_messages(request: Request, query: MessagesQuery) -> Response:
+@router.get(
+    "/api/conversations/{conversation_id}/messages", response_model=list[MessageRead]
+)
+async def list_messages(
+    request: Request, query: Annotated[MessagesQuery, Query()], conversation_id: str
+) -> Response:
     """List settled transcript rows for one conversation."""
-    raw_conversation_id = request.path_params["conversation_id"]
+    raw_conversation_id = conversation_id
     try:
-        conversation_id = UUID(raw_conversation_id)
+        parsed_conversation_id = UUID(raw_conversation_id)
     except ValueError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     return await _messages_response(
         request,
-        conversation_id,
+        parsed_conversation_id,
         limit=query.limit,
         before_seq=query.before_seq,
     )
 
 
-@endpoint(response=ConversationRead)
-async def clear_messages(request: Request) -> Response:
+@router.delete(
+    "/api/conversations/{conversation_id}/messages", response_model=ConversationRead
+)
+async def clear_messages(request: Request, conversation_id: str) -> Response:
     """Clear one conversation's transcript and rotate its pi session."""
-    raw_conversation_id = request.path_params["conversation_id"]
+    raw_conversation_id = conversation_id
     try:
-        conversation_id = UUID(raw_conversation_id)
+        parsed_conversation_id = UUID(raw_conversation_id)
     except ValueError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     try:
         conversation = await request.app.state.conversation_service.clear_conversation(
-            conversation_id
+            parsed_conversation_id
         )
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
@@ -621,23 +632,3 @@ async def clear_messages(request: Request) -> Response:
     await request.app.state.conversation_runtime_registry.discard(conversation.id)
     read = await request.app.state.conversation_service.to_read(conversation)
     return JSONResponse(read.model_dump(mode="json"))
-
-
-conversation_routes: list[Route] = [
-    EndpointRoute("/api/conversations", list_conversations, methods=["GET"]),
-    EndpointRoute(
-        "/api/conversations/{conversation_id}/model",
-        set_conversation_model,
-        methods=["POST"],
-    ),
-    EndpointRoute(
-        "/api/conversations/{conversation_id}/messages",
-        list_messages,
-        methods=["GET"],
-    ),
-    EndpointRoute(
-        "/api/conversations/{conversation_id}/messages",
-        clear_messages,
-        methods=["DELETE"],
-    ),
-]

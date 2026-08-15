@@ -16,16 +16,16 @@ delete), and a version that has moved on surfaces as a 409.
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import Route
 
 from tether import trigger_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.openapi import EndpointRoute, endpoint
 from tether.trigger_capabilities import TRIGGER_ERRORS, TriggerRead, TriggerSpecBody
 from tether.triggers import TriggerNotFoundError
 
@@ -50,9 +50,8 @@ class DeleteTriggerQuery(BaseModel):
     version: PositiveInt
 
 
-def _path_trigger_id(request: Request) -> UUID:
+def _path_trigger_id(raw_id: str) -> UUID:
     """Parse the `{trigger_id}` path segment, treating a bad id as absent."""
-    raw_id = request.path_params["trigger_id"]
     try:
         return UUID(raw_id)
     except ValueError as error:
@@ -62,7 +61,10 @@ def _path_trigger_id(request: Request) -> UUID:
 _translate_domain_errors = translate_domain_errors(TRIGGER_ERRORS)
 
 
-@endpoint(request_body=CreateTriggerRequest, response=TriggerRead, status=201)
+router = APIRouter()
+
+
+@router.post("/api/triggers", response_model=TriggerRead, status_code=201)
 @_translate_domain_errors
 async def create_trigger(request: Request, body: CreateTriggerRequest) -> Response:
     """Create a Scheduled trigger."""
@@ -70,35 +72,31 @@ async def create_trigger(request: Request, body: CreateTriggerRequest) -> Respon
     return rest_response(outcome, status_code=201)
 
 
-@endpoint(response=TriggerRead, response_is_list=True)
+@router.get("/api/triggers", response_model=list[TriggerRead])
 async def list_triggers(request: Request) -> Response:
     """List live Scheduled triggers, soonest next fire first."""
     return rest_response(await trigger_capabilities.list_triggers(request))
 
 
-@endpoint(request_body=UpdateTriggerRequest, response=TriggerRead)
+@router.put("/api/triggers/{trigger_id}", response_model=TriggerRead)
 @_translate_domain_errors
-async def update_trigger(request: Request, body: UpdateTriggerRequest) -> Response:
+async def update_trigger(
+    request: Request, body: UpdateTriggerRequest, trigger_id: str
+) -> Response:
     """Replace a trigger's definition, re-arming it from its next occurrence."""
     outcome = await trigger_capabilities.update(
-        request, _path_trigger_id(request), body.to_spec(), body.version
+        request, _path_trigger_id(trigger_id), body.to_spec(), body.version
     )
     return rest_response(outcome)
 
 
-@endpoint(query=DeleteTriggerQuery, response=TriggerRead)
+@router.delete("/api/triggers/{trigger_id}", response_model=TriggerRead)
 @_translate_domain_errors
-async def delete_trigger(request: Request, query: DeleteTriggerQuery) -> Response:
+async def delete_trigger(
+    request: Request, query: Annotated[DeleteTriggerQuery, Query()], trigger_id: str
+) -> Response:
     """Delete a Scheduled trigger."""
     outcome = await trigger_capabilities.delete(
-        request, _path_trigger_id(request), query.version
+        request, _path_trigger_id(trigger_id), query.version
     )
     return rest_response(outcome)
-
-
-trigger_routes: list[Route] = [
-    EndpointRoute("/api/triggers", create_trigger, methods=["POST"]),
-    EndpointRoute("/api/triggers", list_triggers, methods=["GET"]),
-    EndpointRoute("/api/triggers/{trigger_id}", update_trigger, methods=["PUT"]),
-    EndpointRoute("/api/triggers/{trigger_id}", delete_trigger, methods=["DELETE"]),
-]

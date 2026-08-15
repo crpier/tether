@@ -16,6 +16,7 @@ mount the sandboxed iframe. `list_artifacts` renders the lighter
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import UUID7, BaseModel, PositiveInt
@@ -27,7 +28,6 @@ from tether.artifacts import (
     ArtifactHtmlTooLargeError,
     ArtifactNotFoundError,
     Fetched,
-    JsonValue,
 )
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
@@ -99,7 +99,7 @@ class ArtifactEventRead(BaseModel):
 
     id: UUID7
     artifact_id: UUID7
-    payload: dict[str, JsonValue]
+    payload: dict[str, Any]
     created_at: datetime
 
     @classmethod
@@ -177,7 +177,7 @@ async def list_artifacts(request: Request) -> CapabilityOutcome:
 
 
 async def post_event(
-    request: Request, artifact_id: UUID, payload: dict[str, JsonValue]
+    request: Request, artifact_id: UUID, payload: dict[str, Any]
 ) -> CapabilityOutcome:
     """Append one free-form event to an artifact's log (the postMessage relay target)."""
     event = await request.app.state.artifact_service.record_event(

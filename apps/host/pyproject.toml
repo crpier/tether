@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "aiosqlite>=0.22.1",
     "anyio>=4.14.0",
+    "fastapi>=0.128.0",
     "fastembed>=0.8.0",
     "httpx2>=2.5.0",
     "itsdangerous>=2.2.0",
@@ -20,7 +21,6 @@ dependencies = [
     "pywebpush>=2.3.0",
     "pyyaml>=6.0.3",
     "snekql>=0.5.0",
-    "starlette>=1.3.1",
     "structlog>=26.1.0",
     "uvicorn>=0.49.0",
     # uvicorn needs a WebSocket protocol implementation to upgrade `/ws`;
