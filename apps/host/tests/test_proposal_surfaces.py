@@ -24,8 +24,8 @@ from tether.action_registry import (
     ActionSpec,
     build_action_registry,
 )
+from tether.app_runtime import app_runtime
 from tether.proposal_tools import PROPOSAL_TOOL_SPECS
-from tether.proposals import ProposalService
 from tether.tool_registry import all_tool_specs
 
 make_client = surface_client
@@ -44,7 +44,7 @@ async def _ok(params: BaseModel, context: ActionContext) -> ActionResult:
 def install_fake_kind(client: TestClient) -> None:
     """Register `test.ok`/`test.other` action kinds onto the live service."""
     app = cast("Starlette", client.app)
-    service = cast("ProposalService", app.state.proposal_service)
+    service = app_runtime(app).proposal_service
     service.action_registry = build_action_registry(
         [
             ActionSpec("test.ok", NoParams, _ok, ui_hint="test.ok"),

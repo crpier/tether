@@ -4,16 +4,18 @@ Required packages: `starlette` and `structlog`. Install `opentelemetry-api` only
 when trace/span correlation is wanted.
 
 After copying this file as `structured_logging.py`, configure logging before the
-application starts handling requests. The middleware requires
-`app.state.logger`:
+application starts handling requests. The middleware reads the logger from the
+application's canonical runtime:
 
 ```python
+from types import SimpleNamespace
+
 from fastapi import FastAPI
 
 from structured_logging import ContextLoggerMiddleware, configure_logging
 
 app = FastAPI()
-app.state.logger = configure_logging()
+app.state.runtime = SimpleNamespace(logger=configure_logging())
 app.add_middleware(ContextLoggerMiddleware)
 ```
 """
@@ -26,7 +28,7 @@ import time
 from collections.abc import Callable, Collection, Mapping
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 import structlog
@@ -35,6 +37,18 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog.typing import EventDict, WrappedLogger
 
 type Logger = structlog.stdlib.BoundLogger
+
+
+class _LoggingRuntime(Protocol):
+    """Logger available while the host serves requests."""
+
+    logger: Logger
+
+
+def _runtime(connection: HTTPConnection) -> _LoggingRuntime:
+    """Read logging from the canonical host runtime."""
+    return cast("_LoggingRuntime", connection.app.state.runtime)
+
 
 try:
     from opentelemetry.trace import get_current_span
@@ -374,7 +388,7 @@ class ContextLoggerMiddleware:
     address; forwarded headers are not interpreted:
 
     ```python
-    app.state.logger = configure_logging()
+    app.state.runtime = SimpleNamespace(logger=configure_logging())
     app.add_middleware(
         ContextLoggerMiddleware,
         include_client_ip=True,
@@ -408,7 +422,7 @@ class ContextLoggerMiddleware:
             return
 
         connection = HTTPConnection(scope)
-        base_logger = cast("Logger", connection.app.state.logger)
+        base_logger = _runtime(connection).logger
         request_context = self._connection_context(connection, scope)
         status_code: int | None = None
 

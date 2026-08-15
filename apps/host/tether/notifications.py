@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import ClassVar, Protocol, cast
 from uuid import UUID, uuid7
 
 from fastapi import APIRouter
@@ -202,6 +202,17 @@ class NotificationRead(BaseModel):
         )
 
 
+class _NotificationRuntime(Protocol):
+    """Notification service available while the host serves requests."""
+
+    notification_service: NotificationService
+
+
+def _runtime(request: Request) -> _NotificationRuntime:
+    """Read notifications from the canonical host runtime."""
+    return cast("_NotificationRuntime", request.app.state.runtime)
+
+
 def _path_notification_id(raw_id: str) -> UUID:
     """Parse the `{notification_id}` path segment, treating a bad id as absent."""
     try:
@@ -218,7 +229,7 @@ router = APIRouter()
 @router.get("/api/notifications", response_model=list[NotificationRead])
 async def list_notifications(request: Request) -> Response:
     """List undismissed notifications, newest first."""
-    notifications = await request.app.state.notification_service.list_recent()
+    notifications = await _runtime(request).notification_service.list_recent()
     return JSONResponse(
         [
             NotificationRead.from_notification(notification).model_dump(mode="json")
@@ -230,7 +241,7 @@ async def list_notifications(request: Request) -> Response:
 @router.delete("/api/notifications/{notification_id}", status_code=204)
 async def dismiss_notification(request: Request, notification_id: str) -> Response:
     """Dismiss one notification."""
-    await request.app.state.notification_service.dismiss(
+    await _runtime(request).notification_service.dismiss(
         _path_notification_id(notification_id)
     )
     return Response(status_code=204)
@@ -239,5 +250,5 @@ async def dismiss_notification(request: Request, notification_id: str) -> Respon
 @router.delete("/api/notifications", status_code=204)
 async def clear_notifications(request: Request) -> Response:
     """Dismiss every live notification."""
-    _ = await request.app.state.notification_service.clear()
+    _ = await _runtime(request).notification_service.clear()
     return Response(status_code=204)

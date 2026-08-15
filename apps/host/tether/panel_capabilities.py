@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.memory_capabilities import MemoryRead
 from tether.panels import (
@@ -139,7 +140,7 @@ def _single(panel: SyntheticPanel[Fetched]) -> CapabilityOutcome:
 
 async def create(request: Request, spec: PanelSpec) -> CapabilityOutcome:
     """Create a Synthetic panel."""
-    panel = await request.app.state.panel_service.create(
+    panel = await app_runtime(request.app).panel_service.create(
         spec,
         logger=get_request_logger(request),
     )
@@ -148,7 +149,7 @@ async def create(request: Request, spec: PanelSpec) -> CapabilityOutcome:
 
 async def list_panels(request: Request) -> CapabilityOutcome:
     """List live Synthetic panels in position order."""
-    panels = await request.app.state.panel_service.list_panels(
+    panels = await app_runtime(request.app).panel_service.list_panels(
         logger=get_request_logger(request),
     )
     return CapabilityOutcome(
@@ -160,7 +161,7 @@ async def update(
     request: Request, panel_id: UUID, spec: PanelSpec, version: PositiveInt
 ) -> CapabilityOutcome:
     """Replace a panel's definition at an observed version."""
-    panel = await request.app.state.panel_service.update(
+    panel = await app_runtime(request.app).panel_service.update(
         _panel_reference(panel_id, version),
         spec,
         logger=get_request_logger(request),
@@ -172,7 +173,7 @@ async def delete(
     request: Request, panel_id: UUID, version: PositiveInt
 ) -> CapabilityOutcome:
     """Delete a Synthetic panel."""
-    panel = await request.app.state.panel_service.delete(
+    panel = await app_runtime(request.app).panel_service.delete(
         _panel_reference(panel_id, version),
         logger=get_request_logger(request),
     )
@@ -185,7 +186,7 @@ async def execute(
     limit: PositiveInt = EXECUTE_DEFAULT_LIMIT,
 ) -> CapabilityOutcome:
     """Run a panel's saved query, recomputed against the corpus right now."""
-    service = request.app.state.panel_service
+    service = app_runtime(request.app).panel_service
     panel = await service.fetch(panel_id)
     results = await service.execute(
         panel,

@@ -25,7 +25,10 @@ from tether.transcripts.contracts import (
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
-from tether.youtube import IngestedVideo, create_youtube_schema
+from tether.youtube_store import (
+    IngestedVideo,
+    create_youtube_schema,
+)
 
 _NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 

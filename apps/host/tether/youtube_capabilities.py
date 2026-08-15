@@ -15,8 +15,10 @@ from datetime import datetime
 
 from pydantic import UUID7, BaseModel
 from snekok import Err, Ok
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 from tether.transcripts.contracts import (
@@ -28,19 +30,20 @@ from tether.transcripts.contracts import (
 )
 from tether.youtube import (
     EmptyYouTubeSearchQueryError,
-    Fetched,
-    IngestedVideo,
-    IngestState,
     TranscriptBlockedError,
     TranscriptNeedsReviewError,
     TranscriptRequestResult,
     TranscriptResult,
-    TranscriptStatus,
     TranscriptTransientError,
     TranscriptUnavailableError,
-    YouTubeQuotaExceededError,
-    YouTubeSource,
     YouTubeVideoNotFoundError,
+)
+from tether.youtube_quota import YouTubeQuotaExceededError
+from tether.youtube_store import (
+    IngestedVideo,
+    IngestState,
+    TranscriptStatus,
+    YouTubeSource,
     derive_ingest_state,
 )
 
@@ -168,9 +171,9 @@ class YouTubeVideoRead(BaseModel):
 
 async def _single(request: Request, video: IngestedVideo[Fetched]) -> CapabilityOutcome:
     """Render a single ingested video (ignore/retry carry no quota/cache)."""
-    transcript_status = await request.app.state.youtube_service.transcript_status(
-        video.video_id
-    )
+    transcript_status = await app_runtime(
+        request.app
+    ).youtube_service.transcript_status(video.video_id)
     return CapabilityOutcome(
         result=YouTubeVideoRead.from_video(
             video, transcript_status=transcript_status
@@ -180,7 +183,7 @@ async def _single(request: Request, video: IngestedVideo[Fetched]) -> Capability
 
 async def ignore(request: Request, video_id: str) -> CapabilityOutcome:
     """Purge a video from ingestion."""
-    video = await request.app.state.youtube_service.ignore(
+    video = await app_runtime(request.app).youtube_service.ignore(
         video_id,
         logger=get_request_logger(request),
     )
@@ -189,7 +192,7 @@ async def ignore(request: Request, video_id: str) -> CapabilityOutcome:
 
 async def retry(request: Request, video_id: str) -> CapabilityOutcome:
     """Return a previously purged video to ingestion."""
-    video = await request.app.state.youtube_service.retry(
+    video = await app_runtime(request.app).youtube_service.retry(
         video_id,
         logger=get_request_logger(request),
     )

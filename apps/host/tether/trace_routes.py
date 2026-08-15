@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from tether.agent_trace import AgentTraceRecorder
+from tether.app_runtime import app_runtime
 
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 200
@@ -25,7 +26,7 @@ _MAX_LIMIT = 200
 
 def _recorder(request: Request) -> AgentTraceRecorder:
     """Return the host's agent-trace recorder."""
-    return request.app.state.trace_recorder
+    return app_runtime(request.app).trace_recorder
 
 
 def _limit(request: Request) -> int:

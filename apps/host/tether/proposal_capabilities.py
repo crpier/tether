@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.proposals import (
     ActionDisposition,
@@ -221,7 +222,7 @@ def _single(view: ProposalView) -> CapabilityOutcome:
 
 async def propose(request: Request, draft: ProposalDraft) -> CapabilityOutcome:
     """Compose a proposal; it auto-executes iff every action is grant-covered."""
-    creation = await request.app.state.proposal_service.create(
+    creation = await app_runtime(request.app).proposal_service.create(
         draft,
         producing_run_id=getattr(request.state, "session_id", None),
         now=datetime.now(UTC),
@@ -239,7 +240,7 @@ async def list_proposals(
     request: Request, state: ProposalState | None = None, limit: int | None = None
 ) -> CapabilityOutcome:
     """List proposals newest first, each bundled with its actions."""
-    views = await request.app.state.proposal_service.list_proposals(
+    views = await app_runtime(request.app).proposal_service.list_proposals(
         state=state, limit=limit, logger=get_request_logger(request)
     )
     return CapabilityOutcome(
@@ -249,7 +250,7 @@ async def list_proposals(
 
 async def counts(request: Request) -> CapabilityOutcome:
     """Count queue and history proposals without loading actions."""
-    proposal_counts = await request.app.state.proposal_service.counts(
+    proposal_counts = await app_runtime(request.app).proposal_service.counts(
         logger=get_request_logger(request)
     )
     return CapabilityOutcome(
@@ -259,7 +260,7 @@ async def counts(request: Request) -> CapabilityOutcome:
 
 async def get(request: Request, proposal_id: UUID) -> CapabilityOutcome:
     """Fetch one proposal bundled with its actions."""
-    view = await request.app.state.proposal_service.get(proposal_id)
+    view = await app_runtime(request.app).proposal_service.get(proposal_id)
     return _single(view)
 
 
@@ -270,7 +271,7 @@ async def approve(
     deselected_action_ids: set[UUID7],
 ) -> CapabilityOutcome:
     """Approve a pending proposal at an observed version, then execute it."""
-    view = await request.app.state.proposal_service.approve(
+    view = await app_runtime(request.app).proposal_service.approve(
         _proposal_reference(proposal_id, version),
         deselected_action_ids=deselected_action_ids,
         now=datetime.now(UTC),
@@ -283,7 +284,7 @@ async def reject(
     request: Request, proposal_id: UUID, version: PositiveInt, reason: str | None
 ) -> CapabilityOutcome:
     """Reject a pending proposal (terminal), returning any revocable grants."""
-    outcome: RejectionOutcome = await request.app.state.proposal_service.reject(
+    outcome: RejectionOutcome = await app_runtime(request.app).proposal_service.reject(
         _proposal_reference(proposal_id, version),
         reason=reason,
         now=datetime.now(UTC),
@@ -301,7 +302,7 @@ async def grant(
     request: Request, kind: str, scope: str | None = None
 ) -> CapabilityOutcome:
     """Grant autonomy for a `(kind, scope)` category (a new ledger row)."""
-    granted = await request.app.state.proposal_service.grant(
+    granted = await app_runtime(request.app).proposal_service.grant(
         kind, scope, now=datetime.now(UTC)
     )
     return CapabilityOutcome(
@@ -311,13 +312,15 @@ async def grant(
 
 async def revoke(request: Request, grant_id: UUID) -> CapabilityOutcome:
     """Revoke a grant convergently; an absent/already-revoked id is a no-op."""
-    await request.app.state.proposal_service.revoke(grant_id, now=datetime.now(UTC))
+    await app_runtime(request.app).proposal_service.revoke(
+        grant_id, now=datetime.now(UTC)
+    )
     return CapabilityOutcome(result=None)
 
 
 async def list_grants(request: Request) -> CapabilityOutcome:
     """List live (unrevoked) grants, newest first."""
-    grants = await request.app.state.proposal_service.list_grants()
+    grants = await app_runtime(request.app).proposal_service.list_grants()
     return CapabilityOutcome(
         result=[GrantRead.from_grant(g).model_dump(mode="json") for g in grants]
     )
@@ -325,7 +328,7 @@ async def list_grants(request: Request) -> CapabilityOutcome:
 
 async def suggestions(request: Request) -> CapabilityOutcome:
     """Read-time grant suggestions for ungranted categories with history."""
-    computed = await request.app.state.proposal_service.calibration_stats()
+    computed = await app_runtime(request.app).proposal_service.calibration_stats()
     return CapabilityOutcome(
         result=[
             GrantSuggestionRead.from_suggestion(s).model_dump(mode="json")

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.routing import Route
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.structured_logging import get_request_logger
 from tether.tools import ToolSpec
@@ -29,7 +30,7 @@ class TriageReportParams(BaseModel):
 
 async def _triage_report(request: Request) -> CapabilityOutcome:
     """Compute the read-only Triage report over the live active Bucket list."""
-    report = await request.app.state.triage_service.triage_report(
+    report = await app_runtime(request.app).triage_service.triage_report(
         logger=get_request_logger(request)
     )
     return CapabilityOutcome(result=report.model_dump(mode="json"))

@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether import bucket_capabilities
+from tether.app_runtime import app_runtime
 from tether.bucket_capabilities import (
     BUCKET_ERRORS,
     AddBucketItemResponse,
@@ -155,7 +156,7 @@ async def search_bucket_items(
 @router.get("/api/bucket-items/triage", response_model=TriageReport)
 async def triage_bucket_items(request: Request) -> Response:
     """Compute the read-only Triage report over the live active Bucket list."""
-    report = await request.app.state.triage_service.triage_report(
+    report = await app_runtime(request.app).triage_service.triage_report(
         logger=get_request_logger(request)
     )
     return JSONResponse(report.model_dump(mode="json"))

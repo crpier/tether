@@ -9,7 +9,7 @@ lives in `tether.search_fusion` alongside the fusion engine.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -18,13 +18,23 @@ from tether.bucket_capabilities import BucketItemRead
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.memories import EmptySearchQueryError, Memory
 from tether.memory_capabilities import MemoryRead
-from tether.search_fusion import InvalidSearchWindowError, SourceType
+from tether.search_fusion import (
+    InvalidSearchWindowError,
+    SearchFusionService,
+    SourceType,
+)
 from tether.structured_logging import get_request_logger
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from tether.search_fusion import FusedHit
+
+
+def _service(request: Request) -> SearchFusionService:
+    """Read fused Search from the canonical host runtime."""
+    return cast("SearchFusionService", request.app.state.runtime.search_fusion_service)
+
 
 SEARCH_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((EmptySearchQueryError,), "invalid_input", 400),
@@ -73,7 +83,7 @@ async def search(  # noqa: PLR0913 - each param is an independent Search knob
     `before` bound every arm's own capture timestamp, inclusive; both
     surfaces (`GET /api/search` and the agent's `search` tool) expose them
     identically since both call this one execute function."""
-    hits = await request.app.state.search_fusion_service.search(
+    hits = await _service(request).search(
         q,
         limit=limit,
         facets=facets,

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID, uuid7
 
 from fastapi import APIRouter, Query
@@ -504,10 +504,32 @@ async def create_conversation_schema(database: Database) -> None:
 router = APIRouter()
 
 
+class _ConversationRuntimeRegistry(Protocol):
+    """Live conversation-process operations needed by HTTP handlers."""
+
+    async def set_model(
+        self, conversation_id: object, model: AgentModelConfig
+    ) -> None: ...
+
+    async def discard(self, conversation_id: object) -> None: ...
+
+
+class _ConversationRuntime(Protocol):
+    """Conversation dependencies available while the host serves requests."""
+
+    conversation_runtime_registry: _ConversationRuntimeRegistry
+    conversation_service: ConversationService
+
+
+def _runtime(request: Request) -> _ConversationRuntime:
+    """Read conversation dependencies from the canonical host runtime."""
+    return cast("_ConversationRuntime", request.app.state.runtime)
+
+
 @router.get("/api/conversations", response_model=list[ConversationRead])
 async def list_conversations(request: Request) -> Response:
     """List host-owned conversations."""
-    service = request.app.state.conversation_service
+    service = _runtime(request).conversation_service
     conversations = await service.list_conversations()
     return JSONResponse(
         [
@@ -542,7 +564,7 @@ async def _messages_response(
 ) -> Response:
     """Serialize settled transcript rows or translate absence to 404."""
     try:
-        messages = await request.app.state.conversation_service.fetch_messages(
+        messages = await _runtime(request).conversation_service.fetch_messages(
             conversation_id, limit=limit, before_seq=before_seq
         )
     except ConversationNotFoundError:
@@ -573,7 +595,7 @@ async def set_conversation_model(
         (
             conversation,
             selected_model,
-        ) = await request.app.state.conversation_service.set_selected_model(
+        ) = await _runtime(request).conversation_service.set_selected_model(
             parsed_conversation_id,
             body.selected_model,
         )
@@ -582,12 +604,12 @@ async def set_conversation_model(
     except ModelNotAllowedError:
         return JSONResponse({"detail": "model not allowed"}, status_code=422)
     try:
-        await request.app.state.conversation_runtime_registry.set_model(
+        await _runtime(request).conversation_runtime_registry.set_model(
             conversation.id, selected_model
         )
     except PiRuntimeError:
         return JSONResponse({"detail": "set_model failed"}, status_code=502)
-    read = await request.app.state.conversation_service.to_read(conversation)
+    read = await _runtime(request).conversation_service.to_read(conversation)
     return JSONResponse(read.model_dump(mode="json"))
 
 
@@ -622,13 +644,13 @@ async def clear_messages(request: Request, conversation_id: str) -> Response:
     except ValueError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     try:
-        conversation = await request.app.state.conversation_service.clear_conversation(
+        conversation = await _runtime(request).conversation_service.clear_conversation(
             parsed_conversation_id
         )
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     # Tear down any live runtime bound to the now-rotated session so the next
     # turn spawns clean against the fresh pi session instead of replaying it.
-    await request.app.state.conversation_runtime_registry.discard(conversation.id)
-    read = await request.app.state.conversation_service.to_read(conversation)
+    await _runtime(request).conversation_runtime_registry.discard(conversation.id)
+    read = await _runtime(request).conversation_service.to_read(conversation)
     return JSONResponse(read.model_dump(mode="json"))

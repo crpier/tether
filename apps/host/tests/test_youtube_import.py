@@ -26,13 +26,16 @@ from snektest import (
 )
 
 from tether.structured_logging import Logger
-from tether.youtube import IngestedVideo, create_youtube_schema
 from tether.youtube_import import (
     BackupLikedVideo,
     BackupTranscript,
     InMemoryLikesBackupReader,
     SqliteLikesBackupReader,
     import_backup,
+)
+from tether.youtube_store import (
+    IngestedVideo,
+    create_youtube_schema,
 )
 
 

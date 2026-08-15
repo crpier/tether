@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Self, cast
+from typing import Annotated, Any, Literal, Protocol, Self, cast
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -1927,6 +1927,18 @@ async def create_health_connect_schema(database: Database) -> None:
 router = APIRouter()
 
 
+class _HealthConnectRuntime(Protocol):
+    """Health Connect dependencies available while the host serves requests."""
+
+    health_connect_ingestion: HealthConnectIngestion
+    logger: Logger
+
+
+def _runtime(request: Request) -> _HealthConnectRuntime:
+    """Read Health Connect dependencies from the canonical host runtime."""
+    return cast("_HealthConnectRuntime", request.app.state.runtime)
+
+
 @router.get(
     "/api/telemetry/health-connect/sync-state",
     response_model=HealthConnectSyncStateRead,
@@ -1938,7 +1950,7 @@ async def read_health_connect_sync_state(
         record_types = _parse_record_types(query.record_types)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=422)
-    service = cast("HealthConnectIngestion", request.app.state.health_connect_ingestion)
+    service = _runtime(request).health_connect_ingestion
     return JSONResponse(
         (
             await service.fetch_sync_state(query.installation_id, record_types)
@@ -1959,14 +1971,14 @@ async def start_health_connect_baseline(
         _validate_versioned_record_types(body.contract_version, record_types)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=422)
-    service = cast("HealthConnectIngestion", request.app.state.health_connect_ingestion)
+    service = _runtime(request).health_connect_ingestion
     state = await service.start_baseline(
         installation_id=body.installation_id,
         record_types=record_types,
         starting_token=body.starting_token,
         request_id=body.request_id,
     )
-    cast("Logger", request.app.state.logger).info(
+    _runtime(request).logger.info(
         "Health Connect baseline started",
         baseline_generation=state.baseline_generation,
         installation_id=body.installation_id,
@@ -1983,11 +1995,11 @@ async def complete_health_connect_baseline(
     request: Request, body: CompleteHealthConnectBaselineRequest
 ) -> Response:
     """Reconcile bounded baseline absence and unlock live change pages."""
-    service = cast("HealthConnectIngestion", request.app.state.health_connect_ingestion)
+    service = _runtime(request).health_connect_ingestion
     try:
         report = await service.complete_baseline(body)
     except HealthConnectCursorConflictError:
-        cast("Logger", request.app.state.logger).warning(
+        _runtime(request).logger.warning(
             "Health Connect baseline completion conflicted",
             error_category="cursor_conflict",
             installation_id=body.installation_id,
@@ -1996,7 +2008,7 @@ async def complete_health_connect_baseline(
         return JSONResponse({"detail": "baseline state is stale"}, status_code=409)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=422)
-    cast("Logger", request.app.state.logger).info(
+    _runtime(request).logger.info(
         "Health Connect baseline completed",
         deleted=report.deleted,
         installation_id=body.installation_id,
@@ -2011,11 +2023,11 @@ async def complete_health_connect_baseline(
 async def ingest_health_connect_batch(
     request: Request, body: HealthConnectBatchRequest
 ) -> Response:
-    service = cast("HealthConnectIngestion", request.app.state.health_connect_ingestion)
+    service = _runtime(request).health_connect_ingestion
     try:
         report = await service.ingest_batch(body)
     except HealthConnectCursorConflictError:
-        cast("Logger", request.app.state.logger).warning(
+        _runtime(request).logger.warning(
             "Health Connect page conflicted",
             error_category="cursor_conflict",
             installation_id=body.installation_id,
@@ -2024,7 +2036,7 @@ async def ingest_health_connect_batch(
         return JSONResponse({"detail": "expected token is stale"}, status_code=409)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=409)
-    cast("Logger", request.app.state.logger).info(
+    _runtime(request).logger.info(
         "Health Connect page accepted",
         accepted=report.accepted,
         deleted=report.deleted,

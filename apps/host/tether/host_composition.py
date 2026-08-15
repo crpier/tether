@@ -9,13 +9,11 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
 
 from anyio import Path as AsyncPath
 from fastapi import FastAPI
 from opentelemetry.trace import Tracer
 from snekql.sqlite import Config, Database
-from starlette.applications import Starlette
 
 from tether.action_registry import (
     ActionContext,
@@ -143,21 +141,42 @@ from tether.transcripts.contracts import (
 from tether.transcripts.worker import TranscriptSyncService
 from tether.triage import TriageService
 from tether.triggers import TriggerService, create_trigger_schema
-from tether.youtube import (
+from tether.youtube import YouTubeService
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import (
     DailyQuota,
-    InMemoryYouTubeApi,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeApiGate,
     YouTubeApiGateConfig,
-    YouTubeService,
-    YouTubeSyncConfig,
-    YouTubeSyncService,
-    create_youtube_schema,
+)
+from tether.youtube_quota import (
+    SystemClock as YouTubeSystemClock,
 )
 from tether.youtube_search import YouTubeSearchService
 from tether.youtube_search_index import YouTubeSearchIndex
 from tether.youtube_search_reconciler import YouTubeSearchReconciler
+from tether.youtube_store import create_youtube_schema
+from tether.youtube_sync import YouTubeSyncConfig, YouTubeSyncService
+
+
+@dataclass(frozen=True, slots=True)
+class HostBootstrap:
+    """Process-local dependencies created before application startup."""
+
+    session_registry: SessionRegistry
+    stt_client: SttClient
+    tool_secret: str
+    trace_recorder: AgentTraceRecorder
+
+
+@dataclass(frozen=True, slots=True)
+class YouTubeComponent:
+    """YouTube request service and observable worker readiness."""
+
+    likes_ready: asyncio.Event
+    service: YouTubeService
+    transcripts_ready: asyncio.Event
 
 
 async def _create_schemas(db: Database) -> None:
@@ -188,7 +207,7 @@ def _build_youtube_client(
     return YouTubeApiClient(
         api,
         DailyQuota(database, limit=config.youtube_daily_quota_limit),
-        clock=SystemClock(),
+        clock=YouTubeSystemClock(),
         gate=YouTubeApiGate(
             database,
             config=YouTubeApiGateConfig(
@@ -201,25 +220,17 @@ def _build_youtube_client(
     )
 
 
-async def _wire_youtube(
-    app: Starlette,
+async def _wire_youtube(  # noqa: PLR0913 - composition requires each dependency
     *,
     config: AppConfig,
     database: Database,
     event_publisher: EventHub,
+    ingestion_lifecycle: IngestionLifecycle,
+    logger: Logger,
+    tracer: Tracer,
     youtube_search: YouTubeSearchService | None = None,
-) -> YouTubeService:
-    """Wire the YouTube service + likes/transcript background workers onto state.
-
-    All three share one budgeted client over the configured upstream `YouTubeApi`
-    (the in-memory fake when none is configured); the likes sync owns liked-list
-    traffic, the transcript worker drains the fixed source chain through shared
-    acquisition policy, and the service reads only the local ingested corpus.
-    Each worker is activated only when its real upstream is configured; the
-    shared Ingestion lifecycle owns deferred boot, readiness, and cancellation.
-    """
-    logger = cast("Logger", app.state.logger)
-    tracer = cast("Telemetry", app.state.telemetry).tracer
+) -> YouTubeComponent:
+    """Compose YouTube requests and workers from explicit host dependencies."""
     api = config.youtube_api or InMemoryYouTubeApi()
     client = _build_youtube_client(api, config, database)
     configured_provider = config.transcript_provider or (
@@ -250,7 +261,6 @@ async def _wire_youtube(
         tracer=tracer,
         youtube_search=youtube_search,
     )
-    app.state.youtube_service = youtube_service
     sync = YouTubeSyncService(
         database=database,
         client=client,
@@ -269,7 +279,6 @@ async def _wire_youtube(
         ),
         event_publisher=event_publisher,
     )
-    app.state.youtube_sync = sync
     transcript_sync = (
         TranscriptSyncService(
             acquisition=acquisition,
@@ -280,18 +289,18 @@ async def _wire_youtube(
         if acquisition is not None
         else None
     )
-    app.state.transcript_sync = transcript_sync
-    (
-        app.state.youtube_boot_done,
-        app.state.transcript_boot_done,
-    ) = _activate_youtube_workers(
+    likes_ready, transcripts_ready = _activate_youtube_workers(
         config=config,
-        ingestion_lifecycle=cast("IngestionLifecycle", app.state.ingestion_lifecycle),
+        ingestion_lifecycle=ingestion_lifecycle,
         logger=logger,
         sync=sync,
         transcript_sync=transcript_sync,
     )
-    return youtube_service
+    return YouTubeComponent(
+        likes_ready=likes_ready,
+        service=youtube_service,
+        transcripts_ready=transcripts_ready,
+    )
 
 
 def _activate_youtube_workers(
@@ -345,23 +354,21 @@ def _activate_youtube_workers(
 
 
 async def _wire_readwise(
-    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
+    ingestion_lifecycle: IngestionLifecycle,
+    logger: Logger,
     memory_service: MemoryService,
 ) -> None:
     """Compose the optional Readwise export adapter into Ingestion lifecycle."""
-    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.readwise_sync_enabled or not config.readwise_api_key:
-        app.state.readwise_boot_done = ingestion_lifecycle.activate("readwise")
+        _ = ingestion_lifecycle.activate("readwise")
         return
-    logger = cast("Logger", app.state.logger)
     client = ReadwiseClient(transport=HttpReadwiseTransport(config.readwise_api_key))
     sync = ReadwiseSyncService(
         database=database, client=client, memory_service=memory_service
     )
-    app.state.readwise_sync = sync
 
     async def _boot_readwise() -> IngestionBootOutcome:
         if not await client.verify_token(logger=logger):
@@ -375,30 +382,28 @@ async def _wire_readwise(
             interval_seconds=config.readwise_sync_interval_seconds, logger=logger
         )
 
-    app.state.readwise_boot_done = ingestion_lifecycle.activate(
+    _ = ingestion_lifecycle.activate(
         "readwise", CallbackIngestionWorker(_boot_readwise, _repeat_readwise)
     )
 
 
 async def _wire_reader(
-    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
+    ingestion_lifecycle: IngestionLifecycle,
+    logger: Logger,
     memory_service: MemoryService,
 ) -> None:
     """Compose the optional Reader progress adapter into Ingestion lifecycle."""
-    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
     if not config.readwise_reader_sync_enabled or not config.readwise_api_key:
         _ = ingestion_lifecycle.activate("readwise-reader")
         return
-    logger = cast("Logger", app.state.logger)
     sync = ReaderSyncService(
         database=database,
         client=ReaderClient(transport=HttpReaderTransport(config.readwise_api_key)),
         memory_service=memory_service,
     )
-    app.state.reader_sync = sync
 
     async def _boot_reader() -> IngestionBootOutcome:
         _ = await sync.sync(logger=logger)
@@ -416,30 +421,25 @@ async def _wire_reader(
 
 
 async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring dependency
-    app: Starlette,
     *,
+    bootstrap: HostBootstrap,
     config: AppConfig,
     database: Database,
+    ingestion_lifecycle: IngestionLifecycle,
+    kb_root: Path,
+    logger: Logger,
     memory_service: MemoryService,
+    model_catalog: AgentModelCatalog,
     trigger_service: TriggerService,
     todo_service: TodoService,
-    kb_root: Path,
 ) -> None:
-    """Wire the Gmail ingestion gate + its background worker onto state.
-
-    The adapter stays inactive unless the gate is enabled and a Gmail transport
-    is configured. When active, batches of eligible messages are triaged through
-    an ephemeral pi run; the shared lifecycle defers boot and owns the poll task.
-    """
-    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
+    """Compose the optional Gmail ingestion worker."""
     if not config.gmail_sync_enabled or config.gmail_transport is None:
         _ = ingestion_lifecycle.activate("gmail")
         return
-    logger = cast("Logger", app.state.logger)
-    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
     triage_runner = EphemeralPiPromptRunner(
         _ephemeral_pi_config(
-            app,
+            bootstrap,
             config=config,
             kb_root=kb_root,
             run_kind="gmail",
@@ -455,7 +455,6 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
         triage_runner=triage_runner,
         triage_batch_size=config.gmail_triage_batch_size,
     )
-    app.state.gmail_sync = sync
 
     async def _boot_gmail() -> IngestionBootOutcome:
         _ = await sync.sync(logger=logger)
@@ -471,29 +470,24 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
     )
 
 
-async def _wire_gmail_purge(
-    app: FastAPI,
+async def _wire_gmail_purge(  # noqa: PLR0913 - composition requires each dependency
     *,
+    bootstrap: HostBootstrap,
     config: AppConfig,
     database: Database,
-    proposal_service: ProposalService,
+    ingestion_lifecycle: IngestionLifecycle,
     kb_root: Path,
+    logger: Logger,
+    model_catalog: AgentModelCatalog,
+    proposal_service: ProposalService,
 ) -> None:
-    """Wire the Gmail backlog-purge sweep + its background worker onto state.
-
-    The adapter stays inactive unless the sweep and Gmail transport are both
-    configured. Each active backlog chunk is triaged through an ephemeral pi run
-    and folded into one Proposal; the shared lifecycle owns boot and repetition.
-    """
-    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
+    """Compose the optional Gmail backlog-purge worker."""
     if not config.gmail_purge_enabled or config.gmail_transport is None:
         _ = ingestion_lifecycle.activate("gmail-purge")
         return
-    logger = cast("Logger", app.state.logger)
-    model_catalog = cast("AgentModelCatalog", app.state.model_catalog)
     triage_runner = EphemeralPiPromptRunner(
         _ephemeral_pi_config(
-            app,
+            bootstrap,
             config=config,
             kb_root=kb_root,
             run_kind="gmail_purge",
@@ -507,7 +501,6 @@ async def _wire_gmail_purge(
         triage_runner=triage_runner,
         chunk_size=config.gmail_purge_chunk_size,
     )
-    app.state.gmail_purge_sweep = sweep
 
     async def _boot_gmail_purge() -> IngestionBootOutcome:
         _ = await sweep.sweep(logger=logger)
@@ -525,26 +518,20 @@ async def _wire_gmail_purge(
 
 
 async def _wire_ebook_stats(
-    app: FastAPI,
     *,
     config: AppConfig,
     database: Database,
+    ingestion_lifecycle: IngestionLifecycle,
+    logger: Logger,
 ) -> None:
-    """Wire the KOReader statistics-file ingestion worker onto state.
-
-    The adapter stays inactive unless `ebook_statistics_db_path` is set. When
-    configured, the shared lifecycle owns its deferred boot and stat-check loop.
-    """
-    ingestion_lifecycle = cast("IngestionLifecycle", app.state.ingestion_lifecycle)
+    """Compose the optional KOReader statistics-file ingestion worker."""
     if not config.ebook_statistics_db_path:
         _ = ingestion_lifecycle.activate("ebook-statistics")
         return
-    logger = cast("Logger", app.state.logger)
     sync = EbookStatsSyncService(
         database=database,
         statistics_db_path=Path(config.ebook_statistics_db_path),
     )
-    app.state.ebook_stats_sync = sync
 
     async def _boot_ebook_stats() -> IngestionBootOutcome:
         _ = await sync.sync(logger=logger)
@@ -563,83 +550,100 @@ async def _wire_ebook_stats(
 
 
 async def _wire_ingestion_gates(  # noqa: PLR0913 - composition needs each domain
-    app: FastAPI,
     *,
+    bootstrap: HostBootstrap,
     config: AppConfig,
     database: Database,
     event_publisher: EventHub,
+    ingestion_lifecycle: IngestionLifecycle,
     kb_root: Path,
+    logger: Logger,
     memory_service: MemoryService,
+    model_catalog: AgentModelCatalog,
     proposal_service: ProposalService,
     todo_service: TodoService,
-    youtube_search: YouTubeSearchService | None,
+    tracer: Tracer,
     trigger_service: TriggerService,
+    youtube_search: YouTubeSearchService | None,
 ) -> YouTubeService:
     """Compose every optional source adapter into one lifecycle owner."""
-    youtube_service = await _wire_youtube(
-        app,
+    youtube = await _wire_youtube(
         config=config,
         database=database,
         event_publisher=event_publisher,
+        ingestion_lifecycle=ingestion_lifecycle,
+        logger=logger,
+        tracer=tracer,
         youtube_search=youtube_search,
     )
     await _wire_readwise(
-        app, config=config, database=database, memory_service=memory_service
+        config=config,
+        database=database,
+        ingestion_lifecycle=ingestion_lifecycle,
+        logger=logger,
+        memory_service=memory_service,
     )
     await _wire_reader(
-        app, config=config, database=database, memory_service=memory_service
+        config=config,
+        database=database,
+        ingestion_lifecycle=ingestion_lifecycle,
+        logger=logger,
+        memory_service=memory_service,
     )
     await _wire_gmail(
-        app,
+        bootstrap=bootstrap,
         config=config,
         database=database,
+        ingestion_lifecycle=ingestion_lifecycle,
+        kb_root=kb_root,
+        logger=logger,
         memory_service=memory_service,
+        model_catalog=model_catalog,
         trigger_service=trigger_service,
         todo_service=todo_service,
-        kb_root=kb_root,
     )
     await _wire_gmail_purge(
-        app,
+        bootstrap=bootstrap,
         config=config,
         database=database,
-        proposal_service=proposal_service,
+        ingestion_lifecycle=ingestion_lifecycle,
         kb_root=kb_root,
+        logger=logger,
+        model_catalog=model_catalog,
+        proposal_service=proposal_service,
     )
-    await _wire_ebook_stats(app, config=config, database=database)
-    return youtube_service
+    await _wire_ebook_stats(
+        config=config,
+        database=database,
+        ingestion_lifecycle=ingestion_lifecycle,
+        logger=logger,
+    )
+    return youtube.service
 
 
 def _ephemeral_pi_config(
-    app: Starlette,
+    bootstrap: HostBootstrap,
     *,
     config: AppConfig,
     kb_root: Path,
     run_kind: RunKind,
     model: AgentModelConfig | None,
 ) -> EphemeralPiConfig:
-    """Build the wiring shared by every ephemeral pi runner (scheduled, recall).
-
-    The two run kinds differ only in their session subdir (named after
-    `run_kind` itself) and the `run_kind` carried on the config (which selects
-    the system prompt and trace-run label); everything else (session registry,
-    tool credentials, extension paths, trace recorder) comes straight from
-    `app.state`/`config`, so a future shared field (like `trace_recorder`) only
-    needs to be added here once.
-    """
+    """Build the wiring shared by every ephemeral pi runner."""
     session_root = (
         Path(config.pi_session_root)
         if config.pi_session_root is not None
         else kb_root / "pi-sessions"
     )
     return EphemeralPiConfig(
-        session_registry=app.state.session_registry,
+        session_registry=bootstrap.session_registry,
         session_root=session_root / run_kind,
         tool_base_url=config.tool_base_url,
-        tool_secret=app.state.tool_secret,
+        tool_secret=bootstrap.tool_secret,
         model=model,
         extra_extension_paths=config.extra_extension_paths,
         pi_binary=config.pi_binary,
-        trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+        trace_recorder=bootstrap.trace_recorder,
         run_kind=run_kind,
     )
 
@@ -648,7 +652,7 @@ def _ephemeral_pi_config(
 class _SchedulerDependencies:
     """Dependencies required to compose scheduled-trigger delivery."""
 
-    app: FastAPI
+    bootstrap: HostBootstrap
     config: AppConfig
     database: Database
     event_hub: EventHub
@@ -682,7 +686,7 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     )
     prompt_runner = EphemeralPiPromptRunner(
         _ephemeral_pi_config(
-            dependencies.app,
+            dependencies.bootstrap,
             config=dependencies.config,
             kb_root=dependencies.kb_root,
             run_kind="scheduled",
@@ -765,7 +769,7 @@ def _build_proposal_service(
 class _RecallDependencies:
     """Dependencies required to compose model-backed Recall operations."""
 
-    app: FastAPI
+    bootstrap: HostBootstrap
     config: AppConfig
     database: Database
     event_hub: EventHub
@@ -789,7 +793,7 @@ def _build_recall_service(dependencies: _RecallDependencies) -> RecallService:
     if generator is None or grader is None:
         runner = EphemeralPiPromptRunner(
             _ephemeral_pi_config(
-                dependencies.app,
+                dependencies.bootstrap,
                 config=dependencies.config,
                 kb_root=dependencies.kb_root,
                 run_kind="recall",
@@ -1157,7 +1161,6 @@ class _HostFoundations:
 
 
 def _build_host_foundations(
-    app: FastAPI,
     *,
     config: AppConfig,
     telemetry_settings: TelemetrySettings,
@@ -1169,23 +1172,18 @@ def _build_host_foundations(
         quiet_loggers=HOST_QUIET_LOGGERS,
     )
     telemetry = configure_telemetry(telemetry_settings)
-    foundations = _HostFoundations(
+    return _HostFoundations(
         ingestion_lifecycle=IngestionLifecycle(logger),
         kb_root=Path(config.kb_root),
         logger=logger,
         telemetry=telemetry,
     )
-    (
-        app.state.logger,
-        app.state.telemetry,
-        app.state.ingestion_lifecycle,
-    ) = (foundations.logger, foundations.telemetry, foundations.ingestion_lifecycle)
-    return foundations
 
 
-async def _compose_app_runtime(
+async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
     app: FastAPI,
     *,
+    bootstrap: HostBootstrap,
     config: AppConfig,
     embedder: Embedder | None,
     resources: contextlib.AsyncExitStack,
@@ -1193,7 +1191,7 @@ async def _compose_app_runtime(
 ) -> None:
     """Build and install the complete request-serving dependency graph."""
     foundations = _build_host_foundations(
-        app, config=config, telemetry_settings=telemetry_settings
+        config=config, telemetry_settings=telemetry_settings
     )
     _ = resources.callback(foundations.telemetry.shutdown)
     await AsyncPath(foundations.kb_root).mkdir(parents=True, exist_ok=True)
@@ -1216,7 +1214,6 @@ async def _compose_app_runtime(
             default_model_provider=config.default_model_provider,
         )
     )
-    app.state.model_catalog = model_catalog
     kb_service = KnowledgeBaseService(kb_root=foundations.kb_root)
     event_hub = EventHub()
     # Search is wired only when an embedder is supplied. Production
@@ -1274,7 +1271,7 @@ async def _compose_app_runtime(
     )
     recall_service = _build_recall_service(
         _RecallDependencies(
-            app=app,
+            bootstrap=bootstrap,
             config=config,
             database=db,
             event_hub=event_hub,
@@ -1301,12 +1298,12 @@ async def _compose_app_runtime(
             extra_extension_paths=config.extra_extension_paths,
             idle_seconds=config.pi_idle_seconds,
             pi_binary=config.pi_binary,
-            session_registry=app.state.session_registry,
+            session_registry=bootstrap.session_registry,
             session_root=Path(config.pi_session_root)
             if config.pi_session_root is not None
             else foundations.kb_root / "pi-sessions",
             tool_base_url=config.tool_base_url,
-            tool_secret=app.state.tool_secret,
+            tool_secret=bootstrap.tool_secret,
             todo_digest_provider=todo_digest_provider,
         )
     )
@@ -1327,7 +1324,7 @@ async def _compose_app_runtime(
     )
     scheduler_component = _build_scheduler(
         _SchedulerDependencies(
-            app=app,
+            bootstrap=bootstrap,
             config=config,
             database=db,
             event_hub=event_hub,
@@ -1369,16 +1366,20 @@ async def _compose_app_runtime(
     )
     _ = resources.push_async_callback(foundations.ingestion_lifecycle.stop)
     youtube_service = await _wire_ingestion_gates(
-        app,
+        bootstrap=bootstrap,
         config=config,
         database=db,
         event_publisher=event_hub,
+        ingestion_lifecycle=foundations.ingestion_lifecycle,
         kb_root=foundations.kb_root,
+        logger=foundations.logger,
         memory_service=memory_service,
+        model_catalog=model_catalog,
         proposal_service=proposal_service,
         todo_service=todo_service,
-        youtube_search=youtube_searcher,
+        tracer=foundations.telemetry.tracer,
         trigger_service=trigger_service,
+        youtube_search=youtube_searcher,
     )
     install_app_runtime(
         app,
@@ -1391,6 +1392,7 @@ async def _compose_app_runtime(
             event_hub=event_hub,
             health_connect_ingestion=health_connect_ingestion,
             health_connect_telemetry=health_connect_telemetry,
+            ingestion_lifecycle=foundations.ingestion_lifecycle,
             kosync_auth=presentation.kosync_auth,
             kosync_service=presentation.kosync_service,
             logger=foundations.logger,
@@ -1406,13 +1408,13 @@ async def _compose_app_runtime(
             search_fusion_service=search_fusion_service,
             search_provider=search_provider,
             secure_cookies=config.secure_cookies,
-            session_registry=cast("SessionRegistry", app.state.session_registry),
+            session_registry=bootstrap.session_registry,
             session_secret=config.session_secret,
-            stt_client=cast("SttClient", app.state.stt_client),
+            stt_client=bootstrap.stt_client,
             telemetry=foundations.telemetry,
             todo_service=todo_service,
-            tool_secret=cast("str", app.state.tool_secret),
-            trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+            tool_secret=bootstrap.tool_secret,
+            trace_recorder=bootstrap.trace_recorder,
             triage_service=triage_service,
             trigger_service=trigger_service,
             vapid_public_key=config.vapid_public_key,
@@ -1423,6 +1425,7 @@ async def _compose_app_runtime(
 
 def app_lifespan(
     *,
+    bootstrap: HostBootstrap,
     config: AppConfig,
     telemetry_settings: TelemetrySettings,
     embedder: Embedder | None = None,
@@ -1445,6 +1448,7 @@ def app_lifespan(
                     _ = resources.push_async_callback(configured_resource.aclose)
             await _compose_app_runtime(
                 app,
+                bootstrap=bootstrap,
                 config=config,
                 embedder=embedder,
                 resources=resources,

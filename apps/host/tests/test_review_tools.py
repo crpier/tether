@@ -11,11 +11,12 @@ from tempfile import TemporaryDirectory
 from typing import Any, cast
 
 from snektest import assert_eq, assert_in, assert_is_none, test
+from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from tether.app_runtime import app_runtime
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
-from tether.tools import SessionRegistry
 
 SECRET = "test-process-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"
@@ -34,12 +35,12 @@ def make_client(root: Path) -> TestClient:
         telemetry_settings=TelemetrySettings(install_global_provider=False),
         tool_secret=SECRET,
     )
-    cast("SessionRegistry", app.state.session_registry).register(SESSION)
     return TestClient(app)
 
 
 def call(client: TestClient, tool: str, **params: Any) -> dict[str, Any]:
     """Invoke a tool with the known secret and session, returning the envelope."""
+    app_runtime(cast("Starlette", client.app)).session_registry.register(SESSION)
     response = client.post(
         f"/internal/tools/{tool}",
         json={"session_id": SESSION, **params},

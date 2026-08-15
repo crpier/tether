@@ -29,7 +29,7 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import structlog
 from pydantic import UUID7, AwareDatetime, BaseModel, PositiveInt, ValidationError
@@ -76,11 +76,13 @@ from tether.memory_capabilities import (
 from tether.memory_capabilities import (
     tether as tether_memory,
 )
+from tether.review import ReviewService
 from tether.search_capabilities import SEARCH_ERRORS
 from tether.search_capabilities import search as search_fused
 from tether.search_fusion import SourceType
 from tether.structured_logging import get_request_logger
-from tether.youtube import CacheMeta, QuotaMeta
+from tether.youtube import CacheMeta
+from tether.youtube_quota import QuotaMeta
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
 """Header carrying the per-process credential injected into pi at spawn."""
@@ -249,6 +251,20 @@ class MergeFacetValueParams(BaseModel):
     new_value: str
 
 
+class _ToolRuntime(Protocol):
+    """Core tool dependencies available while the host serves requests."""
+
+    review_service: ReviewService
+    session_registry: SessionRegistry
+    tool_secret: str
+    trace_recorder: AgentTraceRecorder
+
+
+def _runtime(request: Request) -> _ToolRuntime:
+    """Read tool dependencies from the canonical host runtime."""
+    return cast("_ToolRuntime", request.app.state.runtime)
+
+
 def _fail(code: ToolErrorCode, message: str) -> ToolEnvelope:
     """Envelope a failure, leaving `result` null so no state leaks out."""
     return ToolEnvelope(success=False, error=ToolError(code=code, message=message))
@@ -381,7 +397,7 @@ class ToolEndpoint:
 
     def _reject_invalid_secret(self, request: Request) -> JSONResponse | None:
         offered_secret = request.headers.get(TOOL_AUTH_HEADER, "")
-        expected_secret = cast("str", request.app.state.tool_secret)
+        expected_secret = _runtime(request).tool_secret
         if hmac.compare_digest(offered_secret, expected_secret):
             return None
         return JSONResponse({"detail": "invalid tool secret"}, status_code=401)
@@ -402,7 +418,7 @@ class ToolEndpoint:
     def _reject_unknown_session(
         self, request: Request, body: dict[str, Any]
     ) -> JSONResponse | None:
-        registry = cast("SessionRegistry", request.app.state.session_registry)
+        registry = _runtime(request).session_registry
         session_id = body.get("session_id")
         if isinstance(session_id, str) and session_id in registry:
             return None
@@ -480,12 +496,12 @@ def _trace_recorder(request: Request) -> AgentTraceRecorder | None:
     `getattr` with a `None` default keeps the tool path working in setups (some
     tests) that never install a recorder onto `app.state`.
     """
-    return getattr(request.app.state, "trace_recorder", None)
+    return _runtime(request).trace_recorder
 
 
 async def _review_digest(request: Request) -> CapabilityOutcome:
     """Compute the read-only AI-assisted Review digest over the live queue."""
-    digest = await request.app.state.review_service.review_digest(
+    digest = await _runtime(request).review_service.review_digest(
         logger=get_request_logger(request)
     )
     return CapabilityOutcome(result=digest.model_dump(mode="json"))

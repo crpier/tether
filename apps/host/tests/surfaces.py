@@ -11,15 +11,15 @@ browser login, and the enveloped tool call.
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from snektest import assert_eq
 from starlette.testclient import TestClient
 
+from tether.app_runtime import app_runtime
 from tether.embeddings import Embedder
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
-from tether.tools import SessionRegistry
 
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
@@ -52,12 +52,12 @@ def surface_client(
         tool_secret=TOOL_SECRET,
         embedder=embedder,
     )
-    cast("SessionRegistry", app.state.session_registry).register(SESSION)
     with TestClient(app) as client:
-        boot_done = getattr(app.state, "youtube_boot_done", None)
+        runtime = app_runtime(app)
+        runtime.session_registry.register(SESSION)
         portal = client.portal
-        if boot_done is not None and portal is not None:
-            portal.call(boot_done.wait)
+        if portal is not None:
+            portal.call(runtime.ingestion_lifecycle.readiness("youtube-likes").wait)
         yield client
 
 

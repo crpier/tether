@@ -547,10 +547,15 @@ async def after_later_than_before_raises_invalid_search_window_error() -> None:
 
 
 @dataclass
-class _StubAppState:
-    """Just enough of `app.state` for `search_capabilities.search` to read."""
+class _StubRuntime:
+    """Search dependency exposed by the canonical application runtime."""
 
     search_fusion_service: SearchFusionService
+
+
+@dataclass
+class _StubAppState:
+    runtime: _StubRuntime
 
 
 @dataclass
@@ -604,7 +609,7 @@ async def the_shared_capability_execute_applies_the_same_time_window_as_the_serv
         SearchCandidate(id=new.id, score=0.9),
     ]
     request = _StubRequest(
-        app=_StubApp(state=_StubAppState(search_fusion_service=h.fusion)),
+        app=_StubApp(state=_StubAppState(runtime=_StubRuntime(h.fusion))),
         state=_StubRequestState(logger=_logger()),
     )
 

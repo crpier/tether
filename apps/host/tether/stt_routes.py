@@ -17,14 +17,13 @@ authenticated like the rest of the browser-facing API (no separate auth path).
 
 from __future__ import annotations
 
-from typing import cast
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from tether.stt import SttClient, SttError
+from tether.app_runtime import app_runtime
+from tether.stt import SttError
 from tether.voice_http import read_audio_upload, transcription_error_response
 
 
@@ -46,7 +45,7 @@ router = APIRouter()
 )
 async def transcribe_audio(request: Request) -> Response:
     """Transcribe an uploaded audio clip and return the transcript text only."""
-    stt_client = cast("SttClient", request.app.state.stt_client)
+    stt_client = app_runtime(request.app).stt_client
     audio = await read_audio_upload(request)
     if isinstance(audio, JSONResponse):
         return audio

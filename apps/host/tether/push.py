@@ -24,7 +24,7 @@ import asyncio
 import importlib
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Protocol, cast
 from uuid import uuid7
 
 from fastapi import APIRouter, Query
@@ -350,6 +350,18 @@ class PushConfigRead(BaseModel):
     vapid_public_key: str
 
 
+class _PushRuntime(Protocol):
+    """Push dependencies available while the host serves requests."""
+
+    push_service: PushService
+    vapid_public_key: str
+
+
+def _runtime(request: Request) -> _PushRuntime:
+    """Read push dependencies from the canonical host runtime."""
+    return cast("_PushRuntime", request.app.state.runtime)
+
+
 router = APIRouter()
 
 
@@ -357,7 +369,7 @@ router = APIRouter()
 async def push_config(request: Request) -> Response:
     """Expose the VAPID public key the browser needs to subscribe."""
     return JSONResponse(
-        PushConfigRead(vapid_public_key=request.app.state.vapid_public_key).model_dump(
+        PushConfigRead(vapid_public_key=_runtime(request).vapid_public_key).model_dump(
             mode="json"
         )
     )
@@ -368,7 +380,7 @@ async def push_config(request: Request) -> Response:
 )
 async def subscribe_push(request: Request, body: SubscribeRequest) -> Response:
     """Register (or refresh) this browser's push subscription."""
-    subscription = await request.app.state.push_service.subscribe(
+    subscription = await _runtime(request).push_service.subscribe(
         body.endpoint, p256dh=body.p256dh, auth=body.auth
     )
     return JSONResponse(
@@ -380,8 +392,8 @@ async def subscribe_push(request: Request, body: SubscribeRequest) -> Response:
 @router.delete("/api/push/subscriptions", response_model=PushStatusRead)
 async def unsubscribe_push(request: Request, body: UnsubscribeRequest) -> Response:
     """Remove this browser's push subscription."""
-    await request.app.state.push_service.unsubscribe(body.endpoint)
-    status = await request.app.state.push_service.status(body.endpoint)
+    await _runtime(request).push_service.unsubscribe(body.endpoint)
+    status = await _runtime(request).push_service.status(body.endpoint)
     return JSONResponse(PushStatusRead.from_status(status).model_dump(mode="json"))
 
 
@@ -390,5 +402,5 @@ async def push_status(
     request: Request, query: Annotated[StatusQuery, Query()]
 ) -> Response:
     """Report whether this browser (or any browser) is subscribed."""
-    status = await request.app.state.push_service.status(query.endpoint)
+    status = await _runtime(request).push_service.status(query.endpoint)
     return JSONResponse(PushStatusRead.from_status(status).model_dump(mode="json"))

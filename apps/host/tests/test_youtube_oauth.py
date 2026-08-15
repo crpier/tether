@@ -29,12 +29,6 @@ from snektest import (
     test,
 )
 
-from tether.youtube import (
-    DailyQuota,
-    YouTubeApiClient,
-    YouTubeQuotaExceededError,
-    create_youtube_schema,
-)
 from tether.youtube_oauth import (
     REQUIRED_SCOPES,
     OAuthConfig,
@@ -42,6 +36,12 @@ from tether.youtube_oauth import (
     YouTubeAuthError,
     load_credentials,
 )
+from tether.youtube_quota import (
+    DailyQuota,
+    YouTubeApiClient,
+    YouTubeQuotaExceededError,
+)
+from tether.youtube_store import create_youtube_schema
 
 # --- Fake discovery resource ------------------------------------------------
 

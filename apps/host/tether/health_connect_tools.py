@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Literal, Self, cast
+from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from starlette.requests import Request
 from starlette.routing import Route
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.health_connect import HealthRecordType
-from tether.health_connect_telemetry import HealthConnectTelemetry
 from tether.tools import ToolSpec
 
 
@@ -72,9 +72,7 @@ class QueryHealthConnectParams(BaseModel):
 
 async def _health_connect_inventory(request: Request) -> CapabilityOutcome:
     """Read current projection metadata without exposing append-only history."""
-    telemetry = cast(
-        "HealthConnectTelemetry", request.app.state.health_connect_telemetry
-    )
+    telemetry = app_runtime(request.app).health_connect_telemetry
     entries = await telemetry.fetch_inventory()
     return CapabilityOutcome(
         result=[entry.model_dump(mode="json") for entry in entries]
@@ -85,9 +83,7 @@ async def _summarize_health_connect(
     request: Request, params: SummarizeHealthConnectParams
 ) -> CapabilityOutcome:
     """Return compact current metrics for overview and trend requests."""
-    telemetry = cast(
-        "HealthConnectTelemetry", request.app.state.health_connect_telemetry
-    )
+    telemetry = app_runtime(request.app).health_connect_telemetry
     summary = await telemetry.fetch_summary(
         after=params.after, before=params.before, bucket=params.bucket
     )
@@ -98,9 +94,7 @@ async def _query_health_connect(
     request: Request, params: QueryHealthConnectParams
 ) -> CapabilityOutcome:
     """Return bounded records from the latest non-tombstoned projections."""
-    telemetry = cast(
-        "HealthConnectTelemetry", request.app.state.health_connect_telemetry
-    )
+    telemetry = app_runtime(request.app).health_connect_telemetry
     current = await telemetry.fetch_records(
         record_type=params.record_type,
         after=params.after,

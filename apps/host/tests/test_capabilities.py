@@ -8,6 +8,7 @@ surface tests only need to cover their tables' contents.
 """
 
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
+from tether.agent_trace import AgentTraceRecorder
 from tether.capabilities import (
     CapabilityOutcome,
     ErrorRule,
@@ -27,7 +29,8 @@ from tether.capabilities import (
 )
 from tether.memories import MemoryProvenance
 from tether.tools import SessionRegistry, ToolEndpoint, ToolRoute
-from tether.youtube import CacheMeta, QuotaMeta
+from tether.youtube import CacheMeta
+from tether.youtube_quota import QuotaMeta
 
 SECRET = "test-process-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"
@@ -80,10 +83,13 @@ def tool_client(
             )
         ]
     )
-    app.state.tool_secret = SECRET
     registry = SessionRegistry()
     registry.register(SESSION)
-    app.state.session_registry = registry
+    app.state.runtime = SimpleNamespace(
+        session_registry=registry,
+        tool_secret=SECRET,
+        trace_recorder=AgentTraceRecorder(),
+    )
     return TestClient(app, raise_server_exceptions=False)
 
 

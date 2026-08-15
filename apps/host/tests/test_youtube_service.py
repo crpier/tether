@@ -32,23 +32,29 @@ from tether.structured_logging import Logger
 from tether.transcripts.acquisition import TranscriptAcquisitionService
 from tether.transcripts.contracts import TranscriptNeedsReview, TranscriptProviderChain
 from tether.youtube import (
-    DailyQuota,
     EmptyYouTubeSearchQueryError,
-    IngestedVideo,
-    InMemoryYouTubeApi,
+    YouTubeService,
+    YouTubeVideoNotFoundError,
+)
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import (
+    DailyQuota,
     LikedPage,
     RawYouTubeVideo,
-    TranscriptPersistedStatus,
     YouTubeApiClient,
-    YouTubeService,
-    YouTubeSyncConfig,
-    YouTubeSyncService,
+    state_set,
+)
+from tether.youtube_store import (
+    IngestedVideo,
+    TranscriptPersistedStatus,
     YouTubeTranscriptState,
-    YouTubeVideoNotFoundError,
     create_youtube_schema,
     derive_ingest_state,
-    state_set,
     upsert_ingested_video,
+)
+from tether.youtube_sync import (
+    YouTubeSyncConfig,
+    YouTubeSyncService,
 )
 
 

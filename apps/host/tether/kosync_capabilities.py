@@ -55,7 +55,7 @@ def _service(request: Request) -> KosyncService:
     Labeling works even when the device-facing protocol is disabled — the
     service is always present; only the `/kosync/*` routes are gated.
     """
-    return cast("KosyncService", request.app.state.kosync_service)
+    return cast("KosyncService", request.app.state.runtime.kosync_service)
 
 
 def _single(document: EbookDocument[Fetched]) -> CapabilityOutcome:

@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, PositiveInt
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 from tether.triggers import (
@@ -148,7 +149,7 @@ def _single(trigger: ScheduledTrigger[Fetched]) -> CapabilityOutcome:
 
 async def create(request: Request, spec: TriggerSpec) -> CapabilityOutcome:
     """Create a Scheduled trigger."""
-    trigger = await request.app.state.trigger_service.create(
+    trigger = await app_runtime(request.app).trigger_service.create(
         spec,
         now=datetime.now(UTC),
         logger=get_request_logger(request),
@@ -160,7 +161,7 @@ async def list_triggers(
     request: Request, limit: int | None = None
 ) -> CapabilityOutcome:
     """List live Scheduled triggers, soonest next fire first."""
-    triggers = await request.app.state.trigger_service.list_triggers(
+    triggers = await app_runtime(request.app).trigger_service.list_triggers(
         limit=limit,
         logger=get_request_logger(request),
     )
@@ -176,7 +177,7 @@ async def update(
     request: Request, trigger_id: UUID, spec: TriggerSpec, version: PositiveInt
 ) -> CapabilityOutcome:
     """Replace a trigger's definition, re-arming it from its next occurrence."""
-    trigger = await request.app.state.trigger_service.update(
+    trigger = await app_runtime(request.app).trigger_service.update(
         _trigger_reference(trigger_id, version),
         spec,
         now=datetime.now(UTC),
@@ -189,7 +190,7 @@ async def delete(
     request: Request, trigger_id: UUID, version: PositiveInt
 ) -> CapabilityOutcome:
     """Delete a Scheduled trigger."""
-    trigger = await request.app.state.trigger_service.delete(
+    trigger = await app_runtime(request.app).trigger_service.delete(
         _trigger_reference(trigger_id, version),
         now=datetime.now(UTC),
         logger=get_request_logger(request),

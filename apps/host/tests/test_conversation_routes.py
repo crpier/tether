@@ -23,6 +23,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tether import server
+from tether.app_runtime import app_runtime
 from tether.chat_ws import _prompt_with_time_context, local_timezone_name
 from tether.conversations import ConversationService, Message, MessageDraft
 from tether.embeddings import FakeEmbedder
@@ -233,6 +234,15 @@ def make_client(root: Path) -> TestClient:
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
+    )
+
+
+def _set_runtime_registry(client: TestClient, registry: object) -> None:
+    """Replace the live process registry for controlled WebSocket tests."""
+    object.__setattr__(
+        app_runtime(cast("Starlette", client.app)),
+        "conversation_runtime_registry",
+        registry,
     )
 
 
@@ -454,7 +464,7 @@ def setting_model_persists_and_updates_live_runtime() -> None:
         TemporaryDirectory() as directory,
         make_model_client(Path(directory)) as client,
     ):
-        cast("Starlette", client.app).state.conversation_runtime_registry = registry
+        _set_runtime_registry(client, registry)
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -492,7 +502,7 @@ def setting_model_returns_502_when_pi_rejects_the_switch() -> None:
         TemporaryDirectory() as directory,
         make_model_client(Path(directory)) as client,
     ):
-        cast("Starlette", client.app).state.conversation_runtime_registry = registry
+        _set_runtime_registry(client, registry)
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -559,9 +569,9 @@ def stored_model_is_reapplied_after_runtime_respawn() -> None:
         portal = client.portal
         assert portal is not None
         portal.call(
-            cast(
-                "Starlette", client.app
-            ).state.conversation_runtime_registry.shutdown_all
+            app_runtime(
+                cast("Starlette", client.app)
+            ).conversation_runtime_registry.shutdown_all
         )
 
         prompt_until_agent_end(
@@ -651,9 +661,7 @@ def websocket_prompt_sends_time_context_to_pi_not_history() -> None:
     """pi receives the clock preamble; the stored user row stays clean."""
     fake_runtime = FakeRuntime([AgentEnded()])
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -791,7 +799,7 @@ def websocket_prompt_rotates_pi_session_after_a_cold_gap() -> None:
 
         portal = client.portal
         assert portal is not None
-        service = cast("Starlette", client.app).state.conversation_service
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
         portal.call(_backdate_transcript, service, UUID(conversation_id), 10)
         prompt_until_agent_end(
             client, conversation_id=conversation_id, content="new topic"
@@ -812,9 +820,7 @@ def websocket_prompt_failure_reports_pi_detail() -> None:
     """A failed pi prompt surfaces the provider-specific detail to the browser."""
     runtime = FailingPromptRuntime()
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -848,9 +854,7 @@ def websocket_reports_settled_provider_error_to_browser() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -885,9 +889,7 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -928,9 +930,7 @@ def websocket_drains_stale_events_before_prompt() -> None:
     """Each prompt drains leftover events before driving pi (queue hygiene)."""
     runtime = OrderedRuntime([AgentEnded()])
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -953,9 +953,7 @@ def websocket_reports_agent_timeout_to_browser() -> None:
     """A silent pi past the agent-event timeout surfaces an error frame."""
     runtime = TimeoutRuntime()
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -992,9 +990,7 @@ def websocket_persists_reasoning_as_its_own_row_before_the_answer() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1035,7 +1031,7 @@ def append_message_is_idempotent_for_pi_message_ids() -> None:
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
-        service = cast("Starlette", client.app).state.conversation_service
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
         portal = client.portal
         assert portal is not None
 
@@ -1087,8 +1083,8 @@ def websocket_internal_tool_capture_publishes_invalidation() -> None:
     session_id = "019f0906-0000-7000-8000-000000000001"
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         login(client)
-        cast("Starlette", client.app).state.session_registry.register(session_id)
-        tool_secret = cast("str", cast("Starlette", client.app).state.tool_secret)
+        app_runtime(cast("Starlette", client.app)).session_registry.register(session_id)
+        tool_secret = app_runtime(cast("Starlette", client.app)).tool_secret
         with client.websocket_connect("/ws") as websocket:
             response = client.post(
                 "/internal/tools/capture",
@@ -1128,7 +1124,11 @@ def websocket_rejects_overlapping_prompts() -> None:
     fake_runtime = BlockingRuntime()
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         app = assert_isinstance(client.app, Starlette)
-        app.state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        object.__setattr__(
+            app_runtime(app),
+            "conversation_runtime_registry",
+            FakeRuntimeRegistry(fake_runtime),
+        )
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1159,9 +1159,7 @@ def websocket_abort_forwards_to_current_runtime() -> None:
     """Inbound `abort` asks the current pi runtime to stop generation."""
     fake_runtime = FakeRuntime([])
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1178,9 +1176,7 @@ def websocket_abort_is_processed_while_generation_is_running() -> None:
     """The receive loop stays alive while a prompt stream is in flight."""
     fake_runtime = BlockingRuntime()
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1210,9 +1206,7 @@ def websocket_reports_only_the_confirmed_loaded_skill_count() -> None:
         skills_confirmed=True,
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1262,9 +1256,7 @@ def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1308,9 +1300,7 @@ def websocket_marks_tool_only_turns_without_a_final_answer() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1357,9 +1347,7 @@ def websocket_persists_tool_call_rows() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1403,9 +1391,7 @@ def websocket_tool_frames_carry_args_and_result() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1452,9 +1438,7 @@ def websocket_compacts_oversized_tool_results_before_chat_completion() -> None:
         ]
     )
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast(
-            "Starlette", client.app
-        ).state.conversation_runtime_registry = FakeRuntimeRegistry(fake_runtime)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
@@ -1492,7 +1476,7 @@ def clearing_a_conversation_empties_the_transcript() -> None:
     )
     registry = FakeRuntimeRegistry(fake_runtime)
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        cast("Starlette", client.app).state.conversation_runtime_registry = registry
+        _set_runtime_registry(client, registry)
         login(client)
         conversation = client.get("/api/conversations").json()[0]
         conversation_id = conversation["id"]

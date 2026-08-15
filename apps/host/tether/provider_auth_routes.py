@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from tether.app_runtime import app_runtime
 from tether.provider_auth import (
     ProviderAuthorizationActiveError,
-    ProviderAuthService,
     ProviderAuthState,
     ProviderAuthStatus,
 )
@@ -39,7 +37,7 @@ router = APIRouter()
 @router.get("/api/provider-auth/openai-codex", response_model=ProviderAuthRead)
 async def provider_auth_status(request: Request) -> Response:
     """Check and refresh the server-owned OpenAI Codex credential."""
-    service = cast("ProviderAuthService", request.app.state.provider_auth_service)
+    service = app_runtime(request.app).provider_auth_service
     return _response(await service.status())
 
 
@@ -48,7 +46,7 @@ async def provider_auth_status(request: Request) -> Response:
 )
 async def start_provider_auth(request: Request) -> Response:
     """Start OpenAI Codex device-code authorization on the server."""
-    service = cast("ProviderAuthService", request.app.state.provider_auth_service)
+    service = app_runtime(request.app).provider_auth_service
     try:
         status = await service.start()
     except ProviderAuthorizationActiveError:
@@ -61,5 +59,5 @@ async def start_provider_auth(request: Request) -> Response:
 @router.delete("/api/provider-auth/openai-codex", response_model=ProviderAuthRead)
 async def cancel_provider_auth(request: Request) -> Response:
     """Cancel an active OpenAI Codex authorization attempt."""
-    service = cast("ProviderAuthService", request.app.state.provider_auth_service)
+    service = app_runtime(request.app).provider_auth_service
     return _response(await service.cancel())

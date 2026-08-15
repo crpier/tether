@@ -14,6 +14,7 @@ from uuid import UUID
 from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 from tether.todos import (
@@ -112,7 +113,7 @@ async def create(
     condition: str | None = None,
 ) -> CapabilityOutcome:
     """Create an active Todo, optionally with a free-text waiting condition."""
-    todo = await request.app.state.todo_service.create(
+    todo = await app_runtime(request.app).todo_service.create(
         action, condition=condition, logger=get_request_logger(request)
     )
     return _single(todo)
@@ -125,7 +126,7 @@ async def set_status(
     status: TodoStatus,
 ) -> CapabilityOutcome:
     """Transition a Todo to a new status at an observed version."""
-    todo = await request.app.state.todo_service.set_status(
+    todo = await app_runtime(request.app).todo_service.set_status(
         todo_reference(todo_id, version),
         status,
         logger=get_request_logger(request),
@@ -140,7 +141,7 @@ async def link_trigger(
     trigger_id: UUID,
 ) -> CapabilityOutcome:
     """Attach a scheduled trigger (a deadline) to a Todo at its version."""
-    todo = await request.app.state.todo_service.link_trigger(
+    todo = await app_runtime(request.app).todo_service.link_trigger(
         todo_reference(todo_id, version),
         str(trigger_id),
         logger=get_request_logger(request),
@@ -154,7 +155,7 @@ async def link_memory(
     memory_id: UUID,
 ) -> CapabilityOutcome:
     """Link a Memory to a Todo so its context travels with the task."""
-    await request.app.state.todo_service.link_memory(
+    await app_runtime(request.app).todo_service.link_memory(
         todo_id, memory_id, logger=get_request_logger(request)
     )
     return CapabilityOutcome(
@@ -164,7 +165,7 @@ async def link_memory(
 
 async def list_todos(request: Request) -> CapabilityOutcome:
     """List the active Todos split into ready and waiting."""
-    readiness = await request.app.state.todo_service.readiness(
+    readiness = await app_runtime(request.app).todo_service.readiness(
         now=datetime.now(UTC), logger=get_request_logger(request)
     )
     return CapabilityOutcome(

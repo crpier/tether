@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from json import dumps
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID
 
 import structlog
@@ -19,6 +19,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from tether.agent_trace import AgentTraceRecorder, record_run
 from tether.auth import SESSION_COOKIE, verify_session_cookie
+from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import (
     AbortAckFrame,
     AgentEndFrame,
@@ -38,9 +39,10 @@ from tether.conversations import (
 )
 from tether.conversations import (
     ConversationNotFoundError,
+    ConversationService,
     MessageDraft,
 )
-from tether.events import HubEvent, NotifyEvent
+from tether.events import EventHub, HubEvent, NotifyEvent
 from tether.pi_runtime import (
     AgentEnded,
     AssistantStreamNote,
@@ -67,6 +69,21 @@ _logger = structlog.stdlib.get_logger("tether.chat_ws")
 """Operational chat diagnostics that exclude user and skill contents."""
 
 type InboundType = Literal["prompt", "abort"]
+
+
+class _ChatRuntime(Protocol):
+    """Chat dependencies available while the host serves WebSockets."""
+
+    conversation_runtime_registry: ConversationRuntimeRegistry
+    conversation_service: ConversationService
+    event_hub: EventHub
+    session_secret: str
+    trace_recorder: AgentTraceRecorder
+
+
+def _runtime(websocket: WebSocket) -> _ChatRuntime:
+    """Read chat dependencies from the canonical host runtime."""
+    return cast("_ChatRuntime", websocket.app.state.runtime)
 
 
 def _compact_tool_result(tool_result: dict[str, Any]) -> dict[str, Any]:
@@ -215,7 +232,7 @@ async def _settle_message_end(
     """
     reasoning = settled.reasoning or "".join(streamed_reasoning)
     if reasoning:
-        _ = await websocket.app.state.conversation_service.append_message(
+        _ = await _runtime(websocket).conversation_service.append_message(
             MessageDraft(
                 content=reasoning,
                 conversation_id=conversation_id,
@@ -224,7 +241,7 @@ async def _settle_message_end(
         )
     content = settled.text or "".join(streamed_text)
     if content:
-        _ = await websocket.app.state.conversation_service.append_message(
+        _ = await _runtime(websocket).conversation_service.append_message(
             MessageDraft(
                 content=content,
                 conversation_id=conversation_id,
@@ -266,7 +283,7 @@ async def _settle_tool_end(
     transcript_result = _compact_tool_result(settled.result)
     persisted = False
     if settled.tool_call_id is not None and settled.tool_name is not None:
-        _ = await websocket.app.state.conversation_service.append_message(
+        _ = await _runtime(websocket).conversation_service.append_message(
             MessageDraft(
                 content=settled.tool_name,
                 conversation_id=conversation_id,
@@ -335,7 +352,7 @@ async def _settle_tool_only_turn_marker(
     conversation_id: UUID,
 ) -> None:
     """Append a durable marker when pi ends after tools without answering."""
-    _ = await websocket.app.state.conversation_service.append_message(
+    _ = await _runtime(websocket).conversation_service.append_message(
         MessageDraft(
             content=_TOOL_ONLY_TURN_MARKER,
             conversation_id=conversation_id,
@@ -447,7 +464,7 @@ async def _run_prompt(
 ) -> None:
     """Forward one prompt to pi, then stream its events."""
     try:
-        service = websocket.app.state.conversation_service
+        service = _runtime(websocket).conversation_service
         conversation = await service.fetch_conversation(conversation_id)
         # Decide which pi session receives this turn *before* recording the new
         # user row, so the gap is measured against the previous turn. A cold gap
@@ -478,7 +495,7 @@ async def _run_prompt(
     )
     recorder = cast(
         "AgentTraceRecorder | None",
-        getattr(websocket.app.state, "trace_recorder", None),
+        _runtime(websocket).trace_recorder,
     )
     session_id = str(conversation.pi_session_id)
     try:
@@ -489,11 +506,9 @@ async def _run_prompt(
             prompt=content,
             conversation_id=str(conversation_id),
         ) as run:
-            runtime = (
-                await websocket.app.state.conversation_runtime_registry.runtime_for(
-                    conversation
-                )
-            )
+            runtime = await _runtime(
+                websocket
+            ).conversation_runtime_registry.runtime_for(conversation)
             if getattr(runtime, "skills_confirmed", False):
                 await websocket.send_json(
                     SkillStatusFrame(
@@ -577,7 +592,7 @@ async def _handle_frame(
             )
             running_generations[frame.conversation_id] = task
         case "abort":
-            runtime = websocket.app.state.conversation_runtime_registry.current_for(
+            runtime = _runtime(websocket).conversation_runtime_registry.current_for(
                 frame.conversation_id
             )
             if runtime is not None:
@@ -610,13 +625,13 @@ async def websocket_bus(websocket: WebSocket) -> None:
     """Accept one authenticated browser WebSocket connection."""
     principal = verify_session_cookie(
         websocket.cookies.get(SESSION_COOKIE, ""),
-        cast("str", websocket.app.state.session_secret),
+        _runtime(websocket).session_secret,
     )
     if principal is None:
         await websocket.close(code=_POLICY_VIOLATION)
         return
     await websocket.accept()
-    subscription = websocket.app.state.event_hub.subscribe()
+    subscription = _runtime(websocket).event_hub.subscribe()
     event_task = asyncio.create_task(_event_pump(websocket, subscription))
     running_generations: dict[UUID, asyncio.Task[None]] = {}
     try:
@@ -633,7 +648,7 @@ async def websocket_bus(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         return
     finally:
-        websocket.app.state.event_hub.unsubscribe(subscription)
+        _runtime(websocket).event_hub.unsubscribe(subscription)
         _ = event_task.cancel()
         for task in running_generations.values():
             _ = task.cancel()

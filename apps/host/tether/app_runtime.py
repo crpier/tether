@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from starlette.applications import Starlette
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from tether.events import EventHub
     from tether.health_connect import HealthConnectIngestion
     from tether.health_connect_telemetry import HealthConnectTelemetry
+    from tether.ingestion_lifecycle import IngestionLifecycle
     from tether.kosync import KosyncService
     from tether.kosync_routes import KosyncAuth
     from tether.memories import MemoryService
@@ -51,6 +52,7 @@ class AppRuntime:
     event_hub: EventHub
     health_connect_ingestion: HealthConnectIngestion
     health_connect_telemetry: HealthConnectTelemetry
+    ingestion_lifecycle: IngestionLifecycle
     kosync_auth: KosyncAuth
     kosync_service: KosyncService
     logger: Logger
@@ -80,14 +82,8 @@ class AppRuntime:
 
 
 def install_app_runtime(app: Starlette, runtime: AppRuntime) -> None:
-    """Install the complete runtime and compatibility state aliases.
-
-    The typed runtime is canonical; aliases preserve existing handlers,
-    extensions, and tests using Starlette's conventional state container.
-    """
+    """Install the complete runtime as the application's only service graph."""
     app.state.runtime = runtime
-    for runtime_field in fields(runtime):
-        setattr(app.state, runtime_field.name, getattr(runtime, runtime_field.name))
 
 
 def app_runtime(app: Starlette) -> AppRuntime:

@@ -21,7 +21,8 @@ from tether.transcripts.contracts import (
     TranscriptFetchResult,
     TranscriptSource,
 )
-from tether.youtube import InMemoryYouTubeApi, RawYouTubeVideo
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import RawYouTubeVideo
 
 
 def video(

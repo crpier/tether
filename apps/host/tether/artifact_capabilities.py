@@ -22,6 +22,7 @@ from uuid import UUID
 from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 
+from tether.app_runtime import app_runtime
 from tether.artifacts import (
     Artifact,
     ArtifactEvent,
@@ -131,7 +132,7 @@ def _full(artifact: Artifact[Fetched]) -> CapabilityOutcome:
 
 async def create(request: Request, title: str, html: str) -> CapabilityOutcome:
     """Create a new artifact at version 1; the outcome is a small pointer."""
-    artifact = await request.app.state.artifact_service.create(
+    artifact = await app_runtime(request.app).artifact_service.create(
         title, html, logger=get_request_logger(request)
     )
     return _pointer(artifact)
@@ -139,7 +140,7 @@ async def create(request: Request, title: str, html: str) -> CapabilityOutcome:
 
 async def update(request: Request, artifact_id: UUID, html: str) -> CapabilityOutcome:
     """Append a new version onto an existing artifact; outcome is a small pointer."""
-    artifact = await request.app.state.artifact_service.update(
+    artifact = await app_runtime(request.app).artifact_service.update(
         artifact_id, html, logger=get_request_logger(request)
     )
     return _pointer(artifact)
@@ -147,7 +148,7 @@ async def update(request: Request, artifact_id: UUID, html: str) -> CapabilityOu
 
 async def get_latest(request: Request, artifact_id: UUID) -> CapabilityOutcome:
     """Fetch an artifact's newest version, `html` included."""
-    artifact = await request.app.state.artifact_service.get_latest(
+    artifact = await app_runtime(request.app).artifact_service.get_latest(
         artifact_id, logger=get_request_logger(request)
     )
     return _full(artifact)
@@ -157,7 +158,7 @@ async def get_version(
     request: Request, artifact_id: UUID, version: PositiveInt
 ) -> CapabilityOutcome:
     """Fetch one specific past version of an artifact, `html` included."""
-    artifact = await request.app.state.artifact_service.get_version(
+    artifact = await app_runtime(request.app).artifact_service.get_version(
         artifact_id, version, logger=get_request_logger(request)
     )
     return _full(artifact)
@@ -165,7 +166,7 @@ async def get_version(
 
 async def list_artifacts(request: Request) -> CapabilityOutcome:
     """List every artifact's latest version as lightweight summaries."""
-    artifacts = await request.app.state.artifact_service.list_artifacts(
+    artifacts = await app_runtime(request.app).artifact_service.list_artifacts(
         logger=get_request_logger(request)
     )
     return CapabilityOutcome(
@@ -180,7 +181,7 @@ async def post_event(
     request: Request, artifact_id: UUID, payload: dict[str, Any]
 ) -> CapabilityOutcome:
     """Append one free-form event to an artifact's log (the postMessage relay target)."""
-    event = await request.app.state.artifact_service.record_event(
+    event = await app_runtime(request.app).artifact_service.record_event(
         artifact_id, payload, logger=get_request_logger(request)
     )
     return CapabilityOutcome(
@@ -190,7 +191,7 @@ async def post_event(
 
 async def list_events(request: Request, artifact_id: UUID) -> CapabilityOutcome:
     """List an artifact's events, oldest first — the agent's sole read-back channel."""
-    events = await request.app.state.artifact_service.list_events(
+    events = await app_runtime(request.app).artifact_service.list_events(
         artifact_id, logger=get_request_logger(request)
     )
     return CapabilityOutcome(

@@ -13,6 +13,7 @@ from snektest import assert_eq, assert_true, test
 from starlette.testclient import TestClient
 
 from tether.agent_trace import AgentTraceRecorder
+from tether.app_runtime import app_runtime
 from tether.embeddings import FakeEmbedder
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
@@ -60,8 +61,8 @@ def trace_routes_require_an_app_session() -> None:
     """The inspection surface is gated like every other browser-facing route."""
     with TemporaryDirectory() as directory:
         app = _make_app(Path(directory))
-        run_id = _seed_completed_run(app.state.trace_recorder)
         with TestClient(app) as client:
+            run_id = _seed_completed_run(app_runtime(app).trace_recorder)
             assert_eq(client.get("/api/traces").status_code, 401)
             assert_eq(client.get(f"/api/traces/{run_id}").status_code, 401)
 
@@ -71,8 +72,8 @@ def a_completed_run_appears_in_the_recent_runs_list() -> None:
     """An authenticated browser sees a past run in the recent-runs listing."""
     with TemporaryDirectory() as directory:
         app = _make_app(Path(directory))
-        run_id = _seed_completed_run(app.state.trace_recorder)
         with TestClient(app) as client:
+            run_id = _seed_completed_run(app_runtime(app).trace_recorder)
             _login(client)
 
             listed = client.get("/api/traces")
@@ -87,8 +88,8 @@ def a_completed_run_is_inspectable_with_secrets_redacted() -> None:
     """Reading a past run by id renders its trace with secret args masked."""
     with TemporaryDirectory() as directory:
         app = _make_app(Path(directory))
-        run_id = _seed_completed_run(app.state.trace_recorder)
         with TestClient(app) as client:
+            run_id = _seed_completed_run(app_runtime(app).trace_recorder)
             _login(client)
 
             detail = client.get(f"/api/traces/{run_id}")

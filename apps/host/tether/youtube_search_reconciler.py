@@ -27,9 +27,9 @@ from typing import TYPE_CHECKING, Protocol
 from snekql.sqlite import select
 
 from tether.reconcile_loop import run_reconcile_loop
-from tether.youtube import IngestedVideo
 from tether.youtube_search_chunks import chunk_youtube_text
 from tether.youtube_search_index import ChunkDocument, chunk_id
+from tether.youtube_store import IngestedVideo
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

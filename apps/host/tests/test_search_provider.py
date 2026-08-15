@@ -15,7 +15,7 @@ from tether.search_tools import (
     TavilySearchRequest,
 )
 from tether.server import HostSettings, _build_search_provider
-from tether.youtube import create_youtube_schema
+from tether.youtube_store import create_youtube_schema
 
 
 class FakeMonotonicClock:

@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TextIO, cast
 
 import structlog
@@ -538,7 +539,7 @@ def context_logger_middleware_logs_completed_requests_at_default_info_level() ->
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging(force_tty=False)
+        app.state.runtime = SimpleNamespace(logger=configure_logging(force_tty=False))
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/ok")
@@ -557,7 +558,7 @@ def context_logger_middleware_accepts_a_custom_completion_level() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging(force_tty=False)
+        app.state.runtime = SimpleNamespace(logger=configure_logging(force_tty=False))
         app.add_middleware(
             ContextLoggerMiddleware,
             completion_log_level=logging.DEBUG,
@@ -572,14 +573,16 @@ def context_logger_middleware_accepts_a_custom_completion_level() -> None:
 
 @test()
 def context_logger_middleware_uses_application_logger_from_lifespan() -> None:
-    """Middleware can bind requests from `app.state.logger`."""
+    """Middleware binds requests from the canonical application runtime."""
 
     async def read(_request: Request) -> Response:
         return JSONResponse({"ok": True})
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.state.runtime = SimpleNamespace(
+            logger=configure_logging("DEBUG", force_tty=False)
+        )
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/ok")
@@ -601,7 +604,9 @@ def context_logger_middleware_logs_completed_requests() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.state.runtime = SimpleNamespace(
+            logger=configure_logging("DEBUG", force_tty=False)
+        )
         app.add_middleware(
             ContextLoggerMiddleware,
             include_client_ip=True,
@@ -636,7 +641,7 @@ def context_logger_middleware_binds_context_for_websockets() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[WebSocketRoute("/ws", websocket_endpoint)])
-        app.state.logger = configure_logging(force_tty=False)
+        app.state.runtime = SimpleNamespace(logger=configure_logging(force_tty=False))
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client, client.websocket_connect("/ws"):
             pass
@@ -661,7 +666,9 @@ def context_logger_middleware_logs_streaming_failures() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/stream", read)])
-        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.state.runtime = SimpleNamespace(
+            logger=configure_logging("DEBUG", force_tty=False)
+        )
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client, assert_raises(RuntimeError):
             client.get("/stream")
@@ -685,7 +692,9 @@ def context_logger_middleware_logs_completion_after_streaming_finishes() -> None
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/stream", read)])
-        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.state.runtime = SimpleNamespace(
+            logger=configure_logging("DEBUG", force_tty=False)
+        )
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/stream")
@@ -704,7 +713,9 @@ def context_logger_middleware_places_request_context_after_event_fields() -> Non
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.state.runtime = SimpleNamespace(
+            logger=configure_logging("DEBUG", force_tty=False)
+        )
         app.add_middleware(
             ContextLoggerMiddleware,
             include_client_ip=True,
@@ -741,7 +752,9 @@ def context_logger_middleware_omits_sensitive_request_fields_by_default() -> Non
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging("DEBUG", force_tty=False)
+        app.state.runtime = SimpleNamespace(
+            logger=configure_logging("DEBUG", force_tty=False)
+        )
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/ok", headers={"user-agent": "snektest"})
@@ -762,7 +775,7 @@ def context_logger_middleware_logs_and_reraises_failures() -> None:
 
     with captured_logging(is_tty=False) as stream:
         app = Starlette(routes=[Route("/fail", fail)])
-        app.state.logger = configure_logging(force_tty=False)
+        app.state.runtime = SimpleNamespace(logger=configure_logging(force_tty=False))
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client, assert_raises(RuntimeError):
             client.get("/fail")
@@ -785,7 +798,7 @@ def bound_request_logger_is_cleared_after_request() -> None:
 
     with captured_logging(is_tty=False):
         app = Starlette(routes=[Route("/ok", read)])
-        app.state.logger = configure_logging(force_tty=False)
+        app.state.runtime = SimpleNamespace(logger=configure_logging(force_tty=False))
         app.add_middleware(ContextLoggerMiddleware)
         with TestClient(app) as client:
             response = client.get("/ok")

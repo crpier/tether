@@ -450,7 +450,7 @@ def app_lifespan_installs_a_complete_typed_runtime() -> None:
             runtime = app_runtime(app)
 
             assert_eq(runtime.app_password, "test-app-password")
-            assert_true(runtime.youtube_service is app.state.youtube_service)
+            assert_false(hasattr(app.state, "youtube_service"))
 
 
 @test()

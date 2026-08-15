@@ -23,13 +23,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 
 from tether.structured_logging import Logger
-from tether.youtube import (
-    DailyQuota,
-    InMemoryYouTubeApi,
-    YouTubeApiClient,
-    YouTubeSyncService,
-    create_youtube_schema,
-)
+from tether.youtube_local import InMemoryYouTubeApi
+from tether.youtube_quota import DailyQuota, YouTubeApiClient
+from tether.youtube_store import create_youtube_schema
+from tether.youtube_sync import YouTubeSyncService
 
 
 class ResetSettings(BaseSettings):

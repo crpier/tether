@@ -25,6 +25,7 @@ from snektest import (
 )
 
 from tether.agent_trace import AgentTraceRecorder
+from tether.app_runtime import app_runtime
 from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
 from tether.pi_runtime import (
@@ -139,8 +140,8 @@ async def live_host() -> AsyncGenerator[LiveHost]:
         try:
             yield LiveHost(
                 base_url=f"http://127.0.0.1:{port}",
-                session_registry=cast("SessionRegistry", app.state.session_registry),
-                trace_recorder=cast("AgentTraceRecorder", app.state.trace_recorder),
+                session_registry=app_runtime(app).session_registry,
+                trace_recorder=app_runtime(app).trace_recorder,
             )
         finally:
             server.should_exit = True

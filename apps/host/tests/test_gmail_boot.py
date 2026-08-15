@@ -1,11 +1,7 @@
 """Wiring tests for the Gmail ingestion gate's disabled/credential-less boot.
 
-`_wire_gmail` must be a genuine no-op — no task, no app.state, no ephemeral pi
-config built — whenever the gate is off or no OAuth transport is configured, so
-a fresh checkout never touches mail. These drive `_wire_gmail` directly against
-a bare `Starlette` app with no `model_catalog`/`session_registry` on state at
-all: reaching past the early return would raise `AttributeError`, so a passing
-test is itself proof the wiring short-circuited before touching mail.
+`_wire_gmail` must be a genuine no-op whenever the gate is off or no OAuth
+transport is configured, so a fresh checkout never touches mail.
 """
 
 from __future__ import annotations
@@ -19,14 +15,18 @@ from anyio import TemporaryDirectory
 from opentelemetry import trace
 from snekql.sqlite import Config, Database
 from snektest import assert_true, test
-from starlette.applications import Starlette
 
+from tether.agent_trace import AgentTraceRecorder
 from tether.gmail import GmailResponse, create_gmail_schema
-from tether.host_composition import _wire_gmail
+from tether.host_composition import HostBootstrap, _wire_gmail
 from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
+from tether.local_dependencies import LocalSttTransport
 from tether.memories import KnowledgeBaseService, MemoryService, create_memory_schema
+from tether.model_selection import AgentModelCatalog
+from tether.stt import SttClient
 from tether.todos import TodoService, create_todo_schema
+from tether.tools import SessionRegistry
 from tether.triggers import TriggerService, create_trigger_schema
 
 
@@ -69,11 +69,8 @@ async def _wire(config: AppConfig) -> asyncio.Event:
     await create_trigger_schema(db)
     await create_todo_schema(db)
     await create_gmail_schema(db)
-    app = Starlette()
-    ingestion_lifecycle = IngestionLifecycle(
-        structlog.stdlib.get_logger("test.gmail_boot")
-    )
-    app.state.ingestion_lifecycle = ingestion_lifecycle
+    logger = structlog.stdlib.get_logger("test.gmail_boot")
+    ingestion_lifecycle = IngestionLifecycle(logger)
     tracer = trace.NoOpTracerProvider().get_tracer("test.gmail_boot")
     try:
         async with TemporaryDirectory() as kb_root:
@@ -84,13 +81,23 @@ async def _wire(config: AppConfig) -> asyncio.Event:
             trigger_service = TriggerService(database=db, tracer=tracer)
             todo_service = TodoService(database=db, tracer=tracer)
             await _wire_gmail(
-                app,
+                bootstrap=HostBootstrap(
+                    session_registry=SessionRegistry(),
+                    stt_client=SttClient(
+                        transport=LocalSttTransport(), model="test-stt"
+                    ),
+                    tool_secret="test-tool-secret",
+                    trace_recorder=AgentTraceRecorder(),
+                ),
                 config=config,
                 database=db,
+                ingestion_lifecycle=ingestion_lifecycle,
+                kb_root=Path(kb_root),
+                logger=logger,
                 memory_service=memory_service,
+                model_catalog=AgentModelCatalog(default_model=None, models=()),
                 trigger_service=trigger_service,
                 todo_service=todo_service,
-                kb_root=Path(kb_root),
             )
             return ingestion_lifecycle.readiness("gmail")
     finally:

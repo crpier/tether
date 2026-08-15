@@ -2,7 +2,7 @@
 
 Each handler adapts one `YouTubeService` capability to HTTP: `endpoint`
 validates the query string with Pydantic, the handler calls
-`request.app.state.youtube_service` (or, for ignore/retry, binds the path id
+`app_runtime(request.app).youtube_service` (or, for ignore/retry, binds the path id
 onto the shared execute in `tether.youtube_capabilities`), and the result is
 serialised as a `YouTubeVideoRead` (or a list/transcript response that also
 carries the call's quota + cache metadata, mirroring the tool envelope).
@@ -22,20 +22,20 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether import youtube_capabilities
+from tether.app_runtime import app_runtime
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.structured_logging import get_request_logger
 from tether.youtube import (
     BrowseResult,
     CacheMeta,
-    QuotaMeta,
     SearchResult,
     TranscriptDecision,
     TranscriptResult,
-    TranscriptStatus,
-    YouTubeSource,
     YouTubeSyncStatus,
 )
 from tether.youtube_capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
+from tether.youtube_quota import QuotaMeta
+from tether.youtube_store import TranscriptStatus, YouTubeSource
 
 
 class BrowseYouTubeQuery(BaseModel):
@@ -205,7 +205,7 @@ async def browse_youtube(
     request: Request, query: Annotated[BrowseYouTubeQuery, Query()]
 ) -> Response:
     """List active ingested videos, optionally filtered by topic and source."""
-    result = await request.app.state.youtube_service.browse(
+    result = await app_runtime(request.app).youtube_service.browse(
         topic=query.topic,
         source=query.source,
         logger=get_request_logger(request),
@@ -218,7 +218,7 @@ async def browse_youtube(
 @router.get("/api/youtube/status", response_model=YouTubeSyncStatusRead)
 async def youtube_sync_status(request: Request) -> Response:
     """Report the background ingestion's progress and health (local read only)."""
-    status = await request.app.state.youtube_service.sync_status(
+    status = await app_runtime(request.app).youtube_service.sync_status(
         logger=get_request_logger(request),
     )
     return JSONResponse(
@@ -232,7 +232,7 @@ async def search_youtube(
     request: Request, query: Annotated[SearchYouTubeQuery, Query()]
 ) -> Response:
     """Keyword Search across saved content and transcript text."""
-    result = await request.app.state.youtube_service.search(
+    result = await app_runtime(request.app).youtube_service.search(
         query.q,
         logger=get_request_logger(request),
     )
@@ -246,7 +246,7 @@ async def search_youtube(
 )
 async def transcript_decisions(request: Request) -> Response:
     """List transcript failures awaiting a human decision."""
-    decisions = await request.app.state.youtube_service.transcript_decisions(
+    decisions = await app_runtime(request.app).youtube_service.transcript_decisions(
         logger=get_request_logger(request)
     )
     body = TranscriptDecisionListResponse(
@@ -261,7 +261,7 @@ async def transcript_decisions(request: Request) -> Response:
 @_translate_domain_errors
 async def fetch_youtube_transcript(request: Request, video_id: str) -> Response:
     """Fetch and persist a transcript for an ingested video."""
-    outcome = await request.app.state.youtube_service.fetch_transcript(
+    outcome = await app_runtime(request.app).youtube_service.fetch_transcript(
         video_id,
         logger=get_request_logger(request),
     )
@@ -278,7 +278,7 @@ async def fetch_youtube_transcript(request: Request, video_id: str) -> Response:
 @_translate_domain_errors
 async def keep_trying_transcript(request: Request, video_id: str) -> Response:
     """Return a review-needed transcript to pending acquisition."""
-    outcome = await request.app.state.youtube_service.keep_trying_transcript(
+    outcome = await app_runtime(request.app).youtube_service.keep_trying_transcript(
         video_id, logger=get_request_logger(request)
     )
     body = TranscriptDecisionOutcomeRead(
@@ -294,7 +294,7 @@ async def keep_trying_transcript(request: Request, video_id: str) -> Response:
 @_translate_domain_errors
 async def give_up_transcript(request: Request, video_id: str) -> Response:
     """Confirm that a review-needed video has no transcript worth pursuing."""
-    outcome = await request.app.state.youtube_service.give_up_transcript(
+    outcome = await app_runtime(request.app).youtube_service.give_up_transcript(
         video_id, logger=get_request_logger(request)
     )
     body = TranscriptDecisionOutcomeRead(
