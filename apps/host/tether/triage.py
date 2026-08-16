@@ -27,7 +27,8 @@ from pydantic import UUID7, BaseModel
 from snekql.sqlite import Database, Fetched, select
 
 from tether.bucket_capabilities import BucketItemRead
-from tether.bucket_items import BucketItem, ItemType, PurchaseData
+from tether.bucket_item_model import ItemType, PurchaseData
+from tether.bucket_item_store import BucketItem
 from tether.structured_logging import Logger
 
 STALE_AFTER_DAYS = 180

@@ -1,4 +1,4 @@
-"""Bucket item service layer: Add, Complete, Delete, Search, with dedup.
+"""Bucket Item mutation service: Add, Complete, Delete, and curation.
 
 A Bucket item is a typed intention to act (a movie to watch, a place to visit).
 It is Added `active` under exactly one item type, each type carrying its own
@@ -24,57 +24,31 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypedDict
-from uuid import uuid7
+from typing import Literal, Protocol
 
 from opentelemetry.trace import Tracer
-from pydantic import UUID7, BaseModel, Field, Json, PositiveInt, ValidationError
+from pydantic import UUID7
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
     Fetched,
-    Index,
-    Integer,
-    Model,
-    Pending,
-    Text,
     Transaction,
-    UtcDatetime,
     insert,
     select,
     update,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
+from tether.bucket_item_model import (
+    DedupSeverity,
+    ItemType,
+    PurchaseData,
+    PurchaseDecision,
+    describe_item,
+    normalise_intent,
+)
+from tether.bucket_item_store import BucketItem, derive_state
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from uuid import UUID
-
-    from tether.bucket_item_index import BucketItemCandidate
-
-type BucketItemState = Literal["active", "completed", "deleted"]
-"""A Bucket item's lifecycle state, derived from its terminal timestamps."""
-
-type ItemType = Literal["movie", "place", "book", "travel", "purchase"]
-"""The kind of a Bucket item; determines which payload fields it carries."""
-
-type PurchaseDecision = Literal["buy", "wait", "need-more-info"]
-"""The human's current decision about a planned purchase."""
-
-type DedupSeverity = Literal["none", "warn", "inform"]
-"""How loudly dedup speaks about pre-existing duplicates of an Added item."""
-
-type JsonValue = (
-    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
-)
-
-
-class BucketItemProvenance(TypedDict):
-    kind: Literal["manual"]
 
 
 class BucketItemNotFoundError(Exception):
@@ -89,66 +63,8 @@ class BucketItemConflictError(Exception):
     """
 
 
-class EmptyBucketSearchQueryError(Exception):
-    """Raised when a keyword Search is asked to run on a blank query."""
-
-
-class BucketSearchUnavailableError(Exception):
-    """Raised when `search` is called on a service wired without a searcher.
-
-    Search needs the embedder + index seam (a `BucketItemReconciler`). A bare
-    service (as most non-search tests construct) cannot rank results — mirrors
-    `MemoryService`'s `SearchUnavailableError`."""
-
-
-class EmptyIntentContextError(Exception):
-    """Raised when intent context is blank after trimming whitespace."""
-
-
-class InvalidItemDataError(Exception):
-    """Raised when an item-type payload fails its type's validation."""
-
-
 class NotPurchaseItemError(Exception):
     """Raised when a purchase-only operation targets another item type."""
-
-
-class MovieData(BaseModel):
-    """The payload fields a `movie` Bucket item carries."""
-
-    title: str
-    year: int | None = None
-
-
-class PlaceData(BaseModel):
-    """The payload fields a `place` Bucket item carries."""
-
-    name: str
-    location: str | None = None
-
-
-class BookData(BaseModel):
-    """The payload fields a `book` Bucket item carries."""
-
-    title: str
-    author: str | None = None
-
-
-class TravelData(BaseModel):
-    """The payload fields a `travel` Bucket item carries."""
-
-    destination: str
-    season: str | None = None
-
-
-class PurchaseData(BaseModel):
-    """The context and current decision carried by a `purchase` Bucket item."""
-
-    name: str
-    price: str | None = None
-    store: str | None = None
-    decision_factors: list[str] = Field(default_factory=list)
-    decision: PurchaseDecision | None = None
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -164,195 +80,6 @@ def _info(logger: Logger, event: str, **context: object) -> None:
 def _exception(logger: Logger, event: str, **context: object) -> None:
     """Emit an exception event (with traceback) using caller-supplied context."""
     logger.exception(event, **context)
-
-
-def _normalise_key(text: str) -> str:
-    """Collapse a payload string to its dedup-comparison form.
-
-    Dedup is about identity, not presentation, so case and surrounding/internal
-    whitespace are noise: "The  Matrix" and "the matrix" are the same intention.
-    """
-    return " ".join(text.lower().split())
-
-
-def _dedup_with_optional(base: str, optional: str | int | None) -> str:
-    """Append one normalized distinguishing field to a dedup identity."""
-    if optional is None:
-        return base
-    suffix = str(optional) if isinstance(optional, int) else _normalise_key(optional)
-    return f"{base}|{suffix}"
-
-
-def _optional_index_text(value: str | int | None) -> list[str]:
-    """Project an optional typed payload field into searchable text."""
-    return [] if value is None else [str(value)]
-
-
-def _normalise_intent(intent_context: str | None) -> str:
-    """Trim intent context, rejecting an explicitly-blank reason.
-
-    Intent context answers "why did I save this?" months later. It is optional
-    at Add — an omitted reason (`None`) stores as `""`, so the item is Added
-    immediately rather than blocked — but a reason that *was* supplied must not
-    be blank whitespace. It can be attached or replaced later through
-    `BucketItemService.set_intent`.
-    """
-    if intent_context is None:
-        return ""
-    normalised = intent_context.strip()
-    if not normalised:
-        msg = "intent context must not be blank"
-        raise EmptyIntentContextError(msg)
-    return normalised
-
-
-@dataclass(frozen=True, slots=True)
-class _ItemDescription:
-    """The derived facts an Add needs from a validated item-type payload."""
-
-    data: dict[str, JsonValue]
-    dedup_key: str
-    title: str
-
-
-def _describe_item(item_type: ItemType, data: Mapping[str, object]) -> _ItemDescription:
-    """Validate a raw payload for its item type and derive its stored facts.
-
-    Each item type owns how it builds its dedup key (the identity dedup compares)
-    and its title (the human-facing, searchable projection of the payload). The
-    raw payload is validated through the type's Pydantic model so a malformed
-    payload is a well-formed domain error, never a corrupt row.
-    """
-    try:
-        if item_type == "purchase":
-            purchase = PurchaseData.model_validate(data)
-            return _ItemDescription(
-                data=purchase.model_dump(mode="json"),
-                dedup_key=_normalise_key(purchase.name),
-                title=purchase.name,
-            )
-        match item_type:
-            case "movie":
-                movie = MovieData.model_validate(data)
-                return _ItemDescription(
-                    data=movie.model_dump(mode="json"),
-                    dedup_key=_dedup_with_optional(
-                        _normalise_key(movie.title), movie.year
-                    ),
-                    title=movie.title,
-                )
-            case "place":
-                place = PlaceData.model_validate(data)
-                return _ItemDescription(
-                    data=place.model_dump(mode="json"),
-                    dedup_key=_dedup_with_optional(
-                        _normalise_key(place.name), place.location
-                    ),
-                    title=place.name,
-                )
-            case "book":
-                book = BookData.model_validate(data)
-                return _ItemDescription(
-                    data=book.model_dump(mode="json"),
-                    dedup_key=_dedup_with_optional(
-                        _normalise_key(book.title), book.author
-                    ),
-                    title=book.title,
-                )
-            case "travel":
-                travel = TravelData.model_validate(data)
-                return _ItemDescription(
-                    data=travel.model_dump(mode="json"),
-                    dedup_key=_dedup_with_optional(
-                        _normalise_key(travel.destination), travel.season
-                    ),
-                    title=travel.destination,
-                )
-    except ValidationError as error:
-        message = (
-            f"invalid {item_type} payload: {error.errors(include_url=False)[0]['msg']}"
-        )
-        raise InvalidItemDataError(message) from error
-
-
-class BucketItem[S = Pending](Model[S, "BucketItem[Fetched]"]):
-    id: BucketItem.GenCol[UUID7] = Text(
-        primary_key=True,
-        default_factory=uuid7,
-    )
-    item_type: BucketItem.Col[ItemType] = Text()
-    """The kind of Bucket item; determines its payload fields."""
-    title: BucketItem.Col[str] = Text()
-    """Human-facing display text; the searchable projection of the payload."""
-    dedup_key: BucketItem.Col[str] = Text()
-    """Normalised identity used to find duplicates across all states."""
-    data: BucketItem.Col[Json[dict[str, JsonValue]]] = Text()
-    """The item-type's payload fields, as JSON."""
-    intent_context: BucketItem.Col[str] = Text()
-    """Why the human saved this, if given. Optional at Add (stored as `""` when
-    omitted); may be attached or replaced later via `set_intent`."""
-    provenance: BucketItem.Col[Json[BucketItemProvenance]] = Text(
-        default_factory=lambda: BucketItemProvenance(kind="manual"),
-    )
-    """The objective origin of the Added item."""
-    version: BucketItem.Col[PositiveInt] = Integer(default=1)
-    """Version number used for optimistic concurrency control."""
-    created_at: BucketItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: BucketItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    completed_at: BucketItem.Col[UtcDatetime | None] = Text(
-        default=None,
-        nullable=True,
-    )
-    deleted_at: BucketItem.Col[UtcDatetime | None] = Text(
-        default=None,
-        nullable=True,
-    )
-
-    __indexes__: ClassVar = [Index(item_type, dedup_key)]
-
-
-def derive_state(item: BucketItem[Fetched]) -> BucketItemState:
-    """Derive a Bucket item's lifecycle state from its terminal timestamps.
-
-    Completion and deletion are mutually exclusive terminal transitions, so a
-    stamped `deleted_at` or `completed_at` names the terminal state and an
-    item with neither is still active.
-    """
-    if item.deleted_at is not None:
-        return "deleted"
-    if item.completed_at is not None:
-        return "completed"
-    return "active"
-
-
-def bucket_item_index_text(item: BucketItem[Fetched]) -> str:
-    """The searchable projection of a Bucket item: title + type-relevant text.
-
-    Mirrors `_describe_item`'s derivation of `title`/`dedup_key` from the
-    already-validated payload, but composes the fuller text a hybrid search
-    index should match against — the title plus whichever secondary
-    item-type field carries additional identifying text (an author, a
-    location, a season), not the raw JSON payload."""
-    parts = [item.title]
-    if item.item_type == "purchase":
-        purchase = PurchaseData.model_validate(item.data)
-        parts.extend(_optional_index_text(purchase.store))
-        parts.extend(purchase.decision_factors)
-        return "\n".join(parts)
-    match item.item_type:
-        case "movie":
-            movie = MovieData.model_validate(item.data)
-            parts.extend(_optional_index_text(movie.year))
-        case "place":
-            place = PlaceData.model_validate(item.data)
-            parts.extend(_optional_index_text(place.location))
-        case "book":
-            book = BookData.model_validate(item.data)
-            parts.extend(_optional_index_text(book.author))
-        case "travel":
-            travel = TravelData.model_validate(item.data)
-            parts.extend(_optional_index_text(travel.season))
-    return "\n".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,19 +106,13 @@ def _dedup_severity(duplicates: list[BucketItem[Fetched]]) -> DedupSeverity:
     return "inform"
 
 
-class BucketItemSearcher(Protocol):
-    """The search seam the service needs: the query read-path plus index hooks.
+class BucketItemIndexProjection(Protocol):
+    """Recoverable index writes driven after canonical Bucket Item mutations."""
 
-    A structural Protocol (satisfied by `BucketItemReconciler`) so this module
-    does not import the concrete reconciler — that import would close a cycle,
-    since the reconciler depends on `BucketItem`. Mirrors `MemorySearcher`."""
-
-    async def candidates(
-        self, query: str, *, limit: int, logger: Logger
-    ) -> list[BucketItemCandidate]: ...
     async def index_item(
         self, item: BucketItem[Fetched], *, logger: Logger
     ) -> None: ...
+
     async def deindex_item(self, item_id: UUID7, *, logger: Logger) -> None: ...
 
 
@@ -407,17 +128,13 @@ class BucketItemService:
         database: Database,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
-        searcher: BucketItemSearcher | None = None,
+        indexer: BucketItemIndexProjection | None = None,
     ) -> None:
         self.database: Database = database
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.tracer: Tracer = tracer
-        self.searcher: BucketItemSearcher | None = searcher
-        """Search seam (embedder + index + reconciler hooks); `None` if unwired.
-
-        Optional because many service tests construct a bare service that never
-        searches. The mutation sites best-effort index/deindex through it;
-        `search` requires it."""
+        self.indexer: BucketItemIndexProjection | None = indexer
+        """Recoverable index projection; `None` when Search is unwired."""
 
     async def add(
         self,
@@ -436,8 +153,8 @@ class BucketItemService:
         the same transaction that inserts, against every state, and only ever
         informs — the item is created regardless of severity.
         """
-        normalised_intent = _normalise_intent(intent_context)
-        description = _describe_item(item_type, data)
+        normalised_intent = normalise_intent(intent_context)
+        description = describe_item(item_type, data)
         with self.tracer.start_as_current_span(
             "BucketItemService.add",
             attributes={"bucket_item.item_type": item_type},
@@ -485,156 +202,6 @@ class BucketItemService:
             await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
             await self._try_index(item, logger=logger)
             return AddOutcome(item=item, duplicates=duplicates, severity=severity)
-
-    async def search(
-        self,
-        query: str,
-        limit: PositiveInt = 50,
-        *,
-        logger: Logger,
-    ) -> list[BucketItem[Fetched]]:
-        """Ranked hybrid Search over active Bucket items.
-
-        Mirrors `MemoryService.search`: the query is embedded and run through
-        the index's lexical + semantic arms, fused by RRF; the ranked candidate
-        ids are then re-fetched from SQLite and re-filtered to active-only
-        (non-completed, non-deleted). Results keep the index's relevance order,
-        capped at `limit` (default 50)."""
-        normalised_query = query.strip()
-        if not normalised_query:
-            msg = "keyword Search requires a non-empty query"
-            raise EmptyBucketSearchQueryError(msg)
-        with self.tracer.start_as_current_span(
-            "BucketItemService.search",
-            attributes={"bucket_item.search.limit": limit},
-        ) as span:
-            _debug(logger, "Searching Bucket items", limit=limit)
-            candidates = await self.search_candidates(
-                normalised_query, limit=limit, logger=logger
-            )
-            span.set_attribute("bucket_item.search.candidate_count", len(candidates))
-            if not candidates:
-                _debug(
-                    logger,
-                    "Bucket item Search completed",
-                    limit=limit,
-                    candidate_count=0,
-                    result_count=0,
-                )
-                return []
-            rank = {
-                candidate.id: position for position, candidate in enumerate(candidates)
-            }
-            items = await self.hydrate_active(list(rank), logger=logger)
-            items.sort(key=lambda item: rank[item.id])
-            span.set_attribute("bucket_item.search.result_count", len(items))
-            _debug(
-                logger,
-                "Bucket item Search completed",
-                limit=limit,
-                candidate_count=len(candidates),
-                result_count=len(items),
-            )
-            return items
-
-    async def search_candidates(
-        self, query: str, *, limit: int, logger: Logger
-    ) -> list[BucketItemCandidate]:
-        """Raw ranked candidate ids from the index, unfiltered by lifecycle state.
-
-        The read half of the fusion seam (`tether.search_fusion`): a caller
-        doing its own cross-source ranking needs candidates before the SQLite
-        re-filter, whereas `search` does both steps in one call. Assumes
-        `query` is already non-empty."""
-        if self.searcher is None:
-            msg = "BucketItemService.search_candidates requires a configured searcher"
-            raise BucketSearchUnavailableError(msg)
-        return await self.searcher.candidates(query, limit=limit, logger=logger)
-
-    async def hydrate_active(
-        self,
-        ids: Sequence[UUID],
-        *,
-        after: datetime | None = None,
-        before: datetime | None = None,
-        logger: Logger,
-    ) -> list[BucketItem[Fetched]]:
-        """Re-fetch candidate ids from SQLite, filtered to active-only (+window).
-
-        The shared re-filter step `search` and fusion both need: candidate ids
-        from the index carry no guarantee they're still active rows, so this
-        is where ADR 0009's per-arm re-filter happens. `after`/`before`, when
-        supplied, bound `created_at` (inclusive) — Bucket items have no
-        `tethered_at` equivalent, so their creation timestamp is the capture
-        moment a time window bounds. A narrow window can shrink the hydrated
-        set below the candidate count the index returned; callers do not
-        re-fetch to compensate, mirroring the Memory arm's facet-filter
-        behavior. Result order is not preserved — callers sort by their own
-        candidate ranking."""
-        _debug(
-            logger, "Hydrating active Bucket item candidates", candidate_count=len(ids)
-        )
-        if not ids:
-            return []
-        query = select(BucketItem).where(
-            BucketItem.completed_at.is_null()
-            & BucketItem.deleted_at.is_null()
-            & BucketItem.id.in_(*ids)
-        )
-        if after is not None:
-            query = query.where(BucketItem.created_at.gte(after))
-        if before is not None:
-            query = query.where(BucketItem.created_at.lte(before))
-        async with self.database.transaction() as tx:
-            return await tx.fetch_all(query)
-
-    async def browse_by_state(
-        self,
-        state: BucketItemState,
-        *,
-        logger: Logger,
-    ) -> list[BucketItem[Fetched]]:
-        """List Bucket items in a given lifecycle state, newest-first.
-
-        `active` is the live list; `completed` and `deleted` are the retained
-        history dedup reasons over. Each is ordered by the timestamp that defines
-        the state (creation for active, the terminal stamp otherwise), newest
-        first."""
-        _debug(logger, "Browsing Bucket items by state", state=state)
-        match state:
-            case "active":
-                browse = (
-                    select(BucketItem)
-                    .where(
-                        BucketItem.completed_at.is_null()
-                        & BucketItem.deleted_at.is_null()
-                    )
-                    .order_by(BucketItem.created_at.desc())
-                )
-            case "completed":
-                browse = (
-                    select(BucketItem)
-                    .where(
-                        BucketItem.completed_at.is_not_null()
-                        & BucketItem.deleted_at.is_null()
-                    )
-                    .order_by(BucketItem.completed_at.desc())
-                )
-            case "deleted":
-                browse = (
-                    select(BucketItem)
-                    .where(BucketItem.deleted_at.is_not_null())
-                    .order_by(BucketItem.deleted_at.desc())
-                )
-        async with self.database.transaction() as tx:
-            items = await tx.fetch_all(browse)
-        _debug(
-            logger,
-            "Bucket item browse completed",
-            state=state,
-            result_count=len(items),
-        )
-        return items
 
     async def complete(
         self,
@@ -822,7 +389,7 @@ class BucketItemService:
         reason can surface after an item has already been completed or
         deleted.
         """
-        normalised_intent = _normalise_intent(intent_context)
+        normalised_intent = normalise_intent(intent_context)
         _debug(
             logger,
             "Setting Bucket item intent context",
@@ -899,11 +466,11 @@ class BucketItemService:
         The index entry is a derived artifact and SQLite is canonical: a failed
         hook is logged, not raised, because the reconciler's pass is the
         correctness backstop. No-op when search is unwired."""
-        if self.searcher is None:
+        if self.indexer is None:
             return
         _debug(logger, "Indexing Bucket item for search", bucket_item_id=str(item.id))
         try:
-            await self.searcher.index_item(item, logger=logger)
+            await self.indexer.index_item(item, logger=logger)
         except Exception:
             _exception(
                 logger,
@@ -921,35 +488,16 @@ class BucketItemService:
 
         Never raises: complete/delete both leave the index entry as drift for
         the reconciler's periodic pass to sweep if this best-effort call fails."""
-        if self.searcher is None:
+        if self.indexer is None:
             return
         _debug(
             logger, "Deindexing Bucket item from search", bucket_item_id=str(item_id)
         )
         try:
-            await self.searcher.deindex_item(item_id, logger=logger)
+            await self.indexer.deindex_item(item_id, logger=logger)
         except Exception:
             _exception(
                 logger,
                 "Failed to deindex Bucket item from search",
                 bucket_item_id=str(item_id),
             )
-
-
-async def create_bucket_item_schema(database: Database) -> None:
-    """Create the Bucket item table and its index on an initialized database.
-
-    Applied as its own migrations after the Memory schema's, mirroring the
-    Memory spine's `create_memory_schema`. The table carries a `(item_type,
-    dedup_key)` index, so scaffolding emits two statements (table, then index);
-    a snekql migration body runs exactly one statement, so each becomes its own
-    ordered migration. The caller owns `Database.initialize` and hands the live
-    database here before serving requests.
-
-    >>> database = await Database.initialize(backend=Config(database=":memory:"))
-    >>> await create_bucket_item_schema(database)
-    """
-    migrations = {
-        f"002_{label}": sql for label, sql in scaffold_sqlite_statements([BucketItem])
-    }
-    await database.migrate(migrations)

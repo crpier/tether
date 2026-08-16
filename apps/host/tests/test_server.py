@@ -34,7 +34,7 @@ from starlette.testclient import TestClient
 from tether import server
 from tether.app_runtime import app_runtime
 from tether.gmail_client import GmailNetworkFailure, GmailResponse
-from tether.host_composition import _shutdown_background_tasks
+from tether.host_resources import shutdown_background_tasks
 from tether.model_selection import AgentModelConfig
 from tether.server import (
     AppConfig,
@@ -899,7 +899,7 @@ async def shutdown_awaits_tasks_that_honor_cancellation() -> None:
     task = asyncio.create_task(cooperative(), name="cooperative")
     await started.wait()
 
-    await _shutdown_background_tasks(
+    await shutdown_background_tasks(
         [task],
         logger=structlog.stdlib.get_logger("test.server.shutdown"),
         grace_seconds=1.0,
@@ -938,7 +938,7 @@ async def shutdown_does_not_block_on_a_task_that_ignores_cancellation() -> None:
     await asyncio.sleep(0)  # let it reach the first sleep
 
     before = time.monotonic()
-    await _shutdown_background_tasks(
+    await shutdown_background_tasks(
         [task],
         logger=structlog.stdlib.get_logger("test.server.shutdown"),
         grace_seconds=0.2,

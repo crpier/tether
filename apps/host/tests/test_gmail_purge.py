@@ -35,7 +35,8 @@ from tether.gmail_client import (
 )
 from tether.gmail_purge import GmailPurgeSweepService
 from tether.gmail_store import GmailSyncState, create_gmail_schema
-from tether.proposals import ProposalService, create_proposal_schema
+from tether.proposal_store import create_proposal_schema
+from tether.proposals import ProposalService
 from tether.structured_logging import Logger
 
 

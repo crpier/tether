@@ -36,22 +36,29 @@ from snektest import (
 )
 
 from tether.bucket_item_index import BucketItemDocument, BucketItemIndex
-from tether.bucket_item_reconciler import BucketItemReconciler
-from tether.bucket_items import (
-    AddOutcome,
-    BucketItem,
-    BucketItemConflictError,
-    BucketItemNotFoundError,
-    BucketItemService,
-    BucketItemState,
-    BucketSearchUnavailableError,
-    EmptyBucketSearchQueryError,
+from tether.bucket_item_model import (
     EmptyIntentContextError,
     InvalidItemDataError,
     ItemType,
     PurchaseDecision,
+)
+from tether.bucket_item_reconciler import BucketItemReconciler
+from tether.bucket_item_search import (
+    BucketItemSearchService,
+    BucketSearchUnavailableError,
+    EmptyBucketSearchQueryError,
+)
+from tether.bucket_item_store import (
+    BucketItem,
+    BucketItemState,
     create_bucket_item_schema,
     derive_state,
+)
+from tether.bucket_items import (
+    AddOutcome,
+    BucketItemConflictError,
+    BucketItemNotFoundError,
+    BucketItemService,
 )
 from tether.embeddings import FakeEmbedder
 from tether.search_meta import SearchMetaService, create_search_meta_schema
@@ -66,9 +73,16 @@ def noop_tracer() -> Tracer:
 class LoggedBucketItemService:
     """Test adapter that supplies the mandatory service logger."""
 
-    def __init__(self, service: BucketItemService, *, logger: Logger) -> None:
-        self.service: BucketItemService = service
+    def __init__(
+        self,
+        service: BucketItemService,
+        search_service: BucketItemSearchService,
+        *,
+        logger: Logger,
+    ) -> None:
         self.logger: Logger = logger
+        self.search_service: BucketItemSearchService = search_service
+        self.service: BucketItemService = service
 
     @property
     def database(self) -> Database:
@@ -106,13 +120,13 @@ class LoggedBucketItemService:
         limit: PositiveInt = 50,
     ) -> list[BucketItem[Fetched]]:
         """Search through the wrapped service with logging context."""
-        return await self.service.search(query, limit=limit, logger=self.logger)
+        return await self.search_service.search(query, limit=limit, logger=self.logger)
 
     async def browse_by_state(
         self, state: BucketItemState
     ) -> list[BucketItem[Fetched]]:
         """Browse through the wrapped service with logging context."""
-        return await self.service.browse_by_state(state, logger=self.logger)
+        return await self.search_service.browse_by_state(state, logger=self.logger)
 
     async def complete(self, item: BucketItem[Fetched]) -> BucketItem[Fetched]:
         """Complete through the wrapped service with logging context."""
@@ -130,6 +144,7 @@ async def bucket_item_service() -> AsyncGenerator[LoggedBucketItemService]:
     await create_bucket_item_schema(db)
     yield LoggedBucketItemService(
         BucketItemService(database=db, tracer=noop_tracer()),
+        BucketItemSearchService(database=db, tracer=noop_tracer()),
         logger=structlog.stdlib.get_logger("test.bucket_item_service"),
     )
     await db.close()
@@ -177,10 +192,13 @@ async def searchable_bucket_item_service() -> AsyncGenerator[SearchableHarness]:
             meta=SearchMetaService(database=db),
         )
         service = BucketItemService(
+            database=db, tracer=noop_tracer(), indexer=reconciler
+        )
+        search_service = BucketItemSearchService(
             database=db, tracer=noop_tracer(), searcher=reconciler
         )
         yield SearchableHarness(
-            service=LoggedBucketItemService(service, logger=logger),
+            service=LoggedBucketItemService(service, search_service, logger=logger),
             index=index,
             embedder=embedder,
             logger=logger,

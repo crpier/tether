@@ -27,13 +27,9 @@ from snektest import (
     test,
 )
 
-from tether.bucket_items import (
-    BucketItem,
-    BucketItemService,
-    ItemType,
-    PurchaseDecision,
-    create_bucket_item_schema,
-)
+from tether.bucket_item_model import ItemType, PurchaseDecision
+from tether.bucket_item_store import BucketItem, create_bucket_item_schema
+from tether.bucket_items import BucketItemService
 from tether.structured_logging import Logger
 from tether.triage import (
     STALE_AFTER_DAYS,

@@ -17,7 +17,8 @@ from starlette.routing import Route
 from tether import proposal_capabilities
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.proposal_capabilities import PROPOSAL_ERRORS
-from tether.proposals import ActionDraft, ProposalDraft, ProposalState
+from tether.proposal_store import ProposalState
+from tether.proposals import ActionDraft, ProposalDraft
 from tether.tools import ToolSpec
 
 

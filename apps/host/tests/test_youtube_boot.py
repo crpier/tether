@@ -1,6 +1,6 @@
 """Regression tests for deferring the ingestion boot sync off startup.
 
-`_wire_youtube` used to `await` the likes/transcript boot pass inside the ASGI
+YouTube composition used to `await` the likes/transcript boot pass inside the ASGI
 lifespan startup, so uvicorn only bound its port once a full (potentially slow)
 sync finished. These tests pin the boot pass to a background task: wiring returns
 promptly even when the upstream blocks, and the component exposes readiness.
@@ -16,8 +16,8 @@ from snekql.sqlite import Config, Database
 from snektest import assert_false, assert_true, fixture, load_fixture, test
 
 from tether.events import EventHub
-from tether.host_composition import YouTubeComponent, _wire_youtube
 from tether.host_config import AppConfig
+from tether.ingestion_composition import YouTubeComponent, compose_youtube
 from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.youtube_local import InMemoryYouTubeApi
 from tether.youtube_quota import (
@@ -56,7 +56,7 @@ class BlockingLikedApi(InMemoryYouTubeApi):
 async def wired_app(
     api: InMemoryYouTubeApi,
 ) -> AsyncGenerator[tuple[YouTubeComponent, IngestionLifecycle]]:
-    """Run `_wire_youtube` over a fresh in-memory DB with the given upstream."""
+    """Compose YouTube over a fresh in-memory database with the given upstream."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
     logger = structlog.stdlib.get_logger("test.youtube_boot")
@@ -68,7 +68,7 @@ async def wired_app(
         youtube_api=api,
     )
     component = await asyncio.wait_for(
-        _wire_youtube(
+        compose_youtube(
             config=config,
             database=db,
             event_publisher=EventHub(),

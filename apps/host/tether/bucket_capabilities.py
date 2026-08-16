@@ -16,33 +16,44 @@ from typing import Any, cast
 from uuid import UUID
 
 from pydantic import UUID7, BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
+from tether.bucket_item_model import (
+    DedupSeverity,
+    EmptyIntentContextError,
+    InvalidItemDataError,
+    ItemType,
+    PurchaseData,
+    PurchaseDecision,
+)
+from tether.bucket_item_search import (
+    BucketItemSearchService,
+    EmptyBucketSearchQueryError,
+)
+from tether.bucket_item_store import BucketItem, BucketItemState, derive_state
 from tether.bucket_items import (
     AddOutcome,
-    BucketItem,
     BucketItemConflictError,
     BucketItemNotFoundError,
     BucketItemService,
-    BucketItemState,
-    DedupSeverity,
-    EmptyBucketSearchQueryError,
-    EmptyIntentContextError,
-    Fetched,
-    InvalidItemDataError,
-    ItemType,
     NotPurchaseItemError,
-    PurchaseData,
-    PurchaseDecision,
-    derive_state,
 )
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 
 
 def _service(request: Request) -> BucketItemService:
-    """Read the Bucket service from the canonical host runtime."""
+    """Read Bucket Item mutations from the canonical host runtime."""
     return cast("BucketItemService", request.app.state.runtime.bucket_item_service)
+
+
+def _search_service(request: Request) -> BucketItemSearchService:
+    """Read Bucket Item Search from the canonical host runtime."""
+    return cast(
+        "BucketItemSearchService",
+        request.app.state.runtime.bucket_item_search_service,
+    )
 
 
 BUCKET_ERRORS: tuple[ErrorRule, ...] = (
@@ -270,7 +281,7 @@ async def add_purchase(
 
 async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:
     """List Bucket items in a lifecycle state (active list / retained history)."""
-    items = await _service(request).browse_by_state(
+    items = await _search_service(request).browse_by_state(
         state,
         logger=get_request_logger(request),
     )
@@ -279,7 +290,7 @@ async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:
 
 async def search(request: Request, q: str, limit: int = 50) -> CapabilityOutcome:
     """Keyword Search over active Bucket items."""
-    items = await _service(request).search(
+    items = await _search_service(request).search(
         q,
         limit=limit,
         logger=get_request_logger(request),

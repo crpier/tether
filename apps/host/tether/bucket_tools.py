@@ -33,7 +33,7 @@ from tether.bucket_capabilities import (
     set_bucket_item_intent,
     set_purchase_decision,
 )
-from tether.bucket_items import PurchaseData, PurchaseDecision
+from tether.bucket_item_model import PurchaseData, PurchaseDecision
 from tether.capabilities import CapabilityOutcome, bind_params
 from tether.tools import ToolSpec
 
