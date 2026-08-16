@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tether.embeddings import Embedder
+    from tether.search_projection.embeddings import Embedder
     from tether.structured_logging import Logger
     from tether.youtube_search_index import ChunkCandidate
 

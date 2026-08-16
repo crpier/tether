@@ -2,7 +2,7 @@
 `HybridLanceTable`.
 
 A sibling of `SearchIndex` (Memories) and `YouTubeSearchIndex` (transcript chunks)
-over the same generic hybrid retriever in `tether.hybrid_lance_table`, which
+over the generic retriever in `tether.search_projection.lance_table`, which
 owns the LanceDB mechanics (native FTS + flat-scan cosine fused by RRF,
 merge-insert upserts, the self-healing `optimize`). This module fixes the
 Bucket-item column set — just `id`, `content`, and the vector — and translates
@@ -26,7 +26,7 @@ from uuid import UUID
 
 import structlog
 
-from tether.hybrid_lance_table import HybridLanceTable, TableDocument
+from tether.search_projection.lance_table import HybridLanceTable, TableDocument
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

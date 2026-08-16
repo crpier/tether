@@ -16,7 +16,7 @@ import structlog
 from snektest import assert_true, test
 from structlog.testing import capture_logs
 
-from tether.reconcile_loop import run_reconcile_loop
+from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
 
 

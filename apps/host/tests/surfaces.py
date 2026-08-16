@@ -17,7 +17,7 @@ from snektest import assert_eq
 from starlette.testclient import TestClient
 
 from tether.app_runtime import app_runtime
-from tether.embeddings import Embedder
+from tether.search_projection.embeddings import Embedder
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 

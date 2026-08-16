@@ -16,7 +16,7 @@ from collections.abc import Sequence
 
 from snektest import assert_eq, assert_gt, assert_true, test
 
-from tether.embeddings import (
+from tether.search_projection.embeddings import (
     FakeEmbedder,
     FastEmbedder,
     vector_from_bytes,

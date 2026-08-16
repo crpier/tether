@@ -1,7 +1,8 @@
 """Chunk-shaped YouTube corpus Search projection over `HybridLanceTable`.
 
 A sibling of `SearchIndex` (Memories) over the same generic hybrid retriever in
-`tether.hybrid_lance_table`, which owns the LanceDB mechanics (native FTS +
+`tether.search_projection.lance_table`, which owns the LanceDB mechanics
+(native FTS +
 flat-scan cosine fused by RRF, merge-insert upserts, the self-healing
 `optimize`). This module fixes the YouTube text column set — `id` (a chunk UUID),
 a `video_id` payload column, `content`, and the vector — and translates at the
@@ -20,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid5
 
-from tether.hybrid_lance_table import HybridLanceTable, TableDocument
+from tether.search_projection.lance_table import HybridLanceTable, TableDocument
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

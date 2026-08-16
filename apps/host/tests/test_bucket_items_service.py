@@ -60,8 +60,11 @@ from tether.bucket_items import (
     BucketItemNotFoundError,
     BucketItemService,
 )
-from tether.embeddings import FakeEmbedder
-from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.search_projection.embeddings import FakeEmbedder
+from tether.search_projection.metadata import (
+    SearchMetaService,
+    create_search_meta_schema,
+)
 from tether.structured_logging import Logger
 
 

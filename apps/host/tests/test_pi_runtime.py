@@ -26,13 +26,13 @@ from snektest import (
 
 from tether.agent_trace import AgentTraceRecorder
 from tether.app_runtime import app_runtime
-from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiRuntimeConfig, build_pi_spawn_command
 from tether.pi_rpc import PiRpcClient
 from tether.pi_runtime import PiRuntime
 from tether.pi_turn_events import AgentEnded, MessageSettled, ModelTurnStarted
+from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tool_runtime import SessionRegistry

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from tether.app_runtime import AppRuntime, install_app_runtime
-from tether.embeddings import Embedder
 from tether.health_connect import HealthConnectIngestion, create_health_connect_schema
 from tether.health_connect_telemetry import HealthConnectTelemetry
 from tether.host_config import AppConfig
@@ -23,6 +22,7 @@ from tether.ingestion_composition import (
     IngestionDependencies,
     compose_ingestion,
 )
+from tether.search_projection.embeddings import Embedder
 from tether.service_composition import compose_core_services
 from tether.telemetry import TelemetrySettings
 from tether.transcripts.contracts import AsyncClosable

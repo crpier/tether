@@ -28,7 +28,6 @@ from tether.chat_prompt import local_timezone_name, prompt_with_time_context
 from tether.conversation_model import MessageDraft
 from tether.conversation_store import Message
 from tether.conversations import ConversationService
-from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_turn_events import (
@@ -42,6 +41,7 @@ from tether.pi_turn_events import (
     ToolStarted,
     TurnEvent,
 )
+from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import AppConfig, HostSettings, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tool_runtime import TOOL_AUTH_HEADER

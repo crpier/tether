@@ -27,7 +27,6 @@ from snektest import (
     test,
 )
 
-from tether.embeddings import Embedder, Vector, vector_to_bytes
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_store import (
@@ -38,7 +37,11 @@ from tether.memory_store import (
     tethered_corpus,
 )
 from tether.review import EmbeddingBatchMismatchError, ReviewDigest, ReviewService
-from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.search_projection.embeddings import Embedder, Vector, vector_to_bytes
+from tether.search_projection.metadata import (
+    SearchMetaService,
+    create_search_meta_schema,
+)
 from tether.structured_logging import Logger
 
 

@@ -17,7 +17,7 @@ from uuid import uuid4
 from anyio import TemporaryDirectory
 from snektest import assert_eq, assert_gt, assert_in, test
 
-from tether.search_index import SearchDocument, SearchIndex
+from tether.memory_search_index import SearchDocument, SearchIndex
 
 _DIM = 4
 

@@ -30,7 +30,6 @@ from typing import Literal
 from pydantic import UUID7, BaseModel
 from snekql.sqlite import Database, Fetched
 
-from tether.embeddings import Embedder, Vector, vector_from_bytes
 from tether.memory_capabilities import MemoryRead
 from tether.memory_store import (
     Memory,
@@ -38,7 +37,8 @@ from tether.memory_store import (
     loose_queue,
     tethered_corpus,
 )
-from tether.search_meta import SearchMetaService
+from tether.search_projection.embeddings import Embedder, Vector, vector_from_bytes
+from tether.search_projection.metadata import SearchMetaService
 from tether.structured_logging import Logger
 
 DEDUP_THRESHOLD = 0.6

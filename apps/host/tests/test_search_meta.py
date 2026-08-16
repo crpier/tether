@@ -20,7 +20,7 @@ from snektest import (
     test,
 )
 
-from tether.search_meta import (
+from tether.search_projection.metadata import (
     SearchMetaService,
     create_search_meta_schema,
 )

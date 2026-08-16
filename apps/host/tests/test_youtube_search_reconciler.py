@@ -20,7 +20,7 @@ import structlog
 from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
-from tether.embeddings import Embedder, FakeEmbedder, Vector
+from tether.search_projection.embeddings import Embedder, FakeEmbedder, Vector
 from tether.structured_logging import Logger
 from tether.youtube_search_index import ChunkDocument
 from tether.youtube_search_reconciler import YouTubeSearchReconciler

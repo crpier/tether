@@ -27,7 +27,6 @@ from tether.chat_ws import websocket_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
-from tether.embeddings import Embedder, FakeEmbedder, FastEmbedder
 from tether.gmail_client import GmailTransport
 from tether.gmail_oauth import (
     GMAIL_MODIFY_SCOPE,
@@ -46,6 +45,7 @@ from tether.openapi_export import public_api_router
 from tether.panel_tools import internal_panel_tool_routes
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
+from tether.search_projection.embeddings import Embedder, FakeEmbedder, FastEmbedder
 from tether.search_tools import (
     HttpTavilyTransport,
     SearchProvider,

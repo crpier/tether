@@ -24,7 +24,6 @@ from tether.bucket_item_search import BucketItemSearchService
 from tether.bucket_items import BucketItemService
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
 from tether.conversations import ConversationService
-from tether.embeddings import Embedder
 from tether.events import EventHub
 from tether.gmail_client import GmailClient
 from tether.host_config import AppConfig
@@ -39,6 +38,8 @@ from tether.kosync_routes import KosyncAuth
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_search import MemorySearchService
+from tether.memory_search_index import SearchIndex
+from tether.memory_search_reconciler import SearchReconciler
 from tether.model_selection import AgentModelCatalog
 from tether.notifications import NotificationService
 from tether.panels import PanelService
@@ -59,7 +60,6 @@ from tether.push import (
 from tether.recall import RecallModelSteps, RecallService
 from tether.recall_generation import PiStudyItemGenerator, StudyItemGenerator
 from tether.recall_grading import AnswerGrader, PiAnswerGrader
-from tether.reconciler import SearchReconciler
 from tether.review import ReviewService
 from tether.scheduler import (
     EphemeralPiPromptRunner,
@@ -72,8 +72,8 @@ from tether.scheduler import (
     TriggerNotifier,
 )
 from tether.search_fusion import SearchFusionService
-from tether.search_index import SearchIndex
-from tether.search_meta import SearchMetaService
+from tether.search_projection.embeddings import Embedder
+from tether.search_projection.metadata import SearchMetaService
 from tether.search_tools import (
     PersistentSearchSpendGuard,
     SearchProvider,

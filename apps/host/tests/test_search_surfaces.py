@@ -19,7 +19,7 @@ from snektest import assert_eq, test
 from starlette.testclient import TestClient
 
 from tests.surfaces import login, surface_client
-from tether.embeddings import FakeEmbedder
+from tether.search_projection.embeddings import FakeEmbedder
 
 
 def make_client(root: Path) -> Any:

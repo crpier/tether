@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 
 from tether.agent_trace import AgentTraceRecorder
 from tether.app_runtime import app_runtime
-from tether.embeddings import FakeEmbedder
+from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
