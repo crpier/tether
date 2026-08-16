@@ -21,6 +21,7 @@ from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.proposal_autonomy import GrantSuggestion
 from tether.proposal_store import (
     ActionDisposition,
     ActionOutcome,
@@ -30,7 +31,6 @@ from tether.proposal_store import (
     ProposalState,
 )
 from tether.proposals import (
-    GrantSuggestion,
     InvalidActionError,
     ProposalConflictError,
     ProposalCounts,
@@ -304,7 +304,7 @@ async def grant(
     request: Request, kind: str, scope: str | None = None
 ) -> CapabilityOutcome:
     """Grant autonomy for a `(kind, scope)` category (a new ledger row)."""
-    granted = await app_runtime(request.app).proposal_service.grant(
+    granted = await app_runtime(request.app).proposal_autonomy_service.grant(
         kind, scope, now=datetime.now(UTC)
     )
     return CapabilityOutcome(
@@ -314,7 +314,7 @@ async def grant(
 
 async def revoke(request: Request, grant_id: UUID) -> CapabilityOutcome:
     """Revoke a grant convergently; an absent/already-revoked id is a no-op."""
-    await app_runtime(request.app).proposal_service.revoke(
+    await app_runtime(request.app).proposal_autonomy_service.revoke(
         grant_id, now=datetime.now(UTC)
     )
     return CapabilityOutcome(result=None)
@@ -322,7 +322,7 @@ async def revoke(request: Request, grant_id: UUID) -> CapabilityOutcome:
 
 async def list_grants(request: Request) -> CapabilityOutcome:
     """List live (unrevoked) grants, newest first."""
-    grants = await app_runtime(request.app).proposal_service.list_grants()
+    grants = await app_runtime(request.app).proposal_autonomy_service.list_grants()
     return CapabilityOutcome(
         result=[GrantRead.from_grant(g).model_dump(mode="json") for g in grants]
     )
@@ -330,7 +330,9 @@ async def list_grants(request: Request) -> CapabilityOutcome:
 
 async def suggestions(request: Request) -> CapabilityOutcome:
     """Read-time grant suggestions for ungranted categories with history."""
-    computed = await app_runtime(request.app).proposal_service.calibration_stats()
+    computed = await app_runtime(
+        request.app
+    ).proposal_autonomy_service.calibration_stats()
     return CapabilityOutcome(
         result=[
             GrantSuggestionRead.from_suggestion(s).model_dump(mode="json")

@@ -42,6 +42,7 @@ from tether.memory_search import MemorySearchService
 from tether.model_selection import AgentModelCatalog
 from tether.notifications import NotificationService
 from tether.panels import PanelService
+from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposals import ProposalService
 from tether.provider_auth import (
     ProviderAuthService,
@@ -172,15 +173,23 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     )
 
 
-def _build_proposal_service(
+@dataclass(frozen=True, slots=True)
+class _ProposalComponent:
+    """Proposal lifecycle and autonomy services sharing one canonical store."""
+
+    autonomy_service: ProposalAutonomyService
+    proposal_service: ProposalService
+
+
+def _build_proposal_component(
     *,
     config: AppConfig,
     database: Database,
     event_publisher: EventHub,
     notification_service: NotificationService,
     tracer: Tracer,
-) -> ProposalService:
-    """Wire the host proposal executor over agent-composed action sets.
+) -> _ProposalComponent:
+    """Wire Proposal lifecycle and autonomy over their shared canonical store.
 
     Built after `_build_scheduler` so its notification service can queue pending
     proposals. The action registry
@@ -194,13 +203,21 @@ def _build_proposal_service(
         if config.gmail_transport is not None
         else None
     )
-    return ProposalService(
+    autonomy_service = ProposalAutonomyService(
         database=database,
-        tracer=tracer,
         event_publisher=event_publisher,
-        action_registry=build_action_registry(all_action_specs()),
-        action_context=ActionContext(gmail_client=gmail_client),
-        notification_service=notification_service,
+    )
+    return _ProposalComponent(
+        autonomy_service=autonomy_service,
+        proposal_service=ProposalService(
+            database=database,
+            tracer=tracer,
+            autonomy_policy=autonomy_service,
+            event_publisher=event_publisher,
+            action_registry=build_action_registry(all_action_specs()),
+            action_context=ActionContext(gmail_client=gmail_client),
+            notification_service=notification_service,
+        ),
     )
 
 
@@ -524,6 +541,7 @@ class CoreServices:
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
     panel_service: PanelService
+    proposal_autonomy_service: ProposalAutonomyService
     proposal_service: ProposalService
     provider_auth_service: ProviderAuthService
     push_service: PushService
@@ -687,7 +705,7 @@ async def compose_core_services(
         )
     )
     _ = resources.push_async_callback(scheduler_component.scheduler.shutdown)
-    proposal_service = _build_proposal_service(
+    proposal_component = _build_proposal_component(
         config=config,
         database=host.database,
         event_publisher=event_hub,
@@ -729,7 +747,8 @@ async def compose_core_services(
         model_catalog=model_catalog,
         notification_service=scheduler_component.notification_service,
         panel_service=presentation.panel_service,
-        proposal_service=proposal_service,
+        proposal_autonomy_service=proposal_component.autonomy_service,
+        proposal_service=proposal_component.proposal_service,
         provider_auth_service=provider_auth_service,
         push_service=push_service,
         recall_service=recall_service,

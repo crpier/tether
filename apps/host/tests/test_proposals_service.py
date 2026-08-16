@@ -1,9 +1,9 @@
-"""Behaviour tests for the Proposal service layer.
+"""Behavior tests for Proposal lifecycle and autonomy integration.
 
-These drive the *service* seam directly against a real in-memory SQLite database
-— no HTTP, no agent — with a fake action registry (kinds `test.ok`, `test.fail`,
-`test.skip`) so the lifecycle, grant matching, executor loop, crash-resume, and
-calibration statistics are exercised without any real consumer.
+These drive the lifecycle and autonomy service seams against a real in-memory
+SQLite database with a fake action registry. They cover orchestration, grant
+policy integration, execution, crash-resume, and calibration history without a
+real consumer.
 """
 
 from collections.abc import AsyncGenerator
@@ -33,6 +33,7 @@ from tether.action_registry import (
 )
 from tether.events import HubEvent, InvalidateEvent
 from tether.notifications import NotificationService, create_notification_schema
+from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_store import (
     Proposal,
     ProposalAction,
@@ -90,6 +91,7 @@ class RecordingPublisher:
 class Harness:
     """The wired proposal service plus its collaborators for assertions."""
 
+    autonomy: ProposalAutonomyService
     service: ProposalService
     publisher: RecordingPublisher
     notifications: NotificationService
@@ -133,15 +135,21 @@ async def harness() -> AsyncGenerator[Harness]:
     publisher = RecordingPublisher()
     notifications = NotificationService(database=db)
     calls = ExecutorCalls()
+    autonomy = ProposalAutonomyService(database=db, event_publisher=publisher)
     service = ProposalService(
         db,
         noop_tracer(),
+        autonomy_policy=autonomy,
         event_publisher=publisher,
         action_registry=_registry(calls),
         notification_service=notifications,
     )
     yield Harness(
-        service=service, publisher=publisher, notifications=notifications, calls=calls
+        autonomy=autonomy,
+        service=service,
+        publisher=publisher,
+        notifications=notifications,
+        calls=calls,
     )
     await db.close()
 
@@ -244,7 +252,7 @@ async def uncovered_proposal_queues_and_notifies() -> None:
 async def fully_covered_proposal_auto_executes() -> None:
     """When every action is grant-covered the host runs the batch immediately."""
     h = await load_fixture(harness())
-    _ = await h.service.grant("test.ok", None, now=NOW)
+    _ = await h.autonomy.grant("test.ok", None, now=NOW)
 
     creation = await h.service.create(draft(action("test.ok")), now=NOW, logger=LOGGER)
 
@@ -260,7 +268,7 @@ async def fully_covered_proposal_auto_executes() -> None:
 async def bare_kind_grant_covers_all_scopes() -> None:
     """A bare-kind grant covers an action carrying any scope."""
     h = await load_fixture(harness())
-    _ = await h.service.grant("test.ok", None, now=NOW)
+    _ = await h.autonomy.grant("test.ok", None, now=NOW)
 
     creation = await h.service.create(
         draft(action("test.ok", scope="anything")), now=NOW, logger=LOGGER
@@ -273,7 +281,7 @@ async def bare_kind_grant_covers_all_scopes() -> None:
 async def typo_scope_fails_closed_and_queues() -> None:
     """A scoped grant does not match a differently-scoped action; it queues."""
     h = await load_fixture(harness())
-    _ = await h.service.grant("test.ok", "newsletter", now=NOW)
+    _ = await h.autonomy.grant("test.ok", "newsletter", now=NOW)
 
     creation = await h.service.create(
         draft(action("test.ok", scope="newsletterr")), now=NOW, logger=LOGGER
@@ -287,7 +295,7 @@ async def typo_scope_fails_closed_and_queues() -> None:
 async def any_uncovered_action_queues_the_whole_proposal() -> None:
     """One uncovered action queues the entire batch — never a partial run."""
     h = await load_fixture(harness())
-    _ = await h.service.grant("test.ok", None, now=NOW)
+    _ = await h.autonomy.grant("test.ok", None, now=NOW)
 
     creation = await h.service.create(
         draft(action("test.ok"), action("test.fail")), now=NOW, logger=LOGGER
@@ -414,7 +422,7 @@ async def reject_is_terminal_with_a_reason() -> None:
 async def reject_in_a_granted_category_signals_revocation() -> None:
     """Rejecting an action in a granted category returns the covering grant id."""
     h = await load_fixture(harness())
-    granted = await h.service.grant("test.fail", None, now=NOW)
+    granted = await h.autonomy.grant("test.fail", None, now=NOW)
     # Mix a covered and an uncovered action so the proposal still queues.
     creation = await h.service.create(
         draft(action("test.ok"), action("test.fail")), now=NOW, logger=LOGGER
@@ -451,7 +459,7 @@ async def execute_skips_already_resolved_actions_on_rerun() -> None:
     `execute` must run only the NULL action and leave the done one untouched.
     """
     h = await load_fixture(harness())
-    _ = await h.service.grant("test.ok", None, now=NOW)
+    _ = await h.autonomy.grant("test.ok", None, now=NOW)
     creation = await h.service.create(
         draft(action("test.ok"), action("test.ok")), now=NOW, logger=LOGGER
     )
@@ -475,7 +483,7 @@ async def execute_skips_already_resolved_actions_on_rerun() -> None:
 async def outcomes_are_append_only_across_reruns() -> None:
     """A terminal outcome is never overwritten by a second execute pass."""
     h = await load_fixture(harness())
-    _ = await h.service.grant("test.ok", None, now=NOW)
+    _ = await h.autonomy.grant("test.ok", None, now=NOW)
     creation = await h.service.create(draft(action("test.ok")), now=NOW, logger=LOGGER)
     proposal_id = creation.proposal.proposal.id
 
@@ -488,18 +496,6 @@ async def outcomes_are_append_only_across_reruns() -> None:
 
 
 # --- grants + calibration --------------------------------------------------
-
-
-@test()
-async def revoke_is_convergent() -> None:
-    """Revoking removes a grant from the live list; re-revoking is a no-op."""
-    h = await load_fixture(harness())
-    granted = await h.service.grant("test.ok", None, now=NOW)
-
-    await h.service.revoke(granted.id, now=NOW)
-    await h.service.revoke(granted.id, now=NOW)
-
-    assert_eq(await h.service.list_grants(), [])
 
 
 @test()
@@ -521,13 +517,13 @@ async def calibration_counts_history_and_hides_granted() -> None:
         logger=LOGGER,
     )
     # A separate category that is granted — must not surface as a suggestion.
-    _ = await h.service.grant("test.skip", None, now=NOW)
+    _ = await h.autonomy.grant("test.skip", None, now=NOW)
     granted_proposal = await h.service.create(
         draft(action("test.skip")), now=NOW, logger=LOGGER
     )
     _ = granted_proposal
 
-    suggestions = await h.service.calibration_stats()
+    suggestions = await h.autonomy.calibration_stats()
 
     by_kind = {s.kind: s for s in suggestions}
     assert_eq(set(by_kind), {"test.ok"})
@@ -552,7 +548,7 @@ async def calibration_counts_edited_proposals() -> None:
         logger=LOGGER,
     )
 
-    suggestions = await h.service.calibration_stats()
+    suggestions = await h.autonomy.calibration_stats()
 
     ok = next(s for s in suggestions if s.kind == "test.ok")
     assert_eq(ok.edited, 1)

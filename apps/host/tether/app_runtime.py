@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from tether.model_selection import AgentModelCatalog
     from tether.notifications import NotificationService
     from tether.panels import PanelService
+    from tether.proposal_autonomy import ProposalAutonomyService
     from tether.proposals import ProposalService
     from tether.provider_auth import ProviderAuthService
     from tether.push import PushService
@@ -64,6 +65,7 @@ class AppRuntime:
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
     panel_service: PanelService
+    proposal_autonomy_service: ProposalAutonomyService
     proposal_service: ProposalService
     provider_auth_service: ProviderAuthService
     push_service: PushService
