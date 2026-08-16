@@ -33,7 +33,8 @@ from tether.panel_capabilities import (
     PanelResultsRead,
     PanelSpecBody,
 )
-from tether.panels import EXECUTE_DEFAULT_LIMIT, PanelNotFoundError
+from tether.panel_errors import PanelNotFoundError
+from tether.panel_model import EXECUTE_DEFAULT_LIMIT
 
 
 class CreatePanelRequest(PanelSpecBody):

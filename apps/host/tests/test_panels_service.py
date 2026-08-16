@@ -32,15 +32,15 @@ from tether.memory_store import (
     Memory,
     create_memory_schema,
 )
-from tether.panels import (
+from tether.panel_errors import (
     InvalidPanelSpecError,
     PanelConflictError,
     PanelNotFoundError,
-    PanelRenderKind,
-    PanelService,
-    PanelSpec,
-    create_panel_schema,
 )
+from tether.panel_execution import PanelExecutor
+from tether.panel_model import PanelRenderKind, PanelSpec
+from tether.panel_store import create_panel_schema
+from tether.panels import PanelService
 from tether.structured_logging import Logger
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.panels_service")
@@ -128,9 +128,13 @@ async def panel_harness() -> AsyncGenerator[Harness]:
         )
         panel_service = PanelService(
             database=db,
-            memory_search=MemorySearchService(
+            executor=PanelExecutor(
                 database=db,
-                searcher=searcher,
+                memory_search=MemorySearchService(
+                    database=db,
+                    searcher=searcher,
+                    tracer=noop_tracer(),
+                ),
                 tracer=noop_tracer(),
             ),
             tracer=noop_tracer(),

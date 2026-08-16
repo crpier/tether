@@ -16,21 +16,19 @@ from typing import cast
 from uuid import UUID
 
 from pydantic import BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.memory_capabilities import MemoryRead
-from tether.panels import (
-    EXECUTE_DEFAULT_LIMIT,
-    Fetched,
+from tether.panel_errors import (
     InvalidPanelSpecError,
     PanelConflictError,
     PanelNotFoundError,
-    PanelRenderKind,
-    PanelSpec,
-    SyntheticPanel,
 )
+from tether.panel_model import EXECUTE_DEFAULT_LIMIT, PanelRenderKind, PanelSpec
+from tether.panel_store import SyntheticPanel
 from tether.structured_logging import get_request_logger
 
 PANEL_ERRORS: tuple[ErrorRule, ...] = (
