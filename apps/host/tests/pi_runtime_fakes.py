@@ -2,7 +2,7 @@
 
 Both `ConversationRuntimeRegistry` (persistent, chat) and
 `EphemeralPiPromptRunner` (ephemeral, scheduled/recall) take a `PiSpawner`
-seam (`tether.pi_runtime.PiSpawner`) as an injectable collaborator instead of
+seam (`tether.pi_process.PiSpawner`) as an injectable collaborator instead of
 calling `PiRuntime.spawn` directly. This module is the one fake process/
 runtime/spawner trio both call sites' tests share, so a real subprocess never
 needs to be spawned in a unit test and the fake stays type-compatible with the
@@ -15,13 +15,10 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import Any, cast
 
 from tether.model_selection import AgentModelConfig
-from tether.pi_runtime import (
-    AgentEnded,
-    PiRuntime,
-    PiRuntimeConfig,
-    PiRuntimeError,
-    TurnEvent,
-)
+from tether.pi_errors import PiRuntimeError
+from tether.pi_process import PiRuntimeConfig
+from tether.pi_runtime import PiRuntime
+from tether.pi_turn_events import AgentEnded, TurnEvent
 from tether.tools import SessionRegistry
 
 

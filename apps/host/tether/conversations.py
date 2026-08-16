@@ -35,7 +35,7 @@ from tether.model_selection import (
     AgentModelConfig,
     ModelNotAllowedError,
 )
-from tether.pi_runtime import PiRuntimeError
+from tether.pi_errors import PiRuntimeError
 
 type MessageRole = Literal["user", "assistant", "tool", "reasoning"]
 type JsonValue = (

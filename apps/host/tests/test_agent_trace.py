@@ -14,7 +14,7 @@ from tether.agent_trace import (
     redact_args,
     summarize_result,
 )
-from tether.pi_runtime import PiRuntimeError
+from tether.pi_errors import PiRuntimeError
 
 SESSION = "session-a"
 

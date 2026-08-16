@@ -28,12 +28,12 @@ from tether.chat_ws import _prompt_with_time_context, local_timezone_name
 from tether.conversations import ConversationService, Message, MessageDraft
 from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
-from tether.pi_runtime import (
+from tether.pi_errors import PiRuntimeError
+from tether.pi_turn_events import (
     AgentEnded,
     AssistantStreamNote,
     MessageSettled,
     ModelTurnStarted,
-    PiRuntimeError,
     TextDelta,
     ThinkingDelta,
     ToolSettled,

@@ -15,7 +15,8 @@ from tether.chat_engine import (
 )
 from tether.conversations import Conversation
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
-from tether.pi_runtime import PiRuntime, PiRuntimeError
+from tether.pi_errors import PiRuntimeError
+from tether.pi_runtime import PiRuntime
 from tether.system_prompt import CONVERSATION_SYSTEM_PROMPT
 from tether.tools import SessionRegistry
 

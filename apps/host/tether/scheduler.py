@@ -34,15 +34,10 @@ from tether.agent_trace import AgentTraceRecorder, RunKind, record_run
 from tether.events import EventPublisher, NotifyEvent
 from tether.model_selection import AgentModelConfig
 from tether.notifications import NotificationDraft
-from tether.pi_runtime import (
-    MessageSettled,
-    ModelTurnStarted,
-    PiRuntime,
-    PiRuntimeError,
-    PiSpawner,
-    PiSpawnRequest,
-    spawn_pi_runtime,
-)
+from tether.pi_errors import PiRuntimeError
+from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime
+from tether.pi_runtime import PiRuntime
+from tether.pi_turn_events import MessageSettled, ModelTurnStarted
 from tether.structured_logging import Logger
 from tether.system_prompt import system_prompt_for
 from tether.tools import SessionRegistry
@@ -192,10 +187,13 @@ class EphemeralPiPromptRunner:
     """
 
     def __init__(
-        self, config: EphemeralPiConfig, *, spawn: PiSpawner = PiRuntime.spawn
+        self,
+        config: EphemeralPiConfig,
+        *,
+        spawn: PiSpawner[PiRuntime] = PiRuntime.spawn,
     ) -> None:
         self.config: EphemeralPiConfig = config
-        self._spawn: PiSpawner = spawn
+        self._spawn: PiSpawner[PiRuntime] = spawn
 
     async def run(self, prompt: str) -> str:
         """Spawn pi, run `prompt`, and return its final assistant text."""
