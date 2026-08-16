@@ -43,6 +43,7 @@ from tether.model_selection import AgentModelCatalog
 from tether.notifications import NotificationService
 from tether.panels import PanelService
 from tether.proposal_autonomy import ProposalAutonomyService
+from tether.proposal_execution import ProposalExecutor
 from tether.proposals import ProposalService
 from tether.provider_auth import (
     ProviderAuthService,
@@ -175,7 +176,7 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
 
 @dataclass(frozen=True, slots=True)
 class _ProposalComponent:
-    """Proposal lifecycle and autonomy services sharing one canonical store."""
+    """Proposal lifecycle with autonomy and execution collaborators."""
 
     autonomy_service: ProposalAutonomyService
     proposal_service: ProposalService
@@ -187,16 +188,13 @@ def _build_proposal_component(
     database: Database,
     event_publisher: EventHub,
     notification_service: NotificationService,
-    tracer: Tracer,
 ) -> _ProposalComponent:
-    """Wire Proposal lifecycle and autonomy over their shared canonical store.
+    """Wire Proposal lifecycle, autonomy, and execution collaborators.
 
     Built after `_build_scheduler` so its notification service can queue pending
-    proposals. The action registry
-    carries the Gmail hygiene consumer (`*GMAIL_ACTION_SPECS`); the action
-    context's `gmail_client` is the real client when a Gmail transport is
-    configured, else `None` — in which case the `gmail.*` executors fail soft
-    ("gmail client unavailable") rather than crashing.
+    proposals. The executor receives the composed action catalog and the real
+    Gmail client when configured. Without that client, `gmail.*` actions return
+    an explicit unavailable failure rather than raising.
     """
     gmail_client = (
         GmailClient(transport=config.gmail_transport)
@@ -207,15 +205,22 @@ def _build_proposal_component(
         database=database,
         event_publisher=event_publisher,
     )
+    proposal_executor = ProposalExecutor(
+        database=database,
+        action_registry=build_action_registry(
+            config.proposal_action_specs
+            if config.proposal_action_specs is not None
+            else all_action_specs()
+        ),
+        action_context=ActionContext(gmail_client=gmail_client),
+    )
     return _ProposalComponent(
         autonomy_service=autonomy_service,
         proposal_service=ProposalService(
             database=database,
-            tracer=tracer,
             autonomy_policy=autonomy_service,
+            execution=proposal_executor,
             event_publisher=event_publisher,
-            action_registry=build_action_registry(all_action_specs()),
-            action_context=ActionContext(gmail_client=gmail_client),
             notification_service=notification_service,
         ),
     )
@@ -710,7 +715,6 @@ async def compose_core_services(
         database=host.database,
         event_publisher=event_hub,
         notification_service=scheduler_component.notification_service,
-        tracer=host.telemetry.tracer,
     )
     background_tasks = [
         asyncio.create_task(runtime_registry.reap_idle_forever()),

@@ -22,6 +22,12 @@ from starlette.requests import Request
 from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.proposal_autonomy import GrantSuggestion
+from tether.proposal_errors import (
+    InvalidActionError,
+    ProposalConflictError,
+    ProposalNotFoundError,
+    ProposalStateError,
+)
 from tether.proposal_store import (
     ActionDisposition,
     ActionOutcome,
@@ -31,12 +37,8 @@ from tether.proposal_store import (
     ProposalState,
 )
 from tether.proposals import (
-    InvalidActionError,
-    ProposalConflictError,
     ProposalCounts,
     ProposalDraft,
-    ProposalNotFoundError,
-    ProposalStateError,
     ProposalView,
     RejectionOutcome,
 )

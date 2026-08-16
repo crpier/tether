@@ -26,8 +26,8 @@ from tether.proposal_capabilities import (
     ProposalRead,
     RejectionRead,
 )
+from tether.proposal_errors import ProposalNotFoundError
 from tether.proposal_store import ProposalState
-from tether.proposals import ProposalNotFoundError
 
 
 class ApproveProposalRequest(BaseModel):
