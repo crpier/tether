@@ -23,7 +23,8 @@ from starlette.responses import Response
 from tether import todo_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
 from tether.todo_capabilities import TODO_ERRORS, TodoRead, TodoReadinessRead
-from tether.todos import TodoNotFoundError, TodoStatus
+from tether.todo_errors import TodoNotFoundError
+from tether.todo_model import TodoStatus
 
 
 class SetTodoStatusRequest(BaseModel):

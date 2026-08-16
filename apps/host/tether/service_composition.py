@@ -78,7 +78,8 @@ from tether.search_spend import PersistentSearchSpendGuard
 from tether.structured_logging import Logger
 from tether.tavily_search import TavilySearchProvider
 from tether.todo_digest import render_todo_digest
-from tether.todos import TodoService, migrate_pending_action_facets
+from tether.todo_migration import migrate_pending_action_facets
+from tether.todos import TodoService
 from tether.triage import TriageService
 from tether.triggers import TriggerService
 from tether.web_search import SearchProvider

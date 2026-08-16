@@ -12,7 +12,8 @@ from snektest import assert_eq, assert_in, assert_not_in, assert_true, test
 
 from tether.system_prompt import CONVERSATION_SYSTEM_PROMPT, compose_conversation_prompt
 from tether.todo_digest import render_todo_digest
-from tether.todos import Todo, TodoReadiness
+from tether.todo_store import Todo
+from tether.todos import TodoReadiness
 
 
 def _todo(action: str, *, condition: str | None = None) -> Todo[Fetched]:

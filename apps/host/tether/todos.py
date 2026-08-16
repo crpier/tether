@@ -33,8 +33,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
-from uuid import UUID, uuid7
+from typing import cast
+from uuid import UUID
 
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, PositiveInt
@@ -42,54 +42,19 @@ from snekql.sqlite import (
     CurrentTimestamp,
     Database,
     Fetched,
-    Index,
-    Integer,
-    Model,
-    Pending,
-    Text,
     Transaction,
-    UtcDatetime,
     insert,
     select,
     update,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.memory_store import Memory, tethered_corpus
 from tether.notifications import Notification
 from tether.structured_logging import Logger
+from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
+from tether.todo_model import READY_DIGEST_CAP, WAITING_DIGEST_CAP, TodoStatus
+from tether.todo_store import Todo, TodoMemory
 from tether.trigger_store import ScheduledTrigger
-
-if TYPE_CHECKING:
-    from tether.memories import MemoryService
-
-type TodoStatus = Literal["active", "completed", "abandoned"]
-"""A Todo's lifecycle state. `active` is live; `completed`/`abandoned` are
-terminal. A convention over the string column, not a schema-enforced enum."""
-
-READY_DIGEST_CAP = 10
-"""How many ready Todos the standing digest carries before it stops, so a
-growing backlog can't bloat every conversation's system prompt."""
-
-WAITING_DIGEST_CAP = 15
-"""How many waiting Todos the digest lists for relevance-gated mention."""
-
-
-class TodoNotFoundError(Exception):
-    """Raised when an operation targets a Todo that does not exist."""
-
-
-class TodoConflictError(Exception):
-    """Raised when a live Todo cannot accept the requested operation.
-
-    A stale observed version, not absence: the caller acted on a Todo that has
-    moved on since it was read.
-    """
-
-
-class InvalidTodoError(Exception):
-    """Raised when a Todo's action text is blank after trimming."""
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -106,8 +71,8 @@ def _normalise_action(action: str) -> str:
     """Trim a Todo's action text, rejecting a blank one."""
     normalised = action.strip()
     if not normalised:
-        msg = "todo action must not be blank"
-        raise InvalidTodoError(msg)
+        message = "todo action must not be blank"
+        raise InvalidTodoError(message)
     return normalised
 
 
@@ -117,38 +82,6 @@ def _normalise_condition(condition: str | None) -> str | None:
         return None
     normalised = condition.strip()
     return normalised or None
-
-
-class Todo[S = Pending](Model[S, "Todo[Fetched]"]):
-    """One actionable item with an optional waiting condition and trigger link."""
-
-    id: Todo.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    action: Todo.Col[str] = Text()
-    """The single action to take, phrased in the user's terms."""
-    status: Todo.Col[TodoStatus] = Text()
-    """Lifecycle state: `active`, or the terminal `completed`/`abandoned`."""
-    condition: Todo.Col[str | None] = Text(default=None, nullable=True)
-    """Free-text waiting condition ("next time I visit Ana"); null when none."""
-    trigger_id: Todo.Col[str | None] = Text(default=None, nullable=True)
-    """The linked scheduled once-trigger (a deadline), if any; a plain nullable
-    reference, not a DB-enforced foreign key (mirrors `Notification.trigger_id`)."""
-    version: Todo.Col[PositiveInt] = Integer(default=1)
-    """Version number used for optimistic concurrency control."""
-    created_at: Todo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: Todo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-
-    __indexes__: ClassVar = [Index(status)]
-
-
-class TodoMemory[S = Pending](Model[S, "TodoMemory[Fetched]"]):
-    """A bespoke link between a Todo and a Memory that carries its context."""
-
-    id: TodoMemory.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    todo_id: TodoMemory.Col[str] = Text()
-    memory_id: TodoMemory.Col[str] = Text()
-    created_at: TodoMemory.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-
-    __indexes__: ClassVar = [Index(todo_id)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,72 +384,3 @@ class TodoService:
             f"{observed.version} but it had version {current.version}"
         )
         raise TodoConflictError(msg)
-
-
-async def create_todo_schema(database: Database) -> None:
-    """Create the Todo and Todo-Memory tables and their indexes.
-
-    Applied as its own ordered migrations after the earlier schemas. Scaffolding
-    emits one statement per table/index, and a snekql migration body runs exactly
-    one statement, so each becomes its own ordered migration.
-
-    >>> database = await Database.initialize(backend=Config(database=":memory:"))
-    >>> await create_todo_schema(database)
-    """
-    migrations = {
-        f"013_{label}": sql
-        for label, sql in scaffold_sqlite_statements([Todo, TodoMemory])
-    }
-    await database.migrate(migrations)
-
-
-async def migrate_pending_action_facets(
-    database: Database,
-    todo_service: TodoService,
-    memory_service: MemoryService,
-    *,
-    logger: Logger,
-) -> int:
-    """One-time backfill: turn `action: pending` facet Memories into Todos.
-
-    The interim convention the Gmail gate used before this vertical wrote an
-    `action: pending` facet on actionable email Memories. This lifts each such
-    Memory into a Todo (its action the Memory's first line), links the Todo back
-    to the source Memory, and strips the now-defunct `action` key. Idempotent:
-    stripping the key is what makes a rerun a no-op, and the per-Memory link is
-    de-duped, so a partial run never double-creates. Returns how many Memories
-    were migrated.
-    """
-    async with database.transaction() as transaction:
-        tethered = await transaction.fetch_all(
-            tethered_corpus().order_by(Memory.tethered_at.desc())
-        )
-    pending = [
-        memory for memory in tethered if memory.facets.get("action") == "pending"
-    ]
-    migrated = 0
-    for memory in pending:
-        if not await _todos_linked_to_memory(database, memory.id):
-            body = memory.content.strip()
-            action = body.splitlines()[0] if body else "follow up"
-            todo = await todo_service.create(action, logger=logger)
-            await todo_service.link_memory(todo.id, memory.id, logger=logger)
-        stripped = {
-            key: value for key, value in memory.facets.items() if key != "action"
-        }
-        _ = await memory_service.edit_content(
-            memory, memory.content, facets=stripped, logger=logger
-        )
-        migrated += 1
-    if migrated:
-        _info(logger, "Migrated pending-action facet Memories to Todos", count=migrated)
-    return migrated
-
-
-async def _todos_linked_to_memory(database: Database, memory_id: UUID) -> list[str]:
-    """Todo ids already linked to a Memory, for the backfill's idempotency guard."""
-    async with database.transaction() as tx:
-        links = await tx.fetch_all(
-            select(TodoMemory).where(TodoMemory.memory_id.eq(str(memory_id)))
-        )
-    return [link.todo_id for link in links]

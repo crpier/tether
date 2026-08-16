@@ -31,14 +31,9 @@ from tether.notifications import (
     create_notification_schema,
 )
 from tether.structured_logging import Logger
-from tether.todos import (
-    InvalidTodoError,
-    TodoConflictError,
-    TodoNotFoundError,
-    TodoService,
-    create_todo_schema,
-    todo_reference,
-)
+from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
+from tether.todo_store import create_todo_schema
+from tether.todos import TodoService, todo_reference
 from tether.trigger_schedule import OnceTriggerSpec
 from tether.trigger_store import create_trigger_schema
 from tether.triggers import TriggerService
