@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from tether.app_runtime import AppRuntime, install_app_runtime
-from tether.health_connect import HealthConnectIngestion
+from tether.health_connect_ingestion import HealthConnectIngestion
 from tether.health_connect_persistence import create_health_connect_schema
 from tether.health_connect_telemetry import HealthConnectTelemetry
 from tether.host_config import AppConfig

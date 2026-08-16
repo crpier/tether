@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from tether.chat_engine import ConversationRuntimeRegistry
     from tether.conversations import ConversationService
     from tether.events import EventHub
-    from tether.health_connect import HealthConnectIngestion
+    from tether.health_connect_ingestion import HealthConnectIngestion
     from tether.health_connect_telemetry import HealthConnectTelemetry
     from tether.ingestion_lifecycle import IngestionLifecycle
     from tether.kosync import KosyncService
