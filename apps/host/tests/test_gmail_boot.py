@@ -32,7 +32,7 @@ from tether.memory_store import create_memory_schema
 from tether.model_selection import AgentModelCatalog
 from tether.stt import SttClient
 from tether.todos import TodoService, create_todo_schema
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 from tether.trigger_store import create_trigger_schema
 from tether.triggers import TriggerService
 

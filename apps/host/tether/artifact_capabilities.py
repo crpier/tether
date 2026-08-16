@@ -30,7 +30,7 @@ from tether.artifacts import (
     ArtifactNotFoundError,
     Fetched,
 )
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 
 ARTIFACT_ERRORS: tuple[ErrorRule, ...] = (

@@ -20,7 +20,7 @@ from tether.scheduler import EphemeralPiConfig
 from tether.structured_logging import QUIET_LOGGERS, Logger, configure_logging
 from tether.stt import SttClient
 from tether.telemetry import Telemetry, TelemetrySettings, configure_telemetry
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 
 HOST_QUIET_LOGGERS = (*QUIET_LOGGERS, "aiosqlite", "snekql", "httpcore2")
 """Dependency loggers whose debug chatter obscures host application events."""

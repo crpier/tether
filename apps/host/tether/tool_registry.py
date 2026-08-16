@@ -20,7 +20,8 @@ from tether.proposal_tools import PROPOSAL_TOOL_SPECS
 from tether.recall_tools import RECALL_TOOL_SPECS
 from tether.search_tools import SEARCH_TOOL_SPECS
 from tether.todo_tools import TODO_TOOL_SPECS
-from tether.tools import MEMORY_TOOL_SPECS, ToolSpec
+from tether.tool_runtime import ToolSpec
+from tether.tools import MEMORY_TOOL_SPECS
 from tether.triage_tools import TRIAGE_TOOL_SPECS
 from tether.trigger_tools import TRIGGER_TOOL_SPECS
 from tether.youtube_tools import YOUTUBE_TOOL_SPECS

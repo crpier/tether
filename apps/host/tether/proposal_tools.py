@@ -15,11 +15,12 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether import proposal_capabilities
-from tether.capabilities import CapabilityOutcome, bind_params
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
 from tether.proposal_capabilities import PROPOSAL_ERRORS
 from tether.proposal_store import ProposalState
 from tether.proposals import ActionDraft, ProposalDraft
-from tether.tools import ToolSpec
+from tether.tool_runtime import ToolSpec
 
 
 class ProposeActionParam(BaseModel):

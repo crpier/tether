@@ -30,8 +30,9 @@ from tether.artifact_capabilities import (
     list_events,
     update,
 )
-from tether.capabilities import CapabilityOutcome, bind_params
-from tether.tools import ToolSpec
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
+from tether.tool_runtime import ToolSpec
 
 
 class CreateArtifactParams(BaseModel):

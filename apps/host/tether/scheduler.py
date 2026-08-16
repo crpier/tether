@@ -40,7 +40,7 @@ from tether.pi_runtime import PiRuntime
 from tether.pi_turn_events import MessageSettled, ModelTurnStarted
 from tether.structured_logging import Logger
 from tether.system_prompt import system_prompt_for
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 from tether.trigger_store import ScheduledTrigger
 from tether.triggers import DEFAULT_BACKOFF_BASE, DEFAULT_MAX_ATTEMPTS, TriggerService
 

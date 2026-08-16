@@ -20,7 +20,7 @@ from tether.model_selection import (
 from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime
 from tether.pi_runtime import PiRuntime
 from tether.system_prompt import compose_conversation_prompt
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 
 
 @dataclass(frozen=True, slots=True)

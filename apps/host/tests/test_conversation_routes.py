@@ -44,7 +44,7 @@ from tether.pi_turn_events import (
 )
 from tether.server import AppConfig, HostSettings, create_app
 from tether.telemetry import TelemetrySettings
-from tether.tools import TOOL_AUTH_HEADER
+from tether.tool_runtime import TOOL_AUTH_HEADER
 
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"

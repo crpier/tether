@@ -15,7 +15,7 @@ from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 from tether.todos import (
     Fetched,

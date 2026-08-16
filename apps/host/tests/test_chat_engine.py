@@ -18,7 +18,7 @@ from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_runtime import PiRuntime
 from tether.system_prompt import CONVERSATION_SYSTEM_PROMPT
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 
 from .pi_runtime_fakes import FakePiRuntime as FakeRuntime
 from .pi_runtime_fakes import ModelRejectingRuntime, RecordingSpawner

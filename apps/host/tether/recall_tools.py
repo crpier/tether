@@ -18,10 +18,11 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether import recall_capabilities
-from tether.capabilities import CapabilityOutcome, bind_params
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
 from tether.recall import PromptAnswer
 from tether.recall_capabilities import RECALL_ERRORS
-from tether.tools import ToolSpec
+from tether.tool_runtime import ToolSpec
 
 
 class StartRecallParams(BaseModel):

@@ -32,10 +32,11 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether.app_runtime import app_runtime
-from tether.capabilities import CapabilityOutcome, bind_params
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
 from tether.conversation_model import ConversationNotFoundError, MessageRole
 from tether.conversation_store import Message
-from tether.tools import ToolSpec
+from tether.tool_runtime import ToolSpec
 
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 50

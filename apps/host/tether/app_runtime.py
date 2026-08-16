@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from tether.stt import SttClient
     from tether.telemetry import Telemetry
     from tether.todos import TodoService
-    from tether.tools import SessionRegistry
+    from tether.tool_runtime import SessionRegistry
     from tether.triage import TriageService
     from tether.triggers import TriggerService
     from tether.youtube import YouTubeService

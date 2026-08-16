@@ -39,7 +39,7 @@ from tether.bucket_items import (
     BucketItemService,
     NotPurchaseItemError,
 )
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 
 
