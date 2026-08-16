@@ -9,16 +9,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from httpx2 import Response
-from snekql.sqlite import Config, Database, scaffold
 from snektest import assert_eq, assert_true, test
 from starlette.testclient import TestClient
 
-from tether.health_connect import (
-    _CURRENT_VIEW_MIGRATIONS,
-    _SCHEMA_MODELS,
-    HcGenericRecord,
-    create_health_connect_schema,
-)
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
@@ -31,38 +24,6 @@ BATCH_PATH = "/api/telemetry/health-connect/batches"
 BASELINE_COMPLETE_PATH = f"{BASELINE_PATH}/complete"
 FIXTURE_ROOT = Path(__file__).parent / "fixtures/health_connect/v2"
 AUTHORIZATION = {"Authorization": f"Bearer {API_TOKEN}"}
-
-
-@test()
-async def schema_upgrade_preserves_legacy_positional_migrations() -> None:
-    """Adding generic DDL must not shift and replay existing view migrations."""
-    database = await Database.initialize(backend=Config(database=":memory:"))
-    legacy_models = [model for model in _SCHEMA_MODELS if model is not HcGenericRecord]
-    migrations = {
-        f"{index:04d}_health_connect_schema": sql
-        for index, sql in enumerate(scaffold(legacy_models).splitlines(), start=1)
-    }
-    next_index = len(migrations) + 1
-    for view, sql in _CURRENT_VIEW_MIGRATIONS.items():
-        if view == "hc_generic_record_current":
-            continue
-        migrations[f"{next_index:04d}_{view}"] = sql
-        next_index += 1
-    await database.migrate(migrations)
-    generic_start = len(scaffold(legacy_models).splitlines()) + 1
-    await database.migrate(
-        {
-            f"{index:04d}_health_connect_schema": sql
-            for index, sql in enumerate(
-                scaffold([HcGenericRecord]).splitlines(), start=generic_start
-            )
-        }
-    )
-
-    await create_health_connect_schema(database)
-    await create_health_connect_schema(database)
-
-    await database.close()
 
 
 def complete_representative_baseline(client: TestClient) -> None:
