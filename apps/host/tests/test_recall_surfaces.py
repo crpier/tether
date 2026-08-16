@@ -14,11 +14,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from snekok import Ok, Result
 from snektest import assert_eq, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
 from tests.surfaces import SESSION, call_tool, login, surface_client
-from tether.recall import EssayGradeProposal, GeneratedPrompt, GeneratedStudyItem
+from tether.recall_generation import (
+    GeneratedPrompt,
+    GeneratedStudyItem,
+    StudyItemGenerationFailure,
+)
+from tether.recall_grading import AnswerGradingUnavailable, EssayGradeProposal
 from tether.youtube_local import InMemoryYouTubeApi
 from tether.youtube_quota import RawYouTubeVideo
 
@@ -29,9 +35,11 @@ class FakeGenerator:
     def __init__(self, distilled: GeneratedStudyItem) -> None:
         self.distilled: GeneratedStudyItem = distilled
 
-    async def generate(self, *, transcript: str, title: str) -> GeneratedStudyItem:
+    async def generate(
+        self, *, transcript: str, title: str
+    ) -> Result[GeneratedStudyItem, StudyItemGenerationFailure]:
         _ = (transcript, title)
-        return self.distilled
+        return Ok(self.distilled)
 
 
 class FakeGrader:
@@ -45,16 +53,19 @@ class FakeGrader:
 
     async def grade_short_answer(
         self, *, question: str, reference_answer: str, answer_text: str
-    ) -> bool:
+    ) -> Result[bool, AnswerGradingUnavailable]:
         _ = (question, reference_answer, answer_text)
-        return self.short_answer_correct
+        return Ok(self.short_answer_correct)
 
     async def propose_essay_grade(
         self, *, question: str, rubric: str, answer_text: str
-    ) -> EssayGradeProposal:
+    ) -> Result[EssayGradeProposal, AnswerGradingUnavailable]:
         _ = (question, rubric, answer_text)
-        return EssayGradeProposal(
-            correct=self.proposal_correct, reasoning="Covers the rubric."
+        return Ok(
+            EssayGradeProposal(
+                correct=self.proposal_correct,
+                reasoning="Covers the rubric.",
+            )
         )
 
 
@@ -288,7 +299,7 @@ def answering_an_unknown_prompt_is_not_found() -> None:
     assert_eq(envelope["error"]["code"], "not_found")
 
 
-# --- short-answer and essay prompts (#131) ---
+# --- short-answer and essay prompts ---
 
 
 @test()
@@ -458,7 +469,7 @@ def the_recall_tools_drive_the_free_text_flow() -> None:
 def the_answer_tool_cannot_grade_an_essay() -> None:
     """The internal tool surface has no `confirmed_correct`, so essays fail.
 
-    ADR 0004: only the human confirms an essay grade. The agent tool omits the
+    Only the human confirms an essay grade. The agent tool omits the
     field structurally, so even a call that claims a confirmed grade cannot
     push an essay verdict into SM-2 (and, transitively, tether the Memory) —
     it fails as invalid input; essays are graded via the human HTTP route.

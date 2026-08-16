@@ -40,7 +40,7 @@ from snekql.sqlite import Fetched, select
 
 from tether.bucket_items import BucketItem, BucketItemService
 from tether.memories import EmptySearchQueryError, Memory, MemoryService
-from tether.recall import StudyItem
+from tether.recall_store import StudyItem
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -55,7 +55,7 @@ from tether.memories import (
     MemoryService,
     create_memory_schema,
 )
-from tether.recall import StudyItem, StudyItemState, create_recall_schema
+from tether.recall_store import StudyItem, StudyItemState, create_recall_schema
 from tether.reconciler import SearchReconciler
 from tether.search_fusion import FusedHit, InvalidSearchWindowError, SearchFusionService
 from tether.search_index import SearchCandidate, SearchDocument

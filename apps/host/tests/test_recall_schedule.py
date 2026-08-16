@@ -5,14 +5,14 @@ no HTTP. They prove the load-bearing Recall behavior: how an answer's
 correctness and response time map to a review quality, how that quality advances
 or resets an SM-2 card, and when a card is considered learned. Driving
 controlled answers + timestamps keeps the scheduling logic testable without ever
-touching a live model (issue #20).
+touching a live model.
 """
 
 from datetime import UTC, datetime, timedelta
 
 from snektest import Param, assert_eq, assert_in, test
 
-from tether.recall import (
+from tether.recall_schedule import (
     GRADUATION_REPETITIONS,
     INITIAL_EASE_FACTOR,
     MIN_EASE_FACTOR,
