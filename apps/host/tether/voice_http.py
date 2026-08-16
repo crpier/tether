@@ -1,68 +1,68 @@
-"""Shared HTTP helpers for audio-upload routes (voice capture, transcribe-only).
-
-Both `capture_routes.capture_voice` and `stt_routes.transcribe_audio` accept a
-multipart audio upload and must reject it consistently (oversize, malformed,
-missing) and translate an upstream `SttError` into the same HTTP shape. Kept
-here so the two routes can't drift on the 413/422/502/503+Retry-After contract.
-"""
+"""HTTP parsing and failure presentation shared by audio-upload routes."""
 
 from __future__ import annotations
 
+from snekok import Err, Ok, Result
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from tether.stt import AudioUpload, SttError
+from tether.stt_errors import (
+    AudioUploadFailure,
+    AudioUploadMalformedFailure,
+    AudioUploadMissingFailure,
+    AudioUploadTooLargeFailure,
+    SttFailure,
+    SttRateLimitedFailure,
+)
+from tether.stt_model import AudioUpload
 
 MAX_AUDIO_MEGABYTES = 25
-"""The upstream OpenAI transcription upload ceiling; larger uploads are rejected."""
+"""Maximum accepted audio upload size, matching the provider ceiling."""
 MAX_AUDIO_BYTES = MAX_AUDIO_MEGABYTES * 1024 * 1024
 
 
-async def read_audio_upload(request: Request) -> AudioUpload | JSONResponse:
-    """Parse the multipart `file` part into an `AudioUpload`, or an error response.
-
-    Enforces the upload contract before any transcription: a well-formed
-    multipart body carrying a `file` audio part no larger than the 25 MB
-    ceiling. A malformed body, a missing part, or an oversize upload each
-    resolve to the matching HTTP error instead of an upload. Any audio
-    container the caller sends (m4a/ogg/wav, or a browser MediaRecorder
-    webm/opus blob) is accepted — the STT provider sniffs the container itself.
-    """
+async def read_audio_upload(
+    request: Request,
+) -> Result[AudioUpload, AudioUploadFailure]:
+    """Parse an untrusted multipart body into a strict ephemeral audio value."""
     try:
         form = await request.form(max_part_size=MAX_AUDIO_BYTES)
     except MultiPartException:
-        return JSONResponse({"detail": "malformed multipart upload"}, status_code=400)
+        return Err(AudioUploadMalformedFailure())
     file_part = form.get("file")
     if not isinstance(file_part, UploadFile):
-        return JSONResponse(
-            {"detail": "a multipart 'file' audio part is required"}, status_code=422
-        )
+        return Err(AudioUploadMissingFailure())
     if file_part.size is not None and file_part.size > MAX_AUDIO_BYTES:
         await file_part.close()
-        return JSONResponse(
-            {"detail": f"audio exceeds the {MAX_AUDIO_MEGABYTES} MB limit"},
-            status_code=413,
-        )
+        return Err(AudioUploadTooLargeFailure(maximum_megabytes=MAX_AUDIO_MEGABYTES))
     upload = AudioUpload(
         content=await file_part.read(),
         content_type=file_part.content_type or "application/octet-stream",
         filename=file_part.filename or "audio",
     )
     await file_part.close()
-    return upload
+    return Ok(upload)
 
 
-def transcription_error_response(error: SttError) -> JSONResponse:
-    """Translate an upstream transcription failure into an HTTP response.
+def audio_upload_error_response(error: AudioUploadFailure) -> JSONResponse:
+    """Present one validated upload failure through the stable HTTP contract."""
+    if isinstance(error, AudioUploadMalformedFailure):
+        return JSONResponse({"detail": "malformed multipart upload"}, status_code=400)
+    if isinstance(error, AudioUploadMissingFailure):
+        return JSONResponse(
+            {"detail": "a multipart 'file' audio part is required"}, status_code=422
+        )
+    return JSONResponse(
+        {"detail": f"audio exceeds the {error.maximum_megabytes} MB limit"},
+        status_code=413,
+    )
 
-    A rate limit (or any upstream failure carrying a `Retry-After` hint)
-    becomes a 503 carrying the parsed delay so the caller can pace a retry; any
-    other upstream failure is a 502. Either way the audio was not captured —
-    the client keeps the recording to try again.
-    """
-    if error.retry_after is not None:
+
+def transcription_error_response(error: SttFailure) -> JSONResponse:
+    """Present typed provider failures through the stable voice HTTP contract."""
+    if isinstance(error, SttRateLimitedFailure) and error.retry_after is not None:
         return JSONResponse(
             {"detail": "transcription is temporarily unavailable"},
             status_code=503,
@@ -74,6 +74,7 @@ def transcription_error_response(error: SttError) -> JSONResponse:
 __all__ = [
     "MAX_AUDIO_BYTES",
     "MAX_AUDIO_MEGABYTES",
+    "audio_upload_error_response",
     "read_audio_upload",
     "transcription_error_response",
 ]

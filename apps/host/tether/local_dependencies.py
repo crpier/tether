@@ -9,7 +9,8 @@ from snekok import Ok, Result
 from tether.provider_auth import ProviderAuthBackend
 from tether.provider_auth_errors import ProviderAuthFailure
 from tether.provider_auth_model import DeviceCode
-from tether.stt import AudioUpload, SttTransport, TranscriptionResponse
+from tether.stt_errors import SttFailure
+from tether.stt_model import AudioUpload, TranscriptionResponse
 
 
 class LocalProviderAuthBackend(ProviderAuthBackend):
@@ -27,12 +28,12 @@ class LocalProviderAuthBackend(ProviderAuthBackend):
         return Ok(None)
 
 
-class LocalSttTransport(SttTransport):
+class LocalSttTransport:
     """Return stable text without uploading recorded audio."""
 
     async def transcribe(
         self, *, audio: AudioUpload, model: str, prompt: str
-    ) -> TranscriptionResponse:
+    ) -> Result[TranscriptionResponse, SttFailure]:
         """Transcribe every local recording into one recognizable fixture phrase."""
         _ = (audio, model, prompt)
-        return TranscriptionResponse(status_code=200, text="Local transcription.")
+        return Ok(TranscriptionResponse(status_code=200, text="Local transcription."))

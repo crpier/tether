@@ -11,14 +11,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from snekok import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether.app_runtime import app_runtime
 from tether.conversation_model import MessageDraft
 from tether.conversation_routes import MessageRead
-from tether.stt import SttError
-from tether.voice_http import read_audio_upload, transcription_error_response
+from tether.voice_http import (
+    audio_upload_error_response,
+    read_audio_upload,
+    transcription_error_response,
+)
 
 
 class VoiceCaptureResponse(BaseModel):
@@ -35,14 +39,13 @@ router = APIRouter()
 async def capture_voice(request: Request) -> Response:
     """Transcribe an uploaded audio note and append it as a user chat turn."""
     stt_client = app_runtime(request.app).stt_client
-    audio = await read_audio_upload(request)
-    if isinstance(audio, JSONResponse):
-        return audio
-    try:
-        transcript = await stt_client.transcribe(audio)
-    except SttError as error:
-        return transcription_error_response(error)
-    normalised_transcript = transcript.strip()
+    upload_outcome = await read_audio_upload(request)
+    if isinstance(upload_outcome, Err):
+        return audio_upload_error_response(upload_outcome.error)
+    transcription_outcome = await stt_client.transcribe(upload_outcome.value)
+    if isinstance(transcription_outcome, Err):
+        return transcription_error_response(transcription_outcome.error)
+    normalised_transcript = transcription_outcome.value.strip()
     if not normalised_transcript:
         return JSONResponse(
             {"detail": "no speech detected in the audio"}, status_code=422

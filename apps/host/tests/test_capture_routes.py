@@ -17,11 +17,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from snekok import Ok, Result
 from snektest import assert_eq, test
 from starlette.testclient import TestClient
 
 from tether.server import AppConfig, create_app
-from tether.stt import AudioUpload, SttClient, TranscriptionResponse
+from tether.stt import SttClient
+from tether.stt_errors import SttFailure
+from tether.stt_model import AudioUpload, TranscriptionResponse
 from tether.telemetry import TelemetrySettings
 
 APP_PASSWORD = "test-app-password"
@@ -37,9 +40,9 @@ class ScriptedSttTransport:
 
     async def transcribe(
         self, *, audio: AudioUpload, model: str, prompt: str
-    ) -> TranscriptionResponse:
+    ) -> Result[TranscriptionResponse, SttFailure]:
         """Return the scripted response regardless of the upload."""
-        return self.response
+        return Ok(self.response)
 
 
 def _stt_client(response: TranscriptionResponse) -> SttClient:
