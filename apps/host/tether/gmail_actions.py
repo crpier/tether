@@ -2,7 +2,7 @@
 
 The backlog-purge sweep (`tether.gmail_purge`) never touches the mailbox
 directly — it only *proposes* typed actions, which the host executes on approval
-through the executors registered here (ADR 0014). Three idempotent kinds:
+through the registered action executors. Three idempotent kinds:
 
 - `gmail.label` — add a human-named label to a message (the name is resolved to
   its Gmail id at execute time, so a label renamed between propose and approve
@@ -19,15 +19,18 @@ and neither ever crashes the host executor loop.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from pydantic import BaseModel
+from snekok import Err
 
 from tether.action_registry import ActionContext, ActionResult, ActionSpec
-from tether.gmail import GmailApiError, GmailWriteResult
-
-if TYPE_CHECKING:
-    from tether.gmail import GmailClient
+from tether.gmail_client import (
+    GmailAuthenticationFailure,
+    GmailFailure,
+    GmailHttpFailure,
+    GmailWriteResult,
+)
 
 _HTTP_FORBIDDEN = 403
 """An insufficient-scope write: the cached token was minted before the
@@ -75,14 +78,18 @@ def _to_action_result(result: GmailWriteResult) -> ActionResult:
     return ActionResult(outcome="skipped", detail=result.detail)
 
 
-def _scope_failure(error: GmailApiError) -> ActionResult:
-    """Turn a Gmail API failure into a clear `failed` outcome.
-
-    A `403` is the insufficient-scope case (the token lacks `gmail.modify`) and
-    gets the re-authorization hint; any other status is surfaced verbatim."""
-    if error.status_code == _HTTP_FORBIDDEN:
+def _provider_failure(error: GmailFailure) -> ActionResult:
+    """Present typed provider failures as fail-soft action outcomes."""
+    if (
+        isinstance(error, GmailAuthenticationFailure)
+        and error.status_code == _HTTP_FORBIDDEN
+    ):
         return ActionResult(outcome="failed", detail=_SCOPE_DETAIL)
-    return ActionResult(outcome="failed", detail=str(error))
+    if isinstance(error, GmailHttpFailure):
+        detail = f"Gmail {error.operation} returned {error.status_code}"
+    else:
+        detail = error.message
+    return ActionResult(outcome="failed", detail=detail)
 
 
 async def _archive(params: BaseModel, context: ActionContext) -> ActionResult:
@@ -91,11 +98,10 @@ async def _archive(params: BaseModel, context: ActionContext) -> ActionResult:
     if client is None:
         return ActionResult(outcome="failed", detail=_NO_CLIENT_DETAIL)
     archive_params = cast("GmailArchiveParams", params)
-    try:
-        result = await client.archive(archive_params.message_id)
-    except GmailApiError as error:
-        return _scope_failure(error)
-    return _to_action_result(result)
+    result = await client.archive(archive_params.message_id)
+    if isinstance(result, Err):
+        return _provider_failure(result.error)
+    return _to_action_result(result.value)
 
 
 async def _label(params: BaseModel, context: ActionContext) -> ActionResult:
@@ -104,17 +110,18 @@ async def _label(params: BaseModel, context: ActionContext) -> ActionResult:
     if client is None:
         return ActionResult(outcome="failed", detail=_NO_CLIENT_DETAIL)
     label_params = cast("GmailLabelParams", params)
-    try:
-        label_id = await _resolve_label(client, label_params.label_name)
-        if label_id is None:
-            return ActionResult(
-                outcome="failed",
-                detail=f"unknown Gmail label: {label_params.label_name!r}",
-            )
-        result = await client.label(label_params.message_id, label_id)
-    except GmailApiError as error:
-        return _scope_failure(error)
-    return _to_action_result(result)
+    label_resolution = await client.resolve_label_id(label_params.label_name)
+    if isinstance(label_resolution, Err):
+        return _provider_failure(label_resolution.error)
+    if label_resolution.value is None:
+        return ActionResult(
+            outcome="failed",
+            detail=f"unknown Gmail label: {label_params.label_name!r}",
+        )
+    result = await client.label(label_params.message_id, label_resolution.value)
+    if isinstance(result, Err):
+        return _provider_failure(result.error)
+    return _to_action_result(result.value)
 
 
 async def _delete(params: BaseModel, context: ActionContext) -> ActionResult:
@@ -123,16 +130,10 @@ async def _delete(params: BaseModel, context: ActionContext) -> ActionResult:
     if client is None:
         return ActionResult(outcome="failed", detail=_NO_CLIENT_DETAIL)
     delete_params = cast("GmailDeleteParams", params)
-    try:
-        result = await client.trash(delete_params.message_id)
-    except GmailApiError as error:
-        return _scope_failure(error)
-    return _to_action_result(result)
-
-
-async def _resolve_label(client: GmailClient, name: str) -> str | None:
-    """Resolve a label display name to its Gmail id, or None when unknown."""
-    return await client.resolve_label_id(name)
+    result = await client.trash(delete_params.message_id)
+    if isinstance(result, Err):
+        return _provider_failure(result.error)
+    return _to_action_result(result.value)
 
 
 GMAIL_ACTION_SPECS: tuple[ActionSpec, ...] = (

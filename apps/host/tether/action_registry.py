@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from tether.gmail import GmailClient
+    from tether.gmail_client import GmailClient
     from tether.structured_logging import Logger
 
 type ActionOutcome = Literal["succeeded", "failed", "skipped"]

@@ -35,12 +35,13 @@ from tether.conversations import ConversationService, create_conversation_schema
 from tether.ebook_stats import EbookStatsSyncService, create_ebook_stats_schema
 from tether.embeddings import Embedder
 from tether.events import EventHub
-from tether.gmail import (
+from tether.gmail import GmailSyncService
+from tether.gmail_client import (
+    GmailAuthenticationFailure,
     GmailClient,
-    GmailSyncService,
-    create_gmail_schema,
 )
 from tether.gmail_purge import GmailPurgeSweepService
+from tether.gmail_store import create_gmail_schema
 from tether.health_connect import (
     HealthConnectIngestion,
     create_health_connect_schema,
@@ -487,7 +488,15 @@ async def _wire_gmail(  # noqa: PLR0913 - each param is an independent wiring de
     )
 
     async def _boot_gmail() -> IngestionBootOutcome:
-        _ = await sync.sync(logger=logger)
+        report = await sync.sync(logger=logger)
+        if isinstance(report, Err):
+            logger.warning(
+                "Gmail boot sync failed",
+                failure=type(report.error).__name__,
+                operation=report.error.operation,
+            )
+            if isinstance(report.error, GmailAuthenticationFailure):
+                return IngestionBootOutcome.STOP
         return IngestionBootOutcome.REPEAT
 
     async def _repeat_gmail() -> None:
@@ -533,7 +542,15 @@ async def _wire_gmail_purge(  # noqa: PLR0913 - composition requires each depend
     )
 
     async def _boot_gmail_purge() -> IngestionBootOutcome:
-        _ = await sweep.sweep(logger=logger)
+        report = await sweep.sweep(logger=logger)
+        if isinstance(report, Err):
+            logger.warning(
+                "Gmail purge boot sweep failed",
+                failure=type(report.error).__name__,
+                operation=report.error.operation,
+            )
+            if isinstance(report.error, GmailAuthenticationFailure):
+                return IngestionBootOutcome.STOP
         return IngestionBootOutcome.REPEAT
 
     async def _repeat_gmail_purge() -> None:

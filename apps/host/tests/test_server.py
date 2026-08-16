@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from datetime import timedelta
 from io import StringIO
@@ -19,7 +19,7 @@ from tempfile import TemporaryDirectory
 import structlog
 from fastapi import FastAPI
 from httpx2 import AsyncClient
-from snekok import Err
+from snekok import Err, Ok, Result
 from snektest import (
     assert_eq,
     assert_false,
@@ -33,6 +33,7 @@ from starlette.testclient import TestClient
 
 from tether import server
 from tether.app_runtime import app_runtime
+from tether.gmail_client import GmailNetworkFailure, GmailResponse
 from tether.host_composition import _shutdown_background_tasks
 from tether.model_selection import AgentModelConfig
 from tether.server import (
@@ -485,6 +486,76 @@ def app_lifespan_closes_transcript_provider_resources() -> None:
             pass
 
         assert_eq(source.close_calls, 1)
+
+
+@test()
+def app_lifespan_closes_gmail_transport_after_its_worker_stops() -> None:
+    """Shutdown cancels Gmail ingestion before closing its HTTP transport."""
+
+    class ClosableGmailTransport:
+        def __init__(self) -> None:
+            self.close_calls: int = 0
+            self.list_calls: int = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+
+        async def list_messages(
+            self, *, query: str, page_token: str | None
+        ) -> Result[GmailResponse, GmailNetworkFailure]:
+            _ = query, page_token
+            self.list_calls += 1
+            return Ok(GmailResponse(payload={"messages": []}, status_code=200))
+
+        async def get_message(
+            self, message_id: str
+        ) -> Result[GmailResponse, GmailNetworkFailure]:
+            _ = message_id
+            return Ok(GmailResponse(payload={}, status_code=404))
+
+        async def list_labels(
+            self,
+        ) -> Result[GmailResponse, GmailNetworkFailure]:
+            return Ok(GmailResponse(payload={"labels": []}, status_code=200))
+
+        async def modify_labels(
+            self,
+            message_id: str,
+            *,
+            add_label_ids: Sequence[str],
+            remove_label_ids: Sequence[str],
+        ) -> Result[GmailResponse, GmailNetworkFailure]:
+            _ = message_id, add_label_ids, remove_label_ids
+            return Ok(GmailResponse(payload={}, status_code=200))
+
+        async def trash_message(
+            self, message_id: str
+        ) -> Result[GmailResponse, GmailNetworkFailure]:
+            _ = message_id
+            return Ok(GmailResponse(payload={}, status_code=200))
+
+    transport = ClosableGmailTransport()
+    with TemporaryDirectory() as directory:
+        app = server.create_app(
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=":memory:",
+                gmail_sync_enabled=True,
+                gmail_transport=transport,
+                kb_root=directory,
+                session_secret="test-session-secret",
+            )
+        )
+
+        with TestClient(app) as client:
+            portal = client.portal
+            if portal is not None:
+                portal.call(
+                    app_runtime(app).ingestion_lifecycle.readiness("gmail").wait
+                )
+
+        assert_eq(transport.list_calls, 1)
+        assert_eq(transport.close_calls, 1)
 
 
 @test()

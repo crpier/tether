@@ -1,7 +1,7 @@
 """Gmail backlog-purge sweep: propose (never perform) inbox hygiene actions.
 
 A background worker in the same reconciler shape as the ingestion gate
-(`tether.gmail.GmailSyncService`), but on the *write* side of ADR 0014: it reads
+(`tether.gmail.GmailSyncService`), but on the proposed-write side: it reads
 a bounded chunk of eligible backlog mail, asks the agent to decide a per-message
 hygiene action (archive / label / delete / keep) plus a sender-category scope,
 and folds the actionable verdicts into a **single Proposal per chunk** through
@@ -22,8 +22,8 @@ message is simply re-swept on a later pass), mirroring the ingestion gate's
 ...     proposal_service=proposal_service,
 ...     triage_runner=triage_runner,
 ... )
->>> report = await service.sweep(logger=logger)
->>> report.proposed
+>>> result = await service.sweep(logger=logger)
+>>> result.value.proposed
 1
 """
 
@@ -38,26 +38,22 @@ from email.utils import parseaddr
 from typing import Literal, cast
 
 from pydantic import BaseModel, ValidationError
-from snekql.sqlite import Database, Transaction, insert, select, update
+from snekok import Err, Ok, Result
+from snekql.sqlite import Database
 
-from tether.gmail import (
-    GmailClient,
-    GmailMessage,
-    GmailSyncState,
-    GmailTriageError,
-    GmailTriageRunner,
+from tether.gmail_client import GmailClient, GmailFailure, GmailMessage
+from tether.gmail_store import (
+    GMAIL_PURGE_WATERMARK_KEY,
+    read_sync_watermark,
+    write_sync_watermark,
 )
+from tether.gmail_triage import GmailTriageRunner
 from tether.proposals import ActionDraft, ProposalDraft, ProposalService
 from tether.structured_logging import Logger
 
 DEFAULT_PURGE_CHUNK_SIZE = 10
 """How many backlog messages are triaged per sweep chunk (and per proposal), by
 default — bounds both the prompt size and how large one proposal gets."""
-
-_PURGE_WATERMARK_KEY = "gmail_purge_watermark"
-"""Sync-state key for the sweep's own resumable watermark. Deliberately distinct
-from the ingestion gate's `gmail_message_watermark` so the two workers advance
-independently over the same `gmail_sync_state` table."""
 
 _WATERMARK_OVERLAP = timedelta(days=1)
 """Re-query window subtracted from the watermark on an incremental sweep, so a
@@ -138,14 +134,11 @@ def _chunk(items: Sequence[GmailMessage], size: int) -> list[list[GmailMessage]]
     return [list(items[start : start + size]) for start in range(0, len(items), size)]
 
 
-def _extract_json_array(text: str) -> str:
-    """Slice the outermost JSON array from a model reply, tolerating stray prose."""
+def _extract_json_array(text: str) -> str | None:
+    """Extract the outermost JSON array while tolerating surrounding prose."""
     start = text.find("[")
     end = text.rfind("]")
-    if start == -1 or end == -1 or end < start:
-        message = "purge reply contained no JSON array"
-        raise GmailTriageError(message)
-    return text[start : end + 1]
+    return None if start == -1 or end == -1 or end < start else text[start : end + 1]
 
 
 def _parse_purge_verdicts(
@@ -158,9 +151,12 @@ def _parse_purge_verdicts(
     dropped rather than failing the chunk — that message is simply re-swept on a
     later pass. A reply with no JSON array yields no verdicts.
     """
+    json_array = _extract_json_array(reply)
+    if json_array is None:
+        return {}
     try:
-        raw = json.loads(_extract_json_array(reply))
-    except GmailTriageError, json.JSONDecodeError:
+        raw = json.loads(json_array)
+    except json.JSONDecodeError:
         return {}
     if not isinstance(raw, list):
         return {}
@@ -272,8 +268,8 @@ def _display_line(message: GmailMessage, verdict: GmailPurgeVerdict) -> str:
     """A human-readable one-line summary of a hygiene action for the panel.
 
     Shape: `<verb> · <subject> · <sender> · <date>`, with the applied label name
-    folded into the verb for a `label` action (`Label "Receipts"`). This is the
-    reviewer-facing text kept out of the executor's typed params (ADR 0014)."""
+    folded into the verb for a `label` action (`Label "Receipts"`). This keeps
+    reviewer-facing text separate from the executor's typed params."""
     if verdict.action == "label" and verdict.label_name is not None:
         verb = f'Label "{verdict.label_name}"'
     else:
@@ -377,25 +373,29 @@ class GmailPurgeSweepService:
         self.triage_runner: GmailTriageRunner = triage_runner
         self.chunk_size: int = chunk_size
 
-    async def sweep(self, *, logger: Logger) -> GmailPurgeReport:
-        """Run one idempotent sweep; persist the watermark only if it completes."""
+    async def sweep(self, *, logger: Logger) -> Result[GmailPurgeReport, GmailFailure]:
+        """Run one sweep and advance the watermark only after full success."""
         started_at = datetime.now(UTC)
-        watermark = await self._read_watermark()
+        watermark = await read_sync_watermark(self.database, GMAIL_PURGE_WATERMARK_KEY)
         _debug(
             logger,
             "Gmail purge sweep starting",
             incremental=watermark is not None,
             watermark=watermark.isoformat() if watermark is not None else None,
         )
-        message_ids = await self.client.list_message_ids(
+        listing = await self.client.list_message_ids(
             query=_build_purge_query(watermark), logger=logger
         )
+        if isinstance(listing, Err):
+            return Err(listing.error)
         messages: list[GmailMessage] = []
-        for message_id in message_ids:
-            message = await self.client.get_message(message_id)
-            if _is_excluded_entirely(message.label_ids):
+        for message_id in listing.value:
+            fetched = await self.client.get_message(message_id)
+            if isinstance(fetched, Err):
+                return Err(fetched.error)
+            if _is_excluded_entirely(fetched.value.label_ids):
                 continue
-            messages.append(message)
+            messages.append(fetched.value)
         proposed = 0
         actions_total = 0
         for batch in _chunk(messages, self.chunk_size):
@@ -417,7 +417,7 @@ class GmailPurgeSweepService:
             )
             proposed += 1
             actions_total += len(drafts)
-        await self._store_watermark(started_at)
+        await write_sync_watermark(self.database, GMAIL_PURGE_WATERMARK_KEY, started_at)
         _info(
             logger,
             "Gmail purge sweep completed",
@@ -425,65 +425,23 @@ class GmailPurgeSweepService:
             proposed=proposed,
             actions=actions_total,
         )
-        return GmailPurgeReport(
-            scanned=len(messages), proposed=proposed, actions=actions_total
+        return Ok(
+            GmailPurgeReport(
+                actions=actions_total, proposed=proposed, scanned=len(messages)
+            )
         )
 
     async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
-        """Run sweep passes on the given interval until cancelled.
-
-        Mirrors the ingestion worker: a failed pass is logged with its traceback
-        and the loop survives, so a transient Gmail or model outage does not take
-        the worker down.
-        """
+        """Run periodic sweep passes until cancellation."""
         while True:
             await asyncio.sleep(interval_seconds)
-            try:
-                _ = await self.sweep(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Gmail purge sweep failed")
-
-    async def _read_watermark(self) -> datetime | None:
-        """The last fully successful sweep's start time, or None on first sweep."""
-        async with self.database.transaction() as tx:
-            row = await tx.fetch_one_or_none(
-                select(GmailSyncState).where(
-                    GmailSyncState.key.eq(_PURGE_WATERMARK_KEY)
+            report = await self.sweep(logger=logger)
+            if isinstance(report, Err):
+                logger.warning(
+                    "Gmail purge sweep failed",
+                    failure=type(report.error).__name__,
+                    operation=report.error.operation,
                 )
-            )
-        if row is None:
-            return None
-        parsed = datetime.fromisoformat(row.value)
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-    async def _store_watermark(self, watermark: datetime) -> None:
-        """Persist the sweep watermark, upserting its single sync-state row."""
-
-        async def _set(tx: Transaction) -> None:
-            existing = await tx.fetch_one_or_none(
-                select(GmailSyncState).where(
-                    GmailSyncState.key.eq(_PURGE_WATERMARK_KEY)
-                )
-            )
-            if existing is None:
-                _ = await tx.execute(
-                    insert(
-                        GmailSyncState(
-                            key=_PURGE_WATERMARK_KEY, value=watermark.isoformat()
-                        )
-                    )
-                )
-            else:
-                _ = await tx.execute(
-                    update(GmailSyncState)
-                    .set(GmailSyncState.value.to(watermark.isoformat()))
-                    .where(GmailSyncState.key.eq(_PURGE_WATERMARK_KEY))
-                )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            await _set(tx)
 
 
 __all__ = [

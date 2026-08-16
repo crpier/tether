@@ -20,8 +20,9 @@ from pathlib import Path
 
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from snekok import Err, Ok, Result
 
-from tether.gmail import GmailClient
+from tether.gmail_client import GmailClient, GmailFailure
 from tether.gmail_oauth import (
     GMAIL_MODIFY_SCOPE,
     GMAIL_READONLY_SCOPE,
@@ -46,18 +47,22 @@ class GmailAuthSettings(BaseSettings):
 
 async def _recent_subjects(
     config: OAuthConfig, count: int, *, logger: Logger
-) -> list[str]:
+) -> Result[list[str], GmailFailure]:
     """List a handful of recent eligible subjects, as an end-to-end sanity check."""
     async with HttpGmailTransport(config) as transport:
         client = GmailClient(transport=transport)
-        ids = await client.list_message_ids(
+        listing = await client.list_message_ids(
             query="-in:spam -in:trash -in:sent", logger=logger
         )
+        if isinstance(listing, Err):
+            return Err(listing.error)
         subjects: list[str] = []
-        for message_id in ids[:count]:
+        for message_id in listing.value[:count]:
             message = await client.get_message(message_id)
-            subjects.append(message.subject or "(no subject)")
-        return subjects
+            if isinstance(message, Err):
+                return Err(message.error)
+            subjects.append(message.value.subject or "(no subject)")
+        return Ok(subjects)
 
 
 def main() -> None:
@@ -78,7 +83,7 @@ def main() -> None:
         # error type; it is not Gmail-specific despite the name, since both
         # integrations drive the same installed-app flow code.
         _ = run_auth_flow(config)
-        subjects = asyncio.run(
+        subject_result = asyncio.run(
             _recent_subjects(
                 config,
                 _VERIFY_COUNT,
@@ -88,6 +93,12 @@ def main() -> None:
     except YouTubeAuthError as error:
         print(f"Gmail authorization failed: {error}")
         raise SystemExit(1) from error
+    if isinstance(subject_result, Err):
+        print(
+            f"Gmail authorization verification failed: {type(subject_result.error).__name__}"
+        )
+        raise SystemExit(1)
+    subjects = subject_result.value
     print(f"Authorized. Token cached at {config.token_path}.")
     if subjects:
         print("Most-recent eligible subjects:")
