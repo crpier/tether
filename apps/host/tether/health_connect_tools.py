@@ -74,7 +74,7 @@ class QueryHealthConnectParams(BaseModel):
 async def _health_connect_inventory(request: Request) -> CapabilityOutcome:
     """Read current projection metadata without exposing append-only history."""
     telemetry = app_runtime(request.app).health_connect_telemetry
-    entries = await telemetry.fetch_inventory()
+    entries = await telemetry.inventory.fetch_inventory()
     return CapabilityOutcome(
         result=[entry.model_dump(mode="json") for entry in entries]
     )
@@ -85,7 +85,7 @@ async def _summarize_health_connect(
 ) -> CapabilityOutcome:
     """Return compact current metrics for overview and trend requests."""
     telemetry = app_runtime(request.app).health_connect_telemetry
-    summary = await telemetry.fetch_summary(
+    summary = await telemetry.summary.fetch_summary(
         after=params.after, before=params.before, bucket=params.bucket
     )
     return CapabilityOutcome(result=summary.model_dump(mode="json"))
@@ -96,7 +96,7 @@ async def _query_health_connect(
 ) -> CapabilityOutcome:
     """Return bounded records from the latest non-tombstoned projections."""
     telemetry = app_runtime(request.app).health_connect_telemetry
-    current = await telemetry.fetch_records(
+    current = await telemetry.records.fetch_records(
         record_type=params.record_type,
         after=params.after,
         before=params.before,
