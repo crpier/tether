@@ -34,8 +34,9 @@ from starlette.routing import Route
 
 from tether import kosync_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.kosync import KosyncService, ProgressUpdate
+from tether.kosync import KosyncService
 from tether.kosync_capabilities import KOSYNC_ERRORS, EbookDocumentRead
+from tether.kosync_model import ProgressUpdate
 from tether.structured_logging import get_request_logger
 
 _CODE_UNAUTHORIZED = 2001

@@ -57,7 +57,7 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.kosync import EbookDocument
+from tether.kosync_store import EbookDocument
 from tether.structured_logging import Logger
 
 _WATERMARK_KEY = "statistics_file_watermark"
