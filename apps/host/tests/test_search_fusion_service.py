@@ -48,11 +48,11 @@ from tether.bucket_items import (
     create_bucket_item_schema,
 )
 from tether.embeddings import FakeEmbedder
-from tether.memories import (
-    EmptySearchQueryError,
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_search import EmptySearchQueryError, MemorySearchService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
 )
 from tether.recall_store import StudyItem, StudyItemState, create_recall_schema
@@ -176,9 +176,14 @@ async def harness() -> AsyncGenerator[Harness]:
     async with TemporaryDirectory() as kb_root:
         memory_service = MemoryService(
             database=db,
+            indexer=memory_reconciler,
             kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
             tracer=_noop_tracer(),
+        )
+        memory_search = MemorySearchService(
+            database=db,
             searcher=memory_reconciler,
+            tracer=_noop_tracer(),
         )
         bucket_item_service = BucketItemService(
             database=db,
@@ -186,7 +191,7 @@ async def harness() -> AsyncGenerator[Harness]:
             searcher=bucket_item_reconciler,
         )
         fusion = SearchFusionService(
-            memory_service=memory_service, bucket_item_service=bucket_item_service
+            memory_search=memory_search, bucket_item_service=bucket_item_service
         )
         yield Harness(
             fusion, memory_service, bucket_item_service, memory_index, bucket_item_index

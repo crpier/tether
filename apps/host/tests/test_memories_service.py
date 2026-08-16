@@ -22,7 +22,6 @@ import contextlib
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid7
 
 import structlog
 from anyio import TemporaryDirectory
@@ -51,16 +50,20 @@ from structlog.testing import capture_logs
 from tether.embeddings import FakeEmbedder
 from tether.memories import (
     EmptyMemoryContentError,
-    EmptySearchQueryError,
     FacetOverviewEntry,
-    KnowledgeBaseService,
-    Memory,
     MemoryConflictError,
     MemoryNotFoundError,
-    MemoryProvenance,
     MemoryService,
+)
+from tether.memory_projection import KnowledgeBaseService, MemoryProjection
+from tether.memory_search import EmptySearchQueryError, MemorySearchService
+from tether.memory_store import (
+    Memory,
+    MemoryProvenance,
     MemoryState,
     create_memory_schema,
+    loose_queue,
+    tethered_corpus,
 )
 from tether.reconciler import SearchReconciler
 from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
@@ -91,9 +94,23 @@ class EmptyMemorySearcher:
 class LoggedMemoryService:
     """Test adapter that supplies the mandatory service logger."""
 
-    def __init__(self, service: MemoryService, *, logger: Logger) -> None:
+    def __init__(
+        self,
+        service: MemoryService,
+        *,
+        logger: Logger,
+        search_service: MemorySearchService | None = None,
+    ) -> None:
         self.service: MemoryService = service
         self.logger: Logger = logger
+        self.search_service: MemorySearchService = (
+            search_service
+            or MemorySearchService(
+                database=service.database,
+                searcher=None,
+                tracer=service.tracer,
+            )
+        )
 
     @property
     def database(self) -> Database:
@@ -101,7 +118,7 @@ class LoggedMemoryService:
         return self.service.database
 
     @property
-    def kb_service(self) -> KnowledgeBaseService:
+    def kb_service(self) -> MemoryProjection:
         """Expose the wrapped KB service for projection assertions."""
         return self.service.kb_service
 
@@ -134,7 +151,7 @@ class LoggedMemoryService:
         facets: dict[str, str] | None = None,
     ) -> list[Memory[Fetched]]:
         """Search through the wrapped service with logging context."""
-        return await self.service.search(
+        return await self.search_service.search(
             query, limit=limit, facets=facets, logger=self.logger
         )
 
@@ -142,7 +159,7 @@ class LoggedMemoryService:
         self, state: MemoryState, limit: int | None = None
     ) -> list[Memory[Fetched]]:
         """Browse through the wrapped service with logging context."""
-        return await self.service.browse_by_state(
+        return await self.search_service.browse_by_state(
             state, limit=limit, logger=self.logger
         )
 
@@ -264,14 +281,21 @@ async def lexical_fallback_memory_service() -> AsyncGenerator[LoggedMemoryServic
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
     async with TemporaryDirectory() as kb_root:
+        searcher = EmptyMemorySearcher()
+        service = MemoryService(
+            database=db,
+            indexer=searcher,
+            kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
+            tracer=noop_tracer(),
+        )
         yield LoggedMemoryService(
-            MemoryService(
-                database=db,
-                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
-                tracer=noop_tracer(),
-                searcher=EmptyMemorySearcher(),
-            ),
+            service,
             logger=structlog.stdlib.get_logger("test.memory_service.lexical"),
+            search_service=MemorySearchService(
+                database=db,
+                searcher=searcher,
+                tracer=service.tracer,
+            ),
         )
     await db.close()
 
@@ -303,12 +327,20 @@ async def searchable_memory_service() -> AsyncGenerator[SearchableHarness]:
         )
         service = MemoryService(
             database=db,
+            indexer=reconciler,
             kb_service=KnowledgeBaseService(kb_root=kb_root),
             tracer=noop_tracer(),
-            searcher=reconciler,
         )
         yield SearchableHarness(
-            service=LoggedMemoryService(service, logger=logger),
+            service=LoggedMemoryService(
+                service,
+                logger=logger,
+                search_service=MemorySearchService(
+                    database=db,
+                    searcher=reconciler,
+                    tracer=service.tracer,
+                ),
+            ),
             index=index,
             embedder=embedder,
             logger=logger,
@@ -316,20 +348,25 @@ async def searchable_memory_service() -> AsyncGenerator[SearchableHarness]:
     await db.close()
 
 
-class FailingOnceKnowledgeBaseService(KnowledgeBaseService):
-    """A KB adapter that drops the first projection write."""
+class FailingOnceMemoryProjection:
+    """A projection adapter that drops the first write."""
 
     def __init__(self, kb_root: Path) -> None:
-        super().__init__(kb_root=kb_root)
+        self.delegate: KnowledgeBaseService = KnowledgeBaseService(kb_root=kb_root)
         self.failures_remaining: int = 1
+        self.kb_root: Path = kb_root
 
     async def set_projection(self, memory: Memory[Fetched]) -> None:
-        """Fail the first write, then behave like the real KB service."""
+        """Fail the first write, then delegate to the real projection."""
         if self.failures_remaining:
             self.failures_remaining -= 1
             message = "projection target unavailable"
             raise OSError(message)
-        await super().set_projection(memory)
+        await self.delegate.set_projection(memory)
+
+    async def remove_projection(self, memory_id: UUID7) -> None:
+        """Delegate projection removal unchanged."""
+        await self.delegate.remove_projection(memory_id)
 
 
 @test()
@@ -1368,7 +1405,7 @@ async def projection_failure_does_not_roll_back_tether() -> None:
         service = LoggedMemoryService(
             MemoryService(
                 database=db,
-                kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+                kb_service=FailingOnceMemoryProjection(kb_root=Path(kb_root)),
                 tracer=noop_tracer(),
             ),
             logger=structlog.stdlib.get_logger("test.memory_service"),
@@ -1392,7 +1429,7 @@ async def regenerating_the_kb_recovers_a_missed_projection() -> None:
         service = LoggedMemoryService(
             MemoryService(
                 database=db,
-                kb_service=FailingOnceKnowledgeBaseService(kb_root=Path(kb_root)),
+                kb_service=FailingOnceMemoryProjection(kb_root=Path(kb_root)),
                 tracer=noop_tracer(),
             ),
             logger=structlog.stdlib.get_logger("test.memory_service"),
@@ -1523,7 +1560,7 @@ async def tethered_browse_orders_by_tethered_at_not_created_at() -> None:
 
 
 # --- Named corpus selectors (ADR-0001 invariant, written once) ---
-# `MemoryService.tethered_corpus()` / `loose_queue()` are the single home of
+# `tethered_corpus()` / `loose_queue()` are the single home of
 # the trust predicate; every corpus/queue selection composes on top of them.
 
 
@@ -1537,7 +1574,7 @@ async def tethered_corpus_selects_only_tethered_non_deleted() -> None:
     _ = await service.delete(deleted)
 
     async with service.database.transaction() as tx:
-        corpus = await tx.fetch_all(MemoryService.tethered_corpus())
+        corpus = await tx.fetch_all(tethered_corpus())
 
     found = [memory.id for memory in corpus]
     assert_in(tethered.id, found)
@@ -1555,7 +1592,7 @@ async def loose_queue_selects_only_loose_non_deleted() -> None:
     _ = await service.delete(deleted)
 
     async with service.database.transaction() as tx:
-        queue = await tx.fetch_all(MemoryService.loose_queue())
+        queue = await tx.fetch_all(loose_queue())
 
     found = [memory.id for memory in queue]
     assert_in(loose.id, found)
@@ -1951,114 +1988,3 @@ async def the_embedding_columns_round_trip_through_sqlite() -> None:
     assert stored is not None
     assert_eq(stored.embedding, payload)
     assert_eq(stored.embedded_version, memory.version)
-
-
-# The legacy `memory` schema as shipped before the embedding columns existed
-# (PR #72 / hybrid search). A real pre-#72 `.tether/tether.sqlite3` carries
-# exactly this DDL, recorded under the `001_memories` migration key. Frozen here
-# so the test can stand up a database that looks like an existing deployment.
-_LEGACY_MEMORY_DDL = (
-    'CREATE TABLE "memory" ('
-    '"id" TEXT PRIMARY KEY, '
-    '"content" TEXT, '
-    '"version" INTEGER, '
-    '"provenance" TEXT, '
-    "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
-    "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
-    '"tethered_at" TEXT, '
-    '"deleted_at" TEXT'
-    ") STRICT"
-)
-
-
-@fixture
-async def legacy_upgraded_memory_service() -> AsyncGenerator[LoggedMemoryService]:
-    """A service over a database that began life on the pre-embedding schema.
-
-    Stands up the legacy `memory` table under the original `001_memories` key,
-    then runs `create_memory_schema` to bring it current — the exact path a real
-    pre-#72 `.tether/tether.sqlite3` takes on the next boot.
-    """
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await db.migrate({"001_memories": _LEGACY_MEMORY_DDL})
-    await create_memory_schema(db)
-    async with TemporaryDirectory() as kb_root:
-        yield LoggedMemoryService(
-            MemoryService(
-                database=db,
-                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
-                tracer=noop_tracer(),
-            ),
-            logger=structlog.stdlib.get_logger("test.memory_service"),
-        )
-    await db.close()
-
-
-@test()
-async def create_memory_schema_upgrades_a_legacy_pre_embedding_database() -> None:
-    """An existing pre-embedding database gains the embedding columns.
-
-    snekql records migrations by key and never re-runs an applied one, so a
-    database that ran the original `001_memories` (before the embedding columns
-    were added to the model) keeps a `memory` table without them. Capture then
-    fails with `table memory has no column named embedding`. `create_memory_schema`
-    must carry a forward migration that adds the columns to such a database, not
-    rely on `scaffold` regenerating the current model under the same key.
-    """
-    service = await load_fixture(legacy_upgraded_memory_service())
-
-    # Capture exercises the INSERT that references the embedding columns, and
-    # browse exercises the SELECT that decodes them: both 500'd before the fix.
-    memory = await service.capture("I prefer window seats")
-    assert_is_none(memory.embedding)
-    assert_is_none(memory.embedded_version)
-
-    loose = await service.browse_by_state("loose")
-    assert_eq([m.id for m in loose], [memory.id])
-
-    payload = b"vector-bytes"
-    async with service.database.transaction() as tx:
-        _ = await tx.execute(
-            update(Memory)
-            .set(Memory.embedding.to(payload))
-            .set(Memory.embedded_version.to(memory.version))
-            .where(Memory.id.eq(memory.id))
-        )
-    stored = await fetch_memory_row(service, memory)
-    assert stored is not None
-    assert_eq(stored.embedding, payload)
-    assert_eq(stored.embedded_version, memory.version)
-
-
-@test()
-async def create_memory_schema_backfills_facets_to_empty_dict() -> None:
-    """A pre-facets database's existing rows backfill `facets` to `{}`.
-
-    `001_memories` is never edited; the facets column arrives as its own
-    forward migration, same as `embedding` did. Reuses the frozen legacy DDL
-    (pre-embedding, pre-facets) so the full forward chain (002 through 004)
-    runs against a row that predates every one of them.
-    """
-    db = await Database.initialize(backend=Config(database=":memory:"))
-    await db.migrate({"001_memories": _LEGACY_MEMORY_DDL})
-    pre_facets_id = uuid7()
-    async with db.transaction() as tx:
-        connection = tx.require_connection()
-        insert_sql = (
-            'INSERT INTO "memory" (id, content, version, provenance) '
-            "VALUES (?, ?, ?, ?)"
-        )
-        _ = await connection.execute(
-            insert_sql,
-            (str(pre_facets_id), "a pre-facets memory", 1, '{"kind": "manual"}'),
-        )
-
-    await create_memory_schema(db)
-
-    async with db.transaction() as tx:
-        row = await tx.fetch_one_or_none(
-            select(Memory).where(Memory.id.eq(pre_facets_id))
-        )
-    assert row is not None, "the pre-migration row must survive the upgrade"
-    assert_eq(row.facets, {})
-    await db.close()

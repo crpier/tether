@@ -61,7 +61,10 @@ from tether.embeddings import (
     vector_from_bytes,
     vector_to_bytes,
 )
-from tether.memories import Memory, create_memory_schema
+from tether.memory_store import (
+    Memory,
+    create_memory_schema,
+)
 from tether.reconciler import SearchReconciler
 from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
 from tether.search_meta import SearchMetaService, create_search_meta_schema

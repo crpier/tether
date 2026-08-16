@@ -48,11 +48,12 @@ from tether.gmail_client import (
     GmailResponse,
 )
 from tether.gmail_store import GmailMessageRecord, create_gmail_schema
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
+    tethered_corpus,
 )
 from tether.notifications import create_notification_schema
 from tether.structured_logging import Logger
@@ -355,7 +356,8 @@ class GmailEnv:
 
     async def tethered_memories(self) -> list[Memory[Fetched]]:
         """The current tethered corpus, for content/facet assertions."""
-        return await self.memory_service.browse_by_state("tethered", logger=self.logger)
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_all(tethered_corpus())
 
     async def triggers(self) -> list[ScheduledTrigger[Fetched]]:
         """The current live triggers, soonest-due first."""

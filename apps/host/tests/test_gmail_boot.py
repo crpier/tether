@@ -25,7 +25,9 @@ from tether.host_composition import HostBootstrap, _wire_gmail
 from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.local_dependencies import LocalSttTransport
-from tether.memories import KnowledgeBaseService, MemoryService, create_memory_schema
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import create_memory_schema
 from tether.model_selection import AgentModelCatalog
 from tether.stt import SttClient
 from tether.todos import TodoService, create_todo_schema

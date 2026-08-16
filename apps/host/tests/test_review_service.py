@@ -28,12 +28,14 @@ from snektest import (
 )
 
 from tether.embeddings import Embedder, Vector, vector_to_bytes
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     Memory,
     MemoryProvenance,
-    MemoryService,
     create_memory_schema,
+    loose_queue,
+    tethered_corpus,
 )
 from tether.review import EmbeddingBatchMismatchError, ReviewDigest, ReviewService
 from tether.search_meta import SearchMetaService, create_search_meta_schema
@@ -758,10 +760,7 @@ async def digest_persists_no_embeddings() -> None:
 
     _ = await harness.digest()
 
-    loose_rows = await harness.memory_service.browse_by_state(
-        "loose", logger=harness.logger
-    )
-    tethered_rows = await harness.memory_service.browse_by_state(
-        "tethered", logger=harness.logger
-    )
+    async with harness.database.transaction() as transaction:
+        loose_rows = await transaction.fetch_all(loose_queue())
+        tethered_rows = await transaction.fetch_all(tethered_corpus())
     assert_eq([row.embedding for row in loose_rows + tethered_rows], [None, None])

@@ -18,7 +18,9 @@ from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from tether.host_composition import _wire_reader, _wire_readwise
 from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
-from tether.memories import KnowledgeBaseService, MemoryService, create_memory_schema
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import create_memory_schema
 from tether.readwise_http import ReadwiseNetworkFailure, ReadwiseResponse
 from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger

@@ -57,7 +57,8 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.memories import MemoryProvenance, MemoryService
+from tether.memories import MemoryService
+from tether.memory_store import MemoryProvenance
 from tether.structured_logging import Logger
 
 FINISHED_THRESHOLD = 0.98

@@ -30,7 +30,11 @@ from tether.gmail_triage import (
     gmail_trigger_message,
     parse_gmail_verdicts,
 )
-from tether.memories import Memory, MemoryProvenance, MemoryService
+from tether.memories import MemoryService
+from tether.memory_store import (
+    Memory,
+    MemoryProvenance,
+)
 from tether.structured_logging import Logger
 from tether.todos import TodoService
 from tether.triggers import TriggerService, TriggerSpec

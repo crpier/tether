@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING, Protocol
 from snekql.sqlite import update
 
 from tether.embeddings import vector_from_bytes, vector_to_bytes
-from tether.memories import Memory, MemoryService
+from tether.memory_store import Memory, tethered_corpus
 from tether.reconcile_loop import run_reconcile_loop
 from tether.search_index import SearchDocument
 
@@ -160,7 +160,7 @@ class SearchReconciler:
         )
 
         async with self.database.transaction() as tx:
-            memories = await tx.fetch_all(MemoryService.tethered_corpus())
+            memories = await tx.fetch_all(tethered_corpus())
         owed = [
             memory
             for memory in memories

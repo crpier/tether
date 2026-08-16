@@ -27,7 +27,7 @@ from tether.capabilities import (
     rest_response,
     translate_domain_errors,
 )
-from tether.memories import MemoryProvenance
+from tether.memory_store import MemoryProvenance
 from tether.tools import SessionRegistry, ToolEndpoint, ToolRoute
 from tether.youtube import CacheMeta
 from tether.youtube_quota import QuotaMeta

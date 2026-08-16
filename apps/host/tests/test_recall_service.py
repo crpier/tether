@@ -32,10 +32,10 @@ from snektest import (
     test,
 )
 
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
 )
 from tether.recall import (

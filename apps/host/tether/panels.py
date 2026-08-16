@@ -13,7 +13,7 @@ the mutations optimistic-concurrency checked like Scheduled triggers) plus
 `search_candidates` + `hydrate_tethered` (rank order), a facets-only panel is a
 recency-ordered corpus listing with the same facet post-filter semantics.
 
->>> service = PanelService(database=db, memory_service=memories, tracer=tracer)
+>>> service = PanelService(database=db, memory_search=search, tracer=tracer)
 >>> panel = await service.create(
 ...     PanelSpec(name="finance", facets={"domain": "finance"}), logger=logger
 ... )
@@ -49,7 +49,8 @@ from snekql.sqlite import (
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.memories import Memory, MemoryService
+from tether.memory_search import MemorySearchService
+from tether.memory_store import Memory, tethered_corpus
 from tether.structured_logging import Logger
 
 type PanelRenderKind = Literal["table", "vega-lite"]
@@ -222,12 +223,12 @@ class PanelService:
     def __init__(
         self,
         database: Database,
-        memory_service: MemoryService,
+        memory_search: MemorySearchService,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
-        self.memory_service: MemoryService = memory_service
+        self.memory_search: MemorySearchService = memory_search
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.tracer: Tracer = tracer
 
@@ -447,13 +448,13 @@ class PanelService:
         logger: Logger,
     ) -> list[Memory[Fetched]]:
         """The text-query arm: Search's candidates, re-filtered and rank-ordered."""
-        candidates = await self.memory_service.search_candidates(
+        candidates = await self.memory_search.search_candidates(
             query, limit=_SEARCH_CANDIDATE_LIMIT, logger=logger
         )
         if not candidates:
             return []
         rank = {candidate.id: position for position, candidate in enumerate(candidates)}
-        memories = await self.memory_service.hydrate_tethered(
+        memories = await self.memory_search.hydrate_tethered(
             list(rank),
             facets=facets or None,
             after=after,
@@ -470,7 +471,7 @@ class PanelService:
         logger: Logger,
     ) -> list[Memory[Fetched]]:
         """The facets-only arm: the trusted corpus, most recently tethered first."""
-        query = MemoryService.tethered_corpus().order_by(Memory.tethered_at.desc())
+        query = tethered_corpus().order_by(Memory.tethered_at.desc())
         if after is not None:
             query = query.where(Memory.tethered_at.gte(after))
         async with self.database.transaction() as tx:

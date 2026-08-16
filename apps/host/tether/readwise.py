@@ -13,7 +13,14 @@ from uuid import UUID
 from snekok import Err, Ok, Result
 from snekql.sqlite import Database, Fetched, insert, select, update
 
-from tether.memories import Memory, MemoryConflictError, MemoryProvenance, MemoryService
+from tether.memories import (
+    MemoryConflictError,
+    MemoryService,
+)
+from tether.memory_store import (
+    Memory,
+    MemoryProvenance,
+)
 from tether.readwise_http import (
     ReadwiseAuthenticationFailure,
     ReadwiseFailure,
