@@ -20,7 +20,11 @@ as they happen and never overwritten**, which is what makes an interrupted
 `executing` batch safe to re-run: already-resolved actions are skipped and only
 NULL-outcome approved actions run again.
 
->>> service = ProposalService(database=database, tracer=tracer)
+>>> service = ProposalService(
+...     database=database,
+...     tracer=tracer,
+...     autonomy_policy=autonomy_service,
+... )
 >>> creation = await service.create(
 ...     ProposalDraft(
 ...         consumer="gmail",
@@ -39,7 +43,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, ValidationError
@@ -62,16 +66,9 @@ from tether.action_registry import (
 )
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.notifications import NotificationDraft, NotificationService
-from tether.proposal_store import (
-    AutonomyGrant,
-    Proposal,
-    ProposalAction,
-    ProposalState,
-)
+from tether.proposal_autonomy import ActionCategory, ProposalAutonomyPolicy
+from tether.proposal_store import Proposal, ProposalAction, ProposalState
 from tether.structured_logging import Logger
-
-_APPROVED_STATES: frozenset[str] = frozenset({"approved", "executing", "executed"})
-"""States a proposal reaches by being approved, for calibration accounting."""
 
 
 class ProposalNotFoundError(Exception):
@@ -160,19 +157,6 @@ class RejectionOutcome:
     revocable_grant_ids: list[UUID7]
 
 
-@dataclass(frozen=True, slots=True)
-class GrantSuggestion:
-    """Read-time calibration for one ungranted `(kind, scope)` category."""
-
-    kind: str
-    scope: str | None
-    seen: int
-    approved: int
-    rejected: int
-    edited: int
-    last_rejection: datetime | None
-
-
 def _debug(logger: Logger, event: str, **context: object) -> None:
     """Emit a debug event using caller-supplied logging context."""
     logger.debug(event, **context)
@@ -186,9 +170,8 @@ def _info(logger: Logger, event: str, **context: object) -> None:
 class ProposalService:
     """Capability surface for Proposals, over a snekql database.
 
-    Owns the human-facing lifecycle (create / list / get / approve / reject),
-    the autonomy grant ledger (grant / revoke / list / suggestions), and the
-    host executor loop (`execute`). The executor loop is idempotent and
+    Owns the human-facing lifecycle (create / list / get / approve / reject)
+    and the host executor loop (`execute`). The executor loop is idempotent and
     re-runnable, so an interrupted `executing` batch resumes safely.
     """
 
@@ -197,6 +180,7 @@ class ProposalService:
         database: Database,
         tracer: Tracer,
         *,
+        autonomy_policy: ProposalAutonomyPolicy,
         event_publisher: EventPublisher | None = None,
         action_registry: dict[str, ActionSpec] | None = None,
         action_context: ActionContext | None = None,
@@ -204,6 +188,7 @@ class ProposalService:
     ) -> None:
         self.database: Database = database
         self.tracer: Tracer = tracer
+        self.autonomy_policy: ProposalAutonomyPolicy = autonomy_policy
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.action_registry: dict[str, ActionSpec] = (
             action_registry
@@ -243,9 +228,10 @@ class ProposalService:
             consumer=draft.consumer,
             action_count=len(draft.actions),
         )
-        grants = await self._live_grants()
         actions = await self._fetch_actions(proposal_id)
-        if all(self._is_covered(a.kind, a.scope, grants) for a in actions):
+        if await self.autonomy_policy.covers_all(
+            [ActionCategory(kind=action.kind, scope=action.scope) for action in actions]
+        ):
             proposal = await self._fetch(proposal_id)
             _ = await self._do_approve(
                 proposal, deselected=set(), now=now, logger=logger
@@ -472,19 +458,13 @@ class ProposalService:
         async with self.database.transaction(mode="immediate") as tx:
             proposal = await _reject(tx)
         actions = await self._fetch_actions(proposal_ref.id)
-        grants = await self._live_grants()
-        revocable = sorted(
-            {
-                grant.id
-                for action in actions
-                for grant in grants
-                if self._grant_matches(grant, action.kind, action.scope)
-            }
+        revocable_grant_ids = await self.autonomy_policy.revocable_grant_ids(
+            [ActionCategory(kind=action.kind, scope=action.scope) for action in actions]
         )
         await self.event_publisher.publish(InvalidateEvent(keys=["proposals"]))
         return RejectionOutcome(
             proposal=ProposalView(proposal=proposal, actions=actions),
-            revocable_grant_ids=list(revocable),
+            revocable_grant_ids=revocable_grant_ids,
         )
 
     # --- execute (host executor loop) ------------------------------------
@@ -594,101 +574,7 @@ class ProposalService:
         async with self.database.transaction(mode="immediate") as tx:
             return await _finish(tx)
 
-    # --- grants ----------------------------------------------------------
-
-    async def grant(
-        self, kind: str, scope: str | None, *, now: datetime
-    ) -> AutonomyGrant[Fetched]:
-        """Grant autonomy for a `(kind, scope)` category (a new ledger row)."""
-        _ = now
-
-        async def _grant(tx: Transaction) -> AutonomyGrant[Fetched]:
-            return await tx.execute(
-                insert(AutonomyGrant(kind=kind, scope=scope)).returning()
-            )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            granted = await _grant(tx)
-        await self.event_publisher.publish(InvalidateEvent(keys=["proposals"]))
-        return granted
-
-    async def revoke(self, grant_id: UUID7, *, now: datetime) -> None:
-        """Revoke a grant convergently; an absent/already-revoked id is a no-op."""
-
-        async def _revoke(tx: Transaction) -> int:
-            return await tx.execute(
-                update(AutonomyGrant)
-                .set(AutonomyGrant.revoked_at.to(now))
-                .where(AutonomyGrant.id.eq(grant_id))
-                .where(AutonomyGrant.revoked_at.is_null())
-            )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            matched = await _revoke(tx)
-        if matched:
-            await self.event_publisher.publish(InvalidateEvent(keys=["proposals"]))
-
-    async def list_grants(self) -> list[AutonomyGrant[Fetched]]:
-        """List live (unrevoked) grants, newest first."""
-        return await self._live_grants()
-
-    async def calibration_stats(self) -> list[GrantSuggestion]:
-        """Compute read-time grant suggestions from proposal history.
-
-        Groups every action by `(kind, scope)` and, over the joined proposals,
-        counts how often the category was seen, approved, rejected, and edited,
-        plus the most recent rejection. Only ungranted categories surface, and
-        nothing is stored; calibration is recomputed on every read.
-        """
-        async with self.database.transaction() as tx:
-            proposals = await tx.fetch_all(select(Proposal).all())
-            actions = await tx.fetch_all(select(ProposalAction).all())
-        by_id = {str(p.id): p for p in proposals}
-        deselected_proposals = {
-            a.proposal_id for a in actions if a.disposition == "deselected"
-        }
-        aggregates: dict[tuple[str, str | None], _Aggregate] = {}
-        for action in actions:
-            proposal = by_id.get(action.proposal_id)
-            if proposal is None:
-                continue
-            aggregate = aggregates.setdefault((action.kind, action.scope), _Aggregate())
-            aggregate.observe(
-                action,
-                proposal,
-                edited=action.proposal_id in deselected_proposals,
-            )
-        grants = await self._live_grants()
-        return [
-            aggregate.to_suggestion(kind, scope)
-            for (kind, scope), aggregate in aggregates.items()
-            if not self._is_covered(kind, scope, grants)
-        ]
-
     # --- helpers ---------------------------------------------------------
-
-    async def _live_grants(self) -> list[AutonomyGrant[Fetched]]:
-        """Read every live grant fresh from the database (never cached)."""
-        async with self.database.transaction() as tx:
-            return await tx.fetch_all(
-                select(AutonomyGrant)
-                .where(AutonomyGrant.revoked_at.is_null())
-                .order_by(AutonomyGrant.granted_at.desc())
-                .order_by(AutonomyGrant.id.desc())
-            )
-
-    @staticmethod
-    def _grant_matches(
-        grant: AutonomyGrant[Fetched], kind: str, scope: str | None
-    ) -> bool:
-        """A grant covers an action iff kinds match and its scope is bare or equal."""
-        return grant.kind == kind and (grant.scope is None or grant.scope == scope)
-
-    def _is_covered(
-        self, kind: str, scope: str | None, grants: list[AutonomyGrant[Fetched]]
-    ) -> bool:
-        """Fail-closed coverage check for one `(kind, scope)` against live grants."""
-        return any(self._grant_matches(grant, kind, scope) for grant in grants)
 
     async def _fetch(
         self, proposal_id: UUID7, *, tx: Transaction | None = None
@@ -746,62 +632,3 @@ class ProposalService:
             raise ProposalConflictError(message)
         message = f"proposal {observed.id} is {fresh.state}, not pending"
         raise ProposalStateError(message)
-
-
-class _Aggregate:
-    """Mutable per-`(kind, scope)` calibration accumulator (read-time only)."""
-
-    def __init__(self) -> None:
-        self.seen: set[str] = set()
-        self.approved: set[str] = set()
-        self.rejected: set[str] = set()
-        self.edited: set[str] = set()
-        self.last_rejection: datetime | None = None
-
-    def observe(
-        self,
-        action: ProposalAction[Fetched],
-        proposal: Proposal[Fetched],
-        *,
-        edited: bool,
-    ) -> None:
-        """Fold one action/proposal pair into the running counts."""
-        proposal_id = str(proposal.id)
-        self.seen.add(proposal_id)
-        if edited:
-            self.edited.add(proposal_id)
-        if proposal.state in _APPROVED_STATES and action.disposition == "approved":
-            self.approved.add(proposal_id)
-        if proposal.state == "rejected":
-            self.rejected.add(proposal_id)
-            self.last_rejection = _max_datetime(
-                self.last_rejection, _as_utc(proposal.decided_at)
-            )
-
-    def to_suggestion(self, kind: str, scope: str | None) -> GrantSuggestion:
-        """Render the accumulated counts as a grant suggestion."""
-        return GrantSuggestion(
-            kind=kind,
-            scope=scope,
-            seen=len(self.seen),
-            approved=len(self.approved),
-            rejected=len(self.rejected),
-            edited=len(self.edited),
-            last_rejection=self.last_rejection,
-        )
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    """Read a stored timestamp as UTC-aware; SQLite writes naive timestamps."""
-    if value is None:
-        return None
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-
-
-def _max_datetime(left: datetime | None, right: datetime | None) -> datetime | None:
-    """Return the later of two optional datetimes."""
-    if left is None:
-        return right
-    if right is None:
-        return left
-    return max(left, right)

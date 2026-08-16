@@ -103,6 +103,7 @@ async def _compose_app_runtime(
             model_catalog=core.model_catalog,
             notification_service=core.notification_service,
             panel_service=core.panel_service,
+            proposal_autonomy_service=core.proposal_autonomy_service,
             proposal_service=core.proposal_service,
             provider_auth_service=core.provider_auth_service,
             push_service=core.push_service,

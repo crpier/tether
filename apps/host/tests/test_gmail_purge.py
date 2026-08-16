@@ -35,6 +35,7 @@ from tether.gmail_client import (
 )
 from tether.gmail_purge import GmailPurgeSweepService
 from tether.gmail_store import GmailSyncState, create_gmail_schema
+from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_store import create_proposal_schema
 from tether.proposals import ProposalService
 from tether.structured_logging import Logger
@@ -217,9 +218,14 @@ async def purge_env() -> AsyncGenerator[PurgeEnv]:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_proposal_schema(db)
     await create_gmail_schema(db)
+    autonomy = ProposalAutonomyService(database=db)
     yield PurgeEnv(
         database=db,
-        proposal_service=ProposalService(database=db, tracer=noop_tracer()),
+        proposal_service=ProposalService(
+            database=db,
+            tracer=noop_tracer(),
+            autonomy_policy=autonomy,
+        ),
         logger=test_logger(),
     )
     await db.close()
