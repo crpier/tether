@@ -24,7 +24,7 @@ from tether.ingestion_composition import (
 )
 from tether.search_projection.embeddings import Embedder
 from tether.service_composition import compose_core_services
-from tether.telemetry import TelemetrySettings
+from tether.telemetry_model import TelemetrySettings
 from tether.transcripts.contracts import AsyncClosable
 
 

@@ -17,7 +17,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.app_runtime import app_runtime
 
 _DEFAULT_LIMIT = 50

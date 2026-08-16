@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, request_response
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.bucket_item_store import BucketItemProvenance
 from tether.capability_contracts import (
     CapabilityOutcome,

@@ -4,7 +4,7 @@ from typing import get_args
 
 from snektest import assert_eq, assert_in, test
 
-from tether.agent_trace import RunKind
+from tether.agent_trace_model import RunKind
 from tether.system_prompt import (
     CONVERSATION_SYSTEM_PROMPT,
     TASK_SYSTEM_PROMPT,

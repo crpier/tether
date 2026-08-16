@@ -33,15 +33,15 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocket
 
-from tether.model_selection import AgentModelCatalog, ModelSelectionConfigError
-from tether.structured_logging import (
-    QUIET_LOGGERS,
-    SILENCED_LOGGERS,
-    ContextLoggerMiddleware,
+from tether.logging_config import QUIET_LOGGERS, SILENCED_LOGGERS, configure_logging
+from tether.logging_processors import (
     _capture_bound_context,
     _process_positional_args,
     _reorder_fields,
-    configure_logging,
+)
+from tether.model_selection import AgentModelCatalog, ModelSelectionConfigError
+from tether.request_logging import (
+    ContextLoggerMiddleware,
     get_bound_request_logger,
     get_request_logger,
 )
@@ -143,7 +143,7 @@ def import_without_opentelemetry(name, *args, **kwargs):
     return original_import(name, *args, **kwargs)
 
 builtins.__import__ = import_without_opentelemetry
-import tether.structured_logging
+import tether.logging_config
 """
 
     completed = subprocess.run(
@@ -170,7 +170,7 @@ def import_with_broken_opentelemetry(name, *args, **kwargs):
     return original_import(name, *args, **kwargs)
 
 builtins.__import__ = import_with_broken_opentelemetry
-import tether.structured_logging
+import tether.logging_config
 """
 
     completed = subprocess.run(

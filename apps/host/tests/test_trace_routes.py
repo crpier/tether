@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 from snektest import assert_eq, assert_true, test
 from starlette.testclient import TestClient
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.app_runtime import app_runtime
 from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import AppConfig, create_app

@@ -18,7 +18,7 @@ from snekok import Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_true, test
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.gmail_client import GmailNetworkFailure, GmailResponse
 from tether.gmail_store import create_gmail_schema
 from tether.host_config import AppConfig

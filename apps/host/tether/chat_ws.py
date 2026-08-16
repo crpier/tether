@@ -11,7 +11,7 @@ from pydantic import BaseModel, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame
