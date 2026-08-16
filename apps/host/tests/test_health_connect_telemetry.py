@@ -3,14 +3,14 @@
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, test
 
-from tether.health_connect import (
+from tether.health_connect import HealthConnectIngestion
+from tether.health_connect_contracts import (
     HealthConnectBatchRequest,
-    HealthConnectIngestion,
     HealthConnectRecords,
     RecordMetadata,
     StepsRecord,
-    create_health_connect_schema,
 )
+from tether.health_connect_persistence import create_health_connect_schema
 from tether.health_connect_telemetry import HealthConnectTelemetry
 
 

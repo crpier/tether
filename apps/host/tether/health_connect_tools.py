@@ -12,7 +12,7 @@ from starlette.routing import Route
 from tether.app_runtime import app_runtime
 from tether.capabilities import bind_params
 from tether.capability_contracts import CapabilityOutcome
-from tether.health_connect import HealthRecordType
+from tether.health_connect_contracts import HealthRecordType
 from tether.tool_runtime import ToolSpec
 
 

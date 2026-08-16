@@ -1,4 +1,4 @@
-"""Typed, append-only Health Connect telemetry store and sync HTTP contract."""
+"""Atomic Health Connect cursor and baseline ingestion workflow."""
 
 from __future__ import annotations
 
@@ -6,821 +6,65 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Protocol, Self, cast
+from typing import Annotated, Any, Protocol, cast
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 from snekql.sqlite import (
-    PENDING_GENERATION,
     Database,
     Fetched,
-    Integer,
-    Model,
-    Pending,
-    Real,
-    Text,
     Transaction,
     delete,
     insert,
     not_exists,
-    scaffold,
     select,
     update,
 )
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from tether.structured_logging import Logger
-
-HealthRecordType = Literal[
-    "active_calories_burned",
-    "basal_body_temperature",
-    "basal_metabolic_rate",
-    "blood_glucose",
-    "blood_pressure",
-    "body_fat",
-    "body_temperature",
-    "body_water_mass",
-    "bone_mass",
-    "cervical_mucus",
-    "cycling_pedaling_cadence",
-    "distance",
-    "elevation_gained",
-    "exercise",
-    "floors_climbed",
-    "heart_rate",
-    "heart_rate_variability_rmssd",
-    "height",
-    "hydration",
-    "intermenstrual_bleeding",
-    "lean_body_mass",
-    "menstruation_flow",
-    "menstruation_period",
-    "mindfulness_session",
-    "nutrition",
-    "ovulation_test",
-    "oxygen_saturation",
-    "planned_exercise_session",
-    "power",
-    "respiratory_rate",
-    "resting_heart_rate",
-    "sexual_activity",
-    "skin_temperature",
-    "sleep",
-    "speed",
-    "steps",
-    "steps_cadence",
-    "total_calories_burned",
-    "vo2_max",
-    "weight",
-    "wheelchair_pushes",
-]
-_ALL_RECORD_TYPES: tuple[HealthRecordType, ...] = (
-    "active_calories_burned",
-    "basal_body_temperature",
-    "basal_metabolic_rate",
-    "blood_glucose",
-    "blood_pressure",
-    "body_fat",
-    "body_temperature",
-    "body_water_mass",
-    "bone_mass",
-    "cervical_mucus",
-    "cycling_pedaling_cadence",
-    "distance",
-    "elevation_gained",
-    "exercise",
-    "floors_climbed",
-    "heart_rate",
-    "heart_rate_variability_rmssd",
-    "height",
-    "hydration",
-    "intermenstrual_bleeding",
-    "lean_body_mass",
-    "menstruation_flow",
-    "menstruation_period",
-    "mindfulness_session",
-    "nutrition",
-    "ovulation_test",
-    "oxygen_saturation",
-    "planned_exercise_session",
-    "power",
-    "respiratory_rate",
-    "resting_heart_rate",
-    "sexual_activity",
-    "skin_temperature",
-    "sleep",
-    "speed",
-    "steps",
-    "steps_cadence",
-    "total_calories_burned",
-    "vo2_max",
-    "weight",
-    "wheelchair_pushes",
+from tether.health_connect_contracts import (
+    GENERIC_RECORD_TYPES,
+    CompleteHealthConnectBaselineRequest,
+    GenericRecord,
+    HealthConnectBaselineCompletionRead,
+    HealthConnectBatchRead,
+    HealthConnectBatchRequest,
+    HealthConnectContractError,
+    HealthConnectCursorConflictError,
+    HealthConnectDeletion,
+    HealthConnectRecords,
+    HealthConnectSyncStateQuery,
+    HealthConnectSyncStateRead,
+    HealthRecordType,
+    RecordMetadata,
+    RecordStatus,
+    RequestIdentityReuseError,
+    StartHealthConnectBaselineRequest,
+    canonical_record_types,
+    parse_record_types,
+    validate_versioned_record_types,
 )
-_CAPTURED_RECORD_TYPES = frozenset({"exercise", "heart_rate", "sleep", "steps"})
-_ALLOWED_RECORD_TYPES = frozenset(_ALL_RECORD_TYPES)
-_GENERIC_RECORD_TYPES: tuple[HealthRecordType, ...] = tuple(
-    record_type
-    for record_type in _ALL_RECORD_TYPES
-    if record_type not in _CAPTURED_RECORD_TYPES
-)
-RecordStatus = Literal["baseline", "changes", "initial"]
-GENERIC_RECORD_CONTRACT_VERSION = 3
-
-
-class HealthConnectSyncState[S = Pending](Model[S, "HealthConnectSyncState[Fetched]"]):
-    """Durable cursor and baseline generation for one installation/type set."""
-
-    __tablename__ = "hc_sync_state"
-    state_key: HealthConnectSyncState.Col[str] = Text(primary_key=True)
-    baseline_generation: HealthConnectSyncState.Col[int] = Integer(nullable=False)
-    baseline_request_id: HealthConnectSyncState.Col[str | None] = Text(nullable=True)
-    completion_deleted_json: HealthConnectSyncState.Col[str | None] = Text(
-        nullable=True
-    )
-    completion_request_id: HealthConnectSyncState.Col[str | None] = Text(nullable=True)
-    current_token: HealthConnectSyncState.Col[str | None] = Text(nullable=True)
-    installation_id: HealthConnectSyncState.Col[str] = Text(nullable=False, index=True)
-    record_type_set: HealthConnectSyncState.Col[str] = Text(nullable=False)
-    status: HealthConnectSyncState.Col[str] = Text(nullable=False)
-
-
-class HcOrigin[S = Pending](Model[S, "HcOrigin[Fetched]"]):
-    """Writing application and nullable device provenance."""
-
-    origin_id: HcOrigin.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    origin_key: HcOrigin.Col[str] = Text(nullable=False, unique=True)
-    data_origin_package: HcOrigin.Col[str] = Text(nullable=False)
-    device_manufacturer: HcOrigin.Col[str | None] = Text(nullable=True)
-    device_model: HcOrigin.Col[str | None] = Text(nullable=True)
-    device_type: HcOrigin.Col[int | None] = Integer(nullable=True)
-
-
-class HcPageRequest[S = Pending](Model[S, "HcPageRequest[Fetched]"]):
-    """Committed request identity making response-loss retries idempotent."""
-
-    request_id: HcPageRequest.Col[str] = Text(primary_key=True)
-    state_key: HcPageRequest.Col[str] = Text(nullable=False, index=True)
-    payload_hash: HcPageRequest.Col[str] = Text(nullable=False)
-    accepted_json: HcPageRequest.Col[str] = Text(nullable=False)
-    deleted_json: HcPageRequest.Col[str] = Text(nullable=False)
-    skipped_json: HcPageRequest.Col[str] = Text(nullable=False)
-
-
-class HcBaselineSeen[S = Pending](Model[S, "HcBaselineSeen[Fetched]"]):
-    """One record observed during one uploaded baseline page."""
-
-    seen_key: HcBaselineSeen.Col[str] = Text(primary_key=True)
-    state_key: HcBaselineSeen.Col[str] = Text(nullable=False, index=True)
-    baseline_generation: HcBaselineSeen.Col[int] = Integer(nullable=False)
-    record_type: HcBaselineSeen.Col[str] = Text(nullable=False)
-    record_uid: HcBaselineSeen.Col[str] = Text(nullable=False, index=True)
-
-
-class HcHeartRateRecord[S = Pending](Model[S, "HcHeartRateRecord[Fetched]"]):
-    """One accepted heart-rate record version or tombstone."""
-
-    version_id: HcHeartRateRecord.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    record_uid: HcHeartRateRecord.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    modified_at: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    received_at: HcHeartRateRecord.Col[int] = Integer(nullable=False)
-    request_id: HcHeartRateRecord.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcHeartRateRecord.Col[bool] = Integer(nullable=False)
-    payload_hash: HcHeartRateRecord.Col[str] = Text(nullable=False)
-    client_record_id: HcHeartRateRecord.Col[str | None] = Text(nullable=True)
-    client_record_version: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    recording_method: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    start_time: HcHeartRateRecord.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcHeartRateRecord.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-
-
-class HcHeartRateSample[S = Pending](Model[S, "HcHeartRateSample[Fetched]"]):
-    """An ordered sample belonging to exactly one heart-rate version."""
-
-    sample_id: HcHeartRateSample.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    version_id: HcHeartRateSample.Col[int] = Integer(nullable=False, index=True)
-    sample_index: HcHeartRateSample.Col[int] = Integer(nullable=False)
-    time: HcHeartRateSample.Col[int] = Integer(nullable=False, index=True)
-    beats_per_minute: HcHeartRateSample.Col[int] = Integer(nullable=False)
-
-
-class HcSleepSession[S = Pending](Model[S, "HcSleepSession[Fetched]"]):
-    """One accepted sleep-session version or tombstone."""
-
-    version_id: HcSleepSession.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    record_uid: HcSleepSession.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    modified_at: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    received_at: HcSleepSession.Col[int] = Integer(nullable=False)
-    request_id: HcSleepSession.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcSleepSession.Col[bool] = Integer(nullable=False)
-    payload_hash: HcSleepSession.Col[str] = Text(nullable=False)
-    client_record_id: HcSleepSession.Col[str | None] = Text(nullable=True)
-    client_record_version: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    recording_method: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    start_time: HcSleepSession.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    end_zone_offset_seconds: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    title: HcSleepSession.Col[str | None] = Text(nullable=True)
-    notes: HcSleepSession.Col[str | None] = Text(nullable=True)
-
-
-class HcSleepStage[S = Pending](Model[S, "HcSleepStage[Fetched]"]):
-    """An ordered original-enum stage belonging to one sleep version."""
-
-    stage_id: HcSleepStage.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    version_id: HcSleepStage.Col[int] = Integer(nullable=False, index=True)
-    stage_index: HcSleepStage.Col[int] = Integer(nullable=False)
-    start_time: HcSleepStage.Col[int] = Integer(nullable=False, index=True)
-    end_time: HcSleepStage.Col[int] = Integer(nullable=False)
-    stage: HcSleepStage.Col[int] = Integer(nullable=False)
-
-
-class HcStepInterval[S = Pending](Model[S, "HcStepInterval[Fetched]"]):
-    """One accepted step interval version or tombstone."""
-
-    version_id: HcStepInterval.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    record_uid: HcStepInterval.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    modified_at: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    received_at: HcStepInterval.Col[int] = Integer(nullable=False)
-    request_id: HcStepInterval.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcStepInterval.Col[bool] = Integer(nullable=False)
-    payload_hash: HcStepInterval.Col[str] = Text(nullable=False)
-    client_record_id: HcStepInterval.Col[str | None] = Text(nullable=True)
-    client_record_version: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    recording_method: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    start_time: HcStepInterval.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    end_zone_offset_seconds: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    count: HcStepInterval.Col[int | None] = Integer(nullable=True)
-
-
-class HcExerciseSession[S = Pending](Model[S, "HcExerciseSession[Fetched]"]):
-    """One accepted exercise-session version or tombstone."""
-
-    version_id: HcExerciseSession.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    record_uid: HcExerciseSession.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    modified_at: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    received_at: HcExerciseSession.Col[int] = Integer(nullable=False)
-    request_id: HcExerciseSession.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcExerciseSession.Col[bool] = Integer(nullable=False)
-    payload_hash: HcExerciseSession.Col[str] = Text(nullable=False)
-    client_record_id: HcExerciseSession.Col[str | None] = Text(nullable=True)
-    client_record_version: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    recording_method: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    start_time: HcExerciseSession.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcExerciseSession.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    exercise_type: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    title: HcExerciseSession.Col[str | None] = Text(nullable=True)
-    notes: HcExerciseSession.Col[str | None] = Text(nullable=True)
-    planned_exercise_session_id: HcExerciseSession.Col[str | None] = Text(nullable=True)
-
-
-class HcExerciseSegment[S = Pending](Model[S, "HcExerciseSegment[Fetched]"]):
-    """An ordered segment belonging to one exercise version."""
-
-    segment_id: HcExerciseSegment.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    version_id: HcExerciseSegment.Col[int] = Integer(nullable=False, index=True)
-    segment_index: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    start_time: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    end_time: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    segment_type: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    repetitions_count: HcExerciseSegment.Col[int] = Integer(nullable=False)
-
-
-class HcExerciseLap[S = Pending](Model[S, "HcExerciseLap[Fetched]"]):
-    """An ordered lap with canonical meter length."""
-
-    lap_id: HcExerciseLap.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    version_id: HcExerciseLap.Col[int] = Integer(nullable=False, index=True)
-    lap_index: HcExerciseLap.Col[int] = Integer(nullable=False)
-    start_time: HcExerciseLap.Col[int] = Integer(nullable=False)
-    end_time: HcExerciseLap.Col[int] = Integer(nullable=False)
-    length_meters: HcExerciseLap.Col[float | None] = Real(nullable=True)
-
-
-class HcExerciseRoutePoint[S = Pending](Model[S, "HcExerciseRoutePoint[Fetched]"]):
-    """An ordered route point with Health Connect's canonical units."""
-
-    route_point_id: HcExerciseRoutePoint.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    version_id: HcExerciseRoutePoint.Col[int] = Integer(nullable=False, index=True)
-    point_index: HcExerciseRoutePoint.Col[int] = Integer(nullable=False)
-    time: HcExerciseRoutePoint.Col[int] = Integer(nullable=False, index=True)
-    latitude: HcExerciseRoutePoint.Col[float] = Real(nullable=False)
-    longitude: HcExerciseRoutePoint.Col[float] = Real(nullable=False)
-    horizontal_accuracy_meters: HcExerciseRoutePoint.Col[float | None] = Real(
-        nullable=True
-    )
-    vertical_accuracy_meters: HcExerciseRoutePoint.Col[float | None] = Real(
-        nullable=True
-    )
-    altitude_meters: HcExerciseRoutePoint.Col[float | None] = Real(nullable=True)
-
-
-class HcGenericRecord[S = Pending](Model[S, "HcGenericRecord[Fetched]"]):
-    """Append-only raw storage for expanded Health Connect record types."""
-
-    version_id: HcGenericRecord.GenCol[int] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    record_type: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
-    record_uid: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    modified_at: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    received_at: HcGenericRecord.Col[int] = Integer(nullable=False)
-    request_id: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcGenericRecord.Col[bool] = Integer(nullable=False)
-    payload_hash: HcGenericRecord.Col[str] = Text(nullable=False)
-    client_record_id: HcGenericRecord.Col[str | None] = Text(nullable=True)
-    client_record_version: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    recording_method: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    start_time: HcGenericRecord.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    end_zone_offset_seconds: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    payload_json: HcGenericRecord.Col[str | None] = Text(nullable=True)
-
-
-class HcHeartRateRecordCurrent[S = Pending](
-    Model[S, "HcHeartRateRecordCurrent[Fetched]"]
-):
-    version_id: HcHeartRateRecordCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcHeartRateRecordCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcHeartRateRecordCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcHeartRateRecordCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcHeartRateRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcHeartRateRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcHeartRateRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-
-
-class HcSleepSessionCurrent[S = Pending](Model[S, "HcSleepSessionCurrent[Fetched]"]):
-    version_id: HcSleepSessionCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcSleepSessionCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcSleepSessionCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcSleepSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcSleepSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcSleepSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    title: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
-    notes: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
-
-
-class HcStepIntervalCurrent[S = Pending](Model[S, "HcStepIntervalCurrent[Fetched]"]):
-    version_id: HcStepIntervalCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcStepIntervalCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcStepIntervalCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcStepIntervalCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcStepIntervalCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcStepIntervalCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcStepIntervalCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    count: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-
-
-class HcExerciseSessionCurrent[S = Pending](
-    Model[S, "HcExerciseSessionCurrent[Fetched]"]
-):
-    version_id: HcExerciseSessionCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcExerciseSessionCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcExerciseSessionCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcExerciseSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcExerciseSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcExerciseSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    exercise_type: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    title: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
-    notes: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
-    planned_exercise_session_id: HcExerciseSessionCurrent.Col[str | None] = Text(
-        nullable=True
-    )
-
-
-class HcGenericRecordCurrent[S = Pending](Model[S, "HcGenericRecordCurrent[Fetched]"]):
-    version_id: HcGenericRecordCurrent.Col[int] = Integer(primary_key=True)
-    record_type: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
-    record_uid: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcGenericRecordCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcGenericRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcGenericRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcGenericRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    payload_json: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
-
-
-class HealthConnectWireModel(BaseModel):
-    """Strict base for the versioned Android/host JSON boundary."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class Device(HealthConnectWireModel):
-    """Nullable Health Connect writing-device metadata."""
-
-    manufacturer: str | None = None
-    model: str | None = None
-    type: int | None = None
-
-
-class RecordMetadata(HealthConnectWireModel):
-    """Common metadata exposed by the pinned Health Connect wire contract."""
-
-    id: str = Field(min_length=1)
-    data_origin_package: str = Field(min_length=1)
-    last_modified_time: int | None
-    client_record_id: str | None
-    client_record_version: int | None
-    device: Device | None
-    recording_method: int | None
-
-
-class HeartRateSample(HealthConnectWireModel):
-    time: int
-    beats_per_minute: int = Field(gt=0)
-
-
-class HeartRateRecord(HealthConnectWireModel):
-    metadata: RecordMetadata
-    start_time: int
-    end_time: int
-    start_zone_offset_seconds: int | None
-    end_zone_offset_seconds: int | None
-    samples: list[HeartRateSample] = Field(max_length=10_000)
-
-
-class SleepStage(HealthConnectWireModel):
-    start_time: int
-    end_time: int
-    stage: int
-
-
-class SleepRecord(HealthConnectWireModel):
-    metadata: RecordMetadata
-    start_time: int
-    end_time: int
-    start_zone_offset_seconds: int | None
-    end_zone_offset_seconds: int | None
-    title: str | None
-    notes: str | None
-    stages: list[SleepStage] = Field(max_length=1_000)
-
-
-class StepsRecord(HealthConnectWireModel):
-    metadata: RecordMetadata
-    start_time: int
-    end_time: int
-    start_zone_offset_seconds: int | None
-    end_zone_offset_seconds: int | None
-    count: int = Field(ge=0)
-
-
-class ExerciseSegment(HealthConnectWireModel):
-    start_time: int
-    end_time: int
-    segment_type: int
-    repetitions_count: int = Field(ge=0)
-
-
-class ExerciseLap(HealthConnectWireModel):
-    start_time: int
-    end_time: int
-    length_meters: float | None
-
-
-class ExerciseRoutePoint(HealthConnectWireModel):
-    time: int
-    latitude: float
-    longitude: float
-    horizontal_accuracy_meters: float | None
-    vertical_accuracy_meters: float | None
-    altitude_meters: float | None
-
-
-class ExerciseRecord(HealthConnectWireModel):
-    metadata: RecordMetadata
-    start_time: int
-    end_time: int
-    start_zone_offset_seconds: int | None
-    end_zone_offset_seconds: int | None
-    exercise_type: int
-    title: str | None
-    notes: str | None
-    planned_exercise_session_id: str | None
-    segments: list[ExerciseSegment] = Field(max_length=10_000)
-    laps: list[ExerciseLap] = Field(max_length=10_000)
-    route: list[ExerciseRoutePoint] = Field(max_length=100_000)
-
-
-class GenericRecord(HealthConnectWireModel):
-    metadata: RecordMetadata
-    start_time: int | None = None
-    end_time: int | None = None
-    start_zone_offset_seconds: int | None = None
-    end_zone_offset_seconds: int | None = None
-    payload: dict[str, object] = Field(default_factory=dict)
-
-
-def _generic_record_list_field() -> list[GenericRecord]:
-    return cast("list[GenericRecord]", Field(default_factory=list, max_length=1_000))
-
-
-def _exercise_record_list_field() -> list[ExerciseRecord]:
-    return cast("list[ExerciseRecord]", Field(default_factory=list, max_length=1_000))
-
-
-def _heart_rate_record_list_field() -> list[HeartRateRecord]:
-    return cast("list[HeartRateRecord]", Field(default_factory=list, max_length=1_000))
-
-
-def _sleep_record_list_field() -> list[SleepRecord]:
-    return cast("list[SleepRecord]", Field(default_factory=list, max_length=1_000))
-
-
-def _steps_record_list_field() -> list[StepsRecord]:
-    return cast("list[StepsRecord]", Field(default_factory=list, max_length=1_000))
-
-
-class HealthConnectRecords(HealthConnectWireModel):
-    active_calories_burned: list[GenericRecord] = _generic_record_list_field()
-    basal_body_temperature: list[GenericRecord] = _generic_record_list_field()
-    basal_metabolic_rate: list[GenericRecord] = _generic_record_list_field()
-    blood_glucose: list[GenericRecord] = _generic_record_list_field()
-    blood_pressure: list[GenericRecord] = _generic_record_list_field()
-    body_fat: list[GenericRecord] = _generic_record_list_field()
-    body_temperature: list[GenericRecord] = _generic_record_list_field()
-    body_water_mass: list[GenericRecord] = _generic_record_list_field()
-    bone_mass: list[GenericRecord] = _generic_record_list_field()
-    cervical_mucus: list[GenericRecord] = _generic_record_list_field()
-    cycling_pedaling_cadence: list[GenericRecord] = _generic_record_list_field()
-    distance: list[GenericRecord] = _generic_record_list_field()
-    elevation_gained: list[GenericRecord] = _generic_record_list_field()
-    exercise: list[ExerciseRecord] = _exercise_record_list_field()
-    floors_climbed: list[GenericRecord] = _generic_record_list_field()
-    heart_rate: list[HeartRateRecord] = _heart_rate_record_list_field()
-    heart_rate_variability_rmssd: list[GenericRecord] = _generic_record_list_field()
-    height: list[GenericRecord] = _generic_record_list_field()
-    hydration: list[GenericRecord] = _generic_record_list_field()
-    intermenstrual_bleeding: list[GenericRecord] = _generic_record_list_field()
-    lean_body_mass: list[GenericRecord] = _generic_record_list_field()
-    menstruation_flow: list[GenericRecord] = _generic_record_list_field()
-    menstruation_period: list[GenericRecord] = _generic_record_list_field()
-    mindfulness_session: list[GenericRecord] = _generic_record_list_field()
-    nutrition: list[GenericRecord] = _generic_record_list_field()
-    ovulation_test: list[GenericRecord] = _generic_record_list_field()
-    oxygen_saturation: list[GenericRecord] = _generic_record_list_field()
-    planned_exercise_session: list[GenericRecord] = _generic_record_list_field()
-    power: list[GenericRecord] = _generic_record_list_field()
-    respiratory_rate: list[GenericRecord] = _generic_record_list_field()
-    resting_heart_rate: list[GenericRecord] = _generic_record_list_field()
-    sexual_activity: list[GenericRecord] = _generic_record_list_field()
-    skin_temperature: list[GenericRecord] = _generic_record_list_field()
-    sleep: list[SleepRecord] = _sleep_record_list_field()
-    speed: list[GenericRecord] = _generic_record_list_field()
-    steps: list[StepsRecord] = _steps_record_list_field()
-    steps_cadence: list[GenericRecord] = _generic_record_list_field()
-    total_calories_burned: list[GenericRecord] = _generic_record_list_field()
-    vo2_max: list[GenericRecord] = _generic_record_list_field()
-    weight: list[GenericRecord] = _generic_record_list_field()
-    wheelchair_pushes: list[GenericRecord] = _generic_record_list_field()
-
-
-class HealthConnectDeletion(HealthConnectWireModel):
-    record_type: HealthRecordType
-    record_id: str = Field(min_length=1)
-
-
-class HealthConnectBatchRequest(HealthConnectWireModel):
-    contract_version: Literal[1, 2, 3]
-    mode: Literal["baseline", "changes"]
-    installation_id: str = Field(min_length=1)
-    record_types: list[HealthRecordType]
-    request_id: str = Field(min_length=1)
-    expected_token: str
-    next_token: str
-    records: HealthConnectRecords
-    deletions: list[HealthConnectDeletion] = Field(max_length=10_000)
-
-
-class AuthoritativeScanRange(HealthConnectWireModel):
-    """Exact time range scanned authoritatively by Health Connect."""
-
-    start_time: int
-    end_time: int
-    seen_record_ids: list[str] | None = Field(default=None, max_length=100_000)
-
-
-class V1SeenIdsRequiredError(ValueError):
-    """A v1 completion omitted its authoritative client ID set."""
-
-    def __init__(self) -> None:
-        super().__init__("contract v1 completion requires seen_record_ids")
-
-
-class BaselineRangesMismatchError(ValueError):
-    """Baseline completion ranges do not match the stream's record types."""
-
-    def __init__(self) -> None:
-        super().__init__("ranges must match record_types")
-
-
-class CompleteHealthConnectBaselineRequest(HealthConnectWireModel):
-    """Bounded authoritative scan used to reconcile expired-token gaps."""
-
-    contract_version: Literal[1, 2, 3]
-    installation_id: str
-    record_types: list[HealthRecordType]
-    request_id: str
-    expected_token: str
-    baseline_generation: int = Field(gt=0)
-    ranges: dict[HealthRecordType, AuthoritativeScanRange]
-
-    @model_validator(mode="after")
-    def ranges_match_record_types(self) -> Self:
-        """Reconcile only streams explicitly granted and scanned by Android."""
-        record_types = set(_canonical_record_types(list(self.record_types)))
-        if set(self.ranges) != record_types:
-            raise BaselineRangesMismatchError
-        if self.contract_version == 1 and any(
-            scan.seen_record_ids is None for scan in self.ranges.values()
-        ):
-            raise V1SeenIdsRequiredError
-        return self
-
-
-class HealthConnectBaselineCompletionRead(HealthConnectWireModel):
-    """Safe operational counts from baseline reconciliation."""
-
-    deleted: dict[HealthRecordType, int]
-    status: Literal["completed"]
-
-
-class HealthConnectSyncStateQuery(HealthConnectWireModel):
-    installation_id: str
-    record_types: str
-
-
-class StartHealthConnectBaselineRequest(HealthConnectWireModel):
-    contract_version: Literal[1, 2, 3]
-    installation_id: str
-    record_types: list[HealthRecordType]
-    request_id: str
-    starting_token: str
-
-
-class HealthConnectSyncStateRead(HealthConnectWireModel):
-    baseline_generation: int
-    current_token: str | None
-    installation_id: str
-    record_types: list[HealthRecordType]
-    status: RecordStatus
-
-
-class HealthConnectBatchRead(HealthConnectWireModel):
-    accepted: dict[HealthRecordType, int]
-    deleted: dict[HealthRecordType, int]
-    replayed: bool
-    skipped: dict[HealthRecordType, int]
-    status: Literal["accepted"]
-
-
-class HealthConnectContractError(Exception):
-    """Malformed stream identity or request reuse."""
-
-
-class UnsupportedRecordTypesError(HealthConnectContractError):
-    """The stream contains an unknown record type."""
-
-    def __init__(self) -> None:
-        super().__init__("record_types contains unsupported values")
-
-
-class DuplicateRecordTypesError(HealthConnectContractError):
-    """The stream repeats a record type."""
-
-    def __init__(self) -> None:
-        super().__init__("record_types must not contain duplicates")
-
-
-class RequestIdentityReuseError(HealthConnectContractError):
-    """A committed request ID was presented with different content."""
-
-    def __init__(self) -> None:
-        super().__init__("request_id was reused for another page")
-
-
-class HealthConnectCursorConflictError(Exception):
-    """The page expected a cursor that is no longer current."""
-
-
-_LEGACY_SCHEMA_MODELS = [
-    HealthConnectSyncState,
-    HcOrigin,
-    HcPageRequest,
-    HcHeartRateRecord,
-    HcHeartRateSample,
-    HcSleepSession,
-    HcSleepStage,
-    HcStepInterval,
-    HcExerciseSession,
-    HcExerciseSegment,
+from tether.health_connect_persistence import (
+    HcBaselineSeen,
     HcExerciseLap,
     HcExerciseRoutePoint,
-]
-_SCHEMA_MODELS = [*_LEGACY_SCHEMA_MODELS, HcGenericRecord]
-_MODELS = [*_SCHEMA_MODELS, HcBaselineSeen]
-_PARENT_MODELS = {
-    "exercise": HcExerciseSession,
-    "heart_rate": HcHeartRateRecord,
-    "sleep": HcSleepSession,
-    "steps": HcStepInterval,
-}
+    HcExerciseSegment,
+    HcExerciseSession,
+    HcExerciseSessionCurrent,
+    HcGenericRecord,
+    HcHeartRateRecord,
+    HcHeartRateRecordCurrent,
+    HcHeartRateSample,
+    HcOrigin,
+    HcPageRequest,
+    HcSleepSession,
+    HcSleepSessionCurrent,
+    HcSleepStage,
+    HcStepInterval,
+    HcStepIntervalCurrent,
+    HealthConnectSyncState,
+)
+from tether.structured_logging import Logger
 
 
 def _empty_counts(
@@ -833,36 +77,12 @@ def _state_key(installation_id: str, record_types: tuple[HealthRecordType, ...])
     return f"{installation_id}\x1f{','.join(record_types)}"
 
 
-def _parse_record_types(raw: str) -> tuple[HealthRecordType, ...]:
-    values = set(raw.split(","))
-    if "" in values or not values or not values <= _ALLOWED_RECORD_TYPES:
-        raise UnsupportedRecordTypesError
-    return cast("tuple[HealthRecordType, ...]", tuple(sorted(values)))
-
-
-def _canonical_record_types(raw: list[str]) -> tuple[HealthRecordType, ...]:
-    if len(set(raw)) != len(raw):
-        raise DuplicateRecordTypesError
-    return _parse_record_types(",".join(raw))
-
-
-def _validate_versioned_record_types(
-    contract_version: int,
-    record_types: tuple[HealthRecordType, ...],
-) -> None:
-    if (
-        contract_version < GENERIC_RECORD_CONTRACT_VERSION
-        and not set(record_types) <= _CAPTURED_RECORD_TYPES
-    ):
-        raise UnsupportedRecordTypesError
-
-
 def _state_read(stored: HealthConnectSyncState[Fetched]) -> HealthConnectSyncStateRead:
     return HealthConnectSyncStateRead(
         baseline_generation=stored.baseline_generation,
         current_token=stored.current_token,
         installation_id=stored.installation_id,
-        record_types=list(_parse_record_types(stored.record_type_set)),
+        record_types=list(parse_record_types(stored.record_type_set)),
         status=cast("RecordStatus", stored.status),
     )
 
@@ -995,8 +215,8 @@ class HealthConnectIngestion:
         self, body: CompleteHealthConnectBaselineRequest
     ) -> HealthConnectBaselineCompletionRead:
         """Reconcile only bounded authoritative ranges and enter changes mode."""
-        record_types = _canonical_record_types(list(body.record_types))
-        _validate_versioned_record_types(body.contract_version, record_types)
+        record_types = canonical_record_types(list(body.record_types))
+        validate_versioned_record_types(body.contract_version, record_types)
         key = _state_key(body.installation_id, record_types)
         async with self.database.transaction(mode="immediate") as transaction:
             state = await transaction.fetch_one_or_none(
@@ -1220,8 +440,8 @@ class HealthConnectIngestion:
     async def ingest_batch(
         self, batch: HealthConnectBatchRequest
     ) -> HealthConnectBatchRead:
-        record_types = _canonical_record_types(list(batch.record_types))
-        _validate_versioned_record_types(batch.contract_version, record_types)
+        record_types = canonical_record_types(list(batch.record_types))
+        validate_versioned_record_types(batch.contract_version, record_types)
         key = _state_key(batch.installation_id, record_types)
         payload_hash = _hash_json(batch.model_dump(mode="json"))
         async with self.database.transaction(mode="immediate") as transaction:
@@ -1270,7 +490,7 @@ class HealthConnectIngestion:
                     ("steps", batch.records.steps),
                     *(
                         (record_type, getattr(batch.records, record_type))
-                        for record_type in _GENERIC_RECORD_TYPES
+                        for record_type in GENERIC_RECORD_TYPES
                     ),
                 ]
                 for record_type, records in baseline_records:
@@ -1814,7 +1034,7 @@ class HealthConnectIngestion:
         accepted: dict[HealthRecordType, int],
         skipped: dict[HealthRecordType, int],
     ) -> None:
-        for record_type in _GENERIC_RECORD_TYPES:
+        for record_type in GENERIC_RECORD_TYPES:
             records = cast("list[GenericRecord]", getattr(batch.records, record_type))
             for record in records:
                 digest = _hash_json(record.model_dump(mode="json"))
@@ -1858,72 +1078,6 @@ class HealthConnectIngestion:
                 accepted[record_type] += 1
 
 
-_CURRENT_VIEW_MIGRATIONS = {
-    "hc_heart_rate_record_current": 'CREATE VIEW "hc_heart_rate_record_current" AS SELECT parent.* FROM "hc_heart_rate_record" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_heart_rate_record" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
-    "hc_sleep_session_current": 'CREATE VIEW "hc_sleep_session_current" AS SELECT parent.* FROM "hc_sleep_session" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_sleep_session" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
-    "hc_step_interval_current": 'CREATE VIEW "hc_step_interval_current" AS SELECT parent.* FROM "hc_step_interval" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_step_interval" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
-    "hc_exercise_session_current": 'CREATE VIEW "hc_exercise_session_current" AS SELECT parent.* FROM "hc_exercise_session" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_exercise_session" candidate WHERE candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
-    "hc_generic_record_current": 'CREATE VIEW "hc_generic_record_current" AS SELECT parent.* FROM "hc_generic_record" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_generic_record" candidate WHERE candidate."record_type" = parent."record_type" AND candidate."record_uid" = parent."record_uid") AND parent."is_deleted" = 0',
-}
-_CHILD_CURRENT_VIEW_MIGRATIONS = {
-    "hc_heart_rate_sample_current": 'SELECT child.* FROM "hc_heart_rate_sample" child JOIN "hc_heart_rate_record_current" parent ON parent."version_id" = child."version_id"',
-    "hc_sleep_stage_current": 'SELECT child.* FROM "hc_sleep_stage" child JOIN "hc_sleep_session_current" parent ON parent."version_id" = child."version_id"',
-    "hc_exercise_segment_current": 'SELECT child.* FROM "hc_exercise_segment" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
-    "hc_exercise_lap_current": 'SELECT child.* FROM "hc_exercise_lap" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
-    "hc_exercise_route_point_current": 'SELECT child.* FROM "hc_exercise_route_point" child JOIN "hc_exercise_session_current" parent ON parent."version_id" = child."version_id"',
-}
-
-
-def _create_if_not_exists(sql: str) -> str:
-    """Make scaffold/view DDL safe when adopting a shifted migration key."""
-    for prefix in (
-        "CREATE UNIQUE INDEX ",
-        "CREATE INDEX ",
-        "CREATE TABLE ",
-        "CREATE VIEW ",
-    ):
-        if sql.startswith(prefix):
-            return sql.replace(prefix, f"{prefix}IF NOT EXISTS ", 1)
-    return sql
-
-
-async def create_health_connect_schema(database: Database) -> None:
-    """Initialize every typed table, index, and current-version view."""
-    # Freeze the original positional migration keys. Appending HcGenericRecord to
-    # the combined scaffold shifted every later key and replayed existing views
-    # on production. Future schema additions must likewise append explicit keys.
-    legacy_statements = scaffold(_LEGACY_SCHEMA_MODELS).splitlines()
-    migrations = {
-        f"{index:04d}_health_connect_schema": sql
-        for index, sql in enumerate(legacy_statements, start=1)
-    }
-    next_index = len(migrations) + 1
-    for view, sql in _CURRENT_VIEW_MIGRATIONS.items():
-        if view == "hc_generic_record_current":
-            continue
-        migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
-        next_index += 1
-    for view, query in _CHILD_CURRENT_VIEW_MIGRATIONS.items():
-        sql = f'CREATE VIEW "{view}" AS {query}'
-        migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
-        next_index += 1
-    for sql in scaffold([HcBaselineSeen]).splitlines():
-        migrations[f"{next_index:04d}_baseline_seen"] = _create_if_not_exists(sql)
-        next_index += 1
-
-    # Preserve the five keys already applied by the failed v3 production boot.
-    generic_start = len(legacy_statements) + 1
-    for index, sql in enumerate(
-        scaffold([HcGenericRecord]).splitlines(), start=generic_start
-    ):
-        migrations[f"{index:04d}_health_connect_schema"] = sql
-    generic_view = _CURRENT_VIEW_MIGRATIONS["hc_generic_record_current"]
-    migrations["0045_hc_generic_record_current"] = _create_if_not_exists(generic_view)
-
-    await database.migrate(migrations)
-    await database.verify(_MODELS)
-
-
 router = APIRouter()
 
 
@@ -1947,7 +1101,7 @@ async def read_health_connect_sync_state(
     request: Request, query: Annotated[HealthConnectSyncStateQuery, Query()]
 ) -> Response:
     try:
-        record_types = _parse_record_types(query.record_types)
+        record_types = parse_record_types(query.record_types)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=422)
     service = _runtime(request).health_connect_ingestion
@@ -1967,8 +1121,8 @@ async def start_health_connect_baseline(
     request: Request, body: StartHealthConnectBaselineRequest
 ) -> Response:
     try:
-        record_types = _canonical_record_types(list(body.record_types))
-        _validate_versioned_record_types(body.contract_version, record_types)
+        record_types = canonical_record_types(list(body.record_types))
+        validate_versioned_record_types(body.contract_version, record_types)
     except HealthConnectContractError as error:
         return JSONResponse({"detail": str(error)}, status_code=422)
     service = _runtime(request).health_connect_ingestion

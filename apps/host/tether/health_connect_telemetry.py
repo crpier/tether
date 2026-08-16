@@ -11,7 +11,8 @@ from typing import Any, Literal, cast
 from pydantic import AwareDatetime, BaseModel
 from snekql.sqlite import Database, Fetched, select
 
-from tether.health_connect import (
+from tether.health_connect_contracts import HealthRecordType
+from tether.health_connect_persistence import (
     HcExerciseLap,
     HcExerciseRoutePoint,
     HcExerciseSegment,
@@ -23,7 +24,6 @@ from tether.health_connect import (
     HcSleepSessionCurrent,
     HcSleepStage,
     HcStepIntervalCurrent,
-    HealthRecordType,
 )
 
 _SUMMARY_NUMERIC_SERIES_PER_TYPE = 8
