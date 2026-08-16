@@ -4,7 +4,7 @@ from snekql.sqlite import Database
 
 from tether.artifacts import create_artifact_schema
 from tether.bucket_item_store import create_bucket_item_schema
-from tether.conversations import create_conversation_schema
+from tether.conversation_store import create_conversation_schema
 from tether.ebook_stats import create_ebook_stats_schema
 from tether.gmail_store import create_gmail_schema
 from tether.kosync import create_kosync_schema

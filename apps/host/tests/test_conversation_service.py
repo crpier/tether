@@ -21,13 +21,9 @@ from snektest import (
     test,
 )
 
-from tether.conversations import (
-    ConversationNotFoundError,
-    ConversationService,
-    Message,
-    MessageDraft,
-    create_conversation_schema,
-)
+from tether.conversation_model import ConversationNotFoundError, MessageDraft
+from tether.conversation_store import Message, create_conversation_schema
+from tether.conversations import ConversationService
 
 GAP = timedelta(minutes=5)
 

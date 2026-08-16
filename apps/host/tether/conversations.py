@@ -1,185 +1,41 @@
-"""Host-owned conversation and transcript storage."""
+"""Conversation lifecycle and settled-transcript orchestration."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
-from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID, uuid7
 
-from fastapi import APIRouter, Query
-from pydantic import UUID7, BaseModel, PositiveInt
 from snekql.sqlite import (
-    CurrentTimestamp,
     Database,
     Fetched,
-    Integer,
-    Model,
-    Pending,
-    Text,
     Transaction,
-    UtcDatetime,
     delete,
     insert,
     select,
     update,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
 
+from tether.conversation_model import ConversationNotFoundError, MessageDraft
+from tether.conversation_store import Conversation, Message
 from tether.model_selection import (
     AgentModelCatalog,
     AgentModelConfig,
     ModelNotAllowedError,
 )
-from tether.pi_errors import PiRuntimeError
-
-type MessageRole = Literal["user", "assistant", "tool", "reasoning"]
-type JsonValue = (
-    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
-)
-
-
-class ConversationNotFoundError(Exception):
-    """Raised when transcript history is requested for an absent conversation."""
-
 
 SESSION_GAP = timedelta(minutes=5)
-"""Idle window after which a new turn rotates onto a fresh pi session.
-
-Roughly the provider's automatic prompt-cache warmth window: inside it we reuse
-the live session (cache hit); past it we start clean rather than resend a stale,
-uncached history — which also matches the usual "after a few minutes it's a new
-topic" shape of these conversations. Shared with the frontend via
-`ConversationRead.session_gap_seconds` so it does not hardcode the value.
-"""
+"""Idle window after which a new turn rotates onto a fresh pi session."""
 
 
 def _as_utc(value: datetime) -> datetime:
-    """Read a stored timestamp as UTC-aware; SQLite `CURRENT_TIMESTAMP` is naive."""
+    """Read a stored timestamp as UTC-aware; SQLite timestamps may be naive."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-@dataclass(frozen=True, slots=True)
-class MessageDraft:
-    """A transcript row ready to append to one conversation."""
-
-    content: str
-    conversation_id: UUID
-    role: MessageRole
-    pi_message_id: str | None = None
-    tool_args: dict[str, JsonValue] | None = None
-    tool_name: str | None = None
-    tool_result: dict[str, JsonValue] | None = None
-
-
-class Conversation[S = Pending](Model[S, "Conversation[Fetched]"]):
-    """A stable host-owned chat thread."""
-
-    id: Conversation.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    created_at: Conversation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    pi_session_id: Conversation.GenCol[UUID7] = Text(default_factory=uuid7)
-    selected_model: Conversation.Col[str | None] = Text(default=None, nullable=True)
-    title: Conversation.Col[str | None] = Text(default=None, nullable=True)
-
-
-class Message[S = Pending](Model[S, "Message[Fetched]"]):
-    """One settled transcript row owned by the host."""
-
-    id: Message.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    conversation_id: Message.Col[UUID7] = Text()
-    seq: Message.Col[PositiveInt] = Integer()
-    role: Message.Col[MessageRole] = Text()
-    content: Message.Col[str] = Text()
-    created_at: Message.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    pi_message_id: Message.Col[str | None] = Text(default=None, nullable=True)
-    tool_args: Message.Col[str | None] = Text(default=None, nullable=True)
-    tool_name: Message.Col[str | None] = Text(default=None, nullable=True)
-    tool_result: Message.Col[str | None] = Text(default=None, nullable=True)
-
-
-class ConversationRead(BaseModel):
-    """HTTP representation of a host-owned conversation.
-
-    `session_gap_seconds` and `latest_activity` let the frontend compute
-    whether the *next* message will land on a fresh pi session (see
-    `ConversationService.resolve_session`) without hardcoding the gap.
-    """
-
-    created_at: datetime
-    id: UUID7
-    latest_activity: datetime | None
-    pi_session_id: UUID7
-    selected_model: str | None
-    session_gap_seconds: int
-    title: str | None
-
-    @classmethod
-    def from_conversation(
-        cls,
-        conversation: Conversation[Fetched],
-        *,
-        latest_activity: datetime | None,
-        session_gap: timedelta = SESSION_GAP,
-    ) -> ConversationRead:
-        """Render a stored Conversation as JSON-safe response data."""
-        return cls(
-            created_at=conversation.created_at,
-            id=conversation.id,
-            latest_activity=latest_activity,
-            pi_session_id=conversation.pi_session_id,
-            selected_model=conversation.selected_model,
-            session_gap_seconds=int(session_gap.total_seconds()),
-            title=conversation.title,
-        )
-
-
-class SetConversationModelRequest(BaseModel):
-    """Body for selecting a conversation's model."""
-
-    selected_model: str
-
-
-class MessageRead(BaseModel):
-    """HTTP representation of a settled transcript row."""
-
-    content: str
-    conversation_id: UUID7
-    created_at: datetime
-    id: UUID7
-    pi_message_id: str | None
-    role: MessageRole
-    seq: PositiveInt
-    tool_args: dict[str, Any] | None
-    tool_name: str | None
-    tool_result: dict[str, Any] | None
-
-    @classmethod
-    def from_message(cls, message: Message[Fetched]) -> MessageRead:
-        """Render a stored Message as JSON-safe response data."""
-        return cls(
-            content=message.content,
-            conversation_id=message.conversation_id,
-            created_at=message.created_at,
-            id=message.id,
-            pi_message_id=message.pi_message_id,
-            role=message.role,
-            seq=message.seq,
-            tool_args=json.loads(message.tool_args)
-            if message.tool_args is not None
-            else None,
-            tool_name=message.tool_name,
-            tool_result=json.loads(message.tool_result)
-            if message.tool_result is not None
-            else None,
-        )
-
-
 class ConversationService:
-    """Persistence boundary for conversations and settled transcript rows."""
+    """Coordinate conversation sessions and canonical transcript persistence."""
 
     def __init__(
         self,
@@ -194,28 +50,28 @@ class ConversationService:
         )
 
     async def list_conversations(self) -> list[Conversation[Fetched]]:
-        """Return all conversations, creating the v1 default on first access."""
+        """Return all conversations, creating the default on first access."""
 
-        async def _list(tx: Transaction) -> list[Conversation[Fetched]]:
-            conversations = await tx.fetch_all(
+        async def _list(transaction: Transaction) -> list[Conversation[Fetched]]:
+            conversations = await transaction.fetch_all(
                 select(Conversation).all().order_by(Conversation.created_at.asc())
             )
             if conversations:
                 return conversations
-            conversation = await tx.execute(
+            conversation = await transaction.execute(
                 insert(
                     Conversation(selected_model=self.model_catalog.default_model)
                 ).returning()
             )
             return [conversation]
 
-        async with self.database.transaction(mode="immediate") as tx:
-            return await _list(tx)
+        async with self.database.transaction(mode="immediate") as transaction:
+            return await _list(transaction)
 
     async def fetch_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
-        """Return one conversation or raise when the id is unknown."""
-        async with self.database.transaction() as tx:
-            conversation = await tx.fetch_one_or_none(
+        """Return one conversation or raise when its id is unknown."""
+        async with self.database.transaction() as transaction:
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
         if conversation is None:
@@ -223,17 +79,12 @@ class ConversationService:
         return conversation
 
     async def fetch_conversation_by_pi_session_id(
-        self, pi_session_id: UUID
+        self,
+        pi_session_id: UUID,
     ) -> Conversation[Fetched]:
-        """Return the conversation currently live on a pi session id.
-
-        The loopback tool surface only knows the caller's pi session id (the
-        `session_id` the auth gate already validated against
-        `SessionRegistry`); this is how a tool call resolves that back to the
-        host-owned conversation whose transcript it may read.
-        """
-        async with self.database.transaction() as tx:
-            conversation = await tx.fetch_one_or_none(
+        """Resolve a live pi session id back to its host conversation."""
+        async with self.database.transaction() as transaction:
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.pi_session_id.eq(pi_session_id))
             )
         if conversation is None:
@@ -245,25 +96,20 @@ class ConversationService:
         conversation_id: UUID,
         selected_model: str,
     ) -> tuple[Conversation[Fetched], AgentModelConfig]:
-        """Persist a conversation's selected allowlist model id."""
+        """Persist one allowlisted model selection."""
         model = self.model_catalog.resolve(selected_model)
         if model is None:
             raise ModelNotAllowedError(selected_model)
 
-        async def _set_selected_model(
-            tx: Transaction,
-        ) -> Conversation[Fetched] | None:
-            _ = await tx.execute(
+        async with self.database.transaction(mode="immediate") as transaction:
+            _ = await transaction.execute(
                 update(Conversation)
                 .set(Conversation.selected_model.to(model.id))
                 .where(Conversation.id.eq(conversation_id))
             )
-            return await tx.fetch_one_or_none(
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            conversation = await _set_selected_model(tx)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation, model
@@ -275,26 +121,16 @@ class ConversationService:
         now: datetime,
         gap: timedelta,
     ) -> Conversation[Fetched]:
-        """Return the conversation to prompt, rotating pi if the gap ran cold.
-
-        A gap shorter than `gap` reuses the live pi session (warm provider
-        cache); a longer gap rotates to a fresh session. A conversation with no
-        prior activity is treated as warm — there is nothing stale to abandon.
-        """
+        """Reuse a warm pi session or rotate one whose activity gap ran cold."""
         last = await self.latest_activity(conversation.id)
         if last is None or _as_utc(now) - _as_utc(last) < gap:
             return conversation
         return await self.rotate_pi_session(conversation.id)
 
     async def latest_activity(self, conversation_id: UUID) -> datetime | None:
-        """Return when the last transcript row landed, or None if empty.
-
-        This is the server-observed wall-clock of the most recent turn — the
-        signal used to decide whether an incoming message still lands inside the
-        provider's prompt-cache warmth window.
-        """
-        async with self.database.transaction() as tx:
-            latest = await tx.fetch_one_or_none(
+        """Return when the most recent transcript row landed, if any."""
+        async with self.database.transaction() as transaction:
+            latest = await transaction.fetch_one_or_none(
                 select(Message)
                 .where(Message.conversation_id.eq(conversation_id))
                 .order_by(Message.seq.desc())
@@ -302,65 +138,35 @@ class ConversationService:
             )
         return latest.created_at if latest is not None else None
 
-    async def to_read(self, conversation: Conversation[Fetched]) -> ConversationRead:
-        """Render a conversation with its current session-freshness signal."""
-        latest = await self.latest_activity(conversation.id)
-        return ConversationRead.from_conversation(conversation, latest_activity=latest)
-
     async def rotate_pi_session(self, conversation_id: UUID) -> Conversation[Fetched]:
-        """Point a conversation at a fresh pi session; transcript rows are kept.
-
-        The user keeps seeing one continuous conversation; only the underlying
-        pi session identity changes, so the next turn starts pi with an empty
-        context instead of resending a stale, uncached history.
-        """
-
-        async def _rotate(tx: Transaction) -> Conversation[Fetched] | None:
-            _ = await tx.execute(
+        """Rotate pi identity while retaining the host transcript."""
+        async with self.database.transaction(mode="immediate") as transaction:
+            _ = await transaction.execute(
                 update(Conversation)
                 .set(Conversation.pi_session_id.to(uuid7()))
                 .where(Conversation.id.eq(conversation_id))
             )
-            return await tx.fetch_one_or_none(
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            conversation = await _rotate(tx)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation
 
     async def clear_conversation(self, conversation_id: UUID) -> Conversation[Fetched]:
-        """Delete a conversation's transcript rows and rotate its pi session.
-
-        The user's single continuous thread is emptied so they can start fresh;
-        rotating `pi_session_id` in the same transaction means the next turn
-        also starts pi with an empty context rather than replaying the (now
-        deleted) history.
-
-        This is a deliberately destructive, unconditional "New chat" action: the
-        transcript is hard-deleted with no version precondition and no undo. That
-        is accepted here because it is explicit single-user intent, not a
-        convergence/overwrite hazard — the caveat in docs/principles.md about
-        state-destructive edits is knowingly waived for this reset.
-        """
-
-        async def _clear(tx: Transaction) -> Conversation[Fetched] | None:
-            _ = await tx.execute(
+        """Delete transcript rows and rotate pi identity in one transaction."""
+        async with self.database.transaction(mode="immediate") as transaction:
+            _ = await transaction.execute(
                 delete(Message).where(Message.conversation_id.eq(conversation_id))
             )
-            _ = await tx.execute(
+            _ = await transaction.execute(
                 update(Conversation)
                 .set(Conversation.pi_session_id.to(uuid7()))
                 .where(Conversation.id.eq(conversation_id))
             )
-            return await tx.fetch_one_or_none(
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            conversation = await _clear(tx)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         return conversation
@@ -372,17 +178,9 @@ class ConversationService:
         limit: int | None = None,
         before_seq: int | None = None,
     ) -> list[Message[Fetched]]:
-        """Return settled transcript rows for a conversation in display order.
-
-        With no `limit`/`before_seq`, this is the full unbounded history in
-        ascending `seq` order (unchanged from before pagination existed). A
-        `limit` windows to the newest `limit` rows at or before `before_seq`
-        (or the newest overall when `before_seq` is absent) — fetched newest
-        first so `LIMIT` keeps the right end of the window, then reversed back
-        to ascending `seq` so callers never see a backwards page.
-        """
-        async with self.database.transaction() as tx:
-            conversation = await tx.fetch_one_or_none(
+        """Return a full transcript or an ascending window of its newest rows."""
+        async with self.database.transaction() as transaction:
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(conversation_id))
             )
             if conversation is None:
@@ -391,26 +189,21 @@ class ConversationService:
             if before_seq is not None:
                 query = query.where(Message.seq.lt(before_seq))
             if limit is None:
-                return await tx.fetch_all(query.order_by(Message.seq.asc()))
-            page = await tx.fetch_all(query.order_by(Message.seq.desc()).limit(limit))
+                return await transaction.fetch_all(query.order_by(Message.seq.asc()))
+            page = await transaction.fetch_all(
+                query.order_by(Message.seq.desc()).limit(limit)
+            )
             return list(reversed(page))
 
     async def current_session_start_seq(
-        self, conversation_id: UUID, *, gap: timedelta = SESSION_GAP
+        self,
+        conversation_id: UUID,
+        *,
+        gap: timedelta = SESSION_GAP,
     ) -> int | None:
-        """Return the `seq` of the first row in the live pi session, or None.
-
-        Rotation (`resolve_session`) never stamps a row with "this is where a
-        new session began" — it only swaps `pi_session_id`. This recovers that
-        boundary after the fact from the same signal rotation itself uses: the
-        most recent gap between consecutive rows' `created_at` that is at
-        least `gap` wide. Everything from that row onward is the live session;
-        everything before it is prior-session context. A conversation that has
-        never gone cold (no such gap) returns None — its whole transcript is
-        the live session, so there is nothing earlier to read.
-        """
-        async with self.database.transaction() as tx:
-            rows = await tx.fetch_all(
+        """Recover the first transcript sequence after the latest cold gap."""
+        async with self.database.transaction() as transaction:
+            rows = await transaction.fetch_all(
                 select(Message)
                 .where(Message.conversation_id.eq(conversation_id))
                 .order_by(Message.seq.asc())
@@ -428,14 +221,7 @@ class ConversationService:
         limit: int,
         before_seq: int | None = None,
     ) -> list[Message[Fetched]]:
-        """Return transcript rows from before the conversation's live session.
-
-        Windows exactly like `fetch_messages` (newest-first `limit`, optional
-        `before_seq` cursor to page further back), but clamped to strictly
-        before the live session's first row, so pi can never re-read the
-        context it already has. Returns an empty list when the conversation has
-        never rotated — there is no prior session to read.
-        """
+        """Return rows strictly before the live pi session's recovered boundary."""
         boundary_seq = await self.current_session_start_seq(conversation_id)
         if boundary_seq is None:
             return []
@@ -443,33 +229,35 @@ class ConversationService:
             boundary_seq if before_seq is None else min(before_seq, boundary_seq)
         )
         return await self.fetch_messages(
-            conversation_id, limit=limit, before_seq=effective_before_seq
+            conversation_id,
+            limit=limit,
+            before_seq=effective_before_seq,
         )
 
     async def append_message(self, draft: MessageDraft) -> Message[Fetched]:
-        """Append one settled transcript row with a monotonic per-thread sequence."""
+        """Idempotently append a settled row with a monotonic thread sequence."""
 
-        async def _append(tx: Transaction) -> Message[Fetched]:
-            conversation = await tx.fetch_one_or_none(
+        async def _append(transaction: Transaction) -> Message[Fetched]:
+            conversation = await transaction.fetch_one_or_none(
                 select(Conversation).where(Conversation.id.eq(draft.conversation_id))
             )
             if conversation is None:
                 raise ConversationNotFoundError(draft.conversation_id)
             if draft.pi_message_id is not None:
-                existing = await tx.fetch_one_or_none(
+                existing = await transaction.fetch_one_or_none(
                     select(Message)
                     .where(Message.conversation_id.eq(draft.conversation_id))
                     .where(Message.pi_message_id.eq(draft.pi_message_id))
                 )
                 if existing is not None:
                     return existing
-            latest = await tx.fetch_one_or_none(
+            latest = await transaction.fetch_one_or_none(
                 select(Message)
                 .where(Message.conversation_id.eq(draft.conversation_id))
                 .order_by(Message.seq.desc())
                 .limit(1)
             )
-            return await tx.execute(
+            return await transaction.execute(
                 insert(
                     Message(
                         content=draft.content,
@@ -477,180 +265,23 @@ class ConversationService:
                         pi_message_id=draft.pi_message_id,
                         role=draft.role,
                         seq=1 if latest is None else latest.seq + 1,
-                        tool_args=json.dumps(draft.tool_args)
-                        if draft.tool_args is not None
-                        else None,
+                        tool_args=(
+                            json.dumps(draft.tool_args)
+                            if draft.tool_args is not None
+                            else None
+                        ),
                         tool_name=draft.tool_name,
-                        tool_result=json.dumps(draft.tool_result)
-                        if draft.tool_result is not None
-                        else None,
+                        tool_result=(
+                            json.dumps(draft.tool_result)
+                            if draft.tool_result is not None
+                            else None
+                        ),
                     )
                 ).returning()
             )
 
-        async with self.database.transaction(mode="immediate") as tx:
-            return await _append(tx)
+        async with self.database.transaction(mode="immediate") as transaction:
+            return await _append(transaction)
 
 
-async def create_conversation_schema(database: Database) -> None:
-    """Create conversation and transcript tables on an initialized database."""
-    migrations = {
-        f"003_{label}": sql
-        for label, sql in scaffold_sqlite_statements([Conversation, Message])
-    }
-    await database.migrate(migrations)
-
-
-router = APIRouter()
-
-
-class _ConversationRuntimeRegistry(Protocol):
-    """Live conversation-process operations needed by HTTP handlers."""
-
-    async def set_model(
-        self, conversation_id: object, model: AgentModelConfig
-    ) -> None: ...
-
-    async def discard(self, conversation_id: object) -> None: ...
-
-
-class _ConversationRuntime(Protocol):
-    """Conversation dependencies available while the host serves requests."""
-
-    conversation_runtime_registry: _ConversationRuntimeRegistry
-    conversation_service: ConversationService
-
-
-def _runtime(request: Request) -> _ConversationRuntime:
-    """Read conversation dependencies from the canonical host runtime."""
-    return cast("_ConversationRuntime", request.app.state.runtime)
-
-
-@router.get("/api/conversations", response_model=list[ConversationRead])
-async def list_conversations(request: Request) -> Response:
-    """List host-owned conversations."""
-    service = _runtime(request).conversation_service
-    conversations = await service.list_conversations()
-    return JSONResponse(
-        [
-            (await service.to_read(conversation)).model_dump(mode="json")
-            for conversation in conversations
-        ]
-    )
-
-
-class MessagesQuery(BaseModel):
-    """Query string for windowed transcript pagination.
-
-    No params means the full unbounded history, exactly as before pagination
-    existed. `limit` alone windows to the newest `limit` rows; `before_seq`
-    paired with `limit` walks backwards from a cursor (the oldest `seq` seen
-    so far) to fetch the next-older page.
-
-    >>> MessagesQuery().limit is None
-    True
-    """
-
-    limit: PositiveInt | None = None
-    before_seq: PositiveInt | None = None
-
-
-async def _messages_response(
-    request: Request,
-    conversation_id: UUID,
-    *,
-    limit: int | None = None,
-    before_seq: int | None = None,
-) -> Response:
-    """Serialize settled transcript rows or translate absence to 404."""
-    try:
-        messages = await _runtime(request).conversation_service.fetch_messages(
-            conversation_id, limit=limit, before_seq=before_seq
-        )
-    except ConversationNotFoundError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    return JSONResponse(
-        [
-            MessageRead.from_message(message).model_dump(mode="json")
-            for message in messages
-        ]
-    )
-
-
-@router.post(
-    "/api/conversations/{conversation_id}/model", response_model=ConversationRead
-)
-async def set_conversation_model(
-    request: Request,
-    body: SetConversationModelRequest,
-    conversation_id: str,
-) -> Response:
-    """Select the model used for subsequent turns in one conversation."""
-    raw_conversation_id = conversation_id
-    try:
-        parsed_conversation_id = UUID(raw_conversation_id)
-    except ValueError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    try:
-        (
-            conversation,
-            selected_model,
-        ) = await _runtime(request).conversation_service.set_selected_model(
-            parsed_conversation_id,
-            body.selected_model,
-        )
-    except ConversationNotFoundError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    except ModelNotAllowedError:
-        return JSONResponse({"detail": "model not allowed"}, status_code=422)
-    try:
-        await _runtime(request).conversation_runtime_registry.set_model(
-            conversation.id, selected_model
-        )
-    except PiRuntimeError:
-        return JSONResponse({"detail": "set_model failed"}, status_code=502)
-    read = await _runtime(request).conversation_service.to_read(conversation)
-    return JSONResponse(read.model_dump(mode="json"))
-
-
-@router.get(
-    "/api/conversations/{conversation_id}/messages", response_model=list[MessageRead]
-)
-async def list_messages(
-    request: Request, query: Annotated[MessagesQuery, Query()], conversation_id: str
-) -> Response:
-    """List settled transcript rows for one conversation."""
-    raw_conversation_id = conversation_id
-    try:
-        parsed_conversation_id = UUID(raw_conversation_id)
-    except ValueError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    return await _messages_response(
-        request,
-        parsed_conversation_id,
-        limit=query.limit,
-        before_seq=query.before_seq,
-    )
-
-
-@router.delete(
-    "/api/conversations/{conversation_id}/messages", response_model=ConversationRead
-)
-async def clear_messages(request: Request, conversation_id: str) -> Response:
-    """Clear one conversation's transcript and rotate its pi session."""
-    raw_conversation_id = conversation_id
-    try:
-        parsed_conversation_id = UUID(raw_conversation_id)
-    except ValueError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    try:
-        conversation = await _runtime(request).conversation_service.clear_conversation(
-            parsed_conversation_id
-        )
-    except ConversationNotFoundError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    # Tear down any live runtime bound to the now-rotated session so the next
-    # turn spawns clean against the fresh pi session instead of replaying it.
-    await _runtime(request).conversation_runtime_registry.discard(conversation.id)
-    read = await _runtime(request).conversation_service.to_read(conversation)
-    return JSONResponse(read.model_dump(mode="json"))
+__all__ = ["SESSION_GAP", "ConversationService"]

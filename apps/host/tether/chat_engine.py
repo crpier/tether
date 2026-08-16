@@ -11,7 +11,7 @@ from time import monotonic
 
 from snekql.sqlite import Fetched
 
-from tether.conversations import Conversation
+from tether.conversation_store import Conversation
 from tether.model_selection import (
     AgentModelCatalog,
     AgentModelConfig,

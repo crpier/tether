@@ -13,7 +13,7 @@ from tether.chat_engine import (
     RuntimeRegistryConfig,
     _RuntimeSlot,
 )
-from tether.conversations import Conversation
+from tether.conversation_store import Conversation
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_runtime import PiRuntime

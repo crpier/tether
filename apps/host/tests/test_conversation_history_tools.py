@@ -19,7 +19,9 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tether.app_runtime import app_runtime
-from tether.conversations import ConversationService, Message, MessageDraft
+from tether.conversation_model import MessageDraft
+from tether.conversation_store import Message
+from tether.conversations import ConversationService
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 

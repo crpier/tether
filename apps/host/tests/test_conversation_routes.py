@@ -25,7 +25,9 @@ from starlette.websockets import WebSocketDisconnect
 from tether import server
 from tether.app_runtime import app_runtime
 from tether.chat_ws import _prompt_with_time_context, local_timezone_name
-from tether.conversations import ConversationService, Message, MessageDraft
+from tether.conversation_model import MessageDraft
+from tether.conversation_store import Message
+from tether.conversations import ConversationService
 from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
