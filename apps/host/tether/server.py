@@ -51,7 +51,8 @@ from tether.structured_logging import (
     ContextLoggerMiddleware,
     configure_logging,
 )
-from tether.stt import HttpSttTransport, SttClient
+from tether.stt import SttClient
+from tether.stt_transport import HttpSttTransport
 from tether.tavily_search import HttpTavilyTransport, TavilySearchProvider
 from tether.telemetry import (
     TelemetryMiddleware,
