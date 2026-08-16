@@ -396,17 +396,6 @@ class DuplicateRecordTypesError(HealthConnectContractError):
         super().__init__("record_types must not contain duplicates")
 
 
-class RequestIdentityReuseError(HealthConnectContractError):
-    """A committed request ID was presented with different content."""
-
-    def __init__(self) -> None:
-        super().__init__("request_id was reused for another page")
-
-
-class HealthConnectCursorConflictError(Exception):
-    """The page expected a cursor that is no longer current."""
-
-
 def parse_record_types(raw: str) -> tuple[HealthRecordType, ...]:
     values = set(raw.split(","))
     if "" in values or not values or not values <= _ALLOWED_RECORD_TYPES:
