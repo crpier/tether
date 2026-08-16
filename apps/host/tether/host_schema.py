@@ -9,10 +9,10 @@ from tether.ebook_stats_store import create_ebook_stats_schema
 from tether.gmail_store import create_gmail_schema
 from tether.kosync_store import create_kosync_schema
 from tether.memory_store import create_memory_schema
-from tether.notifications import create_notification_schema
+from tether.notification_store import create_notification_schema
 from tether.panel_store import create_panel_schema
 from tether.proposal_store import create_proposal_schema
-from tether.push import create_push_schema
+from tether.push_store import create_push_schema
 from tether.readwise_store import create_readwise_schema
 from tether.recall_store import create_recall_schema
 from tether.search_projection.metadata import create_search_meta_schema

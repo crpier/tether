@@ -25,11 +25,9 @@ from snektest import (
     test,
 )
 
-from tether.notifications import (
-    NotificationDraft,
-    NotificationService,
-    create_notification_schema,
-)
+from tether.notification_model import NotificationDraft
+from tether.notification_store import NotificationStore, create_notification_schema
+from tether.notifications import NotificationService
 from tether.structured_logging import Logger
 from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
 from tether.todo_store import create_todo_schema
@@ -59,7 +57,9 @@ class TodoEnv:
         self.triggers: TriggerService = TriggerService(
             database=database, tracer=noop_tracer()
         )
-        self.notifications: NotificationService = NotificationService(database=database)
+        self.notifications: NotificationService = NotificationService(
+            store=NotificationStore(database)
+        )
 
 
 @fixture

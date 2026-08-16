@@ -30,7 +30,8 @@ from tether.action_registry import (
     build_action_registry,
 )
 from tether.events import HubEvent, InvalidateEvent
-from tether.notifications import NotificationService, create_notification_schema
+from tether.notification_store import NotificationStore, create_notification_schema
+from tether.notifications import NotificationService
 from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_errors import InvalidActionError, ProposalConflictError
 from tether.proposal_execution import ProposalExecutor
@@ -137,7 +138,7 @@ async def harness() -> AsyncGenerator[Harness]:
     await create_proposal_schema(db)
     await create_notification_schema(db)
     publisher = RecordingPublisher()
-    notifications = NotificationService(database=db)
+    notifications = NotificationService(store=NotificationStore(db))
     calls = ExecutorCalls()
     autonomy = ProposalAutonomyService(database=db, event_publisher=publisher)
     executor = ProposalExecutor(database=db, action_registry=_registry(calls))

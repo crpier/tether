@@ -17,11 +17,9 @@ from snekql.sqlite import Config, Database
 from snektest import assert_eq, fixture, load_fixture, test
 from starlette.testclient import TestClient
 
-from tether.notifications import (
-    NotificationDraft,
-    NotificationService,
-    create_notification_schema,
-)
+from tether.notification_model import NotificationDraft
+from tether.notification_store import NotificationStore, create_notification_schema
+from tether.notifications import NotificationService
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
@@ -43,7 +41,7 @@ async def notification_service() -> AsyncGenerator[NotificationService]:
     """A fresh, isolated notification database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_notification_schema(db)
-    yield NotificationService(database=db)
+    yield NotificationService(store=NotificationStore(db))
     await db.close()
 
 
