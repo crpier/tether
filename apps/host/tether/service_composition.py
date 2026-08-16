@@ -74,16 +74,14 @@ from tether.scheduler import (
 from tether.search_fusion import SearchFusionService
 from tether.search_projection.embeddings import Embedder
 from tether.search_projection.metadata import SearchMetaService
-from tether.search_tools import (
-    PersistentSearchSpendGuard,
-    SearchProvider,
-    TavilySearchProvider,
-)
+from tether.search_spend import PersistentSearchSpendGuard
 from tether.structured_logging import Logger
+from tether.tavily_search import TavilySearchProvider
 from tether.todo_digest import render_todo_digest
 from tether.todos import TodoService, migrate_pending_action_facets
 from tether.triage import TriageService
 from tether.triggers import TriggerService
+from tether.web_search import SearchProvider
 from tether.youtube_search import YouTubeSearchService
 from tether.youtube_search_index import YouTubeSearchIndex
 from tether.youtube_search_reconciler import YouTubeSearchReconciler

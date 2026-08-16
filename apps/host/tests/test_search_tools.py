@@ -5,14 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from snekok import Err, Ok, Result
 from snektest import assert_eq, test
 
 from tests.surfaces import call_tool, surface_client
-from tether.search_tools import (
-    SearchBudgetExhaustedError,
+from tether.web_search import (
+    SearchBudgetExhaustedFailure,
     SearchDepth,
     SearchResponse,
     SearchResult,
+    WebSearchFailure,
 )
 from tether.youtube_quota import QuotaMeta
 
@@ -22,9 +24,9 @@ class ExhaustedSearchProvider:
 
     async def search(
         self, query: str, *, max_results: int, search_depth: SearchDepth
-    ) -> SearchResponse:
+    ) -> Result[SearchResponse, WebSearchFailure]:
         _ = (query, max_results, search_depth)
-        raise SearchBudgetExhaustedError(1000, 1000)
+        return Err(SearchBudgetExhaustedFailure(limit=1000, used=1000))
 
 
 class FakeSearchProvider:
@@ -32,18 +34,20 @@ class FakeSearchProvider:
 
     async def search(
         self, query: str, *, max_results: int, search_depth: SearchDepth
-    ) -> SearchResponse:
+    ) -> Result[SearchResponse, WebSearchFailure]:
         _ = (query, max_results, search_depth)
-        return SearchResponse(
-            quota=QuotaMeta(limit=1000, remaining=998, used=2),
-            results=(
-                SearchResult(
-                    extracted_content="# Async IO\nFull page.",
-                    snippet="Python asynchronous IO guide.",
-                    title="Async IO",
-                    url="https://example.com/async",
+        return Ok(
+            SearchResponse(
+                quota=QuotaMeta(limit=1000, remaining=998, used=2),
+                results=(
+                    SearchResult(
+                        extracted_content="# Async IO\nFull page.",
+                        snippet="Python asynchronous IO guide.",
+                        title="Async IO",
+                        url="https://example.com/async",
+                    ),
                 ),
-            ),
+            )
         )
 
 
