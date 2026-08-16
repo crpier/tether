@@ -54,20 +54,27 @@ from snektest import (
     test,
 )
 
-from tether.embeddings import (
+from tether.memory_search_index import (
+    SearchCandidate,
+    SearchDocument,
+    SearchIndex,
+)
+from tether.memory_search_reconciler import SearchReconciler
+from tether.memory_store import (
+    Memory,
+    create_memory_schema,
+)
+from tether.search_projection.embeddings import (
     Embedder,
     FakeEmbedder,
     Vector,
     vector_from_bytes,
     vector_to_bytes,
 )
-from tether.memory_store import (
-    Memory,
-    create_memory_schema,
+from tether.search_projection.metadata import (
+    SearchMetaService,
+    create_search_meta_schema,
 )
-from tether.reconciler import SearchReconciler
-from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
-from tether.search_meta import SearchMetaService, create_search_meta_schema
 from tether.structured_logging import Logger
 
 _DIM = 16

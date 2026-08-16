@@ -51,10 +51,10 @@ from typing import TYPE_CHECKING, Protocol
 
 from snekql.sqlite import update
 
-from tether.embeddings import vector_from_bytes, vector_to_bytes
+from tether.memory_search_index import SearchDocument
 from tether.memory_store import Memory, tethered_corpus
-from tether.reconcile_loop import run_reconcile_loop
-from tether.search_index import SearchDocument
+from tether.search_projection.embeddings import vector_from_bytes, vector_to_bytes
+from tether.search_projection.loop import run_reconcile_loop
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,9 +62,9 @@ if TYPE_CHECKING:
 
     from snekql.sqlite import Database, Fetched, Transaction
 
-    from tether.embeddings import Embedder, Vector
-    from tether.search_index import SearchCandidate
-    from tether.search_meta import SearchMetaService
+    from tether.memory_search_index import SearchCandidate
+    from tether.search_projection.embeddings import Embedder, Vector
+    from tether.search_projection.metadata import SearchMetaService
     from tether.structured_logging import Logger
 
 

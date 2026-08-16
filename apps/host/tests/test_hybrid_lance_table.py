@@ -23,7 +23,7 @@ import structlog
 from anyio import TemporaryDirectory
 from snektest import assert_eq, assert_gt, assert_in, assert_not_in, assert_raises, test
 
-from tether.hybrid_lance_table import (
+from tether.search_projection.lance_table import (
     HybridLanceTable,
     TableDocument,
     TableHit,

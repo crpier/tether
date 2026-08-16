@@ -47,7 +47,6 @@ from snektest import (
 )
 from structlog.testing import capture_logs
 
-from tether.embeddings import FakeEmbedder
 from tether.memories import (
     EmptyMemoryContentError,
     FacetOverviewEntry,
@@ -57,6 +56,12 @@ from tether.memories import (
 )
 from tether.memory_projection import KnowledgeBaseService, MemoryProjection
 from tether.memory_search import EmptySearchQueryError, MemorySearchService
+from tether.memory_search_index import (
+    SearchCandidate,
+    SearchDocument,
+    SearchIndex,
+)
+from tether.memory_search_reconciler import SearchReconciler
 from tether.memory_store import (
     Memory,
     MemoryProvenance,
@@ -65,9 +70,11 @@ from tether.memory_store import (
     loose_queue,
     tethered_corpus,
 )
-from tether.reconciler import SearchReconciler
-from tether.search_index import SearchCandidate, SearchDocument, SearchIndex
-from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.search_projection.embeddings import FakeEmbedder
+from tether.search_projection.metadata import (
+    SearchMetaService,
+    create_search_meta_schema,
+)
 from tether.structured_logging import Logger
 
 

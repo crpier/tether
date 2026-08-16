@@ -44,19 +44,22 @@ from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_item_search import BucketItemSearchService
 from tether.bucket_item_store import BucketItem, create_bucket_item_schema
 from tether.bucket_items import BucketItemService
-from tether.embeddings import FakeEmbedder
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_search import EmptySearchQueryError, MemorySearchService
+from tether.memory_search_index import SearchCandidate, SearchDocument
+from tether.memory_search_reconciler import SearchReconciler
 from tether.memory_store import (
     Memory,
     create_memory_schema,
 )
 from tether.recall_store import StudyItem, StudyItemState, create_recall_schema
-from tether.reconciler import SearchReconciler
 from tether.search_fusion import FusedHit, InvalidSearchWindowError, SearchFusionService
-from tether.search_index import SearchCandidate, SearchDocument
-from tether.search_meta import SearchMetaService, create_search_meta_schema
+from tether.search_projection.embeddings import FakeEmbedder
+from tether.search_projection.metadata import (
+    SearchMetaService,
+    create_search_meta_schema,
+)
 from tether.structured_logging import Logger
 
 _DIM = 16

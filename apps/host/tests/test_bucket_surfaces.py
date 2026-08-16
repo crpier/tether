@@ -16,7 +16,7 @@ from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
 from starlette.testclient import TestClient
 
 from tests.surfaces import call_tool, login, surface_client
-from tether.embeddings import FakeEmbedder
+from tether.search_projection.embeddings import FakeEmbedder
 
 make_client = surface_client
 

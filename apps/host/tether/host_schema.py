@@ -15,7 +15,7 @@ from tether.proposal_store import create_proposal_schema
 from tether.push import create_push_schema
 from tether.readwise_store import create_readwise_schema
 from tether.recall_store import create_recall_schema
-from tether.search_meta import create_search_meta_schema
+from tether.search_projection.metadata import create_search_meta_schema
 from tether.todos import create_todo_schema
 from tether.trigger_store import create_trigger_schema
 from tether.youtube_store import create_youtube_schema

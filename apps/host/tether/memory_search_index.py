@@ -1,7 +1,8 @@
 """The SearchIndex adapter: the Memory-shaped projection of `HybridLanceTable`.
 
 A thin domain skin over the generic hybrid retriever in
-`tether.hybrid_lance_table`, which owns the LanceDB mechanics (native FTS +
+`tether.search_projection.lance_table`, which owns the LanceDB mechanics
+(native FTS +
 flat-scan cosine fused by RRF, merge-insert upserts, the self-healing
 `optimize`). This module fixes the Memory column set — just `id`, `content`,
 and the vector — and translates at the boundary: `SearchDocument` in,
@@ -22,7 +23,7 @@ from uuid import UUID
 
 import structlog
 
-from tether.hybrid_lance_table import HybridLanceTable, TableDocument
+from tether.search_projection.lance_table import HybridLanceTable, TableDocument
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 _TABLE = "memories"
 """The single table name inside the index dataset."""
 
-_logger = structlog.stdlib.get_logger("tether.search_index")
+_logger = structlog.stdlib.get_logger("tether.memory_search_index")
 """Module logger for the salvage messages `optimize()` may emit.
 
 The Memory reconcile loop calls `optimize()` without a run-scoped logger, so

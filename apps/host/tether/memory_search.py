@@ -21,7 +21,7 @@ from tether.structured_logging import Logger
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from tether.search_index import SearchCandidate
+    from tether.memory_search_index import SearchCandidate
 
 
 class EmptySearchQueryError(Exception):

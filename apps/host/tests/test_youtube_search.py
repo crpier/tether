@@ -15,7 +15,7 @@ from uuid import uuid4
 import structlog
 from snektest import assert_eq, test
 
-from tether.embeddings import FakeEmbedder
+from tether.search_projection.embeddings import FakeEmbedder
 from tether.structured_logging import Logger
 from tether.youtube_search import YouTubeSearchService
 from tether.youtube_search_index import ChunkCandidate

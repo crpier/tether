@@ -52,7 +52,7 @@ from snekql.sqlite import select
 
 from tether.bucket_item_index import BucketItemDocument
 from tether.bucket_item_store import BucketItem, bucket_item_index_text
-from tether.reconcile_loop import run_reconcile_loop
+from tether.search_projection.loop import run_reconcile_loop
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -61,8 +61,8 @@ if TYPE_CHECKING:
     from snekql.sqlite import Database, Fetched, SelectModelQuery
 
     from tether.bucket_item_index import BucketItemCandidate
-    from tether.embeddings import Embedder
-    from tether.search_meta import SearchMetaService
+    from tether.search_projection.embeddings import Embedder
+    from tether.search_projection.metadata import SearchMetaService
     from tether.structured_logging import Logger
 
 
