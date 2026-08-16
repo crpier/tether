@@ -22,45 +22,17 @@ and are never updated or deleted, so the log is a durable audit trail.
 
 from __future__ import annotations
 
-from typing import ClassVar
 from uuid import uuid7
 
 from opentelemetry.trace import Tracer
-from pydantic import UUID7, Json, PositiveInt
-from snekql.sqlite import (
-    CurrentTimestamp,
-    Database,
-    Fetched,
-    Index,
-    Integer,
-    Model,
-    Pending,
-    Text,
-    Transaction,
-    UtcDatetime,
-    insert,
-    select,
-)
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
+from pydantic import UUID7, PositiveInt
+from snekql.sqlite import Database, Fetched, Transaction, insert, select
 
+from tether.artifact_errors import ArtifactHtmlTooLargeError, ArtifactNotFoundError
+from tether.artifact_model import ARTIFACT_HTML_SIZE_CAP_BYTES, JsonValue
+from tether.artifact_store import Artifact, ArtifactEvent
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
-
-type JsonValue = (
-    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
-)
-
-ARTIFACT_HTML_SIZE_CAP_BYTES = 1_000_000
-"""Host-side cap on an Artifact's `html` payload (~1 MB), UTF-8 encoded."""
-
-
-class ArtifactNotFoundError(Exception):
-    """Raised when an operation targets an artifact id (or id+version) that
-    does not exist."""
-
-
-class ArtifactHtmlTooLargeError(Exception):
-    """Raised when `html` exceeds `ARTIFACT_HTML_SIZE_CAP_BYTES` on Create/Update."""
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -82,32 +54,6 @@ def _check_html_size(html: str) -> None:
             f"{ARTIFACT_HTML_SIZE_CAP_BYTES}-byte cap"
         )
         raise ArtifactHtmlTooLargeError(msg)
-
-
-class Artifact[S = Pending](Model[S, "Artifact[Fetched]"]):
-    id: Artifact.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    """This row's own id — one per version, never reused."""
-    artifact_id: Artifact.Col[UUID7] = Text()
-    """The stable identity across every version of this document."""
-    version: Artifact.Col[PositiveInt] = Integer()
-    """1-based, incrementing by exactly 1 per Update; immutable once written."""
-    title: Artifact.Col[str] = Text()
-    html: Artifact.Col[str] = Text()
-    created_at: Artifact.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-
-    __indexes__: ClassVar = [Index(artifact_id, version)]
-
-
-class ArtifactEvent[S = Pending](Model[S, "ArtifactEvent[Fetched]"]):
-    id: ArtifactEvent.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    artifact_id: ArtifactEvent.Col[UUID7] = Text()
-    """The artifact this event was reported by/about; append-only, never mutated."""
-    payload: ArtifactEvent.Col[Json[dict[str, JsonValue]]] = Text()
-    """Opaque, free-form event data — no schema enforced, by convention an
-    optional `type` key names it for whoever renders it later."""
-    created_at: ArtifactEvent.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-
-    __indexes__: ClassVar = [Index(artifact_id)]
 
 
 class ArtifactService:
@@ -307,23 +253,3 @@ class ArtifactService:
         if row is None:
             raise ArtifactNotFoundError(artifact_id)
         return row
-
-
-async def create_artifact_schema(database: Database) -> None:
-    """Create the Artifact and ArtifactEvent tables on an initialized database.
-
-    Applied as its own ordered migrations after the other domains' (prefix
-    `011_`). A snekql migration body runs exactly one statement, so scaffolding
-    each model's (table, index) pair becomes two ordered migrations apiece.
-
-    >>> database = await Database.initialize(backend=Config(database=":memory:"))
-    >>> await create_artifact_schema(database)
-    """
-    migrations = {
-        f"011_{label}": sql
-        for label, sql in (
-            *scaffold_sqlite_statements([Artifact]),
-            *scaffold_sqlite_statements([ArtifactEvent]),
-        )
-    }
-    await database.migrate(migrations)
