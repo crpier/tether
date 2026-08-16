@@ -19,7 +19,7 @@ from pydantic import UUID7, BaseModel, PositiveInt, StringConstraints
 from snekql.sqlite import Fetched
 from starlette.requests import Request
 
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.memories import (
     FacetOverviewEntry,
     MemoryConflictError,

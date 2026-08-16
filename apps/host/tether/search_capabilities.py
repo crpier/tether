@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from starlette.requests import Request
 
 from tether.bucket_capabilities import BucketItemRead
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.memory_capabilities import MemoryRead
 from tether.memory_search import EmptySearchQueryError
 from tether.memory_store import Memory

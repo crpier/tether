@@ -20,7 +20,7 @@ from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.proposal_autonomy import GrantSuggestion
 from tether.proposal_errors import (
     InvalidActionError,

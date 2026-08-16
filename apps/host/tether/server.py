@@ -62,7 +62,8 @@ from tether.telemetry import (
     TelemetrySettings,
 )
 from tether.todo_tools import internal_todo_tool_routes
-from tether.tools import SessionRegistry, internal_tool_routes
+from tether.tool_runtime import SessionRegistry
+from tether.tools import internal_tool_routes
 from tether.trace_routes import trace_routes
 from tether.transcripts.acquisition import (
     TranscriptAcquisitionConfig,

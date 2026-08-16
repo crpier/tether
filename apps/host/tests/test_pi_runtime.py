@@ -35,7 +35,7 @@ from tether.pi_runtime import PiRuntime
 from tether.pi_turn_events import AgentEnded, MessageSettled, ModelTurnStarted
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 
 
 class ControlledByteReader:

@@ -21,7 +21,7 @@ from tether.pi_process import (
 )
 from tether.pi_rpc import PiRpcClient
 from tether.pi_turn_events import AgentEnded, TurnEvent, decode_turn_event
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 """Time to wait for pi to exit before escalating termination."""

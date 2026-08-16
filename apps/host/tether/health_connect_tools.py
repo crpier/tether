@@ -10,9 +10,10 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether.app_runtime import app_runtime
-from tether.capabilities import CapabilityOutcome, bind_params
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
 from tether.health_connect import HealthRecordType
-from tether.tools import ToolSpec
+from tether.tool_runtime import ToolSpec
 
 
 class HealthConnectInventoryParams(BaseModel):

@@ -20,8 +20,9 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from tether import trigger_capabilities
-from tether.capabilities import CapabilityOutcome, bind_params
-from tether.tools import ToolSpec
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
+from tether.tool_runtime import ToolSpec
 from tether.trigger_capabilities import TRIGGER_ERRORS, TriggerSpecBody
 
 

@@ -42,7 +42,7 @@ from tether.scheduler import (
 )
 from tether.structured_logging import Logger
 from tether.system_prompt import TASK_SYSTEM_PROMPT
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 from tether.trigger_schedule import OnceTriggerSpec
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
 from tether.triggers import TriggerService

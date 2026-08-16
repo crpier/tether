@@ -28,7 +28,7 @@ from tether.todo_capabilities import (
     set_status,
 )
 from tether.todos import TodoStatus
-from tether.tools import ToolSpec
+from tether.tool_runtime import ToolSpec
 
 
 class CreateTodoParams(BaseModel):

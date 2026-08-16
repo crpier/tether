@@ -34,8 +34,9 @@ from tether.bucket_capabilities import (
     set_purchase_decision,
 )
 from tether.bucket_item_model import PurchaseData, PurchaseDecision
-from tether.capabilities import CapabilityOutcome, bind_params
-from tether.tools import ToolSpec
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
+from tether.tool_runtime import ToolSpec
 
 
 class AddMovieParams(BaseModel):

@@ -16,7 +16,7 @@ from typing import cast
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from tether.capabilities import CapabilityOutcome, ErrorRule
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.kosync import EbookDocument, Fetched, KosyncService
 
 KOSYNC_ERRORS: tuple[ErrorRule, ...] = ()

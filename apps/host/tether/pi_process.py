@@ -11,7 +11,7 @@ from typing import Protocol
 
 from anyio import Path as AsyncPath
 
-from tether.tools import SessionRegistry
+from tether.tool_runtime import SessionRegistry
 
 BUNDLED_PI_SKILL_NAMES = ("grilling", "writing-great-skills")
 """Release-managed skills explicitly allowlisted into every pi process."""

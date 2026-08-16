@@ -23,9 +23,10 @@ from starlette.routing import Route
 
 from tether import youtube_capabilities
 from tether.app_runtime import app_runtime
-from tether.capabilities import CapabilityOutcome, bind_params
+from tether.capabilities import bind_params
+from tether.capability_contracts import CapabilityOutcome
 from tether.structured_logging import get_request_logger
-from tether.tools import ToolSpec
+from tether.tool_runtime import ToolSpec
 from tether.youtube import BrowseResult, SearchResult
 from tether.youtube_capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
 from tether.youtube_store import (
