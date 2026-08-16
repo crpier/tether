@@ -46,12 +46,8 @@ from tether.pi_runtime import (
 from tether.structured_logging import Logger
 from tether.system_prompt import system_prompt_for
 from tether.tools import SessionRegistry
-from tether.triggers import (
-    DEFAULT_BACKOFF_BASE,
-    DEFAULT_MAX_ATTEMPTS,
-    ScheduledTrigger,
-    TriggerService,
-)
+from tether.trigger_store import ScheduledTrigger
+from tether.triggers import DEFAULT_BACKOFF_BASE, DEFAULT_MAX_ATTEMPTS, TriggerService
 
 
 class Clock(Protocol):

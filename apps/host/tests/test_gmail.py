@@ -63,12 +63,9 @@ from tether.todos import (
     TodoService,
     create_todo_schema,
 )
-from tether.triggers import (
-    ScheduledTrigger,
-    TriggerService,
-    TriggerSpec,
-    create_trigger_schema,
-)
+from tether.trigger_schedule import TriggerSpec
+from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+from tether.triggers import TriggerService
 
 
 def noop_tracer() -> Tracer:

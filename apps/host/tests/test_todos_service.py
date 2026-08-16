@@ -39,7 +39,9 @@ from tether.todos import (
     create_todo_schema,
     todo_reference,
 )
-from tether.triggers import TriggerService, TriggerSpec, create_trigger_schema
+from tether.trigger_schedule import OnceTriggerSpec
+from tether.trigger_store import create_trigger_schema
+from tether.triggers import TriggerService
 
 
 def noop_tracer() -> Tracer:
@@ -179,8 +181,7 @@ async def an_unfired_trigger_waits_and_a_fired_one_readies() -> None:
     env = await load_fixture(todo_env())
     now = datetime.now(UTC)
     trigger = await env.triggers.create(
-        TriggerSpec(
-            recurrence="once",
+        OnceTriggerSpec(
             action_kind="message",
             payload="deadline",
             fire_at=now + timedelta(days=3),

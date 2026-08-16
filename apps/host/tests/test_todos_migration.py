@@ -33,7 +33,7 @@ from tether.todos import (
     create_todo_schema,
     migrate_pending_action_facets,
 )
-from tether.triggers import create_trigger_schema
+from tether.trigger_store import create_trigger_schema
 
 
 def noop_tracer() -> trace.Tracer:

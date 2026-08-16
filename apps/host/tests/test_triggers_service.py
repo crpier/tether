@@ -26,15 +26,15 @@ from snektest import (
 
 from tether.events import HubEvent, InvalidateEvent
 from tether.structured_logging import Logger
-from tether.triggers import (
+from tether.trigger_schedule import (
+    DailyTriggerSpec,
     InvalidTriggerSpecError,
-    ScheduledTrigger,
-    TriggerConflictError,
-    TriggerNotFoundError,
-    TriggerService,
+    OnceTriggerSpec,
     TriggerSpec,
-    create_trigger_schema,
+    WeeklyTriggerSpec,
 )
+from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+from tether.triggers import TriggerConflictError, TriggerNotFoundError, TriggerService
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.triggers_service")
 
@@ -99,8 +99,7 @@ async def edit_trigger(
 
 def once(payload: str, fire_at: datetime) -> TriggerSpec:
     """A once message spec firing at `fire_at`."""
-    return TriggerSpec(
-        recurrence="once",
+    return OnceTriggerSpec(
         action_kind="message",
         payload=payload,
         fire_at=fire_at,
@@ -144,8 +143,7 @@ async def create_daily_materialises_the_next_local_occurrence() -> None:
 
     trigger = await make_trigger(
         service,
-        TriggerSpec(
-            recurrence="daily",
+        DailyTriggerSpec(
             action_kind="message",
             payload="stand up",
             timezone="UTC",
@@ -168,8 +166,7 @@ async def daily_recurrence_survives_a_dst_spring_forward() -> None:
     preserves the wall-clock hour.
     """
     service = await load_fixture(trigger_service())
-    daily = TriggerSpec(
-        recurrence="daily",
+    daily = DailyTriggerSpec(
         action_kind="message",
         payload="lunch",
         timezone="America/New_York",
@@ -195,8 +192,7 @@ async def create_weekly_lands_on_the_next_matching_weekday() -> None:
     # 2030-01-01 is a Tuesday (weekday 1); ask for Friday (weekday 4).
     trigger = await make_trigger(
         service,
-        TriggerSpec(
-            recurrence="weekly",
+        WeeklyTriggerSpec(
             action_kind="message",
             payload="weekly review",
             timezone="UTC",
@@ -219,45 +215,6 @@ async def create_rejects_a_blank_payload() -> None:
         _ = await make_trigger(
             service,
             once("   ", datetime(2030, 1, 1, tzinfo=UTC)),
-            now=datetime(2030, 1, 1, tzinfo=UTC),
-        )
-
-
-@test()
-async def create_weekly_requires_a_weekday() -> None:
-    """A weekly trigger without a weekday is rejected."""
-    service = await load_fixture(trigger_service())
-
-    with assert_raises(InvalidTriggerSpecError):
-        _ = await make_trigger(
-            service,
-            TriggerSpec(
-                recurrence="weekly",
-                action_kind="message",
-                payload="x",
-                timezone="UTC",
-                time_of_day="09:00",
-            ),
-            now=datetime(2030, 1, 1, tzinfo=UTC),
-        )
-
-
-@test()
-async def create_daily_rejects_an_absolute_instant() -> None:
-    """A recurring trigger may not carry a once-style fire_at."""
-    service = await load_fixture(trigger_service())
-
-    with assert_raises(InvalidTriggerSpecError):
-        _ = await make_trigger(
-            service,
-            TriggerSpec(
-                recurrence="daily",
-                action_kind="message",
-                payload="x",
-                timezone="UTC",
-                time_of_day="09:00",
-                fire_at=datetime(2030, 1, 1, tzinfo=UTC),
-            ),
             now=datetime(2030, 1, 1, tzinfo=UTC),
         )
 
@@ -362,8 +319,7 @@ async def update_replaces_the_definition_and_rearms() -> None:
     updated = await edit_trigger(
         service,
         trigger,
-        TriggerSpec(
-            recurrence="daily",
+        DailyTriggerSpec(
             action_kind="prompt",
             payload="summarise my day",
             timezone="UTC",
@@ -489,8 +445,7 @@ async def record_success_reschedules_a_daily_trigger() -> None:
     service = await load_fixture(trigger_service())
     _ = await make_trigger(
         service,
-        TriggerSpec(
-            recurrence="daily",
+        DailyTriggerSpec(
             action_kind="message",
             payload="x",
             timezone="UTC",
@@ -561,8 +516,7 @@ async def record_failure_exhausts_a_daily_trigger_to_next_occurrence() -> None:
     service = await load_fixture(trigger_service())
     _ = await make_trigger(
         service,
-        TriggerSpec(
-            recurrence="daily",
+        DailyTriggerSpec(
             action_kind="message",
             payload="x",
             timezone="UTC",
