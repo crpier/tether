@@ -19,12 +19,12 @@ from tether.provider_auth import ProviderAuthBackend
 from tether.readwise_http import ReaderTransport, ReadwiseTransport
 from tether.recall_generation import StudyItemGenerator
 from tether.recall_grading import AnswerGrader
-from tether.search_tools import SearchProvider
 from tether.stt import SttClient
 from tether.telemetry import TelemetryExporter, TelemetrySettings
 from tether.transcripts.acquisition import TranscriptAcquisitionConfig
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.worker import TranscriptSyncConfig
+from tether.web_search import SearchProvider
 from tether.youtube_quota import YouTubeApi
 
 

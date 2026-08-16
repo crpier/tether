@@ -46,17 +46,13 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, FastEmbedder
-from tether.search_tools import (
-    HttpTavilyTransport,
-    SearchProvider,
-    TavilySearchProvider,
-    internal_search_tool_routes,
-)
+from tether.search_tools import internal_search_tool_routes
 from tether.structured_logging import (
     ContextLoggerMiddleware,
     configure_logging,
 )
 from tether.stt import HttpSttTransport, SttClient
+from tether.tavily_search import HttpTavilyTransport, TavilySearchProvider
 from tether.telemetry import (
     TelemetryMiddleware,
     TelemetrySettings,
@@ -77,6 +73,7 @@ from tether.transcripts.source_composition import (
 from tether.transcripts.worker import TranscriptSyncConfig
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
+from tether.web_search import SearchProvider
 from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
 from tether.youtube_quota import YouTubeApi
 from tether.youtube_tools import internal_youtube_tool_routes

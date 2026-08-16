@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from tether.recall import RecallService
     from tether.review import ReviewService
     from tether.search_fusion import SearchFusionService
-    from tether.search_tools import SearchProvider
     from tether.structured_logging import Logger
     from tether.stt import SttClient
     from tether.telemetry import Telemetry
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
     from tether.tool_runtime import SessionRegistry
     from tether.triage import TriageService
     from tether.triggers import TriggerService
+    from tether.web_search import SearchProvider
     from tether.youtube import YouTubeService
 
 

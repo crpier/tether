@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+from snekok import Err, Ok
 from snekql.sqlite import Config, Database
-from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
+from snektest import assert_eq, assert_is_none, assert_true, fail, test
 
-from tether.search_tools import (
-    PersistentSearchSpendGuard,
-    SearchBudgetExhaustedError,
-    SearchDepth,
-    SearchUpstreamError,
+from tether.search_spend import PersistentSearchSpendGuard
+from tether.server import HostSettings, _build_search_provider
+from tether.tavily_search import (
     TavilyResponse,
     TavilySearchProvider,
     TavilySearchRequest,
 )
-from tether.server import HostSettings, _build_search_provider
+from tether.web_search import (
+    SearchBudgetExhaustedFailure,
+    SearchDepth,
+    SearchUpstreamFailure,
+)
 from tether.youtube_store import create_youtube_schema
 
 
@@ -103,17 +106,22 @@ async def tavily_results_are_normalized_for_the_agent() -> None:
         )
     )
 
-    response = await TavilySearchProvider(transport).search(
+    outcome = await TavilySearchProvider(transport).search(
         "tavily API", max_results=2, search_depth=SearchDepth.BASIC
     )
 
-    assert_eq(response.results[0].title, "Tavily docs")
-    assert_eq(response.results[0].url, "https://docs.tavily.com/")
-    assert_eq(response.results[0].snippet, "Search API documentation.")
-    assert_eq(
-        response.results[0].extracted_content, "# Search API\nFull extracted page."
-    )
-    assert_is_none(response.results[1].extracted_content)
+    match outcome:
+        case Ok(response):
+            assert_eq(response.results[0].title, "Tavily docs")
+            assert_eq(response.results[0].url, "https://docs.tavily.com/")
+            assert_eq(response.results[0].snippet, "Search API documentation.")
+            assert_eq(
+                response.results[0].extracted_content,
+                "# Search API\nFull extracted page.",
+            )
+            assert_is_none(response.results[1].extracted_content)
+        case Err(error):
+            fail(f"unexpected failure: {error}")
 
 
 @test()
@@ -123,10 +131,17 @@ async def tavily_error_response_is_a_typed_upstream_failure() -> None:
         TavilyResponse(status_code=429, payload={"detail": "rate limited"})
     )
 
-    with assert_raises(SearchUpstreamError):
-        _ = await TavilySearchProvider(transport).search(
-            "latest news", max_results=5, search_depth=SearchDepth.BASIC
-        )
+    outcome = await TavilySearchProvider(transport).search(
+        "latest news", max_results=5, search_depth=SearchDepth.BASIC
+    )
+
+    match outcome:
+        case Err(SearchUpstreamFailure(status_code=status_code)):
+            assert_eq(status_code, 429)
+        case Ok(response):
+            fail(f"unexpected success: {response}")
+        case Err(error):
+            fail(f"unexpected failure: {error}")
 
 
 @test()
@@ -176,10 +191,17 @@ async def persisted_credit_cap_blocks_before_an_upstream_call() -> None:
     )
     _ = await provider.search("first", max_results=1, search_depth=SearchDepth.ADVANCED)
 
-    with assert_raises(SearchBudgetExhaustedError):
-        _ = await provider.search(
-            "blocked", max_results=1, search_depth=SearchDepth.BASIC
-        )
+    outcome = await provider.search(
+        "blocked", max_results=1, search_depth=SearchDepth.BASIC
+    )
 
+    match outcome:
+        case Err(SearchBudgetExhaustedFailure(used=used, limit=limit)):
+            assert_eq(used, 2)
+            assert_eq(limit, 2)
+        case Ok(response):
+            fail(f"unexpected success: {response}")
+        case Err(error):
+            fail(f"unexpected failure: {error}")
     assert_eq(len(transport.requests), 1)
     await database.close()
