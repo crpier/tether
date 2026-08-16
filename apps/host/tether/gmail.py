@@ -11,7 +11,7 @@ from pydantic import UUID7
 from snekok import Err, Ok, Result
 from snekql.sqlite import Database, Fetched, Transaction, insert, select, update
 
-from tether.chat_ws import local_timezone_name
+from tether.chat_prompt import local_timezone_name
 from tether.gmail_client import GmailClient, GmailFailure, GmailMessage
 from tether.gmail_store import (
     GMAIL_WATERMARK_KEY,

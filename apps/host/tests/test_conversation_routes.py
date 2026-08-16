@@ -24,7 +24,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from tether import server
 from tether.app_runtime import app_runtime
-from tether.chat_ws import _prompt_with_time_context, local_timezone_name
+from tether.chat_prompt import local_timezone_name, prompt_with_time_context
 from tether.conversation_model import MessageDraft
 from tether.conversation_store import Message
 from tether.conversations import ConversationService
@@ -633,7 +633,7 @@ def websocket_prompt_persists_user_message() -> None:
 def prompt_time_context_carries_clock_and_zone() -> None:
     """The preamble stamps an ISO time + zone and keeps the user's text intact."""
     now = datetime(2026, 7, 1, 18, 23, 5, tzinfo=UTC)
-    augmented = _prompt_with_time_context(
+    augmented = prompt_with_time_context(
         "remind me in 3 minutes", now=now, timezone_name="America/New_York"
     )
 
