@@ -47,7 +47,6 @@ from tether.capabilities import (
     catchable_exceptions,
     match_rule,
 )
-from tether.memories import MemoryProvenance, MemoryState
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent
 from tether.memory_capabilities import (
     agent_edit as agent_edit_memory,
@@ -75,6 +74,10 @@ from tether.memory_capabilities import (
 )
 from tether.memory_capabilities import (
     tether as tether_memory,
+)
+from tether.memory_store import (
+    MemoryProvenance,
+    MemoryState,
 )
 from tether.review import ReviewService
 from tether.search_capabilities import SEARCH_ERRORS

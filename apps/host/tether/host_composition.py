@@ -55,11 +55,10 @@ from tether.ingestion_lifecycle import (
 )
 from tether.kosync import KosyncService, create_kosync_schema
 from tether.kosync_routes import KosyncAuth
-from tether.memories import (
-    KnowledgeBaseService,
-    MemoryService,
-    create_memory_schema,
-)
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_search import MemorySearchService
+from tether.memory_store import create_memory_schema
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.notifications import NotificationService, create_notification_schema
 from tether.panels import PanelService, create_panel_schema
@@ -925,7 +924,7 @@ def _build_bucket_item_and_fusion_services(
     *,
     database: Database,
     event_hub: EventHub,
-    memory_service: MemoryService,
+    memory_search: MemorySearchService,
     searcher: BucketItemReconciler | None,
     tracer: Tracer,
 ) -> tuple[BucketItemService, SearchFusionService]:
@@ -941,7 +940,7 @@ def _build_bucket_item_and_fusion_services(
         searcher=searcher,
     )
     search_fusion_service = SearchFusionService(
-        bucket_item_service=bucket_item_service, memory_service=memory_service
+        bucket_item_service=bucket_item_service, memory_search=memory_search
     )
     return bucket_item_service, search_fusion_service
 
@@ -983,11 +982,12 @@ class _PresentationComponent:
     panel_service: PanelService
 
 
-def _build_presentation_services(
+def _build_presentation_services(  # noqa: PLR0913 - each service is explicit
     *,
     config: AppConfig,
     database: Database,
     event_hub: EventHub,
+    memory_search: MemorySearchService,
     memory_service: MemoryService,
     tracer: Tracer,
 ) -> _PresentationComponent:
@@ -1013,7 +1013,7 @@ def _build_presentation_services(
         ),
         panel_service=PanelService(
             database=database,
-            memory_service=memory_service,
+            memory_search=memory_search,
             event_publisher=event_hub,
             tracer=tracer,
         ),
@@ -1287,9 +1287,14 @@ async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
     memory_service = MemoryService(
         database=db,
         event_publisher=event_hub,
+        indexer=search_reconciler,
         kb_service=kb_service,
         tracer=foundations.telemetry.tracer,
+    )
+    memory_search = MemorySearchService(
+        database=db,
         searcher=search_reconciler,
+        tracer=foundations.telemetry.tracer,
     )
     await memory_service.regenerate_knowledge_base(logger=foundations.logger)
     # The digest reuses the same embedder as search: semantic dedup and
@@ -1308,7 +1313,7 @@ async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
     ) = _build_bucket_item_and_fusion_services(
         database=db,
         event_hub=event_hub,
-        memory_service=memory_service,
+        memory_search=memory_search,
         searcher=bucket_item_reconciler,
         tracer=foundations.telemetry.tracer,
     )
@@ -1316,6 +1321,7 @@ async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
         config=config,
         database=db,
         event_hub=event_hub,
+        memory_search=memory_search,
         memory_service=memory_service,
         tracer=foundations.telemetry.tracer,
     )
@@ -1450,6 +1456,7 @@ async def _compose_app_runtime(  # noqa: PLR0913 - application composition root
             kosync_auth=presentation.kosync_auth,
             kosync_service=presentation.kosync_service,
             logger=foundations.logger,
+            memory_search_service=memory_search,
             memory_service=memory_service,
             model_catalog=model_catalog,
             notification_service=scheduler_component.notification_service,

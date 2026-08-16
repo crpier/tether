@@ -20,7 +20,8 @@ from snekql.sqlite import (
 )
 
 from tether.kosync import EbookDocument, EbookProgressEvent
-from tether.memories import MemoryProvenance, MemoryService
+from tether.memories import MemoryService
+from tether.memory_store import MemoryProvenance
 from tether.readwise_http import (
     ReaderTransport,
     ReadwiseAuthenticationFailure,

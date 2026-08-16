@@ -24,10 +24,11 @@ from snektest import (
     test,
 )
 
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_search import MemorySearchService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
 )
 from tether.panels import (
@@ -118,14 +119,21 @@ async def panel_harness() -> AsyncGenerator[Harness]:
     await create_memory_schema(db)
     await create_panel_schema(db)
     async with TemporaryDirectory() as kb_root:
+        searcher = FakeSearcher()
         memory_service = MemoryService(
             database=db,
+            indexer=searcher,
             kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
             tracer=noop_tracer(),
-            searcher=FakeSearcher(),
         )
         panel_service = PanelService(
-            database=db, memory_service=memory_service, tracer=noop_tracer()
+            database=db,
+            memory_search=MemorySearchService(
+                database=db,
+                searcher=searcher,
+                tracer=noop_tracer(),
+            ),
+            tracer=noop_tracer(),
         )
         yield Harness(panel_service, memory_service, db)
     await db.close()

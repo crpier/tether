@@ -20,10 +20,10 @@ from snektest import (
     test,
 )
 
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     MemoryProvenance,
-    MemoryService,
     create_memory_schema,
 )
 from tether.notifications import create_notification_schema
@@ -93,9 +93,7 @@ async def a_pending_action_memory_becomes_a_linked_todo() -> None:
     assert_eq(todos[0].action, "renew the parking permit")
     assert_eq(await env.todo_service.linked_memory_ids(todos[0].id), [str(memory.id)])
 
-    refreshed = (
-        await env.memory_service.browse_by_state("tethered", logger=env.logger)
-    )[0]
+    refreshed = await env.memory_service.fetch_active(memory.id, logger=env.logger)
     assert_not_in("action", refreshed.facets)
     assert_eq(refreshed.facets.get("source"), "gmail")
 

@@ -21,7 +21,7 @@ that score. A future arm (anything beyond Memories/Bucket items) only needs to
 satisfy the `FusionArm` protocol; `fuse()` itself never changes.
 
 >>> service = SearchFusionService(
-...     memory_service=memory_service, bucket_item_service=bucket_item_service
+...     memory_search=memory_search, bucket_item_service=bucket_item_service
 ... )
 >>> hits = await service.search("aisle seat", logger=logger)
 >>> hits[0].source
@@ -39,7 +39,8 @@ from pydantic import PositiveInt
 from snekql.sqlite import Fetched, select
 
 from tether.bucket_items import BucketItem, BucketItemService
-from tether.memories import EmptySearchQueryError, Memory, MemoryService
+from tether.memory_search import EmptySearchQueryError, MemorySearchService
+from tether.memory_store import Memory
 from tether.recall_store import StudyItem
 
 if TYPE_CHECKING:
@@ -143,7 +144,7 @@ class FusionArm(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class MemoryFusionArm:
-    """The Memory arm: `MemoryService`'s searcher plus its tethered re-filter.
+    """The Memory arm's ranked candidates and canonical trust re-filter.
 
     `facets`, when supplied, is bound once per Search call and applies only to
     this arm — the Bucket-item arm's `hydrate` takes no facets, so both arms
@@ -151,7 +152,7 @@ class MemoryFusionArm:
     and apply to `tethered_at`."""
 
     facets: Mapping[str, str] | None
-    memory_service: MemoryService
+    memory_search: MemorySearchService
     after: datetime | None = None
     before: datetime | None = None
 
@@ -162,14 +163,14 @@ class MemoryFusionArm:
     async def candidates(
         self, query: str, *, limit: int, logger: Logger
     ) -> Sequence[_RawCandidate]:
-        return await self.memory_service.search_candidates(
+        return await self.memory_search.search_candidates(
             query, limit=limit, logger=logger
         )
 
     async def hydrate(
         self, ids: Sequence[UUID], *, logger: Logger
     ) -> Sequence[FusedItem]:
-        return await self.memory_service.hydrate_tethered(
+        return await self.memory_search.hydrate_tethered(
             ids, facets=self.facets, after=self.after, before=self.before, logger=logger
         )
 
@@ -209,7 +210,7 @@ class SearchFusionService:
     """Fuses the Memory and Bucket-item arms into one ranked, source-tagged list.
 
     >>> service = SearchFusionService(
-    ...     memory_service=memory_service, bucket_item_service=bucket_item_service
+    ...     memory_search=memory_search, bucket_item_service=bucket_item_service
     ... )
     >>> hits = await service.search("aisle seat", logger=logger)
     >>> hits[0].source
@@ -217,9 +218,12 @@ class SearchFusionService:
     """
 
     def __init__(
-        self, *, memory_service: MemoryService, bucket_item_service: BucketItemService
+        self,
+        *,
+        memory_search: MemorySearchService,
+        bucket_item_service: BucketItemService,
     ) -> None:
-        self.memory_service: MemoryService = memory_service
+        self.memory_search: MemorySearchService = memory_search
         self.bucket_item_service: BucketItemService = bucket_item_service
 
     async def search(  # noqa: PLR0913 - each param is an independent Search knob
@@ -236,7 +240,7 @@ class SearchFusionService:
         """Fused Search over the selected arms (default: every arm).
 
         `facets` applies only to the Memory arm, exact-match AND, exactly as
-        `MemoryService.search` documents. `sources`, when supplied, restricts
+        `MemorySearchService.search` documents. `sources`, when supplied, restricts
         fusion to that subset of arms; omitted or `None` runs every arm.
         `after`/`before` bound every arm's own capture timestamp (`tethered_at`
         for Memories, `created_at` for Bucket items), inclusive on both ends;
@@ -278,7 +282,7 @@ class SearchFusionService:
             arms.append(
                 MemoryFusionArm(
                     facets=facets,
-                    memory_service=self.memory_service,
+                    memory_search=self.memory_search,
                     after=after,
                     before=before,
                 )
@@ -300,7 +304,7 @@ class SearchFusionService:
         than one lookup per result — and recomputed every call, never cached
         (ADR 0006), so a `StudyItem` completing between two Searches is picked
         up immediately."""
-        async with self.memory_service.database.transaction() as tx:
+        async with self.memory_search.database.transaction() as tx:
             completed_study_items = await tx.fetch_all(
                 select(StudyItem).where(StudyItem.state.eq("completed"))
             )

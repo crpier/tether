@@ -33,11 +33,12 @@ from snektest import (
 )
 
 from tether.kosync import EbookDocument, EbookProgressEvent, create_kosync_schema
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
+    tethered_corpus,
 )
 from tether.reader import ReaderClient, ReaderSyncService
 from tether.readwise_http import (
@@ -174,7 +175,8 @@ class ReaderEnv:
 
     async def tethered_memories(self) -> list[Memory[Fetched]]:
         """The current tethered corpus, for finished-derivation assertions."""
-        return await self.memory_service.browse_by_state("tethered", logger=self.logger)
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_all(tethered_corpus())
 
     async def events(self, key: str) -> list[EbookProgressEvent[Fetched]]:
         """Every stored progress event for a document key, oldest first."""

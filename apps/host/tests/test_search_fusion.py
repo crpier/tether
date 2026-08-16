@@ -27,7 +27,10 @@ import structlog
 from snektest import assert_eq, test
 
 from tether.bucket_items import BucketItem, Fetched
-from tether.memories import Memory, MemoryProvenance
+from tether.memory_store import (
+    Memory,
+    MemoryProvenance,
+)
 from tether.search_fusion import FusedHit, FusedItem, SourceType, fuse
 from tether.structured_logging import Logger
 

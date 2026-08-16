@@ -33,11 +33,12 @@ from snektest import (
     test,
 )
 
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
+    tethered_corpus,
 )
 from tether.readwise import ReadwiseClient, ReadwiseSyncService
 from tether.readwise_http import (
@@ -192,7 +193,8 @@ class ReadwiseEnv:
 
     async def tethered_memories(self) -> list[Memory[Fetched]]:
         """The current tethered corpus, for content/facet assertions."""
-        return await self.memory_service.browse_by_state("tethered", logger=self.logger)
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_all(tethered_corpus())
 
 
 @fixture

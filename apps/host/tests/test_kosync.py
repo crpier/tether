@@ -36,11 +36,12 @@ from tether.kosync import (
     create_kosync_schema,
     ebook_hash_for_filename,
 )
-from tether.memories import (
-    KnowledgeBaseService,
+from tether.memories import MemoryService
+from tether.memory_projection import KnowledgeBaseService
+from tether.memory_store import (
     Memory,
-    MemoryService,
     create_memory_schema,
+    tethered_corpus,
 )
 from tether.structured_logging import Logger
 
@@ -91,7 +92,8 @@ class KosyncEnv:
 
     async def tethered_memories(self) -> list[Memory[Fetched]]:
         """The current tethered corpus, for finished-derivation assertions."""
-        return await self.memory_service.browse_by_state("tethered", logger=self.logger)
+        async with self.memory_service.database.transaction() as transaction:
+            return await transaction.fetch_all(tethered_corpus())
 
 
 @fixture

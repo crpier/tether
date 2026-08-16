@@ -29,8 +29,9 @@ from starlette.responses import Response
 
 from tether import memory_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.memories import MemoryNotFoundError, MemoryState
+from tether.memories import MemoryNotFoundError
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent, MemoryRead
+from tether.memory_store import MemoryState
 
 
 class CaptureRequest(BaseModel):

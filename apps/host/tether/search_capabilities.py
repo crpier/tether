@@ -16,8 +16,9 @@ from starlette.requests import Request
 
 from tether.bucket_capabilities import BucketItemRead
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.memories import EmptySearchQueryError, Memory
 from tether.memory_capabilities import MemoryRead
+from tether.memory_search import EmptySearchQueryError
+from tether.memory_store import Memory
 from tether.search_fusion import (
     InvalidSearchWindowError,
     SearchFusionService,

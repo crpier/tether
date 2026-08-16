@@ -24,7 +24,11 @@ from snekql.sqlite import (
 )
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.memories import Memory, MemoryProvenance, MemoryService
+from tether.memories import MemoryService
+from tether.memory_store import (
+    Memory,
+    MemoryProvenance,
+)
 from tether.recall_generation import StudyItemGenerator, validate_generated_study_item
 from tether.recall_grading import AnswerGrader, EssayGradeProposal, matches_reference
 from tether.recall_schedule import (

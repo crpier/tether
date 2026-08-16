@@ -56,6 +56,7 @@ from snekql.sqlite import (
 from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
+from tether.memory_store import Memory, tethered_corpus
 from tether.notifications import Notification
 from tether.structured_logging import Logger
 from tether.triggers import ScheduledTrigger
@@ -486,7 +487,10 @@ async def migrate_pending_action_facets(
     de-duped, so a partial run never double-creates. Returns how many Memories
     were migrated.
     """
-    tethered = await memory_service.browse_by_state("tethered", logger=logger)
+    async with database.transaction() as transaction:
+        tethered = await transaction.fetch_all(
+            tethered_corpus().order_by(Memory.tethered_at.desc())
+        )
     pending = [
         memory for memory in tethered if memory.facets.get("action") == "pending"
     ]

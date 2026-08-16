@@ -31,8 +31,13 @@ from pydantic import UUID7, BaseModel
 from snekql.sqlite import Database, Fetched
 
 from tether.embeddings import Embedder, Vector, vector_from_bytes
-from tether.memories import Memory, MemoryProvenance, MemoryService
 from tether.memory_capabilities import MemoryRead
+from tether.memory_store import (
+    Memory,
+    MemoryProvenance,
+    loose_queue,
+    tethered_corpus,
+)
 from tether.search_meta import SearchMetaService
 from tether.structured_logging import Logger
 
@@ -373,11 +378,9 @@ class ReviewService:
         """
         logger.debug("Computing review digest", semantic=self.embedder is not None)
         async with self.database.transaction() as tx:
-            loose = await tx.fetch_all(
-                MemoryService.loose_queue().order_by(Memory.created_at.desc())
-            )
+            loose = await tx.fetch_all(loose_queue().order_by(Memory.created_at.desc()))
             tethered = await tx.fetch_all(
-                MemoryService.tethered_corpus().order_by(Memory.created_at.desc())
+                tethered_corpus().order_by(Memory.created_at.desc())
             )
         if self.embedder is None:
             dedup_groups = _dedup_groups(loose)
