@@ -15,7 +15,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether.app_runtime import app_runtime
-from tether.conversations import MessageDraft, MessageRead
+from tether.conversation_model import MessageDraft
+from tether.conversation_routes import MessageRead
 from tether.stt import SttError
 from tether.voice_http import read_audio_upload, transcription_error_response
 

@@ -34,14 +34,9 @@ from tether.chat_frames import (
     ToolStartFrame,
     UserMessageFrame,
 )
-from tether.conversations import (
-    SESSION_GAP as _SESSION_GAP,
-)
-from tether.conversations import (
-    ConversationNotFoundError,
-    ConversationService,
-    MessageDraft,
-)
+from tether.conversation_model import ConversationNotFoundError, MessageDraft
+from tether.conversations import SESSION_GAP as _SESSION_GAP
+from tether.conversations import ConversationService
 from tether.events import EventHub, HubEvent, NotifyEvent
 from tether.pi_errors import PiRuntimeError
 from tether.pi_turn_events import (
