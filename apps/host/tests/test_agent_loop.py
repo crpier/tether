@@ -17,7 +17,8 @@ from snektest import (
 
 from tests.test_pi_runtime import live_host, pi_session_dir
 from tether.model_selection import AgentModelConfig
-from tether.pi_runtime import PiRuntime, PiRuntimeConfig
+from tether.pi_process import PiRuntimeConfig
+from tether.pi_runtime import PiRuntime
 from tether.scheduler import EphemeralPiConfig, EphemeralPiPromptRunner
 
 SECRET = "test-secret"

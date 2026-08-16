@@ -7,7 +7,7 @@ shapes are spelled out.
 
 from snektest import assert_eq, assert_is_none, test
 
-from tether.pi_runtime import (
+from tether.pi_turn_events import (
     AgentEnded,
     AssistantStreamNote,
     MessageSettled,

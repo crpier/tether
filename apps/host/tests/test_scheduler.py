@@ -29,7 +29,8 @@ from snektest import (
 )
 
 from tether.agent_trace import AgentTraceRecorder, RunKind
-from tether.pi_runtime import PiRuntimeConfig, PiRuntimeError
+from tether.pi_errors import PiRuntimeError
+from tether.pi_process import PiRuntimeConfig
 from tether.scheduler import (
     EphemeralPiConfig,
     EphemeralPiPromptRunner,

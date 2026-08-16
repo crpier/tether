@@ -28,16 +28,11 @@ from tether.agent_trace import AgentTraceRecorder
 from tether.app_runtime import app_runtime
 from tether.embeddings import FakeEmbedder
 from tether.model_selection import AgentModelConfig
-from tether.pi_runtime import (
-    AgentEnded,
-    MessageSettled,
-    ModelTurnStarted,
-    PiRpcClient,
-    PiRuntime,
-    PiRuntimeConfig,
-    PiRuntimeError,
-    _spawn_command,
-)
+from tether.pi_errors import PiRuntimeError
+from tether.pi_process import PiRuntimeConfig, build_pi_spawn_command
+from tether.pi_rpc import PiRpcClient
+from tether.pi_runtime import PiRuntime
+from tether.pi_turn_events import AgentEnded, MessageSettled, ModelTurnStarted
 from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tools import SessionRegistry
@@ -511,7 +506,7 @@ async def stream_turn_preserves_provider_error_from_settled_message() -> None:
 @test()
 async def spawn_command_allowlists_only_bundled_product_skills() -> None:
     """Every pi process disables discovery and explicitly loads Tether resources."""
-    command = _spawn_command(
+    command = build_pi_spawn_command(
         PiRuntimeConfig(
             tool_base_url="http://127.0.0.1:9",
             tool_secret="test-secret",
@@ -543,7 +538,7 @@ async def spawn_command_replaces_the_default_prompt_when_one_is_configured() -> 
     or CLAUDE.md are coding-agent context that would pollute the persona and
     make the prompt prefix vary with the host's cwd.
     """
-    command = _spawn_command(
+    command = build_pi_spawn_command(
         PiRuntimeConfig(
             tool_base_url="http://127.0.0.1:9",
             tool_secret="test-secret",
@@ -560,7 +555,7 @@ async def spawn_command_replaces_the_default_prompt_when_one_is_configured() -> 
 @test()
 async def spawn_command_keeps_pi_defaults_when_no_prompt_is_configured() -> None:
     """Without a configured prompt, the command line is unchanged."""
-    command = _spawn_command(
+    command = build_pi_spawn_command(
         PiRuntimeConfig(
             tool_base_url="http://127.0.0.1:9",
             tool_secret="test-secret",

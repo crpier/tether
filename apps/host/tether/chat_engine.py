@@ -17,7 +17,8 @@ from tether.model_selection import (
     AgentModelConfig,
     ModelNotAllowedError,
 )
-from tether.pi_runtime import PiRuntime, PiSpawner, PiSpawnRequest, spawn_pi_runtime
+from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime
+from tether.pi_runtime import PiRuntime
 from tether.system_prompt import compose_conversation_prompt
 from tether.tools import SessionRegistry
 
@@ -55,11 +56,11 @@ class ConversationRuntimeRegistry:
         config: RuntimeRegistryConfig,
         *,
         now: Callable[[], float] = monotonic,
-        spawn: PiSpawner = PiRuntime.spawn,
+        spawn: PiSpawner[PiRuntime] = PiRuntime.spawn,
     ) -> None:
         self.config: RuntimeRegistryConfig = config
         self._now: Callable[[], float] = now
-        self._spawn: PiSpawner = spawn
+        self._spawn: PiSpawner[PiRuntime] = spawn
         self._runtimes: dict[str, _RuntimeSlot] = {}
 
     def current_for(self, conversation_id: object) -> PiRuntime | None:
