@@ -11,7 +11,7 @@ from tether.health_connect_contracts import (
 )
 from tether.health_connect_ingestion import HealthConnectIngestion
 from tether.health_connect_persistence import create_health_connect_schema
-from tether.health_connect_telemetry import HealthConnectTelemetry
+from tether.health_connect_records import HealthConnectRecordQuery
 
 
 @test()
@@ -61,7 +61,7 @@ async def current_record_query_owns_dispatch_count_and_truncation() -> None:
         )
     )
 
-    current = await HealthConnectTelemetry(database).fetch_records(
+    current = await HealthConnectRecordQuery(database).fetch_records(
         after=None,
         before=None,
         limit=1,

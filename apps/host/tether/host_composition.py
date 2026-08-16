@@ -94,7 +94,9 @@ async def _compose_app_runtime(
             conversation_service=core.conversation_service,
             event_hub=core.event_hub,
             health_connect_ingestion=HealthConnectIngestion(host.telemetry_database),
-            health_connect_telemetry=HealthConnectTelemetry(host.telemetry_database),
+            health_connect_telemetry=HealthConnectTelemetry.from_database(
+                host.telemetry_database
+            ),
             ingestion_lifecycle=host.ingestion_lifecycle,
             kosync_auth=core.kosync_auth,
             kosync_service=core.kosync_service,
