@@ -35,8 +35,9 @@ from tether.gmail_oauth import (
     HttpGmailTransport,
 )
 from tether.health_connect_tools import internal_health_connect_tool_routes
-from tether.host_composition import HOST_QUIET_LOGGERS, HostBootstrap, app_lifespan
+from tether.host_composition import app_lifespan
 from tether.host_config import AppConfig, HostSettings
+from tether.host_resources import HOST_QUIET_LOGGERS, HostBootstrap
 from tether.kosync_routes import kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.local_dependencies import LocalProviderAuthBackend, LocalSttTransport

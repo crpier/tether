@@ -33,15 +33,17 @@ from tether.action_registry import (
 )
 from tether.events import HubEvent, InvalidateEvent
 from tether.notifications import NotificationService, create_notification_schema
+from tether.proposal_store import (
+    Proposal,
+    ProposalAction,
+    create_proposal_schema,
+)
 from tether.proposals import (
     ActionDraft,
     InvalidActionError,
-    Proposal,
-    ProposalAction,
     ProposalConflictError,
     ProposalDraft,
     ProposalService,
-    create_proposal_schema,
 )
 from tether.structured_logging import Logger
 

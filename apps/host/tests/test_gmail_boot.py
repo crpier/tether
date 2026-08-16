@@ -1,6 +1,6 @@
 """Wiring tests for the Gmail ingestion gate's disabled/credential-less boot.
 
-`_wire_gmail` must be a genuine no-op whenever the gate is off or no OAuth
+Gmail composition must be a genuine no-op whenever the gate is off or no OAuth
 transport is configured, so a fresh checkout never touches mail.
 """
 
@@ -21,8 +21,9 @@ from snektest import assert_true, test
 from tether.agent_trace import AgentTraceRecorder
 from tether.gmail_client import GmailNetworkFailure, GmailResponse
 from tether.gmail_store import create_gmail_schema
-from tether.host_composition import HostBootstrap, _wire_gmail
 from tether.host_config import AppConfig
+from tether.host_resources import HostBootstrap
+from tether.ingestion_composition import compose_gmail
 from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.local_dependencies import LocalSttTransport
 from tether.memories import MemoryService
@@ -114,7 +115,7 @@ class BootGmailTransport:
 
 
 async def _wire(config: AppConfig) -> asyncio.Event:
-    """Run `_wire_gmail` against a bare app/db, for the disabled-wiring assertions."""
+    """Compose Gmail over bare dependencies for disabled-gate assertions."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_memory_schema(db)
     await create_trigger_schema(db)
@@ -131,7 +132,7 @@ async def _wire(config: AppConfig) -> asyncio.Event:
             )
             trigger_service = TriggerService(database=db, tracer=tracer)
             todo_service = TodoService(database=db, tracer=tracer)
-            await _wire_gmail(
+            await compose_gmail(
                 bootstrap=HostBootstrap(
                     session_registry=SessionRegistry(),
                     stt_client=SttClient(

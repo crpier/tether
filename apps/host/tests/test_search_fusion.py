@@ -24,9 +24,10 @@ from typing import cast
 from uuid import UUID, uuid7
 
 import structlog
+from snekql.sqlite import Fetched
 from snektest import assert_eq, test
 
-from tether.bucket_items import BucketItem, Fetched
+from tether.bucket_item_store import BucketItem
 from tether.memory_store import (
     Memory,
     MemoryProvenance,

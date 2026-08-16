@@ -16,24 +16,26 @@ from typing import cast
 from uuid import UUID
 
 from pydantic import UUID7, BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
-from tether.proposals import (
+from tether.proposal_store import (
     ActionDisposition,
     ActionOutcome,
     AutonomyGrant,
-    Fetched,
-    GrantSuggestion,
-    InvalidActionError,
     Proposal,
     ProposalAction,
+    ProposalState,
+)
+from tether.proposals import (
+    GrantSuggestion,
+    InvalidActionError,
     ProposalConflictError,
     ProposalCounts,
     ProposalDraft,
     ProposalNotFoundError,
-    ProposalState,
     ProposalStateError,
     ProposalView,
     RejectionOutcome,

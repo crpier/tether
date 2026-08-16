@@ -27,7 +27,7 @@ import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Config, Database, insert
+from snekql.sqlite import Config, Database, Fetched, insert
 from snektest import (
     assert_eq,
     assert_not_in,
@@ -41,12 +41,9 @@ from starlette.requests import Request
 from tether import search_capabilities
 from tether.bucket_item_index import BucketItemCandidate, BucketItemDocument
 from tether.bucket_item_reconciler import BucketItemReconciler
-from tether.bucket_items import (
-    BucketItem,
-    BucketItemService,
-    Fetched,
-    create_bucket_item_schema,
-)
+from tether.bucket_item_search import BucketItemSearchService
+from tether.bucket_item_store import BucketItem, create_bucket_item_schema
+from tether.bucket_items import BucketItemService
 from tether.embeddings import FakeEmbedder
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
@@ -188,10 +185,16 @@ async def harness() -> AsyncGenerator[Harness]:
         bucket_item_service = BucketItemService(
             database=db,
             tracer=_noop_tracer(),
+            indexer=bucket_item_reconciler,
+        )
+        bucket_item_search = BucketItemSearchService(
+            database=db,
             searcher=bucket_item_reconciler,
+            tracer=_noop_tracer(),
         )
         fusion = SearchFusionService(
-            memory_search=memory_search, bucket_item_service=bucket_item_service
+            bucket_item_search=bucket_item_search,
+            memory_search=memory_search,
         )
         yield Harness(
             fusion, memory_service, bucket_item_service, memory_index, bucket_item_index

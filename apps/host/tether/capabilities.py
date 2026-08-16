@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from tether.bucket_items import BucketItemProvenance
+from tether.bucket_item_store import BucketItemProvenance
 from tether.memory_store import MemoryProvenance
 from tether.youtube import CacheMeta
 from tether.youtube_quota import QuotaMeta

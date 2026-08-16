@@ -15,8 +15,8 @@ from snekok import Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
-from tether.host_composition import _wire_reader, _wire_readwise
 from tether.host_config import AppConfig
+from tether.ingestion_composition import compose_reader, compose_readwise
 from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
@@ -127,7 +127,7 @@ async def a_disabled_readwise_gate_is_immediately_ready() -> None:
     """Default configuration starts no Readwise background work."""
     environment = await load_fixture(readwise_boot_environment())
 
-    await _wire_readwise(
+    await compose_readwise(
         config=AppConfig(app_password="pw", session_secret="secret"),
         database=environment.database,
         ingestion_lifecycle=environment.lifecycle,
@@ -144,7 +144,7 @@ async def an_authenticated_readwise_gate_completes_its_boot_sync() -> None:
     """A valid token performs one Export pass before becoming ready."""
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReadwiseTransport()
-    await _wire_readwise(
+    await compose_readwise(
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -171,7 +171,7 @@ async def an_owned_readwise_transport_closes_once() -> None:
     """Host resources close the provider transport after stopping its gate."""
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReadwiseTransport()
-    await _wire_readwise(
+    await compose_readwise(
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -199,7 +199,7 @@ async def a_rejected_readwise_token_stops_before_export() -> None:
     """Authentication rejection disables the gate without advancing state."""
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReadwiseTransport(auth_status=401)
-    await _wire_readwise(
+    await compose_readwise(
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -226,7 +226,7 @@ async def a_rejected_reader_token_stops_after_the_boot_request() -> None:
     """Reader authentication rejection does not enter periodic execution."""
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReaderTransport(status_code=401)
-    await _wire_reader(
+    await compose_reader(
         config=AppConfig(
             app_password="pw",
             session_secret="secret",

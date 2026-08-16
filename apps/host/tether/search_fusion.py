@@ -21,7 +21,7 @@ that score. A future arm (anything beyond Memories/Bucket items) only needs to
 satisfy the `FusionArm` protocol; `fuse()` itself never changes.
 
 >>> service = SearchFusionService(
-...     memory_search=memory_search, bucket_item_service=bucket_item_service
+...     bucket_item_search=bucket_item_search, memory_search=memory_search
 ... )
 >>> hits = await service.search("aisle seat", logger=logger)
 >>> hits[0].source
@@ -38,7 +38,8 @@ from uuid import UUID
 from pydantic import PositiveInt
 from snekql.sqlite import Fetched, select
 
-from tether.bucket_items import BucketItem, BucketItemService
+from tether.bucket_item_search import BucketItemSearchService
+from tether.bucket_item_store import BucketItem
 from tether.memory_search import EmptySearchQueryError, MemorySearchService
 from tether.memory_store import Memory
 from tether.recall_store import StudyItem
@@ -177,13 +178,13 @@ class MemoryFusionArm:
 
 @dataclass(frozen=True, slots=True)
 class BucketItemFusionArm:
-    """The Bucket-item arm: `BucketItemService`'s searcher plus its active re-filter.
+    """The Bucket Item arm's ranked candidates and canonical active re-filter.
 
     `after`/`before` are bound once per Search call and apply to `created_at`
     — Bucket items have no `tethered_at` equivalent, so creation time is the
     window bound."""
 
-    bucket_item_service: BucketItemService
+    bucket_item_search: BucketItemSearchService
     after: datetime | None = None
     before: datetime | None = None
 
@@ -194,14 +195,14 @@ class BucketItemFusionArm:
     async def candidates(
         self, query: str, *, limit: int, logger: Logger
     ) -> Sequence[_RawCandidate]:
-        return await self.bucket_item_service.search_candidates(
+        return await self.bucket_item_search.search_candidates(
             query, limit=limit, logger=logger
         )
 
     async def hydrate(
         self, ids: Sequence[UUID], *, logger: Logger
     ) -> Sequence[FusedItem]:
-        return await self.bucket_item_service.hydrate_active(
+        return await self.bucket_item_search.hydrate_active(
             ids, after=self.after, before=self.before, logger=logger
         )
 
@@ -210,7 +211,7 @@ class SearchFusionService:
     """Fuses the Memory and Bucket-item arms into one ranked, source-tagged list.
 
     >>> service = SearchFusionService(
-    ...     memory_search=memory_search, bucket_item_service=bucket_item_service
+    ...     bucket_item_search=bucket_item_search, memory_search=memory_search
     ... )
     >>> hits = await service.search("aisle seat", logger=logger)
     >>> hits[0].source
@@ -220,11 +221,11 @@ class SearchFusionService:
     def __init__(
         self,
         *,
+        bucket_item_search: BucketItemSearchService,
         memory_search: MemorySearchService,
-        bucket_item_service: BucketItemService,
     ) -> None:
+        self.bucket_item_search: BucketItemSearchService = bucket_item_search
         self.memory_search: MemorySearchService = memory_search
-        self.bucket_item_service: BucketItemService = bucket_item_service
 
     async def search(  # noqa: PLR0913 - each param is an independent Search knob
         self,
@@ -290,7 +291,7 @@ class SearchFusionService:
         if selected is None or "bucket_item" in selected:
             arms.append(
                 BucketItemFusionArm(
-                    bucket_item_service=self.bucket_item_service,
+                    bucket_item_search=self.bucket_item_search,
                     after=after,
                     before=before,
                 )

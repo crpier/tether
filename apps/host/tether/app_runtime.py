@@ -10,6 +10,7 @@ from starlette.applications import Starlette
 if TYPE_CHECKING:
     from tether.agent_trace import AgentTraceRecorder
     from tether.artifacts import ArtifactService
+    from tether.bucket_item_search import BucketItemSearchService
     from tether.bucket_items import BucketItemService
     from tether.chat_engine import ConversationRuntimeRegistry
     from tether.conversations import ConversationService
@@ -47,6 +48,7 @@ class AppRuntime:
 
     app_password: str
     artifact_service: ArtifactService
+    bucket_item_search_service: BucketItemSearchService
     bucket_item_service: BucketItemService
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService

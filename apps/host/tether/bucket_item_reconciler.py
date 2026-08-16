@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Protocol
 from snekql.sqlite import select
 
 from tether.bucket_item_index import BucketItemDocument
-from tether.bucket_items import BucketItem, bucket_item_index_text
+from tether.bucket_item_store import BucketItem, bucket_item_index_text
 from tether.reconcile_loop import run_reconcile_loop
 
 if TYPE_CHECKING:
