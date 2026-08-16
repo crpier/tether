@@ -6,14 +6,34 @@ import asyncio
 import sys
 from collections.abc import Callable
 
+from snekok import Err, Ok, Result
 from snektest import assert_eq, assert_raises, test
 
-from tether.provider_auth import (
-    DeviceCode,
-    ProviderAuthorizationActiveError,
-    ProviderAuthService,
-    SubprocessProviderAuthBackend,
+from tether.provider_auth import ProviderAuthService
+from tether.provider_auth_errors import (
+    ProviderAuthFailure,
+    ProviderAuthorizationActiveFailure,
+    ProviderAuthProcessFailure,
 )
+from tether.provider_auth_model import DeviceCode
+from tether.provider_auth_process import SubprocessProviderAuthBackend
+
+
+class ProviderBackendDefect(Exception):
+    """An unexpected backend defect used to verify propagation."""
+
+
+class DefectiveProviderAuthBackend:
+    """Provider backend whose status check has an unexpected defect."""
+
+    async def check(self) -> Result[bool, ProviderAuthFailure]:
+        raise ProviderBackendDefect
+
+    async def authorize(
+        self, report: Callable[[DeviceCode], None]
+    ) -> Result[None, ProviderAuthFailure]:
+        _ = report
+        return Ok(None)
 
 
 class FakeProviderAuthBackend:
@@ -25,16 +45,23 @@ class FakeProviderAuthBackend:
         self.authorization_started = asyncio.Event()
         self.finish_authorization = asyncio.Event()
 
-    async def check(self) -> bool:
-        return self.connected
+    async def check(self) -> Result[bool, ProviderAuthFailure]:
+        return Ok(self.connected)
 
-    async def authorize(self, report: Callable[[DeviceCode], None]) -> None:
+    async def authorize(
+        self, report: Callable[[DeviceCode], None]
+    ) -> Result[None, ProviderAuthFailure]:
         if self.device_code is None:
-            raise AssertionError("authorization was not expected")
+            return Err(
+                ProviderAuthProcessFailure(
+                    operation="login", reason="authorization was not expected"
+                )
+            )
         report(self.device_code)
         self.authorization_started.set()
         await self.finish_authorization.wait()
         self.connected = True
+        return Ok(None)
 
 
 @test()
@@ -48,9 +75,10 @@ async def subprocess_status_reads_the_json_line_protocol() -> None:
         )
     )
 
-    connected = await backend.check()
+    outcome = await backend.check()
 
-    assert_eq(connected, True)
+    assert isinstance(outcome, Ok)
+    assert_eq(outcome.value, True)
 
 
 @test()
@@ -66,8 +94,9 @@ async def subprocess_login_forwards_the_validated_device_code() -> None:
     backend = SubprocessProviderAuthBackend((sys.executable, "-c", script))
     codes: list[DeviceCode] = []
 
-    await backend.authorize(codes.append)
+    outcome = await backend.authorize(codes.append)
 
+    assert isinstance(outcome, Ok)
     assert_eq(
         codes,
         [
@@ -78,6 +107,15 @@ async def subprocess_login_forwards_the_validated_device_code() -> None:
             )
         ],
     )
+
+
+@test()
+async def status_preserves_unexpected_backend_defects() -> None:
+    """Only typed helper failures become safe disconnected status values."""
+    service = ProviderAuthService(DefectiveProviderAuthBackend())
+
+    with assert_raises(ProviderBackendDefect):
+        _ = await service.status()
 
 
 @test()
@@ -125,9 +163,10 @@ async def concurrent_authorization_is_rejected() -> None:
     service = ProviderAuthService(backend)
     _ = await service.start()
 
-    with assert_raises(ProviderAuthorizationActiveError):
-        _ = await service.start()
+    result = await service.start()
 
+    assert isinstance(result, Err)
+    assert isinstance(result.error, ProviderAuthorizationActiveFailure)
     await service.shutdown()
 
 

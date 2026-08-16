@@ -1,177 +1,22 @@
-"""Single-password app auth and stateless signed session cookies."""
+"""Middleware ownership for cookie and bearer authenticated API requests."""
 
-from __future__ import annotations
-
-import secrets
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Protocol, cast
 
-from fastapi import APIRouter
-from itsdangerous import BadData, URLSafeSerializer
-from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-SESSION_COOKIE = "tether_session"
-"""Browser cookie name carrying the signed app session token."""
-
-_SESSION_SUBJECT = "app"
-_SESSION_TTL = timedelta(days=30)
-
-
-class _AuthRuntime(Protocol):
-    """Authentication values available while the host serves requests."""
-
-    app_password: str
-    secure_cookies: bool
-    session_secret: str
-
-
-def _runtime(request: Request) -> _AuthRuntime:
-    """Read authentication dependencies from the canonical host runtime."""
-    return cast("_AuthRuntime", request.app.state.runtime)
-
-
-@dataclass(frozen=True, slots=True)
-class Principal:
-    """Authenticated app identity carried by sessions.
-
-    ```python
-    principal = Principal(sub="app")
-    assert principal.sub == "app"
-    ```
-    """
-
-    sub: str
-
-
-class LoginRequest(BaseModel):
-    """Body for app login with the shared password."""
-
-    password: str
-
-
-class SessionResponse(BaseModel):
-    """Whether the request carries a currently valid app session."""
-
-    authenticated: bool
-
-
-def _session_serializer(session_secret: str) -> URLSafeSerializer:
-    """Create the signer used for stateless app session cookies."""
-    return URLSafeSerializer(session_secret, salt="tether-session")
-
-
-def authenticate_password(password: str, configured_password: str) -> Principal | None:
-    """Validate the single app password in constant time."""
-    if secrets.compare_digest(password.encode(), configured_password.encode()):
-        return Principal(sub=_SESSION_SUBJECT)
-    return None
-
-
-_BEARER_PREFIX = "Bearer "
-
-
-def authenticate_bearer_token(
-    authorization_header: str, configured_token: str
-) -> Principal | None:
-    """Validate a mobile static bearer token in constant time.
-
-    The non-browser auth path: a `Authorization: Bearer <token>` header whose
-    value matches the single configured token authenticates the same app
-    principal a session cookie would. An empty `configured_token` turns the
-    feature off entirely — no header ever authenticates — so token auth is a
-    deliberate, credentialed opt-in and revocation is rotating the value.
-    """
-    if not configured_token:
-        return None
-    if not authorization_header.startswith(_BEARER_PREFIX):
-        return None
-    presented = authorization_header[len(_BEARER_PREFIX) :]
-    if secrets.compare_digest(presented.encode(), configured_token.encode()):
-        return Principal(sub=_SESSION_SUBJECT)
-    return None
-
-
-def mint_session_cookie(
-    principal: Principal,
-    session_secret: str,
-    *,
-    issued_at: datetime | None = None,
-) -> str:
-    """Sign a stateless session token with 30-day absolute claims."""
-    now = issued_at or datetime.now(UTC)
-    issued_timestamp = int(now.timestamp())
-    return str(
-        _session_serializer(session_secret).dumps(
-            {
-                "sub": principal.sub,
-                "iat": issued_timestamp,
-                "exp": int((now + _SESSION_TTL).timestamp()),
-            }
-        )
-    )
-
-
-def verify_session_cookie(
-    token: str,
-    session_secret: str,
-    *,
-    now: datetime | None = None,
-) -> Principal | None:
-    """Verify a signed session cookie and return its principal if current."""
-    try:
-        loaded_claims: object = _session_serializer(session_secret).loads(token)
-    except BadData:
-        return None
-    if not isinstance(loaded_claims, dict):
-        return None
-    claims = cast("dict[str, object]", loaded_claims)
-    sub = claims.get("sub")
-    expires_at = claims.get("exp")
-    if not isinstance(sub, str) or not isinstance(expires_at, int):
-        return None
-    if expires_at <= int((now or datetime.now(UTC)).timestamp()):
-        return None
-    return Principal(sub=sub)
-
-
-def set_session_cookie(
-    response: Response,
-    principal: Principal,
-    session_secret: str,
-    *,
-    secure: bool,
-) -> None:
-    """Attach a refreshed app session cookie to a response."""
-    response.set_cookie(
-        SESSION_COOKIE,
-        mint_session_cookie(principal, session_secret),
-        httponly=True,
-        max_age=int(_SESSION_TTL.total_seconds()),
-        path="/",
-        samesite="lax",
-        secure=secure,
-    )
-
-
-def clear_session_cookie(response: Response, *, secure: bool) -> None:
-    """Expire the app session cookie in the browser."""
-    response.delete_cookie(
-        SESSION_COOKIE,
-        httponly=True,
-        path="/",
-        samesite="lax",
-        secure=secure,
-    )
+from tether.auth_sessions import (
+    SESSION_COOKIE,
+    authenticate_bearer_token,
+    set_session_cookie,
+    verify_session_cookie,
+)
 
 
 class AppSessionMiddleware(BaseHTTPMiddleware):
-    """Require a valid app session for browser-facing REST routes."""
+    """Require valid app authentication for browser-facing REST routes."""
 
     def __init__(
         self,
@@ -182,22 +27,16 @@ class AppSessionMiddleware(BaseHTTPMiddleware):
         api_token: str = "",
     ) -> None:
         super().__init__(app)
+        self.api_token: str = api_token
         self.secure: bool = secure
         self.session_secret: str = session_secret
-        self.api_token: str = api_token
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        """Gate `/api/*` except auth routes, accepting a cookie or bearer token.
-
-        A valid session cookie and a valid mobile bearer token are both accepted;
-        the bearer path is stateless, so only a cookie-authenticated request has
-        its session refreshed on the way out. When a token is configured the
-        bearer is checked first so a mobile client authenticates without a cookie.
-        """
+        """Gate `/api/*` except auth routes, accepting bearer or cookie auth."""
         if not request.url.path.startswith("/api/") or request.url.path.startswith(
             "/api/auth/"
         ):
@@ -222,48 +61,3 @@ class AppSessionMiddleware(BaseHTTPMiddleware):
             secure=self.secure,
         )
         return response
-
-
-router = APIRouter()
-
-
-@router.post("/api/auth/login", status_code=204)
-async def login(request: Request, body: LoginRequest) -> Response:
-    """Authenticate with the app password and set a session cookie."""
-    principal = authenticate_password(body.password, _runtime(request).app_password)
-    if principal is None:
-        return JSONResponse({"detail": "invalid password"}, status_code=401)
-    response = Response(status_code=204)
-    set_session_cookie(
-        response,
-        principal,
-        _runtime(request).session_secret,
-        secure=_runtime(request).secure_cookies,
-    )
-    return response
-
-
-@router.get("/api/auth/session", response_model=SessionResponse)
-async def session(request: Request) -> Response:
-    """Report whether the request carries a valid app session."""
-    principal = verify_session_cookie(
-        request.cookies.get(SESSION_COOKIE, ""),
-        _runtime(request).session_secret,
-    )
-    response = JSONResponse({"authenticated": principal is not None})
-    if principal is not None:
-        set_session_cookie(
-            response,
-            principal,
-            _runtime(request).session_secret,
-            secure=_runtime(request).secure_cookies,
-        )
-    return response
-
-
-@router.post("/api/auth/logout", status_code=204)
-async def logout(request: Request) -> Response:
-    """Clear the app session cookie."""
-    response = Response(status_code=204)
-    clear_session_cookie(response, secure=_runtime(request).secure_cookies)
-    return response

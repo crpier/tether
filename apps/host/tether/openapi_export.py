@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI
 
 from tether.artifact_routes import router as artifact_router
-from tether.auth import router as auth_router
+from tether.auth_routes import router as auth_router
 from tether.bucket_routes import router as bucket_router
 from tether.capture_routes import router as capture_router
 from tether.conversation_routes import router as conversation_router

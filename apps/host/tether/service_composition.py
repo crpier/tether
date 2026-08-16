@@ -55,8 +55,8 @@ from tether.panels import PanelService
 from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_execution import ProposalExecutor
 from tether.proposals import ProposalService
-from tether.provider_auth import (
-    ProviderAuthService,
+from tether.provider_auth import ProviderAuthService
+from tether.provider_auth_process import (
     SubprocessProviderAuthBackend,
     provider_auth_helper_command,
 )

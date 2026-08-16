@@ -15,9 +15,9 @@ from snektest import (
 )
 from starlette.testclient import TestClient
 
-from tether.auth import (
+from tether.auth_model import Principal
+from tether.auth_sessions import (
     SESSION_COOKIE,
-    Principal,
     authenticate_bearer_token,
     mint_session_cookie,
     verify_session_cookie,

@@ -8,19 +8,23 @@ from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from snekok import Ok, Result
 from snektest import assert_eq, test
 
 from tests.surfaces import login, surface_client
-from tether.provider_auth import DeviceCode
+from tether.provider_auth_errors import ProviderAuthFailure
+from tether.provider_auth_model import DeviceCode
 
 
 class DeviceCodeProviderAuthBackend:
     """Provider backend that waits after publishing its device code."""
 
-    async def check(self) -> bool:
-        return False
+    async def check(self) -> Result[bool, ProviderAuthFailure]:
+        return Ok(False)
 
-    async def authorize(self, report: Callable[[DeviceCode], None]) -> None:
+    async def authorize(
+        self, report: Callable[[DeviceCode], None]
+    ) -> Result[None, ProviderAuthFailure]:
         report(
             DeviceCode(
                 expires_in_seconds=900,
@@ -29,15 +33,18 @@ class DeviceCodeProviderAuthBackend:
             )
         )
         await asyncio.Event().wait()
+        return Ok(None)
 
 
 class FakeProviderAuthBackend:
     """Connected provider-auth backend for route tests."""
 
-    async def check(self) -> bool:
-        return True
+    async def check(self) -> Result[bool, ProviderAuthFailure]:
+        return Ok(True)
 
-    async def authorize(self, report: Callable[[DeviceCode], None]) -> None:
+    async def authorize(
+        self, report: Callable[[DeviceCode], None]
+    ) -> Result[None, ProviderAuthFailure]:
         raise AssertionError("authorization was not expected")
 
 
