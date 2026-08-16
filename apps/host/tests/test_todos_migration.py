@@ -28,11 +28,9 @@ from tether.memory_store import (
 )
 from tether.notifications import create_notification_schema
 from tether.structured_logging import Logger
-from tether.todos import (
-    TodoService,
-    create_todo_schema,
-    migrate_pending_action_facets,
-)
+from tether.todo_migration import migrate_pending_action_facets
+from tether.todo_store import create_todo_schema
+from tether.todos import TodoService
 from tether.trigger_store import create_trigger_schema
 
 

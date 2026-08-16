@@ -57,12 +57,8 @@ from tether.memory_store import (
 )
 from tether.notifications import create_notification_schema
 from tether.structured_logging import Logger
-from tether.todos import (
-    Todo,
-    TodoMemory,
-    TodoService,
-    create_todo_schema,
-)
+from tether.todo_store import Todo, TodoMemory, create_todo_schema
+from tether.todos import TodoService
 from tether.trigger_schedule import TriggerSpec
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
 from tether.triggers import TriggerService

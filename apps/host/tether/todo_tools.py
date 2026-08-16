@@ -27,7 +27,7 @@ from tether.todo_capabilities import (
     list_todos,
     set_status,
 )
-from tether.todos import TodoStatus
+from tether.todo_model import TodoStatus
 from tether.tool_runtime import ToolSpec
 
 

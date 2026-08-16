@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from snekql.sqlite import Fetched
 
-    from tether.todos import Todo, TodoReadiness
+    from tether.todo_store import Todo
+    from tether.todos import TodoReadiness
 
 
 def _ready_line(todo: Todo[Fetched]) -> str:

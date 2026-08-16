@@ -12,21 +12,16 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import UUID7, BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
-from tether.todos import (
-    Fetched,
-    InvalidTodoError,
-    Todo,
-    TodoConflictError,
-    TodoNotFoundError,
-    TodoReadiness,
-    TodoStatus,
-    todo_reference,
-)
+from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
+from tether.todo_model import TodoStatus
+from tether.todo_store import Todo
+from tether.todos import TodoReadiness, todo_reference
 
 TODO_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((TodoNotFoundError,), "not_found", 404, detail="todo not found"),
