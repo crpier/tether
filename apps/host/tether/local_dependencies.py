@@ -4,20 +4,27 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from tether.provider_auth import DeviceCode, ProviderAuthBackend
+from snekok import Ok, Result
+
+from tether.provider_auth import ProviderAuthBackend
+from tether.provider_auth_errors import ProviderAuthFailure
+from tether.provider_auth_model import DeviceCode
 from tether.stt import AudioUpload, SttTransport, TranscriptionResponse
 
 
 class LocalProviderAuthBackend(ProviderAuthBackend):
     """Report the deterministic local model provider as always connected."""
 
-    async def check(self) -> bool:
+    async def check(self) -> Result[bool, ProviderAuthFailure]:
         """Report local provider availability without reading credential state."""
-        return True
+        return Ok(value=True)
 
-    async def authorize(self, report: Callable[[DeviceCode], None]) -> None:
+    async def authorize(
+        self, report: Callable[[DeviceCode], None]
+    ) -> Result[None, ProviderAuthFailure]:
         """Complete immediately because the local provider needs no credentials."""
         _ = report
+        return Ok(None)
 
 
 class LocalSttTransport(SttTransport):

@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from snekok import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether.app_runtime import app_runtime
-from tether.provider_auth import (
-    ProviderAuthorizationActiveError,
-    ProviderAuthState,
-    ProviderAuthStatus,
-)
+from tether.provider_auth_model import ProviderAuthState, ProviderAuthStatus
 
 
 class ProviderAuthRead(BaseModel):
@@ -47,13 +44,12 @@ async def provider_auth_status(request: Request) -> Response:
 async def start_provider_auth(request: Request) -> Response:
     """Start OpenAI Codex device-code authorization on the server."""
     service = app_runtime(request.app).provider_auth_service
-    try:
-        status = await service.start()
-    except ProviderAuthorizationActiveError:
+    outcome = await service.start()
+    if isinstance(outcome, Err):
         return JSONResponse(
             {"detail": "provider authorization is already active"}, status_code=409
         )
-    return _response(status, status_code=202)
+    return _response(outcome.value, status_code=202)
 
 
 @router.delete("/api/provider-auth/openai-codex", response_model=ProviderAuthRead)

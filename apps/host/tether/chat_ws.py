@@ -12,7 +12,7 @@ from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from tether.agent_trace import AgentTraceRecorder
-from tether.auth import SESSION_COOKIE, verify_session_cookie
+from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame
 from tether.chat_turn import ChatTurnDependencies, run_chat_prompt, send_chat_error
