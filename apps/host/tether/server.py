@@ -19,7 +19,7 @@ from starlette.status import HTTP_404_NOT_FOUND
 from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.artifact_tools import internal_artifact_tool_routes
 from tether.auth import AppSessionMiddleware
 from tether.bucket_tools import internal_bucket_tool_routes
@@ -40,24 +40,20 @@ from tether.host_resources import HOST_QUIET_LOGGERS, HostBootstrap
 from tether.kosync_routes import kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.local_dependencies import LocalProviderAuthBackend, LocalSttTransport
+from tether.logging_config import configure_logging
 from tether.model_selection import AgentModelConfig
 from tether.openapi_export import public_api_router
 from tether.panel_tools import internal_panel_tool_routes
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
+from tether.request_logging import ContextLoggerMiddleware
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, FastEmbedder
 from tether.search_tools import internal_search_tool_routes
-from tether.structured_logging import (
-    ContextLoggerMiddleware,
-    configure_logging,
-)
 from tether.stt import SttClient
 from tether.stt_transport import HttpSttTransport
 from tether.tavily_search import HttpTavilyTransport, TavilySearchProvider
-from tether.telemetry import (
-    TelemetryMiddleware,
-    TelemetrySettings,
-)
+from tether.telemetry_middleware import TelemetryMiddleware
+from tether.telemetry_model import TelemetrySettings
 from tether.todo_tools import internal_todo_tool_routes
 from tether.tool_runtime import SessionRegistry
 from tether.tools import internal_tool_routes

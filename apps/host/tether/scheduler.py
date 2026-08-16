@@ -30,7 +30,9 @@ from typing import Protocol
 
 from snekql.sqlite import Fetched
 
-from tether.agent_trace import AgentTraceRecorder, RunKind, record_run
+from tether.agent_run import record_run
+from tether.agent_trace_model import RunKind
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime

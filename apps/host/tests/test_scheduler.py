@@ -28,7 +28,8 @@ from snektest import (
     test,
 )
 
-from tether.agent_trace import AgentTraceRecorder, RunKind
+from tether.agent_trace_model import RunKind
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.notification_delivery import (
     PushDeliveryNotifier,
     TriggerDispatcher,

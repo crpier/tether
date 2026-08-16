@@ -8,12 +8,9 @@ from collections.abc import Callable
 import structlog
 from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 
-from tether.agent_trace import (
-    AgentTraceRecorder,
-    record_run,
-    redact_args,
-    summarize_result,
-)
+from tether.agent_run import record_run
+from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.agent_trace_redaction import redact_args, summarize_result
 from tether.pi_errors import PiRuntimeError
 
 SESSION = "session-a"
@@ -265,6 +262,22 @@ def secrets_are_masked_and_long_strings_truncated_in_args() -> None:
     assert_eq(redacted["tool_secret"], "[redacted]")
     assert_eq(redacted["auth_token"], "[redacted]")
     assert_true(redacted["blob"].endswith("(truncated)"))
+
+
+@test()
+def nested_secrets_are_masked_in_trace_arguments() -> None:
+    """Credential-shaped keys cannot leak from nested tool arguments."""
+    redacted = redact_args(
+        {
+            "request": {
+                "authorization": "Bearer secret",
+                "headers": [{"api_token": "secret"}],
+            }
+        }
+    )
+
+    assert_eq(redacted["request"]["authorization"], "[redacted]")
+    assert_eq(redacted["request"]["headers"][0]["api_token"], "[redacted]")
 
 
 @test()

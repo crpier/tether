@@ -9,7 +9,7 @@ APPEND_SYSTEM.md — after them, never before).
 
 from typing import assert_never
 
-from tether.agent_trace import RunKind
+from tether.agent_trace_model import RunKind
 
 CONVERSATION_SYSTEM_PROMPT = """\
 You are Tether, a single-user, self-hosted personal assistant. Your core loop \

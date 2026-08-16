@@ -24,7 +24,7 @@ from snektest import (
     test,
 )
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.app_runtime import app_runtime
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError

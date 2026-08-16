@@ -13,7 +13,8 @@ import structlog
 from snekql.sqlite import Fetched
 from starlette.websockets import WebSocket
 
-from tether.agent_trace import AgentTraceRecorder, record_run
+from tether.agent_run import record_run
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.chat_frames import (
     AgentEndFrame,
     ErrorFrame,

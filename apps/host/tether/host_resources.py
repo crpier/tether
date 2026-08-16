@@ -12,14 +12,16 @@ from pathlib import Path
 from anyio import Path as AsyncPath
 from snekql.sqlite import Config, Database
 
-from tether.agent_trace import AgentTraceRecorder, RunKind
+from tether.agent_trace_model import RunKind
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
+from tether.logging_config import QUIET_LOGGERS, Logger, configure_logging
 from tether.model_selection import AgentModelConfig
 from tether.scheduler import EphemeralPiConfig
-from tether.structured_logging import QUIET_LOGGERS, Logger, configure_logging
 from tether.stt import SttClient
-from tether.telemetry import Telemetry, TelemetrySettings, configure_telemetry
+from tether.telemetry_config import configure_telemetry
+from tether.telemetry_model import Telemetry, TelemetrySettings
 from tether.tool_runtime import SessionRegistry
 
 HOST_QUIET_LOGGERS = (*QUIET_LOGGERS, "aiosqlite", "snekql", "httpcore2")

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 from starlette.applications import Starlette
 
 if TYPE_CHECKING:
-    from tether.agent_trace import AgentTraceRecorder
+    from tether.agent_trace_recorder import AgentTraceRecorder
     from tether.artifacts import ArtifactService
     from tether.bucket_item_search import BucketItemSearchService
     from tether.bucket_items import BucketItemService
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from tether.search_fusion import SearchFusionService
     from tether.structured_logging import Logger
     from tether.stt import SttClient
-    from tether.telemetry import Telemetry
+    from tether.telemetry_model import Telemetry
     from tether.todos import TodoService
     from tether.tool_runtime import SessionRegistry
     from tether.triage import TriageService

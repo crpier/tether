@@ -19,7 +19,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from tether.agent_trace import AgentTraceRecorder
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.capabilities import bind_params, rest_response, translate_domain_errors
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.memory_store import MemoryProvenance
