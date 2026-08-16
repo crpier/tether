@@ -42,12 +42,9 @@ from tether.scheduler import (
 from tether.structured_logging import Logger
 from tether.system_prompt import TASK_SYSTEM_PROMPT
 from tether.tools import SessionRegistry
-from tether.triggers import (
-    ScheduledTrigger,
-    TriggerService,
-    TriggerSpec,
-    create_trigger_schema,
-)
+from tether.trigger_schedule import OnceTriggerSpec
+from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+from tether.triggers import TriggerService
 
 from .pi_runtime_fakes import FakePiRuntime, RecordingSpawner
 
@@ -190,8 +187,7 @@ async def add_due_message(
 ) -> ScheduledTrigger[Fetched]:
     """Create a once message trigger due exactly at BASE."""
     return await service.create(
-        TriggerSpec(
-            recurrence="once",
+        OnceTriggerSpec(
             action_kind="message",
             payload=payload,
             fire_at=BASE,
@@ -242,8 +238,7 @@ async def tick_runs_an_agent_prompt_and_delivers_the_result() -> None:
     """An agent-prompt trigger runs through the runner; its output is delivered."""
     service = await load_fixture(scheduler_service())
     trigger = await service.create(
-        TriggerSpec(
-            recurrence="once",
+        OnceTriggerSpec(
             action_kind="prompt",
             payload="summarise my day",
             fire_at=BASE,

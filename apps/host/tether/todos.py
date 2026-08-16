@@ -59,7 +59,7 @@ from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.memory_store import Memory, tethered_corpus
 from tether.notifications import Notification
 from tether.structured_logging import Logger
-from tether.triggers import ScheduledTrigger
+from tether.trigger_store import ScheduledTrigger
 
 if TYPE_CHECKING:
     from tether.memories import MemoryService

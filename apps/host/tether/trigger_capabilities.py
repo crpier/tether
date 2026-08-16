@@ -15,22 +15,23 @@ from typing import cast
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
 from tether.capabilities import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
-from tether.triggers import (
-    Fetched,
+from tether.trigger_schedule import (
+    DailyTriggerSpec,
     InvalidTriggerSpecError,
-    ScheduledTrigger,
+    OnceTriggerSpec,
     TriggerActionKind,
-    TriggerConflictError,
-    TriggerNotFoundError,
     TriggerRecurrence,
     TriggerSpec,
-    TriggerStatus,
+    WeeklyTriggerSpec,
 )
+from tether.trigger_store import ScheduledTrigger, TriggerStatus
+from tether.triggers import TriggerConflictError, TriggerNotFoundError
 
 TRIGGER_ERRORS: tuple[ErrorRule, ...] = (
     ErrorRule((TriggerNotFoundError,), "not_found", 404, detail="trigger not found"),
@@ -62,15 +63,47 @@ class TriggerSpecBody(BaseModel):
     fire_at: AwareDatetime | None = None
 
     def to_spec(self) -> TriggerSpec:
-        """Project the validated fields onto the service's `TriggerSpec`."""
-        return TriggerSpec(
-            recurrence=self.recurrence,
+        """Validate recurrence-specific fields into a strict domain definition."""
+        if self.recurrence == "once":
+            if self.fire_at is None:
+                message = "a once trigger requires fire_at"
+                raise InvalidTriggerSpecError(message)
+            if self.time_of_day is not None or self.weekday is not None:
+                message = "a once trigger takes neither a time of day nor a weekday"
+                raise InvalidTriggerSpecError(message)
+            return OnceTriggerSpec(
+                action_kind=self.action_kind,
+                payload=self.payload,
+                fire_at=self.fire_at,
+                timezone=self.timezone,
+            )
+        if self.fire_at is not None:
+            message = f"a {self.recurrence} trigger does not take fire_at"
+            raise InvalidTriggerSpecError(message)
+        if self.timezone is None or self.time_of_day is None:
+            message = (
+                f"a {self.recurrence} trigger requires a timezone and a time of day"
+            )
+            raise InvalidTriggerSpecError(message)
+        if self.recurrence == "daily":
+            if self.weekday is not None:
+                message = "a daily trigger does not take a weekday"
+                raise InvalidTriggerSpecError(message)
+            return DailyTriggerSpec(
+                action_kind=self.action_kind,
+                payload=self.payload,
+                timezone=self.timezone,
+                time_of_day=self.time_of_day,
+            )
+        if self.weekday is None:
+            message = "a weekly trigger requires a weekday"
+            raise InvalidTriggerSpecError(message)
+        return WeeklyTriggerSpec(
             action_kind=self.action_kind,
             payload=self.payload,
             timezone=self.timezone,
             time_of_day=self.time_of_day,
             weekday=self.weekday,
-            fire_at=self.fire_at,
         )
 
 

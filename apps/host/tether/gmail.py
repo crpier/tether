@@ -37,7 +37,8 @@ from tether.memory_store import (
 )
 from tether.structured_logging import Logger
 from tether.todos import TodoService
-from tether.triggers import TriggerService, TriggerSpec
+from tether.trigger_schedule import OnceTriggerSpec
+from tether.triggers import TriggerService
 
 DEFAULT_TRIAGE_BATCH_SIZE = 10
 """Maximum messages included in one triage prompt."""
@@ -325,8 +326,7 @@ class GmailSyncService:
         logger: Logger,
     ) -> UUID7:
         trigger = await self.trigger_service.create(
-            TriggerSpec(
-                recurrence="once",
+            OnceTriggerSpec(
                 action_kind="message",
                 payload=gmail_trigger_message(message, deadline),
                 fire_at=gmail_deadline_fire_at(
