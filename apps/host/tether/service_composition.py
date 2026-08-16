@@ -35,6 +35,7 @@ from tether.host_resources import (
 )
 from tether.kosync import KosyncService
 from tether.kosync_routes import KosyncAuth
+from tether.kosync_store import KosyncStore
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_search import MemorySearchService
@@ -426,7 +427,7 @@ def _build_presentation_services(  # noqa: PLR0913 - each service is explicit
             userkey=config.kosync_userkey,
         ),
         kosync_service=KosyncService(
-            database=database,
+            store=KosyncStore(database),
             memory_service=memory_service,
         ),
         panel_service=PanelService(

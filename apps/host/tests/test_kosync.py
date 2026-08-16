@@ -23,29 +23,57 @@ from snektest import (
     assert_eq,
     assert_is_none,
     assert_is_not_none,
+    assert_raises,
     assert_true,
     fixture,
     load_fixture,
     test,
 )
 
-from tether.kosync import (
+from tether.kosync import KosyncService
+from tether.kosync_model import (
     FINISHED_THRESHOLD,
-    KosyncService,
     ProgressUpdate,
-    create_kosync_schema,
     ebook_hash_for_filename,
 )
+from tether.kosync_store import KosyncStore, create_kosync_schema
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_store import (
     Memory,
+    MemoryProvenance,
     create_memory_schema,
     tethered_corpus,
 )
 from tether.structured_logging import Logger
 
 _FIXED_NOW = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
+
+
+class FinishedMemoryCaptureDefect(Exception):
+    """An unexpected finished-Memory capture defect used by the fake port."""
+
+
+class FailingOnceMemoryPort:
+    """A finished-Memory port that defects once, then accepts a retry."""
+
+    def __init__(self) -> None:
+        self.capture_calls: int = 0
+
+    async def capture_tethered(
+        self,
+        content: str,
+        *,
+        provenance: MemoryProvenance,
+        facets: dict[str, str] | None = None,
+        logger: Logger,
+    ) -> object:
+        """Fail the first capture without swallowing the unexpected defect."""
+        _ = content, provenance, facets, logger
+        self.capture_calls += 1
+        if self.capture_calls == 1:
+            raise FinishedMemoryCaptureDefect
+        return object()
 
 
 def noop_tracer() -> Tracer:
@@ -109,10 +137,32 @@ async def kosync_env() -> AsyncGenerator[KosyncEnv]:
             tracer=noop_tracer(),
         )
         yield KosyncEnv(
-            service=KosyncService(database=database, memory_service=memory_service),
+            service=KosyncService(
+                store=KosyncStore(database), memory_service=memory_service
+            ),
             memory_service=memory_service,
             logger=test_logger(),
         )
+    await database.close()
+
+
+@test()
+async def a_failed_finished_capture_remains_resumable() -> None:
+    """An unexpected capture defect propagates and a later push retries it."""
+    database = await Database.initialize(backend=Config(database=":memory:"))
+    await create_kosync_schema(database)
+    memory_port = FailingOnceMemoryPort()
+    service = KosyncService(store=KosyncStore(database), memory_service=memory_port)
+
+    with assert_raises(FinishedMemoryCaptureDefect):
+        _ = await service.record_progress(
+            progress("resumable", 0.99), logger=test_logger(), now=_FIXED_NOW
+        )
+    _ = await service.record_progress(
+        progress("resumable", 1.0), logger=test_logger(), now=_FIXED_NOW
+    )
+
+    assert_eq(memory_port.capture_calls, 2)
     await database.close()
 
 

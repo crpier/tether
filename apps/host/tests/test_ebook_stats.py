@@ -35,7 +35,7 @@ from tether.ebook_stats import (
     EbookStatsSyncService,
     create_ebook_stats_schema,
 )
-from tether.kosync import EbookDocument, create_kosync_schema
+from tether.kosync_store import EbookDocument, create_kosync_schema
 from tether.structured_logging import Logger
 
 

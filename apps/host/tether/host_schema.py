@@ -7,7 +7,7 @@ from tether.bucket_item_store import create_bucket_item_schema
 from tether.conversation_store import create_conversation_schema
 from tether.ebook_stats import create_ebook_stats_schema
 from tether.gmail_store import create_gmail_schema
-from tether.kosync import create_kosync_schema
+from tether.kosync_store import create_kosync_schema
 from tether.memory_store import create_memory_schema
 from tether.notifications import create_notification_schema
 from tether.panel_store import create_panel_schema

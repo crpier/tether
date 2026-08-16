@@ -14,10 +14,12 @@ from __future__ import annotations
 from typing import cast
 
 from pydantic import BaseModel
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
-from tether.kosync import EbookDocument, Fetched, KosyncService
+from tether.kosync import KosyncService
+from tether.kosync_store import EbookDocument
 
 KOSYNC_ERRORS: tuple[ErrorRule, ...] = ()
 """No domain failures translate here: labeling upserts, so a hash is never

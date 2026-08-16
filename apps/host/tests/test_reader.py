@@ -32,7 +32,11 @@ from snektest import (
     test,
 )
 
-from tether.kosync import EbookDocument, EbookProgressEvent, create_kosync_schema
+from tether.kosync_store import (
+    EbookDocument,
+    EbookProgressEvent,
+    create_kosync_schema,
+)
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_store import (
