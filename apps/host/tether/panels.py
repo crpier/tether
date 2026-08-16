@@ -13,7 +13,7 @@ the mutations optimistic-concurrency checked like Scheduled triggers) plus
 `search_candidates` + `hydrate_tethered` (rank order), a facets-only panel is a
 recency-ordered corpus listing with the same facet post-filter semantics.
 
->>> service = PanelService(database=db, memory_search=search, tracer=tracer)
+>>> service = PanelService(database=db, executor=executor, tracer=tracer)
 >>> panel = await service.create(
 ...     PanelSpec(name="finance", facets={"domain": "finance"}), logger=logger
 ... )
@@ -24,62 +24,31 @@ recency-ordered corpus listing with the same facet post-filter semantics.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import ClassVar, Literal
-from uuid import uuid7
+from dataclasses import dataclass
+from datetime import datetime
 
 from opentelemetry.trace import Tracer
-from pydantic import UUID7, Json, PositiveInt
+from pydantic import UUID7, PositiveInt
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
     Fetched,
-    Index,
-    Integer,
-    Model,
-    Pending,
-    Text,
     Transaction,
-    UtcDatetime,
     insert,
     select,
     update,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.memory_search import MemorySearchService
-from tether.memory_store import Memory, tethered_corpus
+from tether.panel_errors import (
+    InvalidPanelSpecError,
+    PanelConflictError,
+    PanelNotFoundError,
+)
+from tether.panel_execution import PanelExecutionPort, PanelResults
+from tether.panel_model import EXECUTE_DEFAULT_LIMIT, PanelRenderKind, PanelSpec
+from tether.panel_store import SyntheticPanel
 from tether.structured_logging import Logger
-
-type PanelRenderKind = Literal["table", "vega-lite"]
-"""How a panel's results render: a Tether-styled table, or a stored Vega-Lite
-spec template the result rows are injected into (ADR 0011 vocabulary only)."""
-
-EXECUTE_DEFAULT_LIMIT = 20
-"""Rows a panel shows by default; `total` still counts every match."""
-
-_SEARCH_CANDIDATE_LIMIT = 200
-"""Candidate bound for the text-query path: generous enough that the facet /
-window post-filter rarely starves the display cap, small enough to stay cheap.
-The facets-only path needs no bound — it counts matches for `total` anyway."""
-
-
-class PanelNotFoundError(Exception):
-    """Raised when an operation targets a panel that does not exist."""
-
-
-class PanelConflictError(Exception):
-    """Raised when a live panel cannot accept the requested operation.
-
-    A stale observed version, not absence: the caller acted on a panel that
-    has moved on since it was read.
-    """
-
-
-class InvalidPanelSpecError(Exception):
-    """Raised when a panel's saved query or render choice is malformed."""
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -90,25 +59,6 @@ def _debug(logger: Logger, event: str, **context: object) -> None:
 def _info(logger: Logger, event: str, **context: object) -> None:
     """Emit an info event using caller-supplied logging context."""
     logger.info(event, **context)
-
-
-@dataclass(frozen=True)
-class PanelSpec:
-    """The saved query + render choice a create or update carries.
-
-    Validation happens in `_normalise_spec` before any write: a panel must be
-    nameable and scoped (facets and/or a text query), a `vega-lite` render kind
-    must carry its spec template, and a window is a positive day count.
-    """
-
-    name: str
-    facets: dict[str, str]
-    query: str | None = None
-    window_days: int | None = None
-    columns: list[str] = field(default_factory=list[str])
-    render_kind: PanelRenderKind = "table"
-    vega_lite_spec: str | None = None
-    position: int = 0
 
 
 @dataclass(frozen=True)
@@ -160,58 +110,6 @@ def _normalise_spec(spec: PanelSpec) -> _NormalisedSpec:
     )
 
 
-def _default_render_kind() -> PanelRenderKind:
-    """The render kind a panel starts with: the plain Tether-styled table."""
-    return "table"
-
-
-class SyntheticPanel[S = Pending](Model[S, "SyntheticPanel[Fetched]"]):
-    """A saved faceted query over the Commons plus its render choice."""
-
-    id: SyntheticPanel.GenCol[UUID7] = Text(
-        primary_key=True,
-        default_factory=uuid7,
-    )
-    name: SyntheticPanel.Col[str] = Text()
-    """The human-facing panel title."""
-    facets: SyntheticPanel.Col[Json[dict[str, str]]] = Text(
-        default_factory=dict[str, str]
-    )
-    """The exact-match AND facet filter, same semantics as Memory search."""
-    query: SyntheticPanel.Col[str | None] = Text(default=None, nullable=True)
-    """Optional text query; when present, results ride hybrid Search's ranking."""
-    window_days: SyntheticPanel.Col[int | None] = Integer(default=None, nullable=True)
-    """Optional relative window bounding `tethered_at`, resolved at query time."""
-    columns: SyntheticPanel.Col[Json[list[str]]] = Text(default_factory=list[str])
-    """Facet keys shown as table columns beside the Memory content."""
-    render_kind: SyntheticPanel.Col[PanelRenderKind] = Text(
-        default_factory=_default_render_kind
-    )
-    """`table` renders rows directly; `vega-lite` injects them into the template."""
-    vega_lite_spec: SyntheticPanel.Col[str | None] = Text(default=None, nullable=True)
-    """The stored Vega-Lite spec template for the `vega-lite` render kind."""
-    position: SyntheticPanel.Col[int] = Integer(default=0)
-    """Explicit sort position; the panel column never reshuffles on its own."""
-    version: SyntheticPanel.Col[PositiveInt] = Integer(default=1)
-    """Version number used for optimistic concurrency control."""
-    created_at: SyntheticPanel.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: SyntheticPanel.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    deleted_at: SyntheticPanel.Col[UtcDatetime | None] = Text(
-        default=None,
-        nullable=True,
-    )
-
-    __indexes__: ClassVar = [Index(deleted_at, position)]
-
-
-@dataclass(frozen=True)
-class PanelResults:
-    """One execution of a panel: the capped rows plus the uncapped match count."""
-
-    memories: list[Memory[Fetched]]
-    total: int
-
-
 class PanelService:
     """Capability surface for Synthetic panels, over a snekql database.
 
@@ -223,12 +121,12 @@ class PanelService:
     def __init__(
         self,
         database: Database,
-        memory_search: MemorySearchService,
+        executor: PanelExecutionPort,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
-        self.memory_search: MemorySearchService = memory_search
+        self.executor: PanelExecutionPort = executor
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.tracer: Tracer = tracer
 
@@ -399,91 +297,8 @@ class PanelService:
         limit: PositiveInt = EXECUTE_DEFAULT_LIMIT,
         logger: Logger,
     ) -> PanelResults:
-        """Run a panel's saved query against the trusted corpus, capped.
-
-        The relative window resolves against the caller's `now` on every call,
-        never at save time (ADR 0006). With a text query, ranking comes from
-        hybrid Search's candidates and the facet/window filter lands in
-        `hydrate_tethered`; without one, the corpus listing is recency-of-trust
-        ordered with the same facet semantics applied post-fetch.
-        """
-        after = (
-            now - timedelta(days=panel.window_days)
-            if panel.window_days is not None
-            else None
-        )
-        with self.tracer.start_as_current_span(
-            "PanelService.execute",
-            attributes={"panel.id": str(panel.id)},
-        ) as span:
-            _debug(
-                logger,
-                "Executing Synthetic panel",
-                panel_id=str(panel.id),
-                name=panel.name,
-            )
-            if panel.query is not None:
-                matches = await self._execute_search(
-                    panel.query, panel.facets, after=after, logger=logger
-                )
-            else:
-                matches = await self._execute_listing(
-                    panel.facets, after=after, logger=logger
-                )
-            span.set_attribute("panel.execute.total", len(matches))
-            _debug(
-                logger,
-                "Synthetic panel execution completed",
-                panel_id=str(panel.id),
-                total=len(matches),
-            )
-            return PanelResults(memories=matches[:limit], total=len(matches))
-
-    async def _execute_search(
-        self,
-        query: str,
-        facets: dict[str, str],
-        *,
-        after: datetime | None,
-        logger: Logger,
-    ) -> list[Memory[Fetched]]:
-        """The text-query arm: Search's candidates, re-filtered and rank-ordered."""
-        candidates = await self.memory_search.search_candidates(
-            query, limit=_SEARCH_CANDIDATE_LIMIT, logger=logger
-        )
-        if not candidates:
-            return []
-        rank = {candidate.id: position for position, candidate in enumerate(candidates)}
-        memories = await self.memory_search.hydrate_tethered(
-            list(rank),
-            facets=facets or None,
-            after=after,
-            logger=logger,
-        )
-        memories.sort(key=lambda memory: rank[memory.id])
-        return memories
-
-    async def _execute_listing(
-        self,
-        facets: dict[str, str],
-        *,
-        after: datetime | None,
-        logger: Logger,
-    ) -> list[Memory[Fetched]]:
-        """The facets-only arm: the trusted corpus, most recently tethered first."""
-        query = tethered_corpus().order_by(Memory.tethered_at.desc())
-        if after is not None:
-            query = query.where(Memory.tethered_at.gte(after))
-        async with self.database.transaction() as tx:
-            memories = await tx.fetch_all(query)
-        _ = logger
-        if facets:
-            memories = [
-                memory
-                for memory in memories
-                if all(memory.facets.get(key) == value for key, value in facets.items())
-            ]
-        return memories
+        """Run a panel's saved query against the trusted corpus, capped."""
+        return await self.executor.execute(panel, now=now, limit=limit, logger=logger)
 
     async def _fetch_live(
         self, tx: Transaction, panel_id: UUID7
@@ -497,19 +312,3 @@ class PanelService:
         if panel is None:
             raise PanelNotFoundError(panel_id)
         return panel
-
-
-async def create_panel_schema(database: Database) -> None:
-    """Create the Synthetic panel table and its index on an initialized DB.
-
-    Applied as its own ordered migrations after the earlier schemas (the
-    artifact chain took `011_`).
-
-    >>> database = await Database.initialize(backend=Config(database=":memory:"))
-    >>> await create_panel_schema(database)
-    """
-    migrations = {
-        f"012_{label}": sql
-        for label, sql in scaffold_sqlite_statements([SyntheticPanel])
-    }
-    await database.migrate(migrations)

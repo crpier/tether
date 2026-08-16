@@ -42,6 +42,7 @@ from tether.memory_search_index import SearchIndex
 from tether.memory_search_reconciler import SearchReconciler
 from tether.model_selection import AgentModelCatalog
 from tether.notifications import NotificationService
+from tether.panel_execution import PanelExecutor
 from tether.panels import PanelService
 from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_execution import ProposalExecutor
@@ -430,7 +431,11 @@ def _build_presentation_services(  # noqa: PLR0913 - each service is explicit
         ),
         panel_service=PanelService(
             database=database,
-            memory_search=memory_search,
+            executor=PanelExecutor(
+                database=database,
+                memory_search=memory_search,
+                tracer=tracer,
+            ),
             event_publisher=event_hub,
             tracer=tracer,
         ),
