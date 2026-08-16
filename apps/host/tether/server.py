@@ -28,9 +28,7 @@ from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
 from tether.embeddings import Embedder, FakeEmbedder, FastEmbedder
-from tether.gmail import (
-    GmailTransport,
-)
+from tether.gmail_client import GmailTransport
 from tether.gmail_oauth import (
     GMAIL_MODIFY_SCOPE,
     GMAIL_READONLY_SCOPE,

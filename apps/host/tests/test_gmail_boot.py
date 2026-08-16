@@ -8,16 +8,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
+from snekok import Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_true, test
 
 from tether.agent_trace import AgentTraceRecorder
-from tether.gmail import GmailResponse, create_gmail_schema
+from tether.gmail_client import GmailNetworkFailure, GmailResponse
+from tether.gmail_store import create_gmail_schema
 from tether.host_composition import HostBootstrap, _wire_gmail
 from tether.host_config import AppConfig
 from tether.ingestion_lifecycle import IngestionLifecycle
@@ -35,15 +38,17 @@ class FakeGmailTransport:
 
     async def list_messages(
         self, *, query: str, page_token: str | None
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 
-    async def get_message(self, message_id: str) -> GmailResponse:
+    async def get_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 
-    async def list_labels(self) -> GmailResponse:
+    async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 
@@ -53,13 +58,57 @@ class FakeGmailTransport:
         *,
         add_label_ids: Sequence[str],
         remove_label_ids: Sequence[str],
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 
-    async def trash_message(self, message_id: str) -> GmailResponse:
+    async def trash_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
+
+
+@dataclass
+class BootGmailTransport:
+    """Record boot requests while returning one configured provider status."""
+
+    status_code: int = 200
+    label_calls: int = 0
+    list_calls: int = 0
+
+    async def list_messages(
+        self, *, query: str, page_token: str | None
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = query, page_token
+        self.list_calls += 1
+        return Ok(GmailResponse(payload={"messages": []}, status_code=self.status_code))
+
+    async def get_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = message_id
+        return Ok(GmailResponse(payload={}, status_code=self.status_code))
+
+    async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
+        self.label_calls += 1
+        return Ok(GmailResponse(payload={"labels": []}, status_code=self.status_code))
+
+    async def modify_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = message_id, add_label_ids, remove_label_ids
+        return Ok(GmailResponse(payload={}, status_code=self.status_code))
+
+    async def trash_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = message_id
+        return Ok(GmailResponse(payload={}, status_code=self.status_code))
 
 
 async def _wire(config: AppConfig) -> asyncio.Event:
@@ -99,8 +148,11 @@ async def _wire(config: AppConfig) -> asyncio.Event:
                 trigger_service=trigger_service,
                 todo_service=todo_service,
             )
-            return ingestion_lifecycle.readiness("gmail")
+            readiness = ingestion_lifecycle.readiness("gmail")
+            await asyncio.wait_for(readiness.wait(), timeout=1)
+            return readiness
     finally:
+        await ingestion_lifecycle.stop(grace_seconds=0.1)
         await db.close()
 
 
@@ -140,3 +192,41 @@ async def the_enabled_flag_without_a_transport_wires_nothing() -> None:
     )
 
     assert_true(readiness.is_set())
+
+
+@test()
+async def an_authenticated_provider_completes_the_boot_sync() -> None:
+    """A successful provider response lists mail before readiness is released."""
+    transport = BootGmailTransport()
+
+    readiness = await _wire(
+        AppConfig(
+            app_password="pw",
+            session_secret="s",
+            gmail_sync_enabled=True,
+            gmail_transport=transport,
+        )
+    )
+
+    assert_true(readiness.is_set())
+    assert transport.label_calls == 1
+    assert transport.list_calls == 1
+
+
+@test()
+async def an_authentication_rejection_stops_after_the_boot_request() -> None:
+    """A rejected credential does not enter periodic synchronization."""
+    transport = BootGmailTransport(status_code=401)
+
+    readiness = await _wire(
+        AppConfig(
+            app_password="pw",
+            session_secret="s",
+            gmail_sync_enabled=True,
+            gmail_transport=transport,
+        )
+    )
+
+    assert_true(readiness.is_set())
+    assert transport.label_calls == 1
+    assert transport.list_calls == 0

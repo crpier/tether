@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from snekok import Ok, Result
 from snekql.sqlite import Config, Database, select
 from snektest import (
     assert_eq,
@@ -27,13 +28,13 @@ from snektest import (
     test,
 )
 
-from tether.gmail import (
+from tether.gmail_client import (
     GmailClient,
+    GmailNetworkFailure,
     GmailResponse,
-    GmailSyncState,
-    create_gmail_schema,
 )
 from tether.gmail_purge import GmailPurgeSweepService
+from tether.gmail_store import GmailSyncState, create_gmail_schema
 from tether.proposals import ProposalService, create_proposal_schema
 from tether.structured_logging import Logger
 
@@ -46,6 +47,12 @@ def noop_tracer() -> Tracer:
 def test_logger() -> Logger:
     """A throwaway structured logger."""
     return structlog.stdlib.get_logger("test.gmail_purge")
+
+
+def _ok[T](result: Result[T, object]) -> T:
+    """Require one expected provider operation to have succeeded."""
+    assert isinstance(result, Ok)
+    return result.value
 
 
 # --- Scripted transport + triage runner -------------------------------------
@@ -64,19 +71,21 @@ class PurgeTransport:
 
     async def list_messages(
         self, *, query: str, page_token: str | None
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         _ = page_token
         self.list_calls.append(query)
-        return GmailResponse(status_code=200, payload=self.message_pages.pop(0))
+        return Ok(GmailResponse(status_code=200, payload=self.message_pages.pop(0)))
 
-    async def get_message(self, message_id: str) -> GmailResponse:
+    async def get_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         payload = self.messages.get(message_id)
         if payload is None:
-            return GmailResponse(status_code=404, payload={})
-        return GmailResponse(status_code=200, payload=payload)
+            return Ok(GmailResponse(status_code=404, payload={}))
+        return Ok(GmailResponse(status_code=200, payload=payload))
 
-    async def list_labels(self) -> GmailResponse:
-        return GmailResponse(status_code=200, payload={"labels": self.labels})
+    async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
+        return Ok(GmailResponse(status_code=200, payload={"labels": self.labels}))
 
     async def modify_labels(
         self,
@@ -84,14 +93,16 @@ class PurgeTransport:
         *,
         add_label_ids: Sequence[str],
         remove_label_ids: Sequence[str],
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         _ = add_label_ids, remove_label_ids
         self.modify_calls.append(message_id)
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
-    async def trash_message(self, message_id: str) -> GmailResponse:
+    async def trash_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.trash_calls.append(message_id)
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
 
 @dataclass
@@ -240,9 +251,9 @@ async def a_chunk_of_actionable_verdicts_becomes_one_proposal() -> None:
         logger=env.logger
     )
 
-    assert_eq(report.scanned, 2)
-    assert_eq(report.proposed, 1)
-    assert_eq(report.actions, 2)
+    assert_eq(_ok(report).scanned, 2)
+    assert_eq(_ok(report).proposed, 1)
+    assert_eq(_ok(report).actions, 2)
     proposals = await env.proposal_service.list_proposals(logger=env.logger)
     assert_eq(len(proposals), 1)
     view = proposals[0]
@@ -318,7 +329,7 @@ async def the_sweep_chunks_the_backlog_into_separate_proposals() -> None:
         logger=env.logger
     )
 
-    assert_eq(report.proposed, 2)
+    assert_eq(_ok(report).proposed, 2)
     assert_eq(len(runner.prompts), 2)
     proposals = await env.proposal_service.list_proposals(logger=env.logger)
     assert_eq(len(proposals), 2)
@@ -335,7 +346,7 @@ async def a_keep_only_chunk_produces_no_proposal() -> None:
 
     report = await env.sweep_service(transport, runner).sweep(logger=env.logger)
 
-    assert_eq(report.proposed, 0)
+    assert_eq(_ok(report).proposed, 0)
     assert_eq(await env.proposal_service.list_proposals(logger=env.logger), [])
 
 
@@ -363,7 +374,7 @@ async def a_bad_verdict_is_dropped_from_the_proposal() -> None:
 
     report = await env.sweep_service(transport, runner).sweep(logger=env.logger)
 
-    assert_eq(report.actions, 1)
+    assert_eq(_ok(report).actions, 1)
     proposals = await env.proposal_service.list_proposals(logger=env.logger)
     assert_eq(len(proposals), 1)
     assert_eq([action.kind for action in proposals[0].actions], ["gmail.archive"])
@@ -386,7 +397,7 @@ async def a_label_verdict_without_a_name_is_dropped() -> None:
 
     report = await env.sweep_service(transport, runner).sweep(logger=env.logger)
 
-    assert_eq(report.proposed, 0)
+    assert_eq(_ok(report).proposed, 0)
 
 
 # --- No direct writes -------------------------------------------------------
@@ -461,5 +472,5 @@ async def a_second_pass_still_scans_new_backlog() -> None:
     first = await service.sweep(logger=env.logger)
     second = await service.sweep(logger=env.logger)
 
-    assert_eq(first.proposed, 0)
-    assert_eq(second.proposed, 1)
+    assert_eq(_ok(first).proposed, 0)
+    assert_eq(_ok(second).proposed, 1)

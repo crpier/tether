@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from tether.gmail import GmailTransport
+from tether.gmail_client import GmailTransport
 from tether.model_selection import AgentModelConfig
 from tether.provider_auth import ProviderAuthBackend
 from tether.readwise_http import ReaderTransport, ReadwiseTransport

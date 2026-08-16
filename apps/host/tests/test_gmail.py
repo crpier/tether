@@ -26,6 +26,7 @@ import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from snekok import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,
@@ -39,14 +40,14 @@ from snektest import (
     test,
 )
 
-from tether.gmail import (
-    GmailApiError,
+from tether.gmail import GmailSyncService
+from tether.gmail_client import (
+    GmailAuthenticationFailure,
     GmailClient,
-    GmailMessageRecord,
+    GmailNetworkFailure,
     GmailResponse,
-    GmailSyncService,
-    create_gmail_schema,
 )
+from tether.gmail_store import GmailMessageRecord, create_gmail_schema
 from tether.memories import (
     KnowledgeBaseService,
     Memory,
@@ -77,6 +78,12 @@ def noop_tracer() -> Tracer:
 def test_logger() -> Logger:
     """A throwaway structured logger for the mandatory service logger arg."""
     return structlog.stdlib.get_logger("test.gmail")
+
+
+def _ok[T](result: Result[T, object]) -> T:
+    """Require one expected provider operation to have succeeded."""
+    assert isinstance(result, Ok)
+    return result.value
 
 
 # --- Fake transport + triage runner -----------------------------------------
@@ -113,18 +120,20 @@ class FakeGmailTransport:
 
     async def list_messages(
         self, *, query: str, page_token: str | None
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.list_calls.append((query, page_token))
-        return GmailResponse(status_code=200, payload=self.message_pages.pop(0))
+        return Ok(GmailResponse(status_code=200, payload=self.message_pages.pop(0)))
 
-    async def get_message(self, message_id: str) -> GmailResponse:
+    async def get_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         payload = self.messages.get(message_id)
         if payload is None:
-            return GmailResponse(status_code=404, payload={})
-        return GmailResponse(status_code=200, payload=payload)
+            return Ok(GmailResponse(status_code=404, payload={}))
+        return Ok(GmailResponse(status_code=200, payload=payload))
 
-    async def list_labels(self) -> GmailResponse:
-        return GmailResponse(status_code=200, payload={"labels": self.labels})
+    async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
+        return Ok(GmailResponse(status_code=200, payload={"labels": self.labels}))
 
     async def modify_labels(
         self,
@@ -132,12 +141,12 @@ class FakeGmailTransport:
         *,
         add_label_ids: Sequence[str],
         remove_label_ids: Sequence[str],
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.modify_calls.append(
             (message_id, tuple(add_label_ids), tuple(remove_label_ids))
         )
         if self.write_status != 200:
-            return GmailResponse(status_code=self.write_status, payload={})
+            return Ok(GmailResponse(status_code=self.write_status, payload={}))
         payload = self.messages.get(message_id)
         if payload is not None:
             labels = [
@@ -145,19 +154,21 @@ class FakeGmailTransport:
             ]
             labels.extend(label for label in add_label_ids if label not in labels)
             payload["labelIds"] = labels
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
-    async def trash_message(self, message_id: str) -> GmailResponse:
+    async def trash_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.trash_calls.append(message_id)
         if self.write_status != 200:
-            return GmailResponse(status_code=self.write_status, payload={})
+            return Ok(GmailResponse(status_code=self.write_status, payload={}))
         payload = self.messages.get(message_id)
         if payload is not None:
             labels = _labels_of(payload)
             if "TRASH" not in labels:
                 labels.append("TRASH")
             payload["labelIds"] = labels
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
 
 @dataclass
@@ -403,7 +414,7 @@ async def a_promotions_labeled_message_is_prefiltered_without_triage() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.prefiltered, 1)
+    assert_eq(_ok(report).prefiltered, 1)
     assert_eq(triage_runner.prompts, [])
     assert_eq(await env.tethered_memories(), [])
 
@@ -421,7 +432,7 @@ async def a_social_labeled_message_is_prefiltered() -> None:
         logger=env.logger
     )
 
-    assert_eq(report.prefiltered, 1)
+    assert_eq(_ok(report).prefiltered, 1)
 
 
 @test()
@@ -441,8 +452,8 @@ async def spam_trash_and_sent_are_excluded_entirely() -> None:
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
     assert_eq(triage_runner.prompts, [])
-    assert_eq(report.ingested, 0)
-    assert_eq(report.noise, 0)
+    assert_eq(_ok(report).ingested, 0)
+    assert_eq(_ok(report).noise, 0)
     assert_eq(await env.tethered_memories(), [])
 
 
@@ -467,7 +478,7 @@ async def an_interesting_verdict_captures_a_tethered_memory() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.ingested, 1)
+    assert_eq(_ok(report).ingested, 1)
     memories = await env.tethered_memories()
     assert_eq(len(memories), 1)
     assert_eq(memories[0].provenance, {"kind": "gmail"})
@@ -488,7 +499,7 @@ async def a_noise_verdict_creates_no_memory() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.noise, 1)
+    assert_eq(_ok(report).noise, 1)
     assert_eq(await env.tethered_memories(), [])
 
 
@@ -572,8 +583,8 @@ async def a_malformed_entry_leaves_only_that_message_pending() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.ingested, 1)
-    assert_eq(report.pending, 1)
+    assert_eq(_ok(report).ingested, 1)
+    assert_eq(_ok(report).pending, 1)
     assert_eq(len(await env.tethered_memories()), 1)
 
 
@@ -591,8 +602,8 @@ async def a_missing_verdict_entry_leaves_that_message_pending() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.ingested, 1)
-    assert_eq(report.pending, 1)
+    assert_eq(_ok(report).ingested, 1)
+    assert_eq(_ok(report).pending, 1)
 
 
 # --- `tether` label override -------------------------------------------------
@@ -611,8 +622,8 @@ async def a_tether_labeled_message_cannot_be_classified_noise() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.ingested, 1)
-    assert_eq(report.noise, 0)
+    assert_eq(_ok(report).ingested, 1)
+    assert_eq(_ok(report).noise, 0)
     assert_eq(len(await env.tethered_memories()), 1)
 
 
@@ -633,8 +644,8 @@ async def a_tether_labeled_message_bypasses_the_category_prefilter() -> None:
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.prefiltered, 0)
-    assert_eq(report.ingested, 1)
+    assert_eq(_ok(report).prefiltered, 0)
+    assert_eq(_ok(report).ingested, 1)
 
 
 # --- Deadlines and triggers ---------------------------------------------------
@@ -758,10 +769,10 @@ async def an_already_recorded_message_is_not_reprocessed() -> None:
     first = await service.sync(logger=env.logger)
     second = await service.sync(logger=env.logger)
 
-    assert_eq(first.ingested, 1)
-    assert_eq(second.ingested, 0)
-    assert_eq(second.noise, 0)
-    assert_eq(second.pending, 0)
+    assert_eq(_ok(first).ingested, 1)
+    assert_eq(_ok(second).ingested, 0)
+    assert_eq(_ok(second).noise, 0)
+    assert_eq(_ok(second).pending, 0)
     assert_eq(len(await env.tethered_memories()), 1)
     # The second pass triaged nothing new, so the runner was never called again.
     assert_eq(len(triage_runner.prompts), 1)
@@ -818,10 +829,10 @@ async def a_failed_pass_does_not_persist_the_watermark() -> None:
     report = await service.sync(logger=env.logger)
 
     assert_is_none(_query_of(recovering_transport.list_calls[0]))
-    assert_eq(report.ingested, 1)
+    assert_eq(_ok(report).ingested, 1)
 
 
-# --- Pending retry (finding 1) -------------------------------------------------
+# --- Pending retry -------------------------------------------------------------
 
 
 @test()
@@ -851,7 +862,7 @@ async def a_malformed_verdict_is_recorded_pending_and_watermark_advances() -> No
 
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(report.pending, 1)
+    assert_eq(_ok(report).pending, 1)
     record = await env.message_record("m2")
     assert_true(record is not None)
     assert_eq(record.status if record is not None else None, "pending")
@@ -887,7 +898,7 @@ async def a_pending_message_is_upgraded_via_the_retry_path_not_the_listing() -> 
         ]
     )
     first = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
-    assert_eq(first.pending, 1)
+    assert_eq(_ok(first).pending, 1)
 
     # Pass 2: m2 is NOT listed at all (simulating it falling outside the
     # watermark window) — it is reachable only through the pending-retry path.
@@ -902,8 +913,8 @@ async def a_pending_message_is_upgraded_via_the_retry_path_not_the_listing() -> 
         logger=env.logger
     )
 
-    assert_eq(second.ingested, 1)
-    assert_eq(second.pending, 0)
+    assert_eq(_ok(second).ingested, 1)
+    assert_eq(_ok(second).pending, 0)
     memories = await env.tethered_memories()
     assert_true(any("Now valid" in memory.content for memory in memories))
     record = await env.message_record("m2")
@@ -925,7 +936,7 @@ async def a_pending_retry_is_not_double_processed_if_also_relisted() -> None:
         ]
     )
     first = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
-    assert_eq(first.pending, 1)
+    assert_eq(_ok(first).pending, 1)
 
     # Pass 2: m2 reappears in the normal listing's overlap window AND is still
     # a pending row — the pending-retry path already covers it, so the
@@ -942,12 +953,12 @@ async def a_pending_retry_is_not_double_processed_if_also_relisted() -> None:
         logger=env.logger
     )
 
-    assert_eq(second.ingested, 1)
+    assert_eq(_ok(second).ingested, 1)
     assert_eq(len(second_triage_runner.prompts), 1)
     assert_eq(len(await env.tethered_memories()), 1)
 
 
-# --- Local-timezone deadline (finding 2) ----------------------------------------
+# --- Local-timezone deadline ----------------------------------------------------
 
 
 @test()
@@ -985,7 +996,7 @@ async def a_deadline_trigger_fires_at_nine_am_local_not_utc() -> None:
     assert_eq(triggers[0].next_fire_at, datetime(2030, 6, 14, 13, 0, tzinfo=UTC))
 
 
-# --- Retry-safe ingest (finding 3) ----------------------------------------------
+# --- Retry-safe ingest ----------------------------------------------------------
 
 
 @test()
@@ -1169,7 +1180,7 @@ async def eligible_messages_are_triaged_in_bounded_batches() -> None:
         logger=env.logger
     )
 
-    assert_eq(report.ingested, 3)
+    assert_eq(_ok(report).ingested, 3)
     assert_eq(len(triage_runner.prompts), 3)
 
 
@@ -1188,8 +1199,8 @@ async def archive_removes_inbox_and_is_idempotent_on_rerun() -> None:
     first = await client.archive("m1")
     second = await client.archive("m1")
 
-    assert_eq(first.outcome, "done")
-    assert_eq(second.outcome, "already")
+    assert_eq(_ok(first).outcome, "done")
+    assert_eq(_ok(second).outcome, "already")
     # One real modify; the second call short-circuits on the stale-soft check.
     assert_eq(len(transport.modify_calls), 1)
     assert_eq(transport.modify_calls[0], ("m1", (), ("INBOX",)))
@@ -1203,7 +1214,7 @@ async def archive_of_a_missing_message_is_gone() -> None:
 
     result = await client.archive("nope")
 
-    assert_eq(result.outcome, "gone")
+    assert_eq(_ok(result).outcome, "gone")
     assert_eq(transport.modify_calls, [])
 
 
@@ -1218,8 +1229,8 @@ async def label_adds_a_label_and_is_idempotent() -> None:
     first = await client.label("m1", "Label_9")
     second = await client.label("m1", "Label_9")
 
-    assert_eq(first.outcome, "done")
-    assert_eq(second.outcome, "already")
+    assert_eq(_ok(first).outcome, "done")
+    assert_eq(_ok(second).outcome, "already")
     assert_eq(len(transport.modify_calls), 1)
     assert_eq(transport.modify_calls[0], ("m1", ("Label_9",), ()))
 
@@ -1235,14 +1246,14 @@ async def trash_moves_to_trash_and_is_idempotent() -> None:
     first = await client.trash("m1")
     second = await client.trash("m1")
 
-    assert_eq(first.outcome, "done")
-    assert_eq(second.outcome, "already")
+    assert_eq(_ok(first).outcome, "done")
+    assert_eq(_ok(second).outcome, "already")
     assert_eq(transport.trash_calls, ["m1"])
 
 
 @test()
-async def a_write_forbidden_by_scope_raises_a_403_gmail_api_error() -> None:
-    """A 403 write (token lacks gmail.modify) raises `GmailApiError` with status."""
+async def a_write_forbidden_by_scope_is_a_typed_authentication_failure() -> None:
+    """A missing modify scope remains an inspectable authentication failure."""
     transport = FakeGmailTransport(
         message_pages=[],
         messages={"m1": message_payload("m1", label_ids=["INBOX"])},
@@ -1250,7 +1261,8 @@ async def a_write_forbidden_by_scope_raises_a_403_gmail_api_error() -> None:
     )
     client = GmailClient(transport=transport)
 
-    with assert_raises(GmailApiError) as caught:
-        _ = await client.archive("m1")
+    archived = await client.archive("m1")
 
-    assert_eq(caught.exception.status_code, 403)
+    assert isinstance(archived, Err)
+    assert isinstance(archived.error, GmailAuthenticationFailure)
+    assert_eq(archived.error.status_code, 403)

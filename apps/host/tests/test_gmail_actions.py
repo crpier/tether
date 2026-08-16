@@ -15,10 +15,10 @@ from dataclasses import dataclass, field
 from typing import cast
 
 import structlog
+from snekok import Ok, Result
 from snektest import assert_eq, assert_in, assert_true, test
 
 from tether.action_registry import ActionContext
-from tether.gmail import GmailClient, GmailResponse
 from tether.gmail_actions import (
     GMAIL_ACTION_SPECS,
     GmailArchiveParams,
@@ -28,6 +28,7 @@ from tether.gmail_actions import (
     _delete,
     _label,
 )
+from tether.gmail_client import GmailClient, GmailNetworkFailure, GmailResponse
 from tether.structured_logging import Logger
 
 
@@ -66,18 +67,20 @@ class WriteTransport:
 
     async def list_messages(
         self, *, query: str, page_token: str | None
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         _ = query, page_token
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
-    async def get_message(self, message_id: str) -> GmailResponse:
+    async def get_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         payload = self.messages.get(message_id)
         if payload is None:
-            return GmailResponse(status_code=404, payload={})
-        return GmailResponse(status_code=200, payload=payload)
+            return Ok(GmailResponse(status_code=404, payload={}))
+        return Ok(GmailResponse(status_code=200, payload=payload))
 
-    async def list_labels(self) -> GmailResponse:
-        return GmailResponse(status_code=200, payload={"labels": self.labels})
+    async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
+        return Ok(GmailResponse(status_code=200, payload={"labels": self.labels}))
 
     async def modify_labels(
         self,
@@ -85,12 +88,12 @@ class WriteTransport:
         *,
         add_label_ids: Sequence[str],
         remove_label_ids: Sequence[str],
-    ) -> GmailResponse:
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.modify_calls.append(
             (message_id, tuple(add_label_ids), tuple(remove_label_ids))
         )
         if self.write_status != 200:
-            return GmailResponse(status_code=self.write_status, payload={})
+            return Ok(GmailResponse(status_code=self.write_status, payload={}))
         payload = self.messages.get(message_id)
         if payload is not None:
             labels = [
@@ -98,19 +101,21 @@ class WriteTransport:
             ]
             labels.extend(label for label in add_label_ids if label not in labels)
             payload["labelIds"] = labels
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
-    async def trash_message(self, message_id: str) -> GmailResponse:
+    async def trash_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.trash_calls.append(message_id)
         if self.write_status != 200:
-            return GmailResponse(status_code=self.write_status, payload={})
+            return Ok(GmailResponse(status_code=self.write_status, payload={}))
         payload = self.messages.get(message_id)
         if payload is not None:
             labels = _labels_of(payload)
             if "TRASH" not in labels:
                 labels.append("TRASH")
             payload["labelIds"] = labels
-        return GmailResponse(status_code=200, payload={})
+        return Ok(GmailResponse(status_code=200, payload={}))
 
 
 def _context(transport: WriteTransport) -> ActionContext:
