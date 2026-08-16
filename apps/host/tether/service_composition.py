@@ -42,6 +42,13 @@ from tether.memory_search import MemorySearchService
 from tether.memory_search_index import SearchIndex
 from tether.memory_search_reconciler import SearchReconciler
 from tether.model_selection import AgentModelCatalog
+from tether.notification_delivery import (
+    EventNotifier,
+    PushDeliveryNotifier,
+    TriggerDispatcher,
+    TriggerNotifier,
+)
+from tether.notification_store import NotificationStore
 from tether.notifications import NotificationService
 from tether.panel_execution import PanelExecutor
 from tether.panels import PanelService
@@ -53,25 +60,18 @@ from tether.provider_auth import (
     SubprocessProviderAuthBackend,
     provider_auth_helper_command,
 )
-from tether.push import (
-    PushService,
-    StoredPushSender,
-    VapidConfig,
-    VapidWebPushTransport,
-)
+from tether.push import PushService
+from tether.push_model import VapidConfig
+from tether.push_store import PushStore
 from tether.recall import RecallModelSteps, RecallService
 from tether.recall_generation import PiStudyItemGenerator, StudyItemGenerator
 from tether.recall_grading import AnswerGrader, PiAnswerGrader
 from tether.review import ReviewService
 from tether.scheduler import (
     EphemeralPiPromptRunner,
-    EventNotifier,
-    PushDeliveryNotifier,
     Scheduler,
     SchedulerConfig,
     SystemClock,
-    TriggerDispatcher,
-    TriggerNotifier,
 )
 from tether.search_fusion import SearchFusionService
 from tether.search_projection.embeddings import Embedder
@@ -84,6 +84,7 @@ from tether.todo_migration import migrate_pending_action_facets
 from tether.todos import TodoService
 from tether.triage import TriageService
 from tether.triggers import TriggerService
+from tether.web_push import StoredPushSender, VapidWebPushTransport
 from tether.web_search import SearchProvider
 from tether.youtube_search import YouTubeSearchService
 from tether.youtube_search_index import YouTubeSearchIndex
@@ -123,7 +124,7 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     dependency bundle keeps every collaborator explicit at this boundary.
     """
     notification_service = NotificationService(
-        database=dependencies.database,
+        store=NotificationStore(dependencies.database),
         event_publisher=dependencies.event_hub,
     )
     prompt_runner = EphemeralPiPromptRunner(
@@ -698,7 +699,7 @@ async def compose_core_services(
         tracer=host.telemetry.tracer,
     )
     push_service = PushService(
-        database=host.database,
+        store=PushStore(host.database),
         event_publisher=event_hub,
     )
     scheduler_component = _build_scheduler(

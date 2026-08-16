@@ -57,7 +57,8 @@ from snekql.sqlite import (
 )
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.notifications import NotificationDraft, NotificationService
+from tether.notification_model import NotificationDraft
+from tether.notifications import NotificationService
 from tether.proposal_autonomy import ActionCategory, ProposalAutonomyPolicy
 from tether.proposal_errors import (
     InvalidActionError,

@@ -17,11 +17,11 @@ from tether.conversation_routes import router as conversation_router
 from tether.health_connect import router as health_connect_router
 from tether.kosync_routes import router as ebook_router
 from tether.model_selection import router as model_router
-from tether.notifications import router as notification_router
+from tether.notification_routes import router as notification_router
 from tether.panel_routes import router as panel_router
 from tether.proposal_routes import router as proposal_router
 from tether.provider_auth_routes import router as provider_auth_router
-from tether.push import router as push_router
+from tether.push_routes import router as push_router
 from tether.recall_routes import router as recall_router
 from tether.routes import router as memory_router
 from tether.search_routes import router as search_router

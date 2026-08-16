@@ -31,9 +31,7 @@ from typing import Protocol
 from snekql.sqlite import Fetched
 
 from tether.agent_trace import AgentTraceRecorder, RunKind, record_run
-from tether.events import EventPublisher, NotifyEvent
 from tether.model_selection import AgentModelConfig
-from tether.notifications import NotificationDraft
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime
 from tether.pi_runtime import PiRuntime
@@ -61,103 +59,11 @@ class SystemClock:
         return datetime.now(UTC)
 
 
-class TriggerNotifier(Protocol):
-    """Delivers a fired trigger's message to the user."""
+class TriggerDispatchPort(Protocol):
+    """Dispatch one claimed Scheduled trigger to its delivery pipeline."""
 
-    async def deliver(
-        self,
-        *,
-        trigger: ScheduledTrigger[Fetched],
-        message: str,
-    ) -> None:
-        """Deliver one fired trigger's message."""
-        ...
-
-
-class NotificationRecorder(Protocol):
-    """Persists a delivered notification so it survives a browser reload."""
-
-    async def record(self, draft: NotificationDraft) -> object:
-        """Persist one delivered notification."""
-        ...
-
-
-class PushSender(Protocol):
-    """Sends a notification through Web Push subscriptions."""
-
-    async def send(self, body: str) -> None:
-        """Send one push notification body."""
-        ...
-
-
-class EventNotifier:
-    """Delivers fired triggers as `NotifyEvent`s over the in-process event hub.
-
-    This is the WebSocket half of capture → resurface: the frame reaches every
-    browser currently connected to the host. Each delivery is also persisted via
-    the `NotificationRecorder`, so a tab that was closed when the trigger fired
-    still finds the notification — timestamped and labelled with its source —
-    on the next reload. (Real Web Push to a closed tab is a deferred follow-up;
-    subscriptions are stored separately by the push service.)
-    """
-
-    def __init__(
-        self,
-        event_publisher: EventPublisher,
-        recorder: NotificationRecorder | None = None,
-    ) -> None:
-        self.event_publisher: EventPublisher = event_publisher
-        self.recorder: NotificationRecorder | None = recorder
-
-    async def deliver(
-        self,
-        *,
-        trigger: ScheduledTrigger[Fetched],
-        message: str,
-    ) -> None:
-        """Persist and publish a notification frame for one fired trigger.
-
-        The stored row carries the producing action and the trigger's payload as
-        its source, so the panel can tell an agent result apart from a plain
-        reminder and show where each came from.
-        """
-        if self.recorder is not None:
-            _ = await self.recorder.record(
-                NotificationDraft(
-                    body=message,
-                    trigger_id=str(trigger.id),
-                    action_kind=trigger.action_kind,
-                    source_label=trigger.payload,
-                )
-            )
-        await self.event_publisher.publish(
-            NotifyEvent(body=message, trigger_id=str(trigger.id))
-        )
-
-
-class PushDeliveryNotifier:
-    """Adds closed-tab Web Push delivery to an existing trigger notifier."""
-
-    def __init__(self, primary: TriggerNotifier, push_sender: PushSender) -> None:
-        self.primary: TriggerNotifier = primary
-        self.push_sender: PushSender = push_sender
-
-    async def deliver(
-        self,
-        *,
-        trigger: ScheduledTrigger[Fetched],
-        message: str,
-    ) -> None:
-        """Deliver through the existing path, then Web Push subscriptions."""
-        await self.primary.deliver(trigger=trigger, message=message)
-        await self.push_sender.send(message)
-
-
-class AgentPromptRunner(Protocol):
-    """Runs an agent prompt to completion and returns the delivered text."""
-
-    async def run(self, prompt: str) -> str:
-        """Run `prompt` through the agent and return its final message."""
+    async def dispatch(self, trigger: ScheduledTrigger[Fetched]) -> None:
+        """Resolve and deliver one trigger, propagating delivery defects."""
         ...
 
 
@@ -251,32 +157,6 @@ class EphemeralPiPromptRunner:
         return final_text
 
 
-class TriggerDispatcher:
-    """Turns a fired trigger into a delivered message.
-
-    A `message` action delivers its payload verbatim; a `prompt` action runs the
-    payload through the agent and delivers the result. Failures propagate so the
-    scheduler can back the occurrence off and retry.
-    """
-
-    def __init__(
-        self,
-        *,
-        notifier: TriggerNotifier,
-        agent_runner: AgentPromptRunner,
-    ) -> None:
-        self.notifier: TriggerNotifier = notifier
-        self.agent_runner: AgentPromptRunner = agent_runner
-
-    async def dispatch(self, trigger: ScheduledTrigger[Fetched]) -> None:
-        """Deliver one fired trigger, running the agent first if needed."""
-        if trigger.action_kind == "message":
-            message = trigger.payload
-        else:
-            message = await self.agent_runner.run(trigger.payload)
-        await self.notifier.deliver(trigger=trigger, message=message)
-
-
 @dataclass(frozen=True, slots=True)
 class SchedulerConfig:
     """Tunables for the scheduler loop."""
@@ -295,13 +175,13 @@ class Scheduler:
         self,
         *,
         service: TriggerService,
-        dispatcher: TriggerDispatcher,
+        dispatcher: TriggerDispatchPort,
         clock: Clock,
         logger: Logger,
         config: SchedulerConfig | None = None,
     ) -> None:
         self.service: TriggerService = service
-        self.dispatcher: TriggerDispatcher = dispatcher
+        self.dispatcher: TriggerDispatchPort = dispatcher
         self.clock: Clock = clock
         self.logger: Logger = logger
         self.config: SchedulerConfig = config or SchedulerConfig()

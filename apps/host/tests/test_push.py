@@ -12,18 +12,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from snekok import Err, Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from starlette.testclient import TestClient
 
-from tether.push import (
-    PushService,
-    StoredPushSender,
-    WebPushGoneError,
-    create_push_schema,
-)
+from tether.push import PushService
+from tether.push_errors import WebPushGoneFailure
+from tether.push_store import PushStore, create_push_schema
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
+from tether.web_push import StoredPushSender
 
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
@@ -44,11 +43,12 @@ class RecordingPushTransport:
         p256dh: str,
         auth: str,
         body: str,
-    ) -> None:
+    ) -> Result[None, WebPushGoneFailure]:
         """Record or report a gone subscription."""
         if endpoint in self.gone_endpoints:
-            raise WebPushGoneError(endpoint)
+            return Err(WebPushGoneFailure(endpoint=endpoint))
         self.sent.append((endpoint, p256dh, auth, body))
+        return Ok(None)
 
 
 def _due_soon() -> str:
@@ -65,7 +65,7 @@ async def push_service() -> AsyncGenerator[PushService]:
     """A fresh, isolated push-subscription database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_push_schema(db)
-    yield PushService(database=db)
+    yield PushService(store=PushStore(db))
     await db.close()
 
 

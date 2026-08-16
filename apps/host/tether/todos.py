@@ -49,7 +49,7 @@ from snekql.sqlite import (
 )
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.notifications import Notification
+from tether.notification_store import Notification
 from tether.structured_logging import Logger
 from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
 from tether.todo_model import READY_DIGEST_CAP, WAITING_DIGEST_CAP, TodoStatus

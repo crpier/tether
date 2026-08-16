@@ -55,7 +55,7 @@ from tether.memory_store import (
     create_memory_schema,
     tethered_corpus,
 )
-from tether.notifications import create_notification_schema
+from tether.notification_store import create_notification_schema
 from tether.structured_logging import Logger
 from tether.todo_store import Todo, TodoMemory, create_todo_schema
 from tether.todos import TodoService

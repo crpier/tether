@@ -29,16 +29,18 @@ from snektest import (
 )
 
 from tether.agent_trace import AgentTraceRecorder, RunKind
+from tether.notification_delivery import (
+    PushDeliveryNotifier,
+    TriggerDispatcher,
+    TriggerNotifier,
+)
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiRuntimeConfig
 from tether.scheduler import (
     EphemeralPiConfig,
     EphemeralPiPromptRunner,
-    PushDeliveryNotifier,
     Scheduler,
     SchedulerConfig,
-    TriggerDispatcher,
-    TriggerNotifier,
 )
 from tether.structured_logging import Logger
 from tether.system_prompt import TASK_SYSTEM_PROMPT
