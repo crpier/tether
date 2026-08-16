@@ -3,32 +3,24 @@
 The REST routes assert request parsing, status codes, and optimistic-concurrency
 409s; the tool registry is asserted to expose *only* `propose` and
 `list_proposals` — approve/reject/grant/revoke are human-only and must never be
-tools. The app's proposal service starts with an empty action registry (no
-consumer in Phase A), so each test that needs to compose a real proposal
-installs a fake `test.ok` kind onto the live service first.
+tools. The test host composes a fake action catalog through `AppConfig`, keeping
+surface tests on the same public composition path as production.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 
 from pydantic import BaseModel
 from snektest import assert_eq, assert_in, assert_not_in, test
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tests.surfaces import call_tool, login, surface_client
-from tether.action_registry import (
-    ActionContext,
-    ActionResult,
-    ActionSpec,
-    build_action_registry,
-)
-from tether.app_runtime import app_runtime
+from tether.action_registry import ActionContext, ActionResult, ActionSpec
 from tether.proposal_tools import PROPOSAL_TOOL_SPECS
 from tether.tool_registry import all_tool_specs
-
-make_client = surface_client
 
 
 class NoParams(BaseModel):
@@ -41,16 +33,18 @@ async def _ok(params: BaseModel, context: ActionContext) -> ActionResult:
     return ActionResult(outcome="succeeded")
 
 
-def install_fake_kind(client: TestClient) -> None:
-    """Register `test.ok`/`test.other` action kinds onto the live service."""
-    app = cast("Starlette", client.app)
-    service = app_runtime(app).proposal_service
-    service.action_registry = build_action_registry(
-        [
-            ActionSpec("test.ok", NoParams, _ok, ui_hint="test.ok"),
-            ActionSpec("test.other", NoParams, _ok, ui_hint="test.other"),
-        ]
-    )
+FAKE_ACTION_SPECS: tuple[ActionSpec, ...] = (
+    ActionSpec("test.ok", NoParams, _ok, ui_hint="test.ok"),
+    ActionSpec("test.other", NoParams, _ok, ui_hint="test.other"),
+)
+"""Action kinds composed into the host for Proposal surface tests."""
+
+
+@contextmanager
+def make_client(root: Path) -> Generator[TestClient]:
+    """Start a surface client with the fake Proposal action catalog."""
+    with surface_client(root, proposal_action_specs=FAKE_ACTION_SPECS) as client:
+        yield client
 
 
 def compose_pending(client: TestClient) -> dict[str, Any]:
@@ -94,7 +88,7 @@ def gate_verbs_are_absent_from_the_tool_registry() -> None:
 
 @test()
 def propose_unknown_kind_is_a_success_false_envelope() -> None:
-    """With the empty Phase-A registry, an unknown kind is an invalid_input."""
+    """A kind absent from the composed action catalog is invalid input."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         envelope = call_tool(
             client,
@@ -113,7 +107,6 @@ def propose_unknown_kind_is_a_success_false_envelope() -> None:
 def propose_queues_and_list_proposals_sees_it() -> None:
     """A composed proposal queues pending and shows up in the tool list."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         proposal = compose_pending(client)
         listed = call_tool(client, "list_proposals")
 
@@ -128,7 +121,6 @@ def propose_queues_and_list_proposals_sees_it() -> None:
 def get_proposal_returns_the_detail() -> None:
     """`GET /api/proposals/{id}` returns the proposal bundled with its actions."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         proposal = compose_pending(client)
 
@@ -144,7 +136,6 @@ def get_proposal_returns_the_detail() -> None:
 def approve_executes_and_bumps_version() -> None:
     """`POST /approve` runs the batch and returns an executed proposal."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         proposal = compose_pending(client)
 
@@ -163,7 +154,6 @@ def approve_executes_and_bumps_version() -> None:
 def approve_with_a_stale_version_conflicts() -> None:
     """A second `approve` at the stale version is a 409."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         proposal = compose_pending(client)
         body: dict[str, object] = {
@@ -181,7 +171,6 @@ def approve_with_a_stale_version_conflicts() -> None:
 def reject_with_a_stale_version_conflicts() -> None:
     """A second `reject` at the stale version is a 409."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         proposal = compose_pending(client)
         body: dict[str, object] = {"version": proposal["version"]}
@@ -197,7 +186,6 @@ def reject_with_a_stale_version_conflicts() -> None:
 def reject_returns_the_revocation_signal() -> None:
     """Rejecting an action in a granted category surfaces the covering grant id."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         grant = client.post("/api/grants", json={"kind": "test.ok"}).json()
         # test.ok is granted, but the second action (test.other) is not, so the
@@ -231,7 +219,6 @@ def reject_returns_the_revocation_signal() -> None:
 def proposal_counts_report_tab_totals() -> None:
     """`GET /api/proposals/counts` reports queue and history tab totals."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         _ = compose_pending(client)
         executed_proposal = compose_pending(client)
@@ -253,7 +240,6 @@ def proposal_counts_report_tab_totals() -> None:
 def list_proposals_filters_by_state() -> None:
     """`GET /api/proposals?state=pending` filters the list by lifecycle state."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        install_fake_kind(client)
         login(client)
         proposal = compose_pending(client)
 

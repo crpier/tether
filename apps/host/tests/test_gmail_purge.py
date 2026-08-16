@@ -16,8 +16,6 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.trace import Tracer
 from snekok import Ok, Result
 from snekql.sqlite import Config, Database, select
 from snektest import (
@@ -36,14 +34,10 @@ from tether.gmail_client import (
 from tether.gmail_purge import GmailPurgeSweepService
 from tether.gmail_store import GmailSyncState, create_gmail_schema
 from tether.proposal_autonomy import ProposalAutonomyService
+from tether.proposal_execution import ProposalExecutor
 from tether.proposal_store import create_proposal_schema
 from tether.proposals import ProposalService
 from tether.structured_logging import Logger
-
-
-def noop_tracer() -> Tracer:
-    """A tracer that emits nowhere."""
-    return trace.NoOpTracerProvider().get_tracer("test.gmail_purge")
 
 
 def test_logger() -> Logger:
@@ -223,8 +217,8 @@ async def purge_env() -> AsyncGenerator[PurgeEnv]:
         database=db,
         proposal_service=ProposalService(
             database=db,
-            tracer=noop_tracer(),
             autonomy_policy=autonomy,
+            execution=ProposalExecutor(database=db),
         ),
         logger=test_logger(),
     )

@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tether.action_registry import ActionSpec
 from tether.gmail_client import GmailTransport
 from tether.model_selection import AgentModelConfig
 from tether.provider_auth import ProviderAuthBackend
@@ -94,6 +95,7 @@ class AppConfig:
     gmail_purge_chunk_size: int = 10
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
+    proposal_action_specs: Sequence[ActionSpec] | None = None
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
     search_max_uses: int = 1_000

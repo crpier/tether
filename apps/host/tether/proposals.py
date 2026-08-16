@@ -22,8 +22,8 @@ NULL-outcome approved actions run again.
 
 >>> service = ProposalService(
 ...     database=database,
-...     tracer=tracer,
 ...     autonomy_policy=autonomy_service,
+...     execution=proposal_executor,
 ... )
 >>> creation = await service.create(
 ...     ProposalDraft(
@@ -42,11 +42,10 @@ False
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 
-from opentelemetry.trace import Tracer
-from pydantic import UUID7, ValidationError
+from pydantic import UUID7
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -57,37 +56,18 @@ from snekql.sqlite import (
     update,
 )
 
-from tether.action_registry import (
-    ActionContext,
-    ActionResult,
-    ActionSpec,
-    all_action_specs,
-    build_action_registry,
-)
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.notifications import NotificationDraft, NotificationService
 from tether.proposal_autonomy import ActionCategory, ProposalAutonomyPolicy
+from tether.proposal_errors import (
+    InvalidActionError,
+    ProposalConflictError,
+    ProposalNotFoundError,
+    ProposalStateError,
+)
+from tether.proposal_execution import ProposalExecution
 from tether.proposal_store import Proposal, ProposalAction, ProposalState
 from tether.structured_logging import Logger
-
-
-class ProposalNotFoundError(Exception):
-    """Raised when an operation targets a proposal that does not exist."""
-
-
-class ProposalConflictError(Exception):
-    """Raised when a stale observed version cannot accept the mutation.
-
-    A version that has moved on since it was read, not absence.
-    """
-
-
-class ProposalStateError(Exception):
-    """Raised on an illegal lifecycle transition (e.g. approve a non-pending)."""
-
-
-class InvalidActionError(Exception):
-    """Raised when an action names an unknown kind or fails its params model."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,34 +148,26 @@ def _info(logger: Logger, event: str, **context: object) -> None:
 
 
 class ProposalService:
-    """Capability surface for Proposals, over a snekql database.
+    """Orchestrate the human-facing Proposal lifecycle.
 
-    Owns the human-facing lifecycle (create / list / get / approve / reject)
-    and the host executor loop (`execute`). The executor loop is idempotent and
-    re-runnable, so an interrupted `executing` batch resumes safely.
+    Creation, reads, approval, and rejection stay here. Action validation and
+    resumable execution are delegated to the explicitly composed execution
+    service.
     """
 
-    def __init__(  # noqa: PLR0913 - each collaborator is an independent injected dependency
+    def __init__(
         self,
         database: Database,
-        tracer: Tracer,
         *,
         autonomy_policy: ProposalAutonomyPolicy,
+        execution: ProposalExecution,
         event_publisher: EventPublisher | None = None,
-        action_registry: dict[str, ActionSpec] | None = None,
-        action_context: ActionContext | None = None,
         notification_service: NotificationService | None = None,
     ) -> None:
         self.database: Database = database
-        self.tracer: Tracer = tracer
         self.autonomy_policy: ProposalAutonomyPolicy = autonomy_policy
+        self.execution: ProposalExecution = execution
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
-        self.action_registry: dict[str, ActionSpec] = (
-            action_registry
-            if action_registry is not None
-            else build_action_registry(all_action_specs())
-        )
-        self.action_context: ActionContext = action_context or ActionContext()
         self.notification_service: NotificationService | None = notification_service
 
     # --- create + auto-execute -------------------------------------------
@@ -219,7 +191,7 @@ class ProposalService:
         if not draft.actions:
             message = "a proposal requires at least one action"
             raise InvalidActionError(message)
-        self._validate_actions(draft.actions)
+        self.execution.validate_actions(draft.actions)
         proposal_id = await self._insert(draft, producing_run_id)
         _info(
             logger,
@@ -246,19 +218,6 @@ class ProposalService:
         return ProposalCreation(
             proposal=await self.get(proposal_id), auto_executed=False
         )
-
-    def _validate_actions(self, actions: list[ActionDraft]) -> None:
-        """Validate every action's params against its kind, or raise."""
-        for action in actions:
-            spec = self.action_registry.get(action.kind)
-            if spec is None:
-                message = f"unknown action kind: {action.kind!r}"
-                raise InvalidActionError(message)
-            try:
-                _ = spec.params_model.model_validate(action.params)
-            except ValidationError as error:
-                message = f"invalid params for {action.kind!r}: {error}"
-                raise InvalidActionError(message) from error
 
     async def _insert(
         self, draft: ProposalDraft, producing_run_id: str | None
@@ -467,112 +426,15 @@ class ProposalService:
             revocable_grant_ids=revocable_grant_ids,
         )
 
-    # --- execute (host executor loop) ------------------------------------
+    # --- execute ---------------------------------------------------------
 
     async def execute(
         self, proposal_id: UUID7, *, now: datetime, logger: Logger
     ) -> ProposalView:
-        """Run the approved actions of a proposal; idempotent and re-runnable.
-
-        Transitions `approved -> executing`, then runs every approved action with
-        a NULL outcome in `seq` order — already-resolved actions are skipped, so
-        a crash-interrupted batch resumes safely. Outcomes are appended, never
-        overwritten. When the batch settles the proposal becomes `failed` if any
-        approved action failed, else `executed`. Tolerant of being called while
-        already `executing`.
-        """
-        proposal = await self._enter_executing(proposal_id)
-        _info(
-            logger,
-            "Executing proposal",
-            proposal_id=str(proposal_id),
-            version=proposal.version,
-        )
-        context = replace(self.action_context, logger=logger)
-        for action in await self._fetch_actions(proposal_id):
-            if action.disposition != "approved" or action.outcome is not None:
-                continue
-            result = await self._run_action(action, context)
-            await self._append_outcome(action.id, result, now)
-        _ = await self._settle(proposal_id)
+        """Execute or resume an approved Proposal, then return its settled view."""
+        await self.execution.execute(proposal_id, now=now, logger=logger)
         await self.event_publisher.publish(InvalidateEvent(keys=["proposals"]))
         return await self.get(proposal_id)
-
-    async def _enter_executing(self, proposal_id: UUID7) -> Proposal[Fetched]:
-        """Transition `approved -> executing`, or accept an in-flight `executing`."""
-
-        async def _enter(tx: Transaction) -> Proposal[Fetched]:
-            proposal = await self._fetch(proposal_id, tx=tx)
-            if proposal.state not in ("approved", "executing"):
-                message = f"proposal {proposal_id} is {proposal.state}, not approved/executing"
-                raise ProposalStateError(message)
-            if proposal.state == "approved":
-                _ = await tx.execute(
-                    update(Proposal)
-                    .set(Proposal.state.to("executing"))
-                    .set(Proposal.version.to(proposal.version + 1))
-                    .set(Proposal.updated_at.to(CurrentTimestamp))
-                    .where(Proposal.id.eq(proposal_id))
-                    .where(Proposal.state.eq("approved"))
-                )
-            return await self._fetch(proposal_id, tx=tx)
-
-        async with self.database.transaction(mode="immediate") as tx:
-            return await _enter(tx)
-
-    async def _run_action(
-        self, action: ProposalAction[Fetched], context: ActionContext
-    ) -> ActionResult:
-        """Dispatch one action to its kind's executor, failing soft on error."""
-        spec = self.action_registry.get(action.kind)
-        if spec is None:
-            return ActionResult(outcome="failed", detail="unknown action kind")
-        try:
-            params = spec.params_model.model_validate_json(action.params_json)
-            return await spec.executor(params, context)
-        except Exception as error:
-            return ActionResult(outcome="failed", detail=str(error))
-
-    async def _append_outcome(
-        self, action_id: UUID7, result: ActionResult, now: datetime
-    ) -> None:
-        """Append an outcome, but only onto a still-NULL outcome (append-only)."""
-
-        async def _append(tx: Transaction) -> int:
-            return await tx.execute(
-                update(ProposalAction)
-                .set(ProposalAction.outcome.to(result.outcome))
-                .set(ProposalAction.outcome_detail.to(result.detail))
-                .set(ProposalAction.executed_at.to(now))
-                .where(ProposalAction.id.eq(action_id))
-                .where(ProposalAction.outcome.is_null())
-            )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            _ = await _append(tx)
-
-    async def _settle(self, proposal_id: UUID7) -> Proposal[Fetched]:
-        """Settle `executing -> executed | failed` from the action outcomes."""
-
-        async def _finish(tx: Transaction) -> Proposal[Fetched]:
-            proposal = await self._fetch(proposal_id, tx=tx)
-            actions = await self._fetch_actions(proposal_id, tx=tx)
-            any_failed = any(
-                a.outcome == "failed" for a in actions if a.disposition == "approved"
-            )
-            final_state: ProposalState = "failed" if any_failed else "executed"
-            _ = await tx.execute(
-                update(Proposal)
-                .set(Proposal.state.to(final_state))
-                .set(Proposal.version.to(proposal.version + 1))
-                .set(Proposal.updated_at.to(CurrentTimestamp))
-                .where(Proposal.id.eq(proposal_id))
-                .where(Proposal.state.eq("executing"))
-            )
-            return await self._fetch(proposal_id, tx=tx)
-
-        async with self.database.transaction(mode="immediate") as tx:
-            return await _finish(tx)
 
     # --- helpers ---------------------------------------------------------
 

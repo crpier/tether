@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from opentelemetry import trace
-from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel
 from snekql.sqlite import Config, Database, update
 from snektest import (
@@ -34,6 +32,8 @@ from tether.action_registry import (
 from tether.events import HubEvent, InvalidateEvent
 from tether.notifications import NotificationService, create_notification_schema
 from tether.proposal_autonomy import ProposalAutonomyService
+from tether.proposal_errors import InvalidActionError, ProposalConflictError
+from tether.proposal_execution import ProposalExecutor
 from tether.proposal_store import (
     Proposal,
     ProposalAction,
@@ -41,8 +41,6 @@ from tether.proposal_store import (
 )
 from tether.proposals import (
     ActionDraft,
-    InvalidActionError,
-    ProposalConflictError,
     ProposalDraft,
     ProposalService,
 )
@@ -62,6 +60,10 @@ class RequiredParams(BaseModel):
     target: str
 
 
+class ExecutorDefect(Exception):
+    """An unexpected action-executor defect used to verify propagation."""
+
+
 @dataclass
 class ExecutorCalls:
     """Records how many times each fake executor ran, for idempotency checks."""
@@ -69,11 +71,6 @@ class ExecutorCalls:
     ok: int = 0
     fail: int = 0
     skip: int = 0
-
-
-def noop_tracer() -> Tracer:
-    """A tracer that emits nowhere."""
-    return trace.NoOpTracerProvider().get_tracer("test.proposals_service")
 
 
 class RecordingPublisher:
@@ -92,6 +89,7 @@ class Harness:
     """The wired proposal service plus its collaborators for assertions."""
 
     autonomy: ProposalAutonomyService
+    executor: ProposalExecutor
     service: ProposalService
     publisher: RecordingPublisher
     notifications: NotificationService
@@ -116,12 +114,18 @@ def _registry(calls: ExecutorCalls) -> dict[str, ActionSpec]:
         calls.skip += 1
         return ActionResult(outcome="skipped", detail="already done")
 
+    async def raise_defect(params: BaseModel, context: ActionContext) -> ActionResult:
+        _ = params, context
+        message = "executor defect"
+        raise ExecutorDefect(message)
+
     return build_action_registry(
         [
             ActionSpec("test.ok", NoParams, ok, ui_hint="test.ok"),
             ActionSpec("test.fail", NoParams, fail, ui_hint="test.fail"),
             ActionSpec("test.skip", NoParams, skip, ui_hint="test.skip"),
             ActionSpec("test.required", RequiredParams, ok, ui_hint="test.required"),
+            ActionSpec("test.defect", NoParams, raise_defect, ui_hint="test.defect"),
         ]
     )
 
@@ -136,16 +140,17 @@ async def harness() -> AsyncGenerator[Harness]:
     notifications = NotificationService(database=db)
     calls = ExecutorCalls()
     autonomy = ProposalAutonomyService(database=db, event_publisher=publisher)
+    executor = ProposalExecutor(database=db, action_registry=_registry(calls))
     service = ProposalService(
-        db,
-        noop_tracer(),
+        database=db,
         autonomy_policy=autonomy,
+        execution=executor,
         event_publisher=publisher,
-        action_registry=_registry(calls),
         notification_service=notifications,
     )
     yield Harness(
         autonomy=autonomy,
+        executor=executor,
         service=service,
         publisher=publisher,
         notifications=notifications,
@@ -451,6 +456,27 @@ async def reject_with_a_stale_version_conflicts() -> None:
 
 
 @test()
+async def unexpected_executor_defect_propagates() -> None:
+    """An executor defect remains exceptional instead of becoming an outcome."""
+    h = await load_fixture(harness())
+    creation = await h.service.create(
+        draft(action("test.defect")), now=NOW, logger=LOGGER
+    )
+
+    with assert_raises(ExecutorDefect):
+        _ = await h.service.approve(
+            creation.proposal.proposal,
+            deselected_action_ids=set(),
+            now=NOW,
+            logger=LOGGER,
+        )
+
+    resumable = await h.service.get(creation.proposal.proposal.id)
+    assert_eq(resumable.proposal.state, "executing")
+    assert_is_none(resumable.actions[0].outcome)
+
+
+@test()
 async def execute_skips_already_resolved_actions_on_rerun() -> None:
     """Re-running an interrupted batch skips done actions and finishes the rest.
 
@@ -471,7 +497,8 @@ async def execute_skips_already_resolved_actions_on_rerun() -> None:
     await _force_executing(h, proposal_id)
     await _clear_outcome(h, second.id)
 
-    view = await h.service.execute(proposal_id, now=NOW, logger=LOGGER)
+    await h.executor.execute(proposal_id, now=NOW, logger=LOGGER)
+    view = await h.service.get(proposal_id)
 
     # Only the cleared action re-ran (3 total); the first stayed succeeded.
     assert_eq(h.calls.ok, 3)
@@ -488,7 +515,8 @@ async def outcomes_are_append_only_across_reruns() -> None:
     proposal_id = creation.proposal.proposal.id
 
     await _force_executing(h, proposal_id)
-    view = await h.service.execute(proposal_id, now=NOW, logger=LOGGER)
+    await h.executor.execute(proposal_id, now=NOW, logger=LOGGER)
+    view = await h.service.get(proposal_id)
 
     # The already-succeeded action was not re-run (still one call).
     assert_eq(h.calls.ok, 1)
