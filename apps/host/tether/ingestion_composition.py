@@ -13,6 +13,7 @@ from snekok import Err
 from snekql.sqlite import Database
 
 from tether.ebook_stats import EbookStatsSyncService
+from tether.ebook_stats_store import EbookStatsStore
 from tether.events import EventHub
 from tether.gmail import GmailSyncService
 from tether.gmail_client import GmailAuthenticationFailure, GmailClient
@@ -446,7 +447,7 @@ async def compose_ebook_stats(
         _ = ingestion_lifecycle.activate("ebook-statistics")
         return
     sync = EbookStatsSyncService(
-        database=database,
+        store=EbookStatsStore(database),
         statistics_db_path=Path(config.ebook_statistics_db_path),
     )
 

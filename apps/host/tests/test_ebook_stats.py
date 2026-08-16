@@ -18,6 +18,7 @@ from pathlib import Path
 import structlog
 from anyio import Path as AsyncPath
 from anyio import TemporaryDirectory
+from snekok import Err, Ok
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,
@@ -29,10 +30,15 @@ from snektest import (
     test,
 )
 
-from tether.ebook_stats import (
+from tether.ebook_stats import EbookStatsSyncService
+from tether.ebook_stats_errors import (
+    EbookStatsParseFailure,
+    EbookStatsSourceFailure,
+)
+from tether.ebook_stats_store import (
     EbookStatBook,
     EbookStatPageEvent,
-    EbookStatsSyncService,
+    EbookStatsStore,
     create_ebook_stats_schema,
 )
 from tether.kosync_store import EbookDocument, create_kosync_schema
@@ -138,13 +144,14 @@ class EbookStatsEnv:
     """A schema-ready database plus a temp dir to hold statistics files."""
 
     database: Database
-    tmp_dir: Path
     logger: Logger
+    store: EbookStatsStore
+    tmp_dir: Path
 
     def service_for(self, filename: str = "statistics.sqlite") -> EbookStatsSyncService:
         """A service pointed at `<tmp_dir>/<filename>` (need not exist yet)."""
         return EbookStatsSyncService(
-            database=self.database, statistics_db_path=self.tmp_dir / filename
+            store=self.store, statistics_db_path=self.tmp_dir / filename
         )
 
     async def all_books(self) -> list[EbookStatBook[Fetched]]:
@@ -164,7 +171,10 @@ async def ebook_stats_env() -> AsyncGenerator[EbookStatsEnv]:
     await create_kosync_schema(database)
     async with TemporaryDirectory() as tmp_dir:
         yield EbookStatsEnv(
-            database=database, tmp_dir=Path(tmp_dir), logger=test_logger()
+            database=database,
+            logger=test_logger(),
+            store=EbookStatsStore(database),
+            tmp_dir=Path(tmp_dir),
         )
     await database.close()
 
@@ -216,12 +226,12 @@ async def report_counts_reflect_a_successful_parse() -> None:
         page_events=(StatsPageEventRow(id_book=1, page=1, start_time=1000),),
     )
 
-    report = await env.service_for().sync(logger=env.logger)
+    result = await env.service_for().sync(logger=env.logger)
 
-    assert_eq(report.books_upserted, 1)
-    assert_eq(report.events_inserted, 1)
-    assert_false(report.skipped)
-    assert_false(report.failed)
+    assert isinstance(result, Ok)
+    assert_eq(result.value.books_upserted, 1)
+    assert_eq(result.value.events_inserted, 1)
+    assert_false(result.value.skipped)
 
 
 @test()
@@ -235,9 +245,10 @@ async def an_unchanged_file_is_skipped_on_the_next_tick() -> None:
     service = env.service_for()
     _ = await service.sync(logger=env.logger)
 
-    second_report = await service.sync(logger=env.logger)
+    second_result = await service.sync(logger=env.logger)
 
-    assert_true(second_report.skipped)
+    assert isinstance(second_result, Ok)
+    assert_true(second_result.value.skipped)
 
 
 @test()
@@ -275,9 +286,10 @@ async def a_changed_file_is_reparsed() -> None:
         ),
     )
 
-    report = await service.sync(logger=env.logger)
+    result = await service.sync(logger=env.logger)
 
-    assert_false(report.skipped)
+    assert isinstance(result, Ok)
+    assert_false(result.value.skipped)
     assert_eq(len(await env.all_books()), 2)
 
 
@@ -299,7 +311,7 @@ async def reparsing_the_same_snapshot_does_not_duplicate_events() -> None:
     service = env.service_for()
     _ = await service.sync(logger=env.logger)
     # Force a re-parse of the identical rows by resetting the stored watermark.
-    _ = await service._store_watermark("stale")
+    await env.store.write_watermark("stale")
 
     _ = await service.sync(logger=env.logger)
 
@@ -347,9 +359,10 @@ async def a_missing_source_file_reports_failure_without_raising() -> None:
     """A never-created source file does not raise; it reports a failure."""
     env = await load_fixture(ebook_stats_env())
 
-    report = await env.service_for("does-not-exist.sqlite").sync(logger=env.logger)
+    result = await env.service_for("does-not-exist.sqlite").sync(logger=env.logger)
 
-    assert_true(report.failed)
+    assert isinstance(result, Err)
+    assert isinstance(result.error, EbookStatsSourceFailure)
 
 
 @test()
@@ -359,9 +372,10 @@ async def a_malformed_source_file_reports_failure_without_raising() -> None:
     malformed_path = env.tmp_dir / "statistics.sqlite"
     _ = await AsyncPath(malformed_path).write_bytes(b"not a sqlite file")
 
-    report = await env.service_for().sync(logger=env.logger)
+    result = await env.service_for().sync(logger=env.logger)
 
-    assert_true(report.failed)
+    assert isinstance(result, Err)
+    assert isinstance(result.error, EbookStatsParseFailure)
 
 
 @test()
@@ -373,10 +387,10 @@ async def a_malformed_source_file_does_not_advance_the_watermark() -> None:
     service = env.service_for()
     _ = await service.sync(logger=env.logger)
 
-    second_report = await service.sync(logger=env.logger)
+    second_result = await service.sync(logger=env.logger)
 
-    assert_false(second_report.skipped)
-    assert_true(second_report.failed)
+    assert isinstance(second_result, Err)
+    assert isinstance(second_result.error, EbookStatsParseFailure)
 
 
 @test()
