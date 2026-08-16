@@ -20,16 +20,12 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import UUID7, BaseModel, PositiveInt
+from snekql.sqlite import Fetched
 from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
-from tether.artifacts import (
-    Artifact,
-    ArtifactEvent,
-    ArtifactHtmlTooLargeError,
-    ArtifactNotFoundError,
-    Fetched,
-)
+from tether.artifact_errors import ArtifactHtmlTooLargeError, ArtifactNotFoundError
+from tether.artifact_store import Artifact, ArtifactEvent
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.structured_logging import get_request_logger
 

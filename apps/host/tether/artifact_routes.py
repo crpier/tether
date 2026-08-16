@@ -31,7 +31,7 @@ from tether.artifact_capabilities import (
     ArtifactRead,
     ArtifactSummaryRead,
 )
-from tether.artifacts import ArtifactNotFoundError
+from tether.artifact_errors import ArtifactNotFoundError
 from tether.capabilities import rest_response, translate_domain_errors
 
 
