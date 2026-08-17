@@ -138,6 +138,7 @@ def host_settings_read_tether_environment_variables() -> None:
                 ]
             ),
             TETHER_PORT="9001",
+            TETHER_PUBLIC_ORIGIN="https://tether.example.test",
             TETHER_RELOAD="true",
             TETHER_SECURE_COOKIES="true",
             TETHER_SESSION_SECRET="configured-session-secret",
@@ -169,6 +170,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.model_allowlist[0].model_id, "tether-chat-cheap-faux")
     assert_eq(settings.model_allowlist[0].thinking_level, "medium")
     assert_eq(settings.port, 9001)
+    assert_eq(settings.public_origin, "https://tether.example.test")
     assert_true(settings.reload)
     assert_eq(settings.session_secret, "configured-session-secret")
     assert_eq(settings.stt_api_key, "configured-stt-key")
@@ -193,6 +195,7 @@ def production_profile_wires_reauthorizable_youtube_without_a_token() -> None:
             app_password="test-app-password",
             database_path=root / "tether.sqlite3",
             kb_root=root / "kb",
+            public_origin="https://tether.example.test",
             session_secret="test-session-secret",
             stt_api_key="test-stt-key",
             youtube_client_secret_path=root / "youtube-client-secret.json",
@@ -201,6 +204,7 @@ def production_profile_wires_reauthorizable_youtube_without_a_token() -> None:
 
         config = server._app_config_from_settings(settings)
 
+    assert_eq(config.public_origin, "https://tether.example.test")
     assert_true(isinstance(config.youtube_api, ReauthorizableYouTubeApi))
     assert_true(config.youtube_auth_backend is not None)
 

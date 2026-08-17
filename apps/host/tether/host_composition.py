@@ -109,6 +109,7 @@ async def _compose_app_runtime(
             proposal_autonomy_service=core.proposal_autonomy_service,
             proposal_service=core.proposal_service,
             provider_auth_service=core.provider_auth_service,
+            public_origin=dependencies.config.public_origin,
             push_service=core.push_service,
             recall_service=core.recall_service,
             review_service=core.review_service,

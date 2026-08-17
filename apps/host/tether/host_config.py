@@ -98,6 +98,7 @@ class AppConfig:
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     proposal_action_specs: Sequence[ActionSpec] | None = None
+    public_origin: str = ""
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
     search_max_uses: int = 1_000
@@ -178,6 +179,10 @@ class HostSettings(BaseSettings):
     model_allowlist: tuple[AgentModelConfig, ...] = ()
     default_model: str | None = None
     port: int = 8000
+    public_origin: str = ""
+    """Canonical browser origin for externally visible OAuth callbacks.
+    Reverse proxies may expose HTTPS while forwarding plain HTTP to Tether, so
+    request-derived URLs are not authoritative in production."""
     reload: bool = False
     secure_cookies: bool = False
     vapid_private_key: str = ""
