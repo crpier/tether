@@ -775,7 +775,9 @@ def the_host_serves_the_built_spa_without_shadowing_the_api() -> None:
         ) as client:
             root = client.get("/")
             asset = client.get("/assets/app.js")
-            client_route = client.get("/some/spa/route")
+            client_route = client.get(
+                "/some/spa/route", headers={"Accept": "text/html"}
+            )
             login = client.post(
                 "/api/auth/login", json={"password": "test-app-password"}
             )
@@ -791,6 +793,51 @@ def the_host_serves_the_built_spa_without_shadowing_the_api() -> None:
     # The API is mounted ahead of the SPA catch-all and still responds.
     assert_eq(login.status_code, 204)
     assert_eq(api.status_code, 200)
+
+
+@test()
+def a_missing_frontend_asset_returns_not_found() -> None:
+    """Asset requests never receive the SPA navigation fallback."""
+    with TemporaryDirectory() as directory:
+        dist = Path(directory) / "dist"
+        dist.mkdir()
+        _ = (dist / "index.html").write_text("<!doctype html><title>Tether</title>")
+        with TestClient(
+            server.create_app(
+                config=AppConfig(
+                    app_password="test-app-password",
+                    database_path=":memory:",
+                    kb_root=f"{directory}/kb",
+                    session_secret="test-session-secret",
+                    web_dist=dist,
+                ),
+                telemetry_settings=TelemetrySettings(
+                    exporter=TelemetryExporter.NONE,
+                    install_global_provider=False,
+                ),
+            )
+        ) as client:
+            response = client.get(
+                "/assets/missing.js",
+                headers={"Accept": "application/javascript"},
+            )
+
+    assert_eq(response.status_code, 404)
+
+
+@test()
+def a_configured_frontend_build_must_exist() -> None:
+    """A configured frontend path must exist when the host is built."""
+    with TemporaryDirectory() as directory, assert_raises(RuntimeError):
+        _ = server.create_app(
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=":memory:",
+                kb_root=f"{directory}/kb",
+                session_secret="test-session-secret",
+                web_dist=Path(directory) / "missing-dist",
+            )
+        )
 
 
 @test()
