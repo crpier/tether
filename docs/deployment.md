@@ -331,29 +331,26 @@ VM sees, and never point it at any real ingestion sync while the VM is live.
 
 ## YouTube ingestion
 
-Optional. The container can't run the browser OAuth flow, so the token is
-**authorized on a laptop and installed into the data volume** — where pi's silent
-refresh writes back to a path that survives redeploys (`compose.yaml` sets
-`TETHER_YOUTUBE_TOKEN_PATH=/data/youtube/token.json`).
+Optional. Authorization is managed from Settings and stored on the durable data
+volume (`/data/youtube/token.json`). Missing or revoked credentials leave the host
+running and expose **Connect YouTube** or **Reconnect YouTube** in the UI.
 
-1. On your laptop, install the Google clients and authorize once:
+1. In Google Cloud, create an OAuth client of type **Web application**. Register
+   this exact authorized redirect URI:
+   `https://<your-tether-origin>/api/youtube-auth/callback`.
+2. Publish the OAuth consent app to **Production**. Testing-mode refresh tokens
+   can expire after seven days.
+3. Install the downloaded client JSON into the volume:
    ```sh
-   uv sync --group youtube
-   # place a Desktop-app OAuth client JSON at .tether/youtube-client-secret.json
-   just youtube-auth          # opens a browser, caches .tether/youtube-oauth-token.json
+   docker compose exec -T host mkdir -p /data/youtube
+   docker compose cp youtube-client-secret.json host:/data/youtube/client-secret.json
    ```
-2. Install the token into the running container's data volume and restart:
-   ```sh
-   just youtube-token-install            # docker compose cp into /data/youtube/token.json
-   docker compose restart host
-   ```
-   (If you also want the client-secret in the volume — needed so an *expired*
-   token can be re-minted in place — copy it too:
-   `docker compose cp .tether/youtube-client-secret.json host:/data/youtube/client-secret.json`.)
+4. Open **Settings → YouTube → Connect YouTube**, follow Google consent, and
+   return to Settings.
 
-Once the token is present the background ingestion sync activates on the next
-host start. With no token, ingestion runs the in-memory fake and the sync stays
-off — the rest of Tether is unaffected.
+The callback atomically installs the token and immediately runs a likes sync;
+no host restart is required. The legacy `just youtube-auth` and
+`just youtube-token-install` recipes remain available for native/CLI recovery.
 
 ## KOReader ebook progress (kosync)
 

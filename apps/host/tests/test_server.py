@@ -49,6 +49,7 @@ from tether.transcripts.contracts import (
     TranscriptProviderChain,
     TranscriptUnavailableFailure,
 )
+from tether.youtube_auth_service import ReauthorizableYouTubeApi
 
 
 class CapturedStdout(StringIO):
@@ -181,6 +182,27 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.vapid_subject, "mailto:test@example.com")
     assert_false(settings.youtube_sync_enabled)
     assert_false(settings.transcript_sync_enabled)
+
+
+@test()
+def production_profile_wires_reauthorizable_youtube_without_a_token() -> None:
+    """Missing credentials keep UI recovery available instead of removing YouTube."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        settings = HostSettings(
+            app_password="test-app-password",
+            database_path=root / "tether.sqlite3",
+            kb_root=root / "kb",
+            session_secret="test-session-secret",
+            stt_api_key="test-stt-key",
+            youtube_client_secret_path=root / "youtube-client-secret.json",
+            youtube_token_path=root / "missing-token.json",
+        )
+
+        config = server._app_config_from_settings(settings)
+
+    assert_true(isinstance(config.youtube_api, ReauthorizableYouTubeApi))
+    assert_true(config.youtube_auth_backend is not None)
 
 
 @test()
@@ -675,6 +697,10 @@ with TestClient(create_app_from_environment()):
                 "TETHER_KB_ROOT": f"{directory}/kb",
                 "TETHER_SESSION_SECRET": "test-session-secret",
                 "TETHER_STT_API_KEY": "test-stt-key",
+                "TETHER_YOUTUBE_CLIENT_SECRET_PATH": (
+                    f"{directory}/youtube-client-secret.json"
+                ),
+                "TETHER_YOUTUBE_TOKEN_PATH": f"{directory}/youtube-token.json",
             },
             text=True,
         )

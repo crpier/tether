@@ -25,6 +25,7 @@ from tether.transcripts.acquisition import TranscriptAcquisitionConfig
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.worker import TranscriptSyncConfig
 from tether.web_search import SearchProvider
+from tether.youtube_auth_service import YouTubeAuthBackend
 from tether.youtube_quota import YouTubeApi
 
 
@@ -59,6 +60,7 @@ class AppConfig:
     pi_binary: Path | None = None
     provider_auth_backend: ProviderAuthBackend | None = None
     youtube_api: YouTubeApi | None = None
+    youtube_auth_backend: YouTubeAuthBackend | None = None
     youtube_daily_quota_limit: int = 10_000
     youtube_sync_enabled: bool = True
     youtube_sync_interval_seconds: float = 5 * 60

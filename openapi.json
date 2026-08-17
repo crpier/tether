@@ -4660,6 +4660,48 @@
         "title": "VoiceCaptureResponse",
         "type": "object"
       },
+      "YouTubeAuthState": {
+        "enum": [
+          "authorizing",
+          "connected",
+          "disconnected",
+          "error"
+        ],
+        "type": "string"
+      },
+      "YouTubeAuthStatus": {
+        "description": "Current authorization state without credential material.",
+        "properties": {
+          "authorization_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "state": {
+            "$ref": "#/components/schemas/YouTubeAuthState",
+            "default": "disconnected"
+          }
+        },
+        "title": "YouTubeAuthStatus",
+        "type": "object"
+      },
       "YouTubeSource": {
         "const": "liked",
         "type": "string"
@@ -7595,6 +7637,42 @@
           }
         },
         "summary": "Browse Youtube"
+      }
+    },
+    "/api/youtube-auth": {
+      "get": {
+        "description": "Report whether the server has usable YouTube authorization.",
+        "operationId": "youtube_auth_status_api_youtube_auth_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeAuthStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Youtube Auth Status"
+      },
+      "post": {
+        "description": "Create a Google consent request for the authenticated browser.",
+        "operationId": "start_youtube_auth_api_youtube_auth_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeAuthStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Start Youtube Auth"
       }
     },
     "/api/youtube/search": {

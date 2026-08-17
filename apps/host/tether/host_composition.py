@@ -64,7 +64,7 @@ async def _compose_app_runtime(
         contextlib.AsyncExitStack()
     )
     _ = resources.push_async_callback(host.ingestion_lifecycle.stop)
-    youtube_service = await compose_ingestion(
+    youtube = await compose_ingestion(
         IngestionDependencies(
             bootstrap=dependencies.bootstrap,
             config=dependencies.config,
@@ -125,7 +125,8 @@ async def _compose_app_runtime(
             triage_service=core.triage_service,
             trigger_service=core.trigger_service,
             vapid_public_key=dependencies.config.vapid_public_key,
-            youtube_service=youtube_service,
+            youtube_auth_service=youtube.auth_service,
+            youtube_service=youtube.service,
         ),
     )
 

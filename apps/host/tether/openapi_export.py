@@ -28,6 +28,7 @@ from tether.search_routes import router as search_router
 from tether.stt_routes import router as stt_router
 from tether.todo_routes import router as todo_router
 from tether.trigger_routes import router as trigger_router
+from tether.youtube_auth_routes import router as youtube_auth_router
 from tether.youtube_routes import router as youtube_router
 
 _EXPECTED_ARGUMENT_COUNT = 2
@@ -40,6 +41,7 @@ _PUBLIC_ROUTERS = (
     todo_router,
     search_router,
     youtube_router,
+    youtube_auth_router,
     conversation_router,
     model_router,
     trigger_router,

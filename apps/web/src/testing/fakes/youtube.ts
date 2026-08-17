@@ -1,11 +1,19 @@
 import type {
   TranscriptDecision,
   TranscriptDecisionOutcome,
+  YouTubeAuthStatus,
   YouTubeHost,
   YouTubeSyncStatus,
 } from "../../host/youtube";
 
 export class FakeYouTubeHost implements YouTubeHost {
+  youTubeAuthStatus: YouTubeAuthStatus = {
+    authorization_url: null,
+    error: null,
+    state: "connected",
+  };
+  nextYouTubeAuthStatus: YouTubeAuthStatus | null = null;
+  startYouTubeAuthCalls = 0;
   youTubeSyncStatus: YouTubeSyncStatus = {
     api_paused_until: null,
     last_synced_at: null,
@@ -23,6 +31,19 @@ export class FakeYouTubeHost implements YouTubeHost {
 
   constructor(transcriptDecisions: TranscriptDecision[] = []) {
     this.storedTranscriptDecisions = transcriptDecisions;
+  }
+
+  getYouTubeAuthStatus(): Promise<YouTubeAuthStatus> {
+    return Promise.resolve(this.youTubeAuthStatus);
+  }
+
+  startYouTubeAuth(): Promise<YouTubeAuthStatus> {
+    this.startYouTubeAuthCalls += 1;
+    if (this.nextYouTubeAuthStatus !== null) {
+      this.youTubeAuthStatus = this.nextYouTubeAuthStatus;
+      this.nextYouTubeAuthStatus = null;
+    }
+    return Promise.resolve(this.youTubeAuthStatus);
   }
 
   getYouTubeSyncStatus(): Promise<YouTubeSyncStatus> {

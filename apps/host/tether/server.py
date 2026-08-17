@@ -33,7 +33,11 @@ from tether.host_config import AppConfig, HostSettings
 from tether.host_resources import HOST_QUIET_LOGGERS, HostBootstrap
 from tether.kosync_routes import kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
-from tether.local_dependencies import LocalProviderAuthBackend, LocalSttTransport
+from tether.local_dependencies import (
+    LocalProviderAuthBackend,
+    LocalSttTransport,
+    LocalYouTubeAuthBackend,
+)
 from tether.logging_config import configure_logging
 from tether.model_selection import AgentModelConfig
 from tether.openapi_export import public_api_router
@@ -65,7 +69,12 @@ from tether.transcripts.worker import TranscriptSyncConfig
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
 from tether.web_search import SearchProvider
-from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
+from tether.youtube_auth_service import (
+    GoogleYouTubeAuthBackend,
+    ReauthorizableYouTubeApi,
+    YouTubeAuthBackend,
+)
+from tether.youtube_oauth import OAuthConfig
 from tether.youtube_quota import YouTubeApi
 from tether.youtube_tools import internal_youtube_tool_routes
 
@@ -175,18 +184,15 @@ def _build_search_provider(settings: HostSettings) -> SearchProvider | None:
     )
 
 
-def build_configured_youtube_api(settings: HostSettings) -> YouTubeApi | None:
-    """Build the OAuth-backed upstream client when a token has been authorized.
-
-    With no cached token, returns `None` so ingestion runs the in-memory fake and
-    the background sync stays off — and the Google client libraries are never
-    imported, keeping the rest of Tether runnable without them. Once the user has
-    run `just youtube-auth`, the token exists and this wires the real client so
-    the background ingestion sync activates automatically.
-    """
-    if not settings.youtube_token_path.exists():
-        return None
-    return OAuthYouTubeApi.from_config(_youtube_oauth_config(settings))
+def _configured_youtube_integration(
+    settings: HostSettings,
+) -> tuple[YouTubeApi, YouTubeAuthBackend]:
+    """Build a stable YouTube API handle and its browser authorization boundary."""
+    api = ReauthorizableYouTubeApi()
+    return api, GoogleYouTubeAuthBackend(
+        _youtube_oauth_config(settings),
+        api_connection=api,
+    )
 
 
 def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
@@ -262,6 +268,7 @@ def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
         vapid_subject="",
         web_dist=settings.web_dist,
         youtube_api=None,
+        youtube_auth_backend=LocalYouTubeAuthBackend(),
         youtube_sync_enabled=False,
     )
 
@@ -304,6 +311,7 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
     """
     if settings.dependency_profile == "local":
         return _local_app_config_from_settings(settings)
+    youtube_api, youtube_auth_backend = _configured_youtube_integration(settings)
     return AppConfig(
         api_token=settings.api_token,
         app_password=settings.app_password,
@@ -346,7 +354,8 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         stt_base_url=settings.stt_base_url,
         stt_model=settings.stt_model,
         web_dist=settings.web_dist,
-        youtube_api=build_configured_youtube_api(settings),
+        youtube_api=youtube_api,
+        youtube_auth_backend=youtube_auth_backend,
         youtube_likes_rewalk_interval_days=settings.youtube_likes_rewalk_interval_days,
         youtube_likes_drift_alarm_margin=settings.youtube_likes_drift_alarm_margin,
         youtube_sync_enabled=settings.youtube_sync_enabled,
