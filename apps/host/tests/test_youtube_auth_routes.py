@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.parse import parse_qs, urlparse
 
 from snekok import Ok, Result
-from snektest import assert_eq, test
+from snektest import assert_eq, assert_false, assert_true, test
 
 from tests.surfaces import login, surface_client
 from tether.youtube_auth_service import (
@@ -199,6 +200,48 @@ def successful_youtube_callback_immediately_syncs_likes() -> None:
 
     assert_eq(videos.status_code, 200)
     assert_eq([video["video_id"] for video in videos.json()["videos"]], ["fresh-video"])
+
+
+@test()
+async def google_consent_does_not_request_previously_granted_scopes() -> None:
+    """A YouTube-only token exchange cannot be widened by project grant history."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        client_secret_path = root / "client-secret.json"
+        _ = client_secret_path.write_text(
+            json.dumps(
+                {
+                    "web": {
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "client_id": "test.apps.googleusercontent.com",
+                        "client_secret": "test-secret",
+                        "redirect_uris": [
+                            "https://tether.example.test/api/youtube-auth/callback"
+                        ],
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        backend = GoogleYouTubeAuthBackend(
+            OAuthConfig(
+                client_secret_path=client_secret_path,
+                token_path=root / "token.json",
+            )
+        )
+
+        outcome = await backend.start(
+            redirect_uri="https://tether.example.test/api/youtube-auth/callback"
+        )
+
+    assert_true(isinstance(outcome, Ok))
+    if not isinstance(outcome, Ok):
+        return
+    query = parse_qs(urlparse(outcome.value.authorization_url).query)
+    assert_eq(query["access_type"], ["offline"])
+    assert_eq(query["prompt"], ["consent"])
+    assert_false("include_granted_scopes" in query)
 
 
 @test()
