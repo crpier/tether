@@ -267,6 +267,36 @@ def authenticated_user_can_start_youtube_authorization() -> None:
 
 
 @test()
+def configured_public_origin_is_used_for_the_entire_google_oauth_flow() -> None:
+    """Funnel's HTTP proxy cannot downgrade Google's registered HTTPS callback."""
+    backend = RedirectYouTubeAuthBackend()
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(
+            Path(directory),
+            public_origin="https://tether.tail2da0b1.ts.net/",
+            transcript_sync_enabled=False,
+            youtube_auth_backend=backend,
+            youtube_sync_enabled=False,
+        ) as client,
+    ):
+        login(client)
+        _ = client.post("/api/youtube-auth")
+
+        _ = client.get(
+            "/api/youtube-auth/callback?state=google-state&code=google-code",
+            follow_redirects=False,
+        )
+
+    expected_callback = "https://tether.tail2da0b1.ts.net/api/youtube-auth/callback"
+    assert_eq(backend.redirect_uri, expected_callback)
+    assert_eq(
+        backend.authorization_response,
+        f"{expected_callback}?state=google-state&code=google-code",
+    )
+
+
+@test()
 def successful_youtube_callback_returns_to_settings() -> None:
     """Google's callback exchanges once and redirects back to the integration UI."""
     backend = RedirectYouTubeAuthBackend()

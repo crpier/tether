@@ -69,6 +69,7 @@ class AppRuntime:
     proposal_autonomy_service: ProposalAutonomyService
     proposal_service: ProposalService
     provider_auth_service: ProviderAuthService
+    public_origin: str
     push_service: PushService
     recall_service: RecallService
     review_service: ReviewService

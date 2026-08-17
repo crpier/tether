@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from snekok import Err
+from starlette.datastructures import URL
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
@@ -11,6 +12,15 @@ from tether.app_runtime import app_runtime
 from tether.youtube_auth_service import YouTubeAuthStatus
 
 router = APIRouter()
+
+
+def _external_url(request: Request, url: URL) -> str:
+    """Use the configured browser origin across an HTTPS-terminating proxy."""
+    public_origin = app_runtime(request.app).public_origin.rstrip("/")
+    if not public_origin:
+        return str(url)
+    query = f"?{url.query}" if url.query else ""
+    return f"{public_origin}{url.path}{query}"
 
 
 @router.get("/api/youtube-auth", response_model=YouTubeAuthStatus)
@@ -26,8 +36,9 @@ async def youtube_auth_status(request: Request) -> YouTubeAuthStatus:
 )
 async def start_youtube_auth(request: Request) -> YouTubeAuthStatus:
     """Create a Google consent request for the authenticated browser."""
+    status_url = _external_url(request, request.url_for("youtube_auth_status"))
     return await app_runtime(request.app).youtube_auth_service.start(
-        redirect_uri=f"{request.url_for('youtube_auth_status')}/callback"
+        redirect_uri=f"{status_url}/callback"
     )
 
 
@@ -35,7 +46,7 @@ async def start_youtube_auth(request: Request) -> YouTubeAuthStatus:
 async def complete_youtube_auth(request: Request, state: str) -> Response:
     """Complete Google consent after validating the pending OAuth state."""
     outcome = await app_runtime(request.app).youtube_auth_service.complete(
-        authorization_response=str(request.url),
+        authorization_response=_external_url(request, request.url),
         state=state,
     )
     if isinstance(outcome, Err):

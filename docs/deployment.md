@@ -335,17 +335,20 @@ Optional. Authorization is managed from Settings and stored on the durable data
 volume (`/data/youtube/token.json`). Missing or revoked credentials leave the host
 running and expose **Connect YouTube** or **Reconnect YouTube** in the UI.
 
-1. In Google Cloud, create an OAuth client of type **Web application**. Register
+1. Set the canonical Funnel origin in the production `.env` so OAuth callbacks
+   retain HTTPS through the internal HTTP proxy:
+   `TETHER_PUBLIC_ORIGIN=https://<your-tether-origin>`.
+2. In Google Cloud, create an OAuth client of type **Web application**. Register
    this exact authorized redirect URI:
    `https://<your-tether-origin>/api/youtube-auth/callback`.
-2. Publish the OAuth consent app to **Production**. Testing-mode refresh tokens
+3. Publish the OAuth consent app to **Production**. Testing-mode refresh tokens
    can expire after seven days.
-3. Install the downloaded client JSON into the volume:
+4. Install the downloaded client JSON into the volume:
    ```sh
    docker compose exec -T host mkdir -p /data/youtube
    docker compose cp youtube-client-secret.json host:/data/youtube/client-secret.json
    ```
-4. Open **Settings → YouTube → Connect YouTube**, follow Google consent, and
+5. Open **Settings → YouTube → Connect YouTube**, follow Google consent, and
    return to Settings.
 
 The callback atomically installs the token and immediately runs a likes sync;
