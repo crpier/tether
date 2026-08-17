@@ -1507,7 +1507,7 @@ youtube = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "anyio", specifier = ">=4.14.0" },
-    { name = "fastapi", specifier = ">=0.128.0" },
+    { name = "fastapi", specifier = ">=0.141.1" },
     { name = "fastembed", specifier = ">=0.8.0" },
     { name = "httpx2", specifier = ">=2.5.0" },
     { name = "itsdangerous", specifier = ">=2.2.0" },

@@ -11,12 +11,6 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from starlette.exceptions import HTTPException
-from starlette.responses import Response
-from starlette.routing import Mount
-from starlette.staticfiles import StaticFiles
-from starlette.status import HTTP_404_NOT_FOUND
-from starlette.types import Scope
 from uvicorn.config import WSProtocolType
 
 from tether.agent_trace_recorder import AgentTraceRecorder
@@ -91,46 +85,6 @@ def _resolve_stt_client(config: AppConfig) -> SttClient:
     )
 
 
-class _SpaStaticFiles(StaticFiles):
-    """Serve the built SPA, falling back to `index.html` for client routes.
-
-    The web app does client-side routing, so a GET for a path that isn't a real
-    asset must return the SPA shell (`index.html`) instead of a bare 404 —
-    otherwise refreshing or deep-linking a client route breaks. This is the
-    conventional single-page-app contract; the API/WS/docs routes are matched
-    ahead of this catch-all mount, so only genuinely unmatched paths reach here.
-    """
-
-    async def get_response(self, path: str, scope: Scope) -> Response:
-        """Resolve a static asset, serving the SPA shell when none matches.
-
-        In `html` mode `StaticFiles` *raises* `HTTPException(404)` for an
-        unmatched path rather than returning a 404 response, so the fallback is
-        handled in both the raised and returned form.
-        """
-        try:
-            response = await super().get_response(path, scope)
-        except HTTPException as exc:
-            if exc.status_code != HTTP_404_NOT_FOUND:
-                raise
-            return await super().get_response("index.html", scope)
-        if response.status_code == HTTP_404_NOT_FOUND:
-            return await super().get_response("index.html", scope)
-        return response
-
-
-def _spa_mount(web_dist: str | Path) -> Mount | None:
-    """Build the SPA catch-all mount when a built `web_dist` directory exists.
-
-    Returns `None` when no build is configured or present (the dev/test default),
-    so the host runs API + WS only and the root path stays unhandled.
-    """
-    dist = Path(web_dist)
-    if not dist.is_dir():
-        return None
-    return Mount("/", app=_SpaStaticFiles(directory=dist, html=True), name="spa")
-
-
 def create_app(
     *,
     config: AppConfig,
@@ -147,7 +101,6 @@ def create_app(
     the search path without downloading a model.
     """
     configured_telemetry = telemetry_settings or TelemetrySettings()
-    spa_mount = _spa_mount(config.web_dist) if config.web_dist is not None else None
     bootstrap = HostBootstrap(
         session_registry=SessionRegistry(),
         stt_client=_resolve_stt_client(config),
@@ -192,10 +145,15 @@ def create_app(
                 else []
             ),
             *websocket_routes,
-            # The SPA catch-all mounts at "/", so it must come last.
-            *([spa_mount] if spa_mount is not None else []),
         ]
     )
+    if config.web_dist is not None:
+        app.frontend(
+            "/",
+            directory=config.web_dist,
+            fallback="index.html",
+            check_dir=True,
+        )
     app.add_middleware(ContextLoggerMiddleware)
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(
