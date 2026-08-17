@@ -701,38 +701,137 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
-    const selector = await screen.findByRole("group", { name: "Model" });
+    const slider = await screen.findByRole("slider", {
+      name: "Model profile",
+    });
 
-    expect(selector.closest("form")).not.toBeNull();
+    expect(slider.closest("form")).not.toBeNull();
   });
 
-  test("labels the current model as selected", async () => {
+  test("maps the current model profile to its slider slot", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
-    const selected = await screen.findByRole("button", {
-      name: "GPT 4.1 Selected",
+    const slider = await screen.findByRole("slider", {
+      name: "Model profile",
     });
-    const unselected = screen.getByRole("button", { name: "Claude Sonnet" });
 
-    expect(selected).toHaveAttribute("aria-pressed", "true");
-    expect(unselected).toHaveAttribute("aria-pressed", "false");
+    expect(slider).toHaveAttribute("min", "0");
+    expect(slider).toHaveAttribute("max", "4");
+    expect(slider).toHaveAttribute("step", "1");
+    expect(slider).toHaveValue("0");
+    expect(slider).toHaveAttribute(
+      "aria-valuetext",
+      "GPT-5.6 Luna · no thinking",
+    );
   });
 
-  test("selecting a model persists it without moving the transcript", async () => {
+  test("selecting a profile persists it without moving the transcript", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
     const transcript = await screen.findByLabelText("Chat transcript");
+    const slider = await screen.findByRole("slider", {
+      name: "Model profile",
+    });
     transcript.scrollTop = 123;
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Claude Sonnet" }),
-    );
+    fireEvent.input(slider, { target: { value: "2" } });
+    fireEvent.input(slider, { target: { value: "4" } });
+    expect(host.chat.selectedModel).toBeUndefined();
+
+    fireEvent.change(slider, { target: { value: "4" } });
 
     await waitFor(() => {
-      expect(host.chat.selectedModel).toBe("anthropic:claude-sonnet-4");
+      expect(host.chat.selectedModel).toBe("gpt-5.6-sol");
     });
+    expect(slider).toHaveAttribute(
+      "aria-valuetext",
+      "GPT-5.6 Sol · medium thinking",
+    );
     expect(transcript.scrollTop).toBe(123);
+  });
+
+  test("serializes rapid profile commits and keeps the latest selection", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    const slider = await screen.findByRole("slider", {
+      name: "Model profile",
+    });
+
+    fireEvent.input(slider, { target: { value: "4" } });
+    fireEvent.change(slider, { target: { value: "4" } });
+    fireEvent.input(slider, { target: { value: "0" } });
+    fireEvent.change(slider, { target: { value: "0" } });
+
+    await waitFor(() => {
+      expect(host.chat.selectedModel).toBe("gpt-5.6-luna");
+    });
+  });
+
+  test("uses the catalog default without an explicit conversation profile", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversation = {
+      ...host.chat.storedConversation,
+      selected_model: null,
+    };
+    renderApp(host);
+
+    const slider = await screen.findByRole("slider", {
+      name: "Model profile",
+    });
+
+    expect(slider).toHaveValue("0");
+    expect(slider).toHaveAttribute(
+      "aria-valuetext",
+      "GPT-5.6 Luna · no thinking",
+    );
+  });
+
+  test("shows a fixed profile when the catalog has one entry", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversation = {
+      ...host.chat.storedConversation,
+      selected_model: "local",
+    };
+    host.chat.listModels = () =>
+      Promise.resolve({
+        default_model: "local",
+        models: [
+          {
+            display_name: "Local deterministic model",
+            id: "local",
+            model_id: "tether-local-faux",
+            provider: "faux",
+            thinking_level: null,
+          },
+        ],
+      });
+    renderApp(host);
+
+    const slider = await screen.findByRole("slider", {
+      name: "Model profile",
+    });
+
+    expect(slider).toBeDisabled();
+    expect(slider).toHaveAttribute("max", "0");
+    expect(slider).toHaveAttribute(
+      "aria-valuetext",
+      "Local deterministic model",
+    );
+  });
+
+  test("reports an empty model catalog without rendering a slider", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.listModels = () =>
+      Promise.resolve({ default_model: null, models: [] });
+    renderApp(host);
+
+    expect(
+      await screen.findByText("No model profiles available."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("slider", { name: "Model profile" }),
+    ).not.toBeInTheDocument();
   });
 
   test("only fetches the latest page of history by default", async () => {

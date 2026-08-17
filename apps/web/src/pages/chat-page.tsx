@@ -72,48 +72,131 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       modelsQuery.data?.default_model ??
       "",
   );
+  const selectedIndex = createMemo(() => {
+    const index = (modelsQuery.data?.models ?? []).findIndex(
+      (model) => model.id === selectedModel(),
+    );
+    return Math.max(0, index);
+  });
+  const [sliderIndex, setSliderIndex] = createSignal(0);
+  const currentProfile = createMemo(
+    () => modelsQuery.data?.models[sliderIndex()],
+  );
 
-  const persistModel = (model: string) => {
-    if (model.length === 0 || model === selectedModel()) {
-      return;
+  let requestedModel = "";
+  let persistingModel = false;
+
+  createEffect(() => {
+    setSliderIndex(selectedIndex());
+    if (!persistingModel) {
+      requestedModel = selectedModel();
     }
-    void (async () => {
-      await props.api.setConversationModel(props.conversation.id, model);
+  });
+
+  const persistRequestedModel = async () => {
+    persistingModel = true;
+    let persistedModel = selectedModel();
+    try {
+      while (requestedModel !== persistedModel) {
+        const nextModel = requestedModel;
+        await props.api.setConversationModel(props.conversation.id, nextModel);
+        persistedModel = nextModel;
+      }
       await queryClient.invalidateQueries({
         queryKey: queryKeys.conversations,
       });
-    })();
+    } catch (error) {
+      requestedModel = selectedModel();
+      throw error;
+    } finally {
+      persistingModel = false;
+      if (requestedModel !== persistedModel) {
+        void persistRequestedModel();
+      }
+    }
+  };
+
+  const persistModel = (model: string) => {
+    if (model.length === 0 || model === requestedModel) {
+      return;
+    }
+    requestedModel = model;
+    if (!persistingModel) {
+      void persistRequestedModel();
+    }
   };
 
   return (
-    <div
-      aria-label="Model"
-      class="flex items-center gap-1.5 overflow-x-auto pb-1"
-      role="group"
-    >
-      <span class="text-muted-foreground text-xs">Model</span>
-      <For each={modelsQuery.data?.models ?? []}>
-        {(model) => (
-          <Button
-            aria-pressed={selectedModel() === model.id}
-            class="shrink-0"
-            disabled={modelsQuery.isLoading}
-            onClick={() => {
-              persistModel(model.id);
-            }}
-            size="sm"
-            type="button"
-            variant={selectedModel() === model.id ? "default" : "outline"}
-          >
-            <span>{model.display_name}</span>
-            <Show when={selectedModel() === model.id}>
-              <span class="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide">
-                Selected
-              </span>
-            </Show>
-          </Button>
-        )}
-      </For>
+    <div aria-label="Model" class="space-y-1.5" role="group">
+      <div class="flex min-h-5 items-baseline gap-2 text-xs">
+        <span class="text-muted-foreground">Model</span>
+        <Show when={currentProfile()}>
+          {(profile) => (
+            <strong class="font-medium">{profile().display_name}</strong>
+          )}
+        </Show>
+      </div>
+      <Show
+        fallback={
+          <p class="text-muted-foreground text-xs" role="status">
+            {modelsQuery.isLoading
+              ? "Loading model profiles…"
+              : "No model profiles available."}
+          </p>
+        }
+        when={(modelsQuery.data?.models.length ?? 0) > 0}
+      >
+        <input
+          aria-label="Model profile"
+          aria-valuetext={currentProfile()?.display_name}
+          class="accent-primary h-7 w-full cursor-pointer disabled:cursor-default"
+          disabled={
+            modelsQuery.isLoading || (modelsQuery.data?.models.length ?? 0) < 2
+          }
+          max={(modelsQuery.data?.models.length ?? 1) - 1}
+          min="0"
+          onChange={(event) => {
+            const profile =
+              modelsQuery.data?.models[event.currentTarget.valueAsNumber];
+            if (profile !== undefined) {
+              persistModel(profile.id);
+            }
+          }}
+          onInput={(event) => {
+            setSliderIndex(event.currentTarget.valueAsNumber);
+          }}
+          step="1"
+          type="range"
+          value={sliderIndex()}
+        />
+        <div aria-hidden="true" class="flex justify-between px-2">
+          <For each={modelsQuery.data?.models ?? []}>
+            {(_model, index) => (
+              <span
+                class={`block size-1.5 rounded-full ${index() === sliderIndex() ? "bg-primary" : "bg-border"}`}
+              />
+            )}
+          </For>
+        </div>
+        <ol
+          aria-hidden="true"
+          class="grid gap-1"
+          style={{
+            "grid-template-columns": `repeat(${(modelsQuery.data?.models.length ?? 1).toString()}, minmax(0, 1fr))`,
+          }}
+        >
+          <For each={modelsQuery.data?.models ?? []}>
+            {(model) => (
+              <li
+                class="text-muted-foreground text-center text-[0.625rem] leading-tight"
+                title={model.display_name}
+              >
+                {model.display_name}
+              </li>
+            )}
+          </For>
+        </ol>
+      </Show>
     </div>
   );
 }
