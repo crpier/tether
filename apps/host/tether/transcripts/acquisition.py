@@ -45,9 +45,6 @@ from tether.youtube_store import (
     YouTubeTranscriptState,
 )
 
-_SUPADATA_SOURCE = "supadata"
-_NO_SOURCES: frozenset[str] = frozenset()
-
 
 @dataclass(frozen=True, slots=True)
 class TranscriptAcquisitionConfig:
@@ -118,15 +115,10 @@ class TranscriptAcquisitionService:
                 source for source, pause in pauses.items() if pause.is_paused(now)
             )
             selected_policy = policy or TranscriptFetchPolicy()
-            caption_excluded = (
-                frozenset({_SUPADATA_SOURCE})
-                if video.caption_available == 0
-                else _NO_SOURCES
-            )
             effective_policy = TranscriptFetchPolicy(
                 attempts=selected_policy.attempts,
                 deferred_sources=(selected_policy.deferred_sources | deferred_sources),
-                excluded_sources=(selected_policy.excluded_sources | caption_excluded),
+                excluded_sources=selected_policy.excluded_sources,
                 request_limits=selected_policy.request_limits,
             )
             outcome = await self.provider.fetch(video_id, policy=effective_policy)

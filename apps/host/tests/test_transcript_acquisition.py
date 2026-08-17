@@ -151,8 +151,8 @@ async def upstream_block_is_persisted_and_honored_on_demand() -> None:
 
 
 @test()
-async def captionless_video_skips_native_supadata() -> None:
-    """Native paid lookup is excluded while the library remains eligible."""
+async def caption_metadata_does_not_skip_supadata() -> None:
+    """Supadata remains eligible when YouTube reports no caption track."""
     database = await _database()
     await _seed(database, "video", caption_available=0)
     supadata = ScriptedSource(
@@ -171,9 +171,9 @@ async def captionless_video_skips_native_supadata() -> None:
     outcome = await acquisition.acquire("video", now=_NOW)
 
     stored = assert_isinstance(outcome, TranscriptStored)
-    assert_eq(stored.source, "youtube_transcript_api")
-    assert_eq(supadata.calls, 0)
-    assert_eq(library.calls, 1)
+    assert_eq(stored.source, "supadata")
+    assert_eq(supadata.calls, 1)
+    assert_eq(library.calls, 0)
     await database.close()
 
 
