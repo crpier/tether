@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
@@ -17,6 +18,8 @@ from tether.youtube_oauth import OAuthConfig, OAuthYouTubeApi
 from tether.youtube_quota import LikedPage, RawYouTubeVideo, YouTubeApi
 
 type YouTubeAuthState = Literal["authorizing", "connected", "disconnected", "error"]
+
+logger = logging.getLogger(__name__)
 
 
 class YouTubeAuthFailure(BaseModel):
@@ -129,7 +132,6 @@ class _GoogleAuthorizationFlowAdapter:
         """Request offline access so Google returns a refresh token."""
         return self._flow.authorization_url(
             access_type="offline",
-            include_granted_scopes="true",
             prompt="consent",
         )
 
@@ -291,6 +293,7 @@ class GoogleYouTubeAuthBackend:
                     )
                 )
         except Exception:
+            logger.exception("Google YouTube token exchange failed")
             return Err(
                 YouTubeAuthFailure(
                     message="Google did not complete YouTube authorization."
