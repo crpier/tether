@@ -24,10 +24,9 @@ services:
       TETHER_TELEMETRY_DATABASE_PATH: /data/telemetry.sqlite3
       TETHER_KB_ROOT: /data/kb
       FASTEMBED_CACHE_PATH: /cache/fastembed
-      # YouTube OAuth state lives on the durable `data` volume (not the image):
-      # the container can't run the browser OAuth flow, so the token is
-      # authorized on a laptop and installed here (`just youtube-token-install`),
-      # and pi's silent refresh writes back to a path that survives redeploys.
+      # YouTube's Web OAuth client secret and UI-authorized token live on the
+      # durable data volume. Settings writes and refreshes the token here, so
+      # reconnecting and redeploying never require image changes.
       TETHER_YOUTUBE_TOKEN_PATH: /data/youtube/token.json
       TETHER_YOUTUBE_CLIENT_SECRET_PATH: /data/youtube/client-secret.json
       # Provider credentials for the embedded pi runtime. This is deliberately

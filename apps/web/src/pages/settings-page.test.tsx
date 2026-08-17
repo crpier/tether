@@ -21,6 +21,40 @@ describe("Settings page", () => {
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });
 
+  test("offers YouTube reconnection when Google authorization is usable", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+    await navigateTo("Settings");
+
+    expect(
+      await screen.findByRole("button", { name: "Reconnect YouTube" }),
+    ).toBeInTheDocument();
+  });
+
+  test("starts YouTube recovery and shows the Google consent link", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.youtube.youTubeAuthStatus = {
+      authorization_url: null,
+      error: null,
+      state: "disconnected",
+    };
+    host.youtube.nextYouTubeAuthStatus = {
+      authorization_url: "https://accounts.google.test/consent",
+      error: null,
+      state: "authorizing",
+    };
+    renderApp(host);
+    await navigateTo("Settings");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Connect YouTube" }),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Continue with Google" }),
+    ).toHaveAttribute("href", "https://accounts.google.test/consent");
+  });
+
   test("shows the server-owned model provider connection", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);

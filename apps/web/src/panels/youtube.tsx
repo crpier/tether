@@ -1,4 +1,8 @@
-import { createQuery } from "@tanstack/solid-query";
+import {
+  createMutation,
+  createQuery,
+  useQueryClient,
+} from "@tanstack/solid-query";
 import { For, Match, Show, Switch } from "solid-js";
 
 import type { YouTubeHost } from "../host/youtube";
@@ -6,6 +10,7 @@ import { formatDateTime, formatSyncTimestamp } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 function formatUntil(iso: string): string {
   const when = new Date(iso);
@@ -16,6 +21,17 @@ function formatUntil(iso: string): string {
 }
 
 export function YouTubeSyncPanel(props: { api: YouTubeHost }) {
+  const queryClient = useQueryClient();
+  const authQuery = createQuery(() => ({
+    queryFn: () => props.api.getYouTubeAuthStatus(),
+    queryKey: queryKeys.youtubeAuth,
+  }));
+  const startAuthMutation = createMutation(() => ({
+    mutationFn: () => props.api.startYouTubeAuth(),
+    onSuccess: (status) => {
+      queryClient.setQueryData(queryKeys.youtubeAuth, status);
+    },
+  }));
   const statusQuery = createQuery(() => ({
     queryFn: () => props.api.getYouTubeSyncStatus(),
     queryKey: queryKeys.youtube,
@@ -26,7 +42,76 @@ export function YouTubeSyncPanel(props: { api: YouTubeHost }) {
 
   return (
     <section aria-label="YouTube sync" class={panelClass}>
-      <h2 class="mb-3 text-sm font-semibold">YouTube sync</h2>
+      <h2 class="mb-3 text-sm font-semibold">YouTube</h2>
+      <Switch>
+        <Match when={authQuery.isLoading}>
+          <p class="text-muted-foreground text-sm">Checking authorization…</p>
+        </Match>
+        <Match when={authQuery.isError}>
+          <p class="text-destructive text-sm" role="alert">
+            Could not check YouTube authorization
+          </p>
+        </Match>
+        <Match when={authQuery.data}>
+          {(authorization) => (
+            <div class="space-y-3 text-sm">
+              <div>
+                <p class="font-medium">Google account</p>
+                <p class="text-muted-foreground">
+                  {authorization().state === "connected"
+                    ? "Connected"
+                    : authorization().state === "authorizing"
+                      ? "Waiting for Google authorization"
+                      : "Not connected"}
+                </p>
+              </div>
+              <Show when={authorization().error}>
+                {(error) => (
+                  <p class="text-destructive text-xs" role="alert">
+                    {error()}
+                  </p>
+                )}
+              </Show>
+              <Show
+                fallback={
+                  <Button
+                    disabled={startAuthMutation.isPending}
+                    onClick={() => startAuthMutation.mutate()}
+                    type="button"
+                    variant={
+                      authorization().state === "connected"
+                        ? "outline"
+                        : "default"
+                    }
+                  >
+                    {authorization().state === "connected"
+                      ? "Reconnect YouTube"
+                      : "Connect YouTube"}
+                  </Button>
+                }
+                when={
+                  authorization().state === "authorizing" &&
+                  authorization().authorization_url
+                }
+              >
+                <a
+                  class="text-primary block w-fit text-sm font-medium underline underline-offset-4"
+                  href={authorization().authorization_url ?? undefined}
+                  rel="noopener noreferrer"
+                >
+                  Continue with Google
+                </a>
+              </Show>
+              <Show when={startAuthMutation.isError}>
+                <p class="text-destructive text-xs" role="alert">
+                  YouTube authorization request failed. Try again.
+                </p>
+              </Show>
+            </div>
+          )}
+        </Match>
+      </Switch>
+      <h3 class="mb-3 mt-4 border-t pt-4 text-sm font-semibold">Sync health</h3>
       <Switch>
         <Match when={statusQuery.isLoading}>
           <p class="text-muted-foreground text-sm">Loading…</p>

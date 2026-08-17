@@ -43,6 +43,7 @@ from tether.transcripts.contracts import TranscriptProviderChain
 from tether.transcripts.worker import TranscriptSyncService
 from tether.triggers import TriggerService
 from tether.youtube import YouTubeService
+from tether.youtube_auth_service import YouTubeAuthService
 from tether.youtube_local import InMemoryYouTubeApi
 from tether.youtube_quota import (
     DailyQuota,
@@ -60,11 +61,24 @@ from tether.youtube_sync import YouTubeSyncConfig, YouTubeSyncService
 
 @dataclass(frozen=True, slots=True)
 class YouTubeComponent:
-    """YouTube request service and observable worker readiness."""
+    """YouTube authorization, request service, and worker readiness."""
 
+    auth_service: YouTubeAuthService
     likes_ready: asyncio.Event
     service: YouTubeService
     transcripts_ready: asyncio.Event
+
+
+@dataclass(frozen=True, slots=True)
+class _YouTubeWorkerDependencies:
+    """Collaborators shared by the independently optional YouTube workers."""
+
+    auth_service: YouTubeAuthService
+    config: AppConfig
+    ingestion_lifecycle: IngestionLifecycle
+    logger: Logger
+    sync: YouTubeSyncService
+    transcript_sync: TranscriptSyncService | None
 
 
 def _build_youtube_client(
@@ -156,7 +170,23 @@ async def compose_youtube(  # noqa: PLR0913 - composition requires each dependen
         if acquisition is not None
         else None
     )
-    likes_ready, transcripts_ready = _activate_youtube_workers(
+
+    async def _sync_after_authorization() -> None:
+        try:
+            _ = await sync.sync(logger=logger)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("YouTube post-authorization sync failed")
+
+    auth_service = YouTubeAuthService(
+        config.youtube_auth_backend,
+        on_authorized=(
+            _sync_after_authorization if config.youtube_sync_enabled else None
+        ),
+    )
+    worker_dependencies = _YouTubeWorkerDependencies(
+        auth_service=auth_service,
         config=config,
         ingestion_lifecycle=ingestion_lifecycle,
         logger=logger,
@@ -164,59 +194,85 @@ async def compose_youtube(  # noqa: PLR0913 - composition requires each dependen
         transcript_sync=transcript_sync,
     )
     return YouTubeComponent(
-        likes_ready=likes_ready,
+        auth_service=auth_service,
+        likes_ready=_activate_youtube_likes(worker_dependencies),
         service=youtube_service,
-        transcripts_ready=transcripts_ready,
+        transcripts_ready=_activate_youtube_transcripts(worker_dependencies),
     )
 
 
-def _activate_youtube_workers(
-    *,
-    config: AppConfig,
-    ingestion_lifecycle: IngestionLifecycle,
-    logger: Logger,
-    sync: YouTubeSyncService,
-    transcript_sync: TranscriptSyncService | None,
-) -> tuple[asyncio.Event, asyncio.Event]:
-    """Adapt YouTube's two source policies to the shared lifecycle owner."""
-    likes_worker: CallbackIngestionWorker | None = None
-    if config.youtube_api is not None and config.youtube_sync_enabled:
-
-        async def _boot_likes() -> IngestionBootOutcome:
-            _ = await sync.maybe_sync(logger=logger)
-            return IngestionBootOutcome.REPEAT
-
-        async def _repeat_likes() -> None:
-            await sync.sync_forever(
-                interval_seconds=config.youtube_sync_interval_seconds, logger=logger
-            )
-
-        likes_worker = CallbackIngestionWorker(_boot_likes, _repeat_likes)
-    youtube_boot_done = ingestion_lifecycle.activate("youtube-likes", likes_worker)
-
-    transcript_worker: CallbackIngestionWorker | None = None
+def _activate_youtube_likes(
+    dependencies: _YouTubeWorkerDependencies,
+) -> asyncio.Event:
+    """Run likes only while Google authorization is usable."""
+    worker: CallbackIngestionWorker | None = None
     if (
-        transcript_sync is not None
-        and config.youtube_api is not None
-        and config.transcript_provider is not None
-        and config.transcript_sync_enabled
+        dependencies.config.youtube_api is not None
+        and dependencies.config.youtube_sync_enabled
     ):
 
-        async def _boot_transcripts() -> IngestionBootOutcome:
-            _ = await transcript_sync.sync(logger=logger)
+        async def _boot() -> IngestionBootOutcome:
+            if not await dependencies.auth_service.available():
+                return IngestionBootOutcome.REPEAT
+            _ = await dependencies.sync.maybe_sync(logger=dependencies.logger)
             return IngestionBootOutcome.REPEAT
 
-        async def _repeat_transcripts() -> None:
-            await transcript_sync.sync_forever(
-                interval_seconds=config.transcript_sync_interval_seconds,
-                logger=logger,
-            )
+        async def _repeat() -> None:
+            while True:
+                await asyncio.sleep(dependencies.config.youtube_sync_interval_seconds)
+                if not await dependencies.auth_service.available():
+                    continue
+                try:
+                    _ = await dependencies.sync.sync(logger=dependencies.logger)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    dependencies.logger.exception("YouTube sync pass failed")
 
-        transcript_worker = CallbackIngestionWorker(
-            _boot_transcripts, _repeat_transcripts
-        )
-    return youtube_boot_done, ingestion_lifecycle.activate(
-        "youtube-transcripts", transcript_worker
+        worker = CallbackIngestionWorker(_boot, _repeat)
+    return dependencies.ingestion_lifecycle.activate("youtube-likes", worker)
+
+
+def _activate_youtube_transcripts(
+    dependencies: _YouTubeWorkerDependencies,
+) -> asyncio.Event:
+    """Run transcript acquisition only when every provider seam is configured."""
+    worker: CallbackIngestionWorker | None = None
+    if (
+        dependencies.transcript_sync is not None
+        and dependencies.config.youtube_api is not None
+        and dependencies.config.transcript_provider is not None
+        and dependencies.config.transcript_sync_enabled
+    ):
+
+        async def _boot() -> IngestionBootOutcome:
+            if not await dependencies.auth_service.available():
+                return IngestionBootOutcome.REPEAT
+            assert dependencies.transcript_sync is not None
+            _ = await dependencies.transcript_sync.sync(logger=dependencies.logger)
+            return IngestionBootOutcome.REPEAT
+
+        async def _repeat() -> None:
+            assert dependencies.transcript_sync is not None
+            while True:
+                await asyncio.sleep(
+                    dependencies.config.transcript_sync_interval_seconds
+                )
+                if not await dependencies.auth_service.available():
+                    continue
+                try:
+                    _ = await dependencies.transcript_sync.sync(
+                        logger=dependencies.logger
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    dependencies.logger.exception("YouTube transcript sync pass failed")
+
+        worker = CallbackIngestionWorker(_boot, _repeat)
+    return dependencies.ingestion_lifecycle.activate(
+        "youtube-transcripts",
+        worker,
     )
 
 
@@ -491,7 +547,7 @@ async def compose_ingestion(
     dependencies: IngestionDependencies,
     *,
     resources: contextlib.AsyncExitStack,
-) -> YouTubeService:
+) -> YouTubeComponent:
     """Compose every optional source adapter into one lifecycle owner."""
     youtube = await compose_youtube(
         config=dependencies.config,
@@ -546,4 +602,4 @@ async def compose_ingestion(
         ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
     )
-    return youtube.service
+    return youtube

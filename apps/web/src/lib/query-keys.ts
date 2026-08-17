@@ -47,6 +47,7 @@ export const queryKeys = {
   todos: ["todos"] as const,
   triggers: ["triggers"] as const,
   youtube: ["youtube"] as const,
+  youtubeAuth: ["youtube-auth"] as const,
   youtubeTranscriptDecisions: ["youtube", "transcript-decisions"] as const,
 };
 

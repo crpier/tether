@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from tether.triggers import TriggerService
     from tether.web_search import SearchProvider
     from tether.youtube import YouTubeService
+    from tether.youtube_auth_service import YouTubeAuthService
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,7 @@ class AppRuntime:
     triage_service: TriageService
     trigger_service: TriggerService
     vapid_public_key: str
+    youtube_auth_service: YouTubeAuthService
     youtube_service: YouTubeService
 
 
