@@ -28,11 +28,7 @@ import type { VoiceMode } from "../voice-recorder";
 import { queryKeys } from "../lib/query-keys";
 import { formatToolResult } from "../lib/tool-result";
 import { Button } from "@/components/ui/button";
-import {
-  TextField,
-  TextFieldLabel,
-  TextFieldTextArea,
-} from "@/components/ui/text-field";
+import { TextField, TextFieldTextArea } from "@/components/ui/text-field";
 
 function messageLabel(role: ChatRole): string {
   switch (role) {
@@ -130,10 +126,10 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   return (
     <div
       aria-label="Model"
-      class="mx-auto w-full max-w-64 space-y-1.5 sm:max-w-sm"
+      class="w-32 shrink-0 sm:w-36"
       role="group"
+      title={profilePosition()}
     >
-      <div class="text-muted-foreground min-h-5 text-xs">Model</div>
       <Show
         fallback={
           <p class="text-muted-foreground text-xs" role="status">
@@ -147,7 +143,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
         <input
           aria-label="Model profile"
           aria-valuetext={profilePosition()}
-          class="accent-primary h-7 w-full cursor-pointer disabled:cursor-default"
+          class="accent-primary h-6 w-full cursor-pointer disabled:cursor-default"
           disabled={
             modelsQuery.isLoading || (modelsQuery.data?.models.length ?? 0) < 2
           }
@@ -167,15 +163,6 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
           type="range"
           value={sliderIndex()}
         />
-        <div aria-hidden="true" class="flex justify-between px-2">
-          <For each={modelsQuery.data?.models ?? []}>
-            {(_model, index) => (
-              <span
-                class={`block size-1.5 rounded-full ${index() === sliderIndex() ? "bg-primary" : "bg-border"}`}
-              />
-            )}
-          </For>
-        </div>
       </Show>
     </div>
   );
@@ -444,7 +431,7 @@ function MessageRows(props: {
           viewport = element;
         }}
         aria-label={props.historyReady ? "Chat transcript" : undefined}
-        class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-4 shadow-sm"
+        class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-3 shadow-sm"
         onScroll={() => {
           updatePinned();
           if (
@@ -662,20 +649,15 @@ export function ChatPage() {
       aria-labelledby="chat-title"
       class="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <header class="bg-card flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5">
-        <h1
-          id="chat-title"
-          class="mr-auto text-lg font-semibold tracking-tight"
-        >
-          Tether chat
-        </h1>
-        <Show when={(loadedSkillCount() ?? 0) > 0}>
-          <p class="text-muted-foreground text-xs">
-            Skills loaded · {loadedSkillCount()}
-          </p>
-        </Show>
-      </header>
-      <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 overflow-hidden p-4 sm:p-5">
+      <h1 class="sr-only" id="chat-title">
+        Tether chat
+      </h1>
+      <Show when={(loadedSkillCount() ?? 0) > 0}>
+        <p class="sr-only" role="status">
+          Skills loaded · {loadedSkillCount()}
+        </p>
+      </Show>
+      <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-2 overflow-hidden p-2 sm:p-3">
         <Show when={connection() !== "open"}>
           <p
             class="bg-muted text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
@@ -725,40 +707,37 @@ export function ChatPage() {
             stopped={stopped()}
             working={working()}
           />
-          <Show when={historyIncomplete() && !generating()}>
-            <p class="text-muted-foreground text-xs" role="status">
-              Previous turn did not finish. Send a new message to recover.
-            </p>
-          </Show>
-          <Show
-            when={startsFreshSession() && !generating() && !historyIncomplete()}
+          <div
+            aria-label="Composer context"
+            class="flex shrink-0 items-center gap-2"
+            role="group"
           >
-            <p
-              class="text-muted-foreground text-xs"
-              title="The assistant's working context resets after a few minutes idle; chat history stays."
-            >
-              Next message starts a fresh session
-            </p>
-          </Show>
-          <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
             <Show when={conversation()}>
               {(currentConversation) => (
                 <ModelSelector api={api} conversation={currentConversation()} />
               )}
             </Show>
-            <TextField onChange={setDraft} value={draft()}>
-              <TextFieldLabel>Message</TextFieldLabel>
-              <TextFieldTextArea
-                onKeyDown={onMessageKeyDown}
-                ref={(element) => {
-                  if (starterPrompt.length > 0) {
-                    queueMicrotask(() => {
-                      element.focus();
-                    });
-                  }
-                }}
-              />
-            </TextField>
+            <div class="min-w-0 flex-1">
+              <Show when={historyIncomplete() && !generating()}>
+                <p class="text-muted-foreground text-xs" role="status">
+                  Previous turn did not finish. Send a new message to recover.
+                </p>
+              </Show>
+              <Show
+                when={
+                  startsFreshSession() && !generating() && !historyIncomplete()
+                }
+              >
+                <p
+                  class="text-muted-foreground text-xs"
+                  title="The assistant's working context resets after a few minutes idle; chat history stays."
+                >
+                  Next message starts a fresh session
+                </p>
+              </Show>
+            </div>
+          </div>
+          <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
             <Show when={queuedPrompts().length > 0}>
               <section
                 aria-label="Queued messages"
@@ -861,22 +840,57 @@ export function ChatPage() {
                 </For>
               </section>
             </Show>
-            <VoiceComposerControls
-              onTranscript={handleVoiceTranscript}
-              transcribe={(blob) => api.transcribeAudio(blob)}
-            />
-            <div class="flex justify-end gap-2">
-              <Button disabled={!canSend()} type="submit">
-                {busy() ? "Queue message" : "Send"}
+            <div
+              aria-label="Message composer"
+              class="bg-card flex items-center gap-1 rounded-xl border p-1 shadow-sm"
+              role="group"
+            >
+              <TextField
+                class="min-w-0 flex-1 gap-0"
+                onChange={setDraft}
+                value={draft()}
+              >
+                <TextFieldTextArea
+                  aria-label="Message"
+                  class="max-h-32 min-h-11 resize-y border-0 px-2 py-2 shadow-none focus-visible:ring-0"
+                  onKeyDown={onMessageKeyDown}
+                  placeholder="Message Tether…"
+                  ref={(element) => {
+                    if (starterPrompt.length > 0) {
+                      queueMicrotask(() => {
+                        element.focus();
+                      });
+                    }
+                  }}
+                  rows={1}
+                />
+              </TextField>
+              <VoiceComposerControls
+                onTranscript={handleVoiceTranscript}
+                transcribe={(blob) => api.transcribeAudio(blob)}
+              />
+              <Button
+                aria-label={busy() ? "Queue message" : "Send"}
+                class="rounded-full"
+                disabled={!canSend()}
+                size="icon-sm"
+                title={busy() ? "Queue message" : "Send"}
+                type="submit"
+              >
+                <span aria-hidden="true">↑</span>
               </Button>
               <Show when={generating()}>
                 <Button
+                  aria-label="Stop"
+                  class="rounded-full"
                   disabled={awaitingAgentEnd()}
                   onClick={abort}
+                  size="icon-sm"
+                  title="Stop"
                   type="button"
                   variant="outline"
                 >
-                  Stop
+                  <span aria-hidden="true">■</span>
                 </Button>
               </Show>
             </div>

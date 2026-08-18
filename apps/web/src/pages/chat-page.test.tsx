@@ -62,6 +62,16 @@ function latestFakeRecorder(): FakeMediaRecorder {
 }
 
 describe("Chat view", () => {
+  test("keeps the page title accessible without visible header chrome", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host);
+
+    const title = await screen.findByRole("heading", { name: "Tether chat" });
+
+    expect(title).toHaveClass("sr-only");
+    expect(title.closest("header")).toBeNull();
+  });
+
   test("does not expose a destructive transcript reset", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
@@ -697,15 +707,35 @@ describe("Chat view", () => {
     });
   });
 
-  test("keeps model selection beside the composer", async () => {
+  test("puts the unlabeled model beside session status above the composer", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
-      name: "Model profile",
+    const context = await screen.findByRole("group", {
+      name: "Composer context",
     });
+    const composer = screen.getByRole("group", { name: "Message composer" });
 
-    expect(slider.closest("form")).not.toBeNull();
+    expect(
+      within(context).getByText("Next message starts a fresh session"),
+    ).toBeInTheDocument();
+    expect(
+      await within(context).findByRole("slider", { name: "Model profile" }),
+    ).toBeInTheDocument();
+    expect(
+      within(composer).queryByRole("slider", { name: "Model profile" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(composer).getByRole("textbox", { name: "Message" }),
+    ).toBeInTheDocument();
+    expect(
+      within(composer).getByRole("button", { name: "Record and review" }),
+    ).toBeInTheDocument();
+    expect(
+      within(composer).getByRole("button", { name: "Send" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
+    expect(screen.queryByText("Message")).not.toBeInTheDocument();
   });
 
   test("presents model profiles without exposing model or effort details", async () => {

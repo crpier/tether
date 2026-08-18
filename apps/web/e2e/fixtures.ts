@@ -46,7 +46,9 @@ export const test = base.extend<TetherFixtures>({
       await page.locator("#login-title").waitFor({ state: "visible" });
       await page.locator('input[name="password"]').fill(APP_PASSWORD);
       await page.getByRole("button", { name: "Log in" }).click();
-      await page.locator("#chat-title").waitFor({ state: "visible" });
+      await page
+        .locator('section[aria-label="Chat transcript"]')
+        .waitFor({ state: "visible" });
     });
   },
 });

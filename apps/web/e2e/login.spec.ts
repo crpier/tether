@@ -162,7 +162,11 @@ test("logs in and lands on pure chat, with the nav present", async ({
   // Chat is the home page and the whole page: transcript + composer, nothing
   // else (#250). The console guard (fixtures.ts) additionally asserts the
   // page booted — including the /ws upgrade — without any runtime error.
-  await expect(page.locator("#chat-title")).toBeVisible();
+  // The semantic page title remains available without spending a visible row
+  // on a heading that duplicates the active Chat navigation item.
+  const chatTitle = page.locator("#chat-title");
+  await expect(chatTitle).toBeAttached();
+  expect(await chatTitle.boundingBox()).toMatchObject({ height: 1, width: 1 });
   await expect(
     page.locator('section[aria-label="Chat transcript"]'),
   ).toBeVisible();
