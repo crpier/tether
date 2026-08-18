@@ -256,6 +256,58 @@ for (const viewport of [PHONE, DESKTOP]) {
   });
 }
 
+// Issue #521: the composer should reveal longer prompts without consuming the
+// whole chat viewport. Real browser geometry is the public seam because jsdom
+// does not calculate textarea layout or wrapped-line scroll height.
+for (const viewport of [PHONE, DESKTOP]) {
+  test(`chat input grows from one through ten rows at ${viewport.width.toString()}px`, async ({
+    page,
+    login,
+  }) => {
+    await page.setViewportSize(viewport);
+    await login();
+
+    const input = page.getByRole("textbox", { name: "Message" });
+    await expect(input).toHaveAttribute("rows", "1");
+    const initialHeight = (await boundingBox(input)).height;
+
+    const heightAfterLines = async (lineCount: number) => {
+      await input.fill(
+        Array.from(
+          { length: lineCount },
+          (_, index) => `Prompt line ${(index + 1).toString()}`,
+        ).join("\n"),
+      );
+      return (await boundingBox(input)).height;
+    };
+
+    const fiveRowHeight = await heightAfterLines(5);
+    const nineRowHeight = await heightAfterLines(9);
+    const tenRowHeight = await heightAfterLines(10);
+    const fifteenRowHeight = await heightAfterLines(15);
+
+    expect(fiveRowHeight).toBeGreaterThan(initialHeight);
+    expect(nineRowHeight).toBeGreaterThan(fiveRowHeight);
+    expect(tenRowHeight).toBeGreaterThan(nineRowHeight);
+    expect(fifteenRowHeight).toBeCloseTo(tenRowHeight, 0);
+    expect(
+      await input.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    ).toBe(true);
+
+    const composerBox = await boundingBox(
+      page.getByRole("group", { name: "Message composer" }),
+    );
+    const sendBox = await boundingBox(
+      page.getByRole("button", { exact: true, name: "Send" }),
+    );
+    expect(
+      composerBox.y + composerBox.height - (sendBox.y + sendBox.height),
+    ).toBeLessThanOrEqual(12);
+  });
+}
+
 test("desktop chat keeps the model selector reasonably narrow", async ({
   page,
   login,

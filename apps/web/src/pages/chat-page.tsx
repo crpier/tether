@@ -56,6 +56,23 @@ function bubbleClass(role: ChatRole): string {
 const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
 
+const CHAT_INPUT_MAX_ROWS = 10;
+
+function fitChatInputToContent(element: HTMLTextAreaElement): void {
+  element.style.height = "auto";
+
+  const style = window.getComputedStyle(element);
+  const lineHeight = Number.parseFloat(style.lineHeight);
+  const verticalPadding =
+    Number.parseFloat(style.paddingTop) +
+    Number.parseFloat(style.paddingBottom);
+  const maxHeight = lineHeight * CHAT_INPUT_MAX_ROWS + verticalPadding;
+  const contentHeight = element.scrollHeight;
+
+  element.style.height = `${Math.min(contentHeight, maxHeight).toString()}px`;
+  element.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+}
+
 function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   const queryClient = useQueryClient();
   const modelsQuery = createQuery(() => ({
@@ -501,6 +518,7 @@ export function ChatPage() {
   const promptParam = searchParams.prompt;
   const starterPrompt = typeof promptParam === "string" ? promptParam : "";
   const [draft, setDraft] = createSignal(starterPrompt);
+  let messageInput: HTMLTextAreaElement | undefined;
   const [editingPromptId, setEditingPromptId] = createSignal<number | null>(
     null,
   );
@@ -509,6 +527,27 @@ export function ChatPage() {
     null,
   );
   const canSend = createMemo(() => draft().trim().length > 0);
+
+  createEffect(() => {
+    draft();
+    queueMicrotask(() => {
+      if (messageInput !== undefined) {
+        fitChatInputToContent(messageInput);
+      }
+    });
+  });
+
+  onMount(() => {
+    const refitInput = () => {
+      if (messageInput !== undefined) {
+        fitChatInputToContent(messageInput);
+      }
+    };
+    window.addEventListener("resize", refitInput);
+    onCleanup(() => {
+      window.removeEventListener("resize", refitInput);
+    });
+  });
 
   const conversationsQuery = createQuery(() => ({
     queryFn: () => api.listConversations(),
@@ -842,7 +881,7 @@ export function ChatPage() {
             </Show>
             <div
               aria-label="Message composer"
-              class="bg-card flex items-center gap-1 rounded-xl border p-1 shadow-sm"
+              class="bg-card flex items-end gap-1 rounded-xl border p-1 shadow-sm"
               role="group"
             >
               <TextField
@@ -852,47 +891,54 @@ export function ChatPage() {
               >
                 <TextFieldTextArea
                   aria-label="Message"
-                  class="max-h-32 min-h-11 resize-y border-0 px-2 py-2 shadow-none focus-visible:ring-0"
+                  class="min-h-11 resize-none border-0 px-2 py-2 shadow-none focus-visible:ring-0"
+                  onInput={(event) => {
+                    fitChatInputToContent(event.currentTarget);
+                  }}
                   onKeyDown={onMessageKeyDown}
                   placeholder="Message Tether…"
                   ref={(element) => {
-                    if (starterPrompt.length > 0) {
-                      queueMicrotask(() => {
+                    messageInput = element;
+                    queueMicrotask(() => {
+                      fitChatInputToContent(element);
+                      if (starterPrompt.length > 0) {
                         element.focus();
-                      });
-                    }
+                      }
+                    });
                   }}
                   rows={1}
                 />
               </TextField>
-              <VoiceComposerControls
-                onTranscript={handleVoiceTranscript}
-                transcribe={(blob) => api.transcribeAudio(blob)}
-              />
-              <Button
-                aria-label={busy() ? "Queue message" : "Send"}
-                class="rounded-full"
-                disabled={!canSend()}
-                size="icon-sm"
-                title={busy() ? "Queue message" : "Send"}
-                type="submit"
-              >
-                <span aria-hidden="true">↑</span>
-              </Button>
-              <Show when={generating()}>
+              <div class="flex shrink-0 items-center gap-1">
+                <VoiceComposerControls
+                  onTranscript={handleVoiceTranscript}
+                  transcribe={(blob) => api.transcribeAudio(blob)}
+                />
                 <Button
-                  aria-label="Stop"
+                  aria-label={busy() ? "Queue message" : "Send"}
                   class="rounded-full"
-                  disabled={awaitingAgentEnd()}
-                  onClick={abort}
+                  disabled={!canSend()}
                   size="icon-sm"
-                  title="Stop"
-                  type="button"
-                  variant="outline"
+                  title={busy() ? "Queue message" : "Send"}
+                  type="submit"
                 >
-                  <span aria-hidden="true">■</span>
+                  <span aria-hidden="true">↑</span>
                 </Button>
-              </Show>
+                <Show when={generating()}>
+                  <Button
+                    aria-label="Stop"
+                    class="rounded-full"
+                    disabled={awaitingAgentEnd()}
+                    onClick={abort}
+                    size="icon-sm"
+                    title="Stop"
+                    type="button"
+                    variant="outline"
+                  >
+                    <span aria-hidden="true">■</span>
+                  </Button>
+                </Show>
+              </div>
             </div>
           </form>
         </Show>
