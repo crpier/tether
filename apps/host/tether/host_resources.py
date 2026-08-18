@@ -108,6 +108,7 @@ async def acquire_host_resources(
     _ = resources.callback(telemetry.shutdown)
     kb_root = Path(config.kb_root)
     await AsyncPath(kb_root).mkdir(parents=True, exist_ok=True)
+    await AsyncPath(kb_root / "memory").mkdir(parents=True, exist_ok=True)
     database, telemetry_database = await resources.enter_async_context(
         _open_databases(config)
     )

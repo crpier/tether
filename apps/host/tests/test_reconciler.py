@@ -64,6 +64,7 @@ from tether.memory_store import (
     Memory,
     create_memory_schema,
 )
+from tether.memory_workspace import MemoryWorkspaceDiagnostic, MemoryWorkspaceScanResult
 from tether.search_projection.embeddings import (
     Embedder,
     FakeEmbedder,
@@ -159,6 +160,18 @@ class Harness:
     index: FakeSearchIndex
     embedder: CountingEmbedder
     meta: SearchMetaService
+
+
+class StubWorkspaceService:
+    """Minimal workspace service stub for reconcile side-effect assertions."""
+
+    def __init__(self, result: MemoryWorkspaceScanResult) -> None:
+        self._result = result
+        self.scan_calls = 0
+
+    async def scan(self, logger: Logger) -> MemoryWorkspaceScanResult:
+        self.scan_calls += 1
+        return self._result
 
 
 async def _build_db() -> Database:
@@ -265,6 +278,45 @@ async def reconcile_records_the_active_model_marker() -> None:
     assert marker is not None
     assert_eq(marker.embedding_model, "fake-a")
     assert_eq(marker.vector_dim, _DIM)
+
+
+@test()
+async def reconcile_consumes_workspace_scan_results() -> None:
+    """A reconcile pass consults the workspace seam and keeps its diagnostics."""
+    db = await _build_db()
+    embedder = CountingEmbedder(FakeEmbedder(vector_dim=_DIM, model_name="fake-a"))
+    index = FakeSearchIndex(vector_dim=_DIM)
+    meta = SearchMetaService(database=db)
+    scan_result = MemoryWorkspaceScanResult(
+        topics=[],
+        diagnostics=[
+            MemoryWorkspaceDiagnostic(
+                path=Path("kb/memory/bad.md"),
+                code="frontmatter.invalid_yaml",
+                message="invalid yaml",
+            )
+        ],
+    )
+    workspace_service = StubWorkspaceService(result=scan_result)
+    reconciler = SearchReconciler(
+        database=db,
+        index=index,
+        embedder=embedder,
+        meta=meta,
+        workspace_service=workspace_service,
+    )
+    _ = await _add_memory(db, "travel preference")
+
+    _ = await reconciler.reconcile(logger=_logger())
+
+    assert_eq(workspace_service.scan_calls, 1)
+    assert_is_not_none(reconciler.last_workspace_scan)
+    assert reconciler.last_workspace_scan is not None
+    assert_eq(
+        [item.code for item in reconciler.last_workspace_scan.diagnostics],
+        ["frontmatter.invalid_yaml"],
+    )
+    await db.close()
 
 
 @test()

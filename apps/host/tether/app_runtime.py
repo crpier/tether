@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from tether.kosync_routes import KosyncAuth
     from tether.memories import MemoryService
     from tether.memory_search import MemorySearchService
+    from tether.memory_workspace_service import MemoryWorkspaceService
     from tether.model_selection import AgentModelCatalog
     from tether.notifications import NotificationService
     from tether.panels import PanelService
@@ -63,6 +64,7 @@ class AppRuntime:
     logger: Logger
     memory_search_service: MemorySearchService
     memory_service: MemoryService
+    memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
     panel_service: PanelService

@@ -77,9 +77,17 @@ import tarfile
 from pathlib import Path
 
 root = Path(sys.argv[1])
+memory_path = root / "memory"
 with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
-    for markdown_path in sorted(root.glob("*.md")):
-        archive.add(markdown_path, arcname=markdown_path.name)
+    if memory_path.is_dir():
+        for markdown_path in sorted(memory_path.rglob("*.md")):
+            relative_path = markdown_path.relative_to(memory_path)
+            if (
+                markdown_path.is_file()
+                and not markdown_path.is_symlink()
+                and all(not part.startswith((".", "~")) for part in relative_path.parts)
+            ):
+                archive.add(markdown_path, arcname=str(markdown_path.relative_to(root)))
     sessions_path = root / "pi-sessions"
     if sessions_path.is_dir():
         archive.add(sessions_path, arcname=sessions_path.name)

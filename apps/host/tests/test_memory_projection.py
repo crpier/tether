@@ -51,11 +51,12 @@ async def projection_harness() -> AsyncGenerator[ProjectionHarness]:
             ).returning()
         )
     async with TemporaryDirectory() as kb_root:
+        kb_root_path = Path(kb_root)
         yield ProjectionHarness(
             database=database,
-            knowledge_base=KnowledgeBaseService(kb_root=Path(kb_root)),
+            knowledge_base=KnowledgeBaseService(kb_root=kb_root_path),
             memory=memory,
-            projection_path=Path(kb_root) / f"{memory.id}.md",
+            projection_path=kb_root_path / "memory" / f"{memory.id}.md",
         )
     await database.close()
 
