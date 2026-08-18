@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
-from anyio import Path
+from anyio import Path as AsyncPath
 from opentelemetry.trace import Tracer
 from pydantic import UUID7, BaseModel, PositiveInt
 from snekql.sqlite import (
@@ -19,7 +19,11 @@ from snekql.sqlite import (
 )
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.memory_projection import MemoryProjection
+from tether.memory_projection import (
+    MemoryProjection,
+    is_managed_projection,
+    memory_projection_root,
+)
 from tether.memory_store import Memory, MemoryProvenance, tethered_corpus
 from tether.structured_logging import Logger
 
@@ -565,10 +569,23 @@ class MemoryService:
         async with self.database.transaction() as tx:
             tethered_memories = await tx.fetch_all(tethered_corpus())
         expected_filenames = {f"{memory.id}.md" for memory in tethered_memories}
+        projection_root = AsyncPath(memory_projection_root(self.kb_service.kb_root))
         removed_count = 0
-        async for path in Path(self.kb_service.kb_root).iterdir():
-            if path.suffix == ".md" and path.name not in expected_filenames:
-                _debug(logger, "Removing stale projection", projection_path=str(path))
+        if await projection_root.exists():
+            async for path in projection_root.iterdir():
+                if path.suffix != ".md" or path.name in expected_filenames:
+                    continue
+                try:
+                    content = await path.read_text(encoding="utf-8")
+                except OSError, UnicodeError:
+                    continue
+                if not is_managed_projection(filename=path.name, content=content):
+                    continue
+                _debug(
+                    logger,
+                    "Removing stale projection",
+                    projection_path=str(path),
+                )
                 await path.unlink()
                 removed_count += 1
         for memory in tethered_memories:

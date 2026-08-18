@@ -103,6 +103,7 @@ async def _compose_app_runtime(
             logger=host.logger,
             memory_search_service=core.memory_search_service,
             memory_service=core.memory_service,
+            memory_workspace_service=core.memory_workspace_service,
             model_catalog=core.model_catalog,
             notification_service=core.notification_service,
             panel_service=core.panel_service,

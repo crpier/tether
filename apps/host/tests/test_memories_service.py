@@ -244,7 +244,7 @@ async def hard_delete_memory_row(
 
 def projection_path(service: LoggedMemoryService, memory: Memory[Fetched]) -> Path:
     """Return the derived KB projection path for a Memory."""
-    return service.kb_service.kb_root / f"{memory.id}.md"
+    return service.kb_service.kb_root / "memory" / f"{memory.id}.md"
 
 
 @fixture
@@ -1253,7 +1253,7 @@ async def deleting_an_already_deleted_memory_raises() -> None:
 
 @test()
 async def tethering_projects_markdown() -> None:
-    """tether projects `kb/<id>.md` synchronously."""
+    """tether projects `kb/memory/<id>.md` synchronously."""
     service = await load_fixture(memory_service())
     memory = await service.capture("I prefer aisle seats")
 
@@ -1390,7 +1390,7 @@ async def deleting_a_tethered_memory_removes_its_file() -> None:
 
 @test()
 async def the_kb_directory_mirrors_the_tethered_set() -> None:
-    """kb/ exactly matches tethered, non-deleted Memories."""
+    """kb/memory/ exactly matches tethered, non-deleted Memories."""
     service = await load_fixture(memory_service())
 
     _ = await service.capture("loose: never tethered")
@@ -1399,8 +1399,29 @@ async def the_kb_directory_mirrors_the_tethered_set() -> None:
     rejected = await capture_tethered_memory(service, "tethered then rejected")
     _ = await service.delete(rejected)
 
-    files = {p.name for p in service.kb_service.kb_root.iterdir()}
+    files = {p.name for p in (service.kb_service.kb_root / "memory").iterdir()}
     assert_eq(files, {f"{first.id}.md", f"{second.id}.md"})
+
+
+@test()
+async def regeneration_preserves_unmanaged_workspace_files() -> None:
+    """Stale projection cleanup never removes curated or malformed external files."""
+    service = await load_fixture(memory_service())
+    memory = await capture_tethered_memory(service, "tethered: aisle seats")
+    memory_root = service.kb_service.kb_root / "memory"
+    curated_path = memory_root / "travel-preferences.md"
+    curated_path.write_text(
+        "---\ntitle: Travel preferences\n---\nPrefer aisle seats.",
+        encoding="utf-8",
+    )
+    malformed_path = memory_root / "01900000-0000-7000-8000-000000000000.md"
+    malformed_path.write_text("not valid frontmatter", encoding="utf-8")
+
+    await service.regenerate_knowledge_base()
+
+    assert_true(projection_path(service, memory).exists())
+    assert_true(curated_path.exists())
+    assert_true(malformed_path.exists())
 
 
 @test()

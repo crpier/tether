@@ -64,11 +64,16 @@ if [[ "$*" == *"exec -T host python3 -c"*"/data/kb"* ]]; then
     fixture_dir="$(mktemp -d)"
     trap 'rm -rf "${fixture_dir}"' EXIT
     mkdir -p \
+        "${fixture_dir}/memory/travel" \
+        "${fixture_dir}/memory/.obsidian" \
         "${fixture_dir}/pi-sessions" \
         "${fixture_dir}/index" \
         "${fixture_dir}/transcript-index" \
         "${fixture_dir}/bucket-item-index"
-    printf 'memory\n' > "${fixture_dir}/memory.md"
+    printf 'memory\n' > "${fixture_dir}/memory/00000000-0000-0000-0000-000000000001.md"
+    printf 'nested memory\n' > "${fixture_dir}/memory/travel/preferences.md"
+    printf 'hidden\n' > "${fixture_dir}/memory/.hidden.md"
+    printf 'editor\n' > "${fixture_dir}/memory/.obsidian/workspace.md"
     printf 'session\n' > "${fixture_dir}/pi-sessions/session.jsonl"
     printf 'derived\n' > "${fixture_dir}/index/chunk.lance"
     printf 'derived\n' > "${fixture_dir}/transcript-index/chunk.lance"
@@ -81,11 +86,12 @@ if [[ "$*" == *" cp host:"* ]]; then
     destination="${@: -1}"
     if [[ "${source_path}" == *"/kb" ]]; then
         mkdir -p \
+            "${destination}/memory" \
             "${destination}/pi-sessions" \
             "${destination}/index" \
             "${destination}/transcript-index" \
             "${destination}/bucket-item-index"
-        printf 'memory\n' > "${destination}/memory.md"
+        printf 'memory\n' > "${destination}/memory/00000000-0000-0000-0000-000000000001.md"
         printf 'session\n' > "${destination}/pi-sessions/session.jsonl"
         printf 'derived\n' > "${destination}/index/chunk.lance"
         printf 'derived\n' > "${destination}/transcript-index/chunk.lance"
@@ -157,7 +163,8 @@ def test_backup_snapshots_both_sqlite_sources_of_truth() -> None:
         run.manifest,
         [
             "env",
-            "kb/memory.md",
+            "kb/memory/00000000-0000-0000-0000-000000000001.md",
+            "kb/memory/travel/preferences.md",
             "kb/pi-sessions/session.jsonl",
             "telemetry.sqlite3",
             "tether.sqlite3",

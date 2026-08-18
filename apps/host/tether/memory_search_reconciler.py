@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from snekql.sqlite import Database, Fetched, Transaction
 
     from tether.memory_search_index import SearchCandidate
+    from tether.memory_workspace import MemoryWorkspaceScanResult
     from tether.search_projection.embeddings import Embedder, Vector
     from tether.search_projection.metadata import SearchMetaService
     from tether.structured_logging import Logger
@@ -101,6 +102,12 @@ class SearchIndexPort(Protocol):
     ) -> list[SearchCandidate]: ...
 
 
+class MemoryWorkspaceScanner(Protocol):
+    """Service seam for workspace discovery and diagnostics."""
+
+    async def scan(self, logger: Logger) -> MemoryWorkspaceScanResult: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ReconcileReport:
     """What a reconcile pass did, for logging and tests."""
@@ -125,6 +132,7 @@ class SearchReconciler:
         index: SearchIndexPort,
         embedder: Embedder,
         meta: SearchMetaService,
+        workspace_service: MemoryWorkspaceScanner | None = None,
     ) -> None:
         if index.vector_dim != embedder.vector_dim:
             message = (
@@ -136,6 +144,8 @@ class SearchReconciler:
         self.index: SearchIndexPort = index
         self.embedder: Embedder = embedder
         self.meta: SearchMetaService = meta
+        self.workspace_service: MemoryWorkspaceScanner | None = workspace_service
+        self.last_workspace_scan: MemoryWorkspaceScanResult | None = None
 
     async def reconcile(self, *, logger: Logger) -> ReconcileReport:
         """Bring the index in step with SQLite; idempotent.
@@ -143,6 +153,9 @@ class SearchReconciler:
         On a model change every vector is recomputed and the index rebuilt;
         otherwise only owed Memories are embedded and the index is converged in
         place (upsert the desired set, drop orphans)."""
+        if self.workspace_service is not None:
+            self.last_workspace_scan = await self.workspace_service.scan(logger=logger)
+
         marker = await self.meta.fetch(logger=logger)
         # A *genuine* model swap (marker present but disagreeing) discards every
         # vector and rebuilds. A missing marker is just a first/restore run: the

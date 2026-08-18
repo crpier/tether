@@ -56,8 +56,8 @@ State lives on two named docker volumes, so `docker compose up` / redeploys neve
 touch your data:
 
 - `data` → `/data`: the independent SQLite sources of truth (`tether.sqlite3`
-  and `telemetry.sqlite3`) and the derived markdown KB (`/data/kb`). Compose
-  sets `TETHER_TELEMETRY_DATABASE_PATH=/data/telemetry.sqlite3` explicitly.
+  and `telemetry.sqlite3`) and the derived markdown workspace (`/data/kb/memory`).
+  Compose sets `TETHER_TELEMETRY_DATABASE_PATH=/data/telemetry.sqlite3` explicitly.
 - `model-cache` → `/cache`: the fastembed ONNX model download.
 
 `docker compose down` keeps the volumes; `down -v` deletes them.
@@ -398,8 +398,9 @@ run that fails *or silently stops happening* (VM down, timer disabled) alerts.
 Current coverage is intentionally explicit:
 
 - Included: both SQLite sources of truth (`tether.sqlite3` and
-  `telemetry.sqlite3`), top-level `/data/kb/*.md`, `/data/kb/pi-sessions`, and
-  production `.env`.
+  `telemetry.sqlite3`), curated memories under `/data/kb/memory/**/*.md`,
+  `/data/kb/pi-sessions`, and production `.env`. Hidden/editor paths and
+  symlinks inside the Memory workspace are excluded.
 - Excluded as rebuildable: `/data/kb/index`, `/data/kb/transcript-index`, and
   `/data/kb/bucket-item-index`.
 - Also excluded: `/srv/tether/pi-agent`, `/data/youtube`, and other

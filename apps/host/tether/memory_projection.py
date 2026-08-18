@@ -3,14 +3,29 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
-from anyio import NamedTemporaryFile, Path
-from pydantic import UUID7, BaseModel, DirectoryPath, Field
+from anyio import NamedTemporaryFile
+from anyio import Path as AsyncPath
+from pydantic import UUID7, BaseModel, DirectoryPath, Field, ValidationError
 from snekql.sqlite import Fetched
-from yaml import safe_dump, safe_load
+from yaml import YAMLError, safe_dump, safe_load
 
 from tether.memory_store import Memory, MemoryProvenance
+
+
+def memory_projection_root(kb_root: str | Path | DirectoryPath) -> Path:
+    """Canonical directory for markdown projection files."""
+    return Path(kb_root) / "memory"
+
+
+def _derive_projection_title(content: str) -> str:
+    """Return a short, non-empty projection title from body text."""
+    first_line = content.splitlines()[0].strip() if content else ""
+    if first_line:
+        return first_line[:80]
+    return "Memory"
 
 
 class ProjectionStructureError(Exception):
@@ -34,6 +49,7 @@ def _render_projection_frontmatter(memory: Memory[Fetched]) -> str:
         "id": str(memory.id),
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
+        "title": _derive_projection_title(memory.content),
         "provenance": memory.provenance,
         "tethered_at": memory.tethered_at,
     }
@@ -51,6 +67,15 @@ def decode_projection_frontmatter(
         raise ProjectionStructureError(message)
     frontmatter = projection_content[3:].split("---\n", maxsplit=1)[0]
     return ProjectionFrontMatter.model_validate(safe_load(frontmatter))
+
+
+def is_managed_projection(*, filename: str, content: str) -> bool:
+    """Return whether a file is a recognizable generated Memory projection."""
+    try:
+        frontmatter = decode_projection_frontmatter(content)
+    except ProjectionStructureError, ValidationError, YAMLError:
+        return False
+    return filename == f"{frontmatter.id}.md"
 
 
 class MemoryProjection(Protocol):
@@ -71,15 +96,16 @@ class KnowledgeBaseService:
 
     def projection_path(self, memory_id: UUID7) -> Path:
         """Return the stable `<memory-id>.md` projection path."""
-        return Path(self.kb_root / f"{memory_id}.md")
+        return memory_projection_root(self.kb_root) / f"{memory_id}.md"
 
     async def set_projection(self, memory: Memory[Fetched]) -> None:
         """Atomically create or replace one Memory projection."""
         projection_path = self.projection_path(memory.id)
+        await AsyncPath(projection_path.parent).mkdir(parents=True, exist_ok=True)
         async with NamedTemporaryFile(
             mode="w", dir=str(projection_path.parent), delete=False
         ) as file:
-            temporary_path = Path(file.wrapped.name)
+            temporary_path = AsyncPath(file.wrapped.name)
             frontmatter_bytes = await file.write(_render_projection_frontmatter(memory))
             assert frontmatter_bytes != 0
             content_bytes = await file.write(memory.content)
@@ -89,5 +115,6 @@ class KnowledgeBaseService:
     async def remove_projection(self, memory_id: UUID7) -> None:
         """Remove a projection when present; otherwise do nothing."""
         projection_path = self.projection_path(memory_id)
-        if await projection_path.exists():
-            await projection_path.unlink()
+        async_projection_path = AsyncPath(projection_path)
+        if await async_projection_path.exists():
+            await async_projection_path.unlink()

@@ -41,6 +41,7 @@ from tether.memory_projection import KnowledgeBaseService
 from tether.memory_search import MemorySearchService
 from tether.memory_search_index import SearchIndex
 from tether.memory_search_reconciler import SearchReconciler
+from tether.memory_workspace_service import MemoryWorkspaceService
 from tether.model_selection import AgentModelCatalog
 from tether.notification_delivery import (
     EventNotifier,
@@ -280,6 +281,7 @@ async def _build_search(
     embedder: Embedder | None,
     index_dir: Path,
     logger: Logger,
+    workspace_service: MemoryWorkspaceService | None = None,
 ) -> SearchReconciler | None:
     """Wire the search subsystem when an embedder is supplied, else disable it.
 
@@ -298,6 +300,7 @@ async def _build_search(
         index=search_index,
         embedder=embedder,
         meta=SearchMetaService(database=database),
+        workspace_service=workspace_service,
     )
     _ = await reconciler.reconcile(logger=logger)
     return reconciler
@@ -550,6 +553,7 @@ class CoreServices:
     kosync_service: KosyncService
     memory_search_service: MemorySearchService
     memory_service: MemoryService
+    memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
     panel_service: PanelService
@@ -594,11 +598,16 @@ async def compose_core_services(
     # (`create_app_from_environment`) passes a `FastEmbedder`; tests that
     # exercise search pass a `FakeEmbedder`; everything else runs with
     # search disabled and never opens the index or loads a model.
+    memory_workspace_service = MemoryWorkspaceService(kb_root=host.kb_root)
+    if embedder is None:
+        _ = await memory_workspace_service.scan(logger=host.logger)
+
     search_reconciler = await _build_search(
         database=host.database,
         embedder=embedder,
         index_dir=host.kb_root / "index",
         logger=host.logger,
+        workspace_service=memory_workspace_service,
     )
     (
         youtube_searcher,
@@ -755,6 +764,7 @@ async def compose_core_services(
         kosync_service=presentation.kosync_service,
         memory_search_service=memory_search,
         memory_service=memory_service,
+        memory_workspace_service=memory_workspace_service,
         model_catalog=model_catalog,
         notification_service=scheduler_component.notification_service,
         panel_service=presentation.panel_service,
