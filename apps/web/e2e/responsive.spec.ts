@@ -205,6 +205,24 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
 
+test("desktop chat keeps the model selector reasonably narrow", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(DESKTOP);
+  await login();
+
+  const modelSelector = page.getByRole("group", { name: "Model" });
+  await modelSelector.waitFor({ state: "visible" });
+  const selectorBox = await boundingBox(modelSelector);
+  const composerBox = await boundingBox(
+    page.getByRole("textbox", { name: "Message" }),
+  );
+
+  expect(selectorBox.width).toBeLessThanOrEqual(384);
+  expect(selectorBox.width).toBeLessThan(composerBox.width * 0.6);
+});
+
 for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
   test(`chat stays anchored and composeable at ${viewport.width.toString()}px`, async ({
     page,

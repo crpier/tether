@@ -708,7 +708,7 @@ describe("Chat view", () => {
     expect(slider.closest("form")).not.toBeNull();
   });
 
-  test("maps the current model profile to its slider slot", async () => {
+  test("presents model profiles without exposing model or effort details", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
@@ -720,10 +720,8 @@ describe("Chat view", () => {
     expect(slider).toHaveAttribute("max", "4");
     expect(slider).toHaveAttribute("step", "1");
     expect(slider).toHaveValue("0");
-    expect(slider).toHaveAttribute(
-      "aria-valuetext",
-      "GPT-5.6 Luna · no thinking",
-    );
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
+    expect(screen.queryAllByText(/GPT-5\.6|thinking/)).toHaveLength(0);
   });
 
   test("selecting a profile persists it without moving the transcript", async () => {
@@ -744,10 +742,7 @@ describe("Chat view", () => {
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-sol");
     });
-    expect(slider).toHaveAttribute(
-      "aria-valuetext",
-      "GPT-5.6 Sol · medium thinking",
-    );
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 5 of 5");
     expect(transcript.scrollTop).toBe(123);
   });
 
@@ -781,10 +776,7 @@ describe("Chat view", () => {
     });
 
     expect(slider).toHaveValue("0");
-    expect(slider).toHaveAttribute(
-      "aria-valuetext",
-      "GPT-5.6 Luna · no thinking",
-    );
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
   });
 
   test("shows a fixed profile when the catalog has one entry", async () => {
@@ -814,10 +806,7 @@ describe("Chat view", () => {
 
     expect(slider).toBeDisabled();
     expect(slider).toHaveAttribute("max", "0");
-    expect(slider).toHaveAttribute(
-      "aria-valuetext",
-      "Local deterministic model",
-    );
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 1");
   });
 
   test("reports an empty model catalog without rendering a slider", async () => {
