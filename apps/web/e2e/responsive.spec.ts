@@ -201,6 +201,7 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   const modelSelector = await boundingBox(
     page.getByRole("group", { name: "Model" }),
   );
+  expect(modelSelector.width).toBeLessThanOrEqual(256);
   expect(modelSelector.y).toBeGreaterThan(chat.y);
   expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
