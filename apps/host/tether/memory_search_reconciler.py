@@ -16,8 +16,8 @@ Three paths keep the index honest and readable:
 
 - `reconcile` is the idempotent full pass run at startup and periodically. It
   embeds any owed `tethered ∧ ¬deleted` Memory (storing the vector in SQLite),
-  upserts that desired set into the index, drops orphans an event missed, runs
-  `optimize()`, and records the active embedding model in `search_meta`. A model
+  upserts that desired set into the index, drops orphans an event missed, and
+  records the active embedding model in `search_meta`. A model
   change (the marker disagrees with the live `Embedder`) re-embeds the whole
   corpus and rebuilds the index, since vector spaces from different models can't
   be compared. This pass alone is enough — on restore the gitignored index is
@@ -96,7 +96,6 @@ class SearchIndexPort(Protocol):
     async def remove(self, ids: Sequence[UUID]) -> None: ...
     async def rebuild(self, documents: Sequence[SearchDocument]) -> None: ...
     async def list_ids(self) -> set[UUID]: ...
-    async def optimize(self) -> None: ...
     async def search(
         self, *, text: str, vector: Sequence[float], limit: int
     ) -> list[SearchCandidate]: ...
@@ -189,7 +188,6 @@ class SearchReconciler:
         else:
             await self.index.upsert(documents)
             removed = await self._drop_orphans(memories)
-        await self.index.optimize()
         _ = await self.meta.set(
             model=self.embedder.model_name,
             vector_dim=self.embedder.vector_dim,
@@ -216,9 +214,8 @@ class SearchReconciler:
         """Run `reconcile` on a fixed interval until cancelled.
 
         This is the correctness backstop the latency hooks lean on: it sweeps
-        orphans a missed event left behind and runs `optimize()` while the host
-        is up, not only at boot. The boot reconcile runs at wiring time, so the
-        first periodic pass waits a full interval rather than repeating it
+        orphans a missed event left behind. The boot reconcile runs at wiring
+        time, so the first periodic pass waits a full interval rather than repeating it
         immediately. A failed pass is logged and swallowed so a transient error
         never kills the loop — the next tick retries."""
         await run_reconcile_loop(

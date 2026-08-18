@@ -23,7 +23,10 @@ from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, Vector
 from tether.structured_logging import Logger
 from tether.youtube_search_index import ChunkDocument
-from tether.youtube_search_reconciler import YouTubeSearchReconciler
+from tether.youtube_search_reconciler import (
+    YouTubeSearchReconciler,
+    YouTubeSearchReconcileReport,
+)
 from tether.youtube_store import (
     IngestedVideo,
     create_youtube_schema,
@@ -258,22 +261,42 @@ async def a_model_swap_re_embeds_the_whole_corpus() -> None:
 
 
 @test()
+async def reconcile_keeps_live_index_compaction_out_of_the_hot_path() -> None:
+    """A reconcile never lets optional compaction block concurrent searches."""
+    h = await load_fixture(harness())
+    await _add_video(h.database, "vid1", transcript="a short transcript")
+
+    _ = await h.reconciler.reconcile(logger=_logger())
+
+    assert_eq(h.index.optimize_calls, 0)
+
+
+@test()
 async def reconcile_forever_runs_passes_until_cancelled() -> None:
     """The periodic loop fills and maintains the index until cancelled."""
     h = await load_fixture(harness())
     await _add_video(h.database, "vid1", transcript="a short transcript")
+    passes = 0
+    real_reconcile = h.reconciler.reconcile
 
+    async def _counting_reconcile(*, logger: Logger) -> YouTubeSearchReconcileReport:
+        nonlocal passes
+        report = await real_reconcile(logger=logger)
+        passes += 1
+        return report
+
+    h.reconciler.reconcile = _counting_reconcile
     task = asyncio.create_task(
         h.reconciler.reconcile_forever(
             interval_seconds=0.001, logger=_logger(), initial_delay_seconds=0.001
         )
     )
     for _ in range(1000):  # bounded wait so a broken loop fails fast, never hangs
-        if h.index.optimize_calls >= 1:
+        if passes >= 1:
             break
         await asyncio.sleep(0.001)
     _ = task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
-    assert_true(h.index.optimize_calls >= 1)
+    assert_true(passes >= 1)

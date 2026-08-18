@@ -52,7 +52,6 @@ class YouTubeSearchIndexPort(Protocol):
     async def upsert(self, documents: Sequence[ChunkDocument]) -> None: ...
     async def remove(self, ids: Sequence[UUID]) -> None: ...
     async def list_ids(self) -> set[UUID]: ...
-    async def optimize(self, *, logger: Logger) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +110,6 @@ class YouTubeSearchReconciler:
         ]
         if orphans:
             await self.index.remove(orphans)
-        await self.index.optimize(logger=logger)
 
         report = YouTubeSearchReconcileReport(
             indexed=len(desired_ids),

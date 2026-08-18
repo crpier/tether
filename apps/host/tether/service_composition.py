@@ -480,11 +480,12 @@ def _reconcile_loop_tasks(
 ) -> list[asyncio.Task[None]]:
     """Periodic reconcile loops for the wired search indexes.
 
-    Each loop is the correctness backstop for its index — sweeping orphans and
-    running `optimize()` while the host is up. The Memory and Bucket-item loops
-    complement their own boot reconcile; the YouTube Search loop has no boot pass,
-    so it fills that index shortly after startup. Any of the
-    three is absent when its index was not wired (no embedder)."""
+    Each loop is the correctness backstop for its index by sweeping orphans.
+    Optional Lance compaction stays outside the live host because it can hold a
+    table indefinitely and block searches. The Memory and Bucket-item loops
+    complement their own boot reconcile; the YouTube Search loop has no boot
+    pass, so it fills that index shortly after startup. Any loop is absent when
+    its index was not wired (no embedder)."""
     tasks: list[asyncio.Task[None]] = []
     if search_reconciler is not None:
         tasks.append(
