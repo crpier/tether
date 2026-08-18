@@ -112,9 +112,9 @@ export function VoiceComposerControls(props: {
   };
 
   return (
-    <div aria-label="Voice input" class="flex flex-col gap-2" role="group">
+    <div aria-label="Voice input" class="relative flex shrink-0" role="group">
       <Show when={state().kind === "idle" || state().kind === "recording"}>
-        <div class="flex gap-2">
+        <div class="flex gap-1">
           <Show when={recordingMode() === null || recordingMode() === "review"}>
             <Button
               aria-label={
@@ -129,7 +129,8 @@ export function VoiceComposerControls(props: {
                   start("review");
                 }
               }}
-              size="sm"
+              class="rounded-full"
+              size="icon-sm"
               title={
                 recordingMode() === "review"
                   ? "Stop recording"
@@ -157,7 +158,8 @@ export function VoiceComposerControls(props: {
                   start("auto-send");
                 }
               }}
-              size="sm"
+              class="rounded-full"
+              size="icon-sm"
               title={
                 recordingMode() === "auto-send"
                   ? "Stop recording"
@@ -176,7 +178,7 @@ export function VoiceComposerControls(props: {
           <Show when={current.kind === "recording" && current}>
             {(recording) => (
               <div
-                class="bg-muted flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
+                class="bg-muted absolute right-0 bottom-full z-10 mb-2 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 rounded-md border px-3 py-1.5 text-sm shadow-sm"
                 role="status"
               >
                 <span
@@ -203,7 +205,10 @@ export function VoiceComposerControls(props: {
         )}
       </Show>
       <Show when={state().kind === "uploading"}>
-        <p class="text-muted-foreground text-sm" role="status">
+        <p
+          class="bg-background text-muted-foreground absolute right-0 bottom-full z-10 mb-2 rounded-md border px-3 py-2 text-sm shadow-sm"
+          role="status"
+        >
           Transcribing…
         </p>
       </Show>
@@ -212,7 +217,7 @@ export function VoiceComposerControls(props: {
           <Show when={current.kind === "failed" && current}>
             {(failed) => (
               <div
-                class="border-destructive/40 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                class="border-destructive/40 bg-background text-destructive absolute right-0 bottom-full z-10 mb-2 flex w-80 max-w-[calc(100vw-2rem)] items-center gap-2 rounded-md border px-3 py-2 text-sm shadow-sm"
                 role="alert"
               >
                 <p class="flex-1">{failed().message}</p>

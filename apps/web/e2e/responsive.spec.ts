@@ -206,6 +206,56 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
 
+for (const viewport of [PHONE, DESKTOP]) {
+  test(`chat composer is one compact row at ${viewport.width.toString()}px`, async ({
+    page,
+    login,
+  }) => {
+    await page.setViewportSize(viewport);
+    await serveLongChat(page);
+    await login();
+
+    const context = await boundingBox(
+      page.getByRole("group", { name: "Composer context" }),
+    );
+    const slider = await boundingBox(
+      page.getByRole("slider", { name: "Model profile" }),
+    );
+    if (viewport.width === PHONE.width) {
+      expect(slider.width).toBeGreaterThanOrEqual(128);
+    }
+    const sessionStatus = await boundingBox(
+      page.getByText("Next message starts a fresh session"),
+    );
+    expect(
+      Math.abs(
+        slider.y +
+          slider.height / 2 -
+          (sessionStatus.y + sessionStatus.height / 2),
+      ),
+    ).toBeLessThanOrEqual(4);
+    expect(slider.x + slider.width).toBeLessThanOrEqual(sessionStatus.x);
+
+    const composer = page.getByRole("group", { name: "Message composer" });
+    const composerBox = await boundingBox(composer);
+    expect(composerBox.height).toBeLessThanOrEqual(56);
+    expect(context.y + context.height).toBeLessThanOrEqual(composerBox.y);
+
+    const controls = [
+      page.getByRole("textbox", { name: "Message" }),
+      page.getByRole("button", { name: "Record and review" }),
+      page.getByRole("button", { exact: true, name: "Send" }),
+    ];
+    const composerCenter = composerBox.y + composerBox.height / 2;
+    for (const control of controls) {
+      const box = await boundingBox(control);
+      expect(
+        Math.abs(box.y + box.height / 2 - composerCenter),
+      ).toBeLessThanOrEqual(4);
+    }
+  });
+}
+
 test("desktop chat keeps the model selector reasonably narrow", async ({
   page,
   login,
