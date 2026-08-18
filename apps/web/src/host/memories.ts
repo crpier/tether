@@ -1,11 +1,19 @@
 import type { components } from "../generated";
+import { ApiError } from "./error";
 import { requireData, type RestContext } from "./transport";
 
 export type Memory = components["schemas"]["MemoryRead"];
 export type MemoryState = components["schemas"]["MemoryState"];
 
+export interface MemoryWorkspaceDiagnostic {
+  code: string;
+  message: string;
+  path: string;
+}
+
 export interface MemoriesHost {
   listMemories(state: MemoryState): Promise<Memory[]>;
+  listWorkspaceDiagnostics(): Promise<MemoryWorkspaceDiagnostic[]>;
   searchMemories(q: string): Promise<Memory[]>;
   captureMemory(content: string): Promise<Memory>;
   editMemory(
@@ -24,6 +32,15 @@ export function createMemoriesHost(context: RestContext): MemoriesHost {
         params: { query: { state } },
       });
       return requireData(data, response);
+    },
+    async listWorkspaceDiagnostics() {
+      const response = await context.fetch(
+        "/api/memories/workspace-diagnostics",
+      );
+      if (!response.ok) {
+        throw new ApiError(response.status);
+      }
+      return (await response.json()) as MemoryWorkspaceDiagnostic[];
     },
     async searchMemories(q) {
       const { data, response } = await context.client.GET(

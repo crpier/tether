@@ -528,6 +528,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/memories/workspace-diagnostics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Workspace Diagnostics
+     * @description Return current workspace diagnostic findings from the latest scan.
+     */
+    get: operations["list_workspace_diagnostics_api_memories_workspace_diagnostics_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memories/{memory_id}": {
     parameters: {
       query?: never;
@@ -2463,6 +2483,18 @@ export interface components {
     /** @enum {string} */
     MemoryState: "loose" | "tethered";
     /**
+     * MemoryWorkspaceDiagnosticRead
+     * @description One workspace-scan issue surfaced through the REST API.
+     */
+    MemoryWorkspaceDiagnosticRead: {
+      /** Code */
+      code: string;
+      /** Message */
+      message: string;
+      /** Path */
+      path: string;
+    };
+    /**
      * MessageRead
      * @description HTTP representation of a settled transcript row.
      */
@@ -4334,6 +4366,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_workspace_diagnostics_api_memories_workspace_diagnostics_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryWorkspaceDiagnosticRead"][];
         };
       };
     };

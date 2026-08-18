@@ -44,7 +44,10 @@ export default defineConfig(({ command }) => {
       // are driven by the Playwright runner, not vitest, so they are excluded.
       include: ["src/**/*.{test,spec}.{ts,tsx}", "e2e/**/*.test.ts"],
       exclude: ["**/node_modules/**", "**/dist/**", "e2e/**/*.spec.ts"],
-      setupFiles: ["node_modules/@testing-library/jest-dom/vitest"],
+      setupFiles: [
+        "node_modules/@testing-library/jest-dom/vitest",
+        "src/testing/vitest-setup.ts",
+      ],
       // Kobalte ships untranspiled .jsx; inline it so vite-plugin-solid transforms
       // it instead of Node trying to load the raw source.
       server: {

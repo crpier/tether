@@ -16,6 +16,11 @@ export const queryKeys = {
   memories: ["memories"] as const,
   memoriesSearch: (q: string) => ["memories", "search", q] as const,
   memoriesState: (state: "loose" | "tethered") => ["memories", state] as const,
+  memoriesWorkspaceDiagnostics: [
+    "memories",
+    "workspace",
+    "diagnostics",
+  ] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
   models: ["models"] as const,
   notifications: ["notifications"] as const,

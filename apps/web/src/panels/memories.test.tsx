@@ -388,4 +388,59 @@ describe("Memories panel (Browse corpus)", () => {
       await within(panel).findByText("No tethered memories yet"),
     ).toBeInTheDocument();
   });
+
+  test("workspace diagnostics are shown when the server reports malformed files", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memoryWorkspaceDiagnostics: [
+        {
+          code: "frontmatter.missing_boundary",
+          message: "file must begin with YAML frontmatter",
+          path: "/kb/memory/bad.md",
+        },
+      ],
+    });
+    renderApp(host);
+
+    const panel = await openCorpus();
+    expect(
+      await within(panel).findByText("Memory workspace diagnostics"),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByText("frontmatter.missing_boundary"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("bad.md")).toBeInTheDocument();
+  });
+
+  test("a memories invalidate frame refetches diagnostics", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memoryWorkspaceDiagnostics: [
+        {
+          code: "frontmatter.missing_boundary",
+          message: "file must begin with YAML frontmatter",
+          path: "/kb/memory/bad.md",
+        },
+      ],
+    });
+    const bus = renderApp(host);
+    const panel = await openCorpus();
+
+    expect(
+      await within(panel).findByText("Memory workspace diagnostics"),
+    ).toBeInTheDocument();
+    expect(host.memories.listWorkspaceDiagnosticsCalls).toBe(1);
+
+    host.memories.storedWorkspaceDiagnostics = [];
+    bus.emit({ keys: ["memories", "review-queue"], type: "invalidate" });
+
+    await waitFor(() => {
+      expect(host.memories.listWorkspaceDiagnosticsCalls).toBeGreaterThan(1);
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Memory workspace diagnostics"),
+      ).not.toBeInTheDocument();
+    });
+  });
 });
