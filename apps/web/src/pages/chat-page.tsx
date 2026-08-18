@@ -130,7 +130,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   return (
     <div
       aria-label="Model"
-      class="mx-auto w-full max-w-sm space-y-1.5"
+      class="mx-auto w-full max-w-64 space-y-1.5 sm:max-w-sm"
       role="group"
     >
       <div class="text-muted-foreground min-h-5 text-xs">Model</div>
