@@ -61,6 +61,24 @@ def post_memories_rejects_blank_content() -> None:
 
 
 @test()
+def get_workspace_diagnostics_reports_malformed_files() -> None:
+    """`GET /api/memories/workspace-diagnostics` exposes scan failures."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        root = Path(directory) / ".tether" / "memory"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "bad.md").write_text("plain text no frontmatter\n", encoding="utf-8")
+
+        login(client)
+        response = client.get("/api/memories/workspace-diagnostics")
+
+    assert_eq(response.status_code, 200)
+    payload = response.json()
+    assert_eq(len(payload), 1)
+    assert_eq(payload[0]["code"], "frontmatter.missing_boundary")
+    assert_eq(payload[0]["path"], str(root / "bad.md"))
+
+
+@test()
 def patch_memories_edits_content_and_keeps_version_checks() -> None:
     """`PATCH /api/memories/{id}` edits `content` at the observed version."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

@@ -15,7 +15,12 @@ import {
   segmentedPanelId,
   segmentedTabId,
 } from "../components/segmented-control";
-import type { MemoriesHost, Memory, MemoryState } from "../host/memories";
+import type {
+  Memory,
+  MemoryState,
+  MemoryWorkspaceDiagnostic,
+  MemoriesHost,
+} from "../host/memories";
 import { ApiError } from "../host/error";
 import { formatDate as formatDateOnly } from "../lib/format";
 import { panelClass } from "../lib/panel";
@@ -41,6 +46,10 @@ const SEARCH_DEBOUNCE_MS = 150;
 // label into a paragraph. Action names keep the full content so controls
 // identify their target without truncation.
 const LABEL_MAX_CHARS = 80;
+
+function memoryFileName(path: string): string {
+  return path.split(/[\\/]/).at(-1) ?? path;
+}
 
 function memoryLabel(content: string): string {
   return content.length <= LABEL_MAX_CHARS
@@ -131,6 +140,10 @@ export function MemoriesPanel(props: {
     queryFn: () => props.api.listMemories("tethered"),
     queryKey: queryKeys.memoriesState("tethered"),
   }));
+  const workspaceDiagnosticsQuery = createQuery(() => ({
+    queryFn: () => props.api.listWorkspaceDiagnostics(),
+    queryKey: queryKeys.memoriesWorkspaceDiagnostics,
+  }));
   const searchQuery = createQuery(() => {
     const term = searchTerm();
     return {
@@ -147,6 +160,9 @@ export function MemoriesPanel(props: {
     };
   });
 
+  const workspaceDiagnostics = createMemo<MemoryWorkspaceDiagnostic[]>(
+    () => workspaceDiagnosticsQuery.data ?? [],
+  );
   const corpusItems = createMemo(() =>
     searchTerm().length > 0
       ? (searchQuery.data ?? [])
@@ -475,6 +491,27 @@ export function MemoriesPanel(props: {
 
   return (
     <section aria-label="Memories" class={panelClass}>
+      <Show when={workspaceDiagnostics().length > 0}>
+        <div class="border-destructive/40 bg-destructive/10 mb-3 rounded-md border px-3 py-2 text-sm">
+          <h3 class="text-destructive text-xs font-semibold uppercase tracking-wider">
+            Memory workspace diagnostics
+          </h3>
+          <p class="text-destructive mt-1 text-xs">
+            These files are malformed and ignored until fixed.
+          </p>
+          <ul class="mt-1 list-disc pl-5 text-xs">
+            <For each={workspaceDiagnostics()}>
+              {(diagnostic) => (
+                <li class="text-destructive">
+                  <span class="font-semibold">{diagnostic.code}</span>
+                  <span class="ml-2">{memoryFileName(diagnostic.path)}</span>
+                  <span class="ml-2">— {diagnostic.message}</span>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Memories</h2>
         <Show when={!fixedView}>

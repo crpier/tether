@@ -1,4 +1,9 @@
-import type { MemoriesHost, Memory, MemoryState } from "../../host/memories";
+import type {
+  MemoryWorkspaceDiagnostic,
+  MemoriesHost,
+  Memory,
+  MemoryState,
+} from "../../host/memories";
 import { ApiError } from "../../host/error";
 import { memory } from "../fixtures";
 
@@ -11,6 +16,8 @@ export class FakeMemoriesHost implements MemoriesHost {
   rejectMemoryCalls: { memoryId: string; version: number }[] = [];
   searchMemoriesCalls: string[] = [];
   listMemoriesCalls = 0;
+  listWorkspaceDiagnosticsCalls = 0;
+  storedWorkspaceDiagnostics: MemoryWorkspaceDiagnostic[] = [];
   serverMemoryVersions: Record<string, number> = {};
   serverMemoryEdits: Record<string, Partial<Memory>> = {};
   captureMemoryRejections: ApiError[] = [];
@@ -27,6 +34,11 @@ export class FakeMemoriesHost implements MemoriesHost {
     return Promise.resolve(
       this.storedMemories.filter((candidate) => candidate.state === state),
     );
+  }
+
+  listWorkspaceDiagnostics(): Promise<MemoryWorkspaceDiagnostic[]> {
+    this.listWorkspaceDiagnosticsCalls += 1;
+    return Promise.resolve(this.storedWorkspaceDiagnostics);
   }
 
   searchMemories(q: string): Promise<Memory[]> {

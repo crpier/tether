@@ -19,7 +19,7 @@ FastAPI derives OpenAPI from the same request and response models used at runtim
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -32,6 +32,7 @@ from tether.capabilities import rest_response, translate_domain_errors
 from tether.memories import MemoryNotFoundError
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent, MemoryRead
 from tether.memory_store import MemoryState
+from tether.structured_logging import Logger
 
 
 class CaptureRequest(BaseModel):
@@ -96,12 +97,32 @@ class SearchQuery(BaseModel):
     q: str
 
 
+class MemoryWorkspaceDiagnosticRead(BaseModel):
+    """One workspace-scan issue surfaced through the REST API."""
+
+    code: str
+    message: str
+    path: str
+
+
+class _MemoryRuntime(Protocol):
+    """Memory workspace service + logger required for diagnostics."""
+
+    logger: Logger
+    memory_workspace_service: Any
+
+
 def _path_memory_id(raw_memory_id: str) -> UUID:
     """Parse the `{memory_id}` path segment, treating a malformed id as absent."""
     try:
         return UUID(raw_memory_id)
     except ValueError as error:
         raise MemoryNotFoundError(raw_memory_id) from error
+
+
+def _runtime(request: Request) -> _MemoryRuntime:
+    """Read the host runtime fields used by this route module."""
+    return request.app.state.runtime
 
 
 _translate_domain_errors = translate_domain_errors(MEMORY_ERRORS)
@@ -133,6 +154,27 @@ async def search_memories(
     """Keyword Search over tethered Memories."""
     outcome = await memory_capabilities.search(request, query.q, limit=query.limit)
     return rest_response(outcome)
+
+
+@router.get(
+    "/api/memories/workspace-diagnostics",
+    response_model=list[MemoryWorkspaceDiagnosticRead],
+)
+async def list_workspace_diagnostics(
+    request: Request,
+) -> list[MemoryWorkspaceDiagnosticRead]:
+    """Return current workspace diagnostic findings from the latest scan."""
+    result = await _runtime(request).memory_workspace_service.scan(
+        logger=_runtime(request).logger
+    )
+    return [
+        MemoryWorkspaceDiagnosticRead(
+            code=diagnostic.code,
+            message=diagnostic.message,
+            path=str(diagnostic.path),
+        )
+        for diagnostic in result.diagnostics
+    ]
 
 
 @router.patch("/api/memories/{memory_id}", response_model=MemoryRead)

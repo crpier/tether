@@ -2606,6 +2606,30 @@
         ],
         "type": "string"
       },
+      "MemoryWorkspaceDiagnosticRead": {
+        "description": "One workspace-scan issue surfaced through the REST API.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "path"
+        ],
+        "title": "MemoryWorkspaceDiagnosticRead",
+        "type": "object"
+      },
       "MessageRead": {
         "description": "HTTP representation of a settled transcript row.",
         "properties": {
@@ -6055,6 +6079,29 @@
           }
         },
         "summary": "Search Memories"
+      }
+    },
+    "/api/memories/workspace-diagnostics": {
+      "get": {
+        "description": "Return current workspace diagnostic findings from the latest scan.",
+        "operationId": "list_workspace_diagnostics_api_memories_workspace_diagnostics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryWorkspaceDiagnosticRead"
+                  },
+                  "title": "Response List Workspace Diagnostics Api Memories Workspace Diagnostics Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Workspace Diagnostics"
       }
     },
     "/api/memories/{memory_id}": {
