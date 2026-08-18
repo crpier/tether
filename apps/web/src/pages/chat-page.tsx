@@ -79,8 +79,9 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
     return Math.max(0, index);
   });
   const [sliderIndex, setSliderIndex] = createSignal(0);
-  const currentProfile = createMemo(
-    () => modelsQuery.data?.models[sliderIndex()],
+  const profilePosition = createMemo(
+    () =>
+      `Profile ${(sliderIndex() + 1).toString()} of ${(modelsQuery.data?.models.length ?? 1).toString()}`,
   );
 
   let requestedModel = "";
@@ -127,15 +128,12 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   };
 
   return (
-    <div aria-label="Model" class="space-y-1.5" role="group">
-      <div class="flex min-h-5 items-baseline gap-2 text-xs">
-        <span class="text-muted-foreground">Model</span>
-        <Show when={currentProfile()}>
-          {(profile) => (
-            <strong class="font-medium">{profile().display_name}</strong>
-          )}
-        </Show>
-      </div>
+    <div
+      aria-label="Model"
+      class="mx-auto w-full max-w-sm space-y-1.5"
+      role="group"
+    >
+      <div class="text-muted-foreground min-h-5 text-xs">Model</div>
       <Show
         fallback={
           <p class="text-muted-foreground text-xs" role="status">
@@ -148,7 +146,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       >
         <input
           aria-label="Model profile"
-          aria-valuetext={currentProfile()?.display_name}
+          aria-valuetext={profilePosition()}
           class="accent-primary h-7 w-full cursor-pointer disabled:cursor-default"
           disabled={
             modelsQuery.isLoading || (modelsQuery.data?.models.length ?? 0) < 2
@@ -178,24 +176,6 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
             )}
           </For>
         </div>
-        <ol
-          aria-hidden="true"
-          class="grid gap-1"
-          style={{
-            "grid-template-columns": `repeat(${(modelsQuery.data?.models.length ?? 1).toString()}, minmax(0, 1fr))`,
-          }}
-        >
-          <For each={modelsQuery.data?.models ?? []}>
-            {(model) => (
-              <li
-                class="text-muted-foreground text-center text-[0.625rem] leading-tight"
-                title={model.display_name}
-              >
-                {model.display_name}
-              </li>
-            )}
-          </For>
-        </ol>
       </Show>
     </div>
   );
