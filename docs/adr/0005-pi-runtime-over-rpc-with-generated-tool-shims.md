@@ -17,3 +17,5 @@ pi gives a maintained agent loop (streaming, steering/abort, sessions) for free,
 ## Why it is hard to reverse
 
 The tool layer, the testing seam, the review/candidate gate enforcement, the spawn-time identity/secret scheme, and the codegen pipeline all assume this boundary. Moving the loop into the host, or letting tools hold logic on the TS side, would touch every tool and every test. pi being a third-party coding agent (closed tool world, RPC limits, extension API) is a dependency baked into the architecture, not an implementation detail. The Python↔pi boundary is a process boundary kept *inside one container* (host + Node/pi co-resident) precisely so the spawn/secret/session design works; splitting pi into its own container would force a pool-service redesign.
+
+**Refinement (ADRs 0022 and 0023):** background Dreaming deliberately receives confined native-shaped filesystem tools, while foreground chat remains closed and host-tool-driven. Tether Conversations and fresh host-selected Memory projections—not pi session JSONL—own conversational continuity and durable context.

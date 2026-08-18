@@ -2,84 +2,92 @@
 
 A single-user, self-hosted AI personal assistant. Its core loop is **capture → resurface**: get a thing out of your head reliably, and have it come back at the right moment. Its distinguishing value is **interconnection** — captured things reference each other, so resurfacing is informed by everything else you've stored.
 
-Tether is a personal operating system: memory is the substrate it is built on, not the product. Capture → resurface is the first loop built on that substrate, not the whole of it — presentation (widgets and artifacts), ingestion (gates and telemetry), proposals and earned autonomy, and typed verticals all layer on top of the same faceted memory pool and the same trust gates.
+Tether is a personal operating system: memory is the substrate it is built on, not the product. Capture → resurface is the first loop built on that substrate, not the whole of it — presentation (widgets and artifacts), ingestion (gates and telemetry), proposals and earned autonomy, and typed verticals all layer on top of canonical Evidence and automatically curated Memory.
 
 ## Language
 
 **Memory**:
-A fact you want to retain — an amorphous blob of information with no domain and no fixed schema, though it may carry Facets (annotations, not structure requirements). It has no lifecycle of its own: it stays true until deleted (e.g. "I prefer aisle seats"), and is never "completed". A Memory is either loose or tethered.
-_Avoid_: note, fact, knowledge
+Tether's small, current, user-centric understanding carried across actions. Dreaming continuously revises its Topics and Claims from canonical Evidence; prior Memory is state to improve, never independent Evidence.
+_Avoid_: knowledge base, note collection, source record
 
-**Facet**:
-A key/value annotation on a Memory (e.g. `domain: finance`, `sensitivity: medical`) — metadata, not schema. The agent invents facet keys freely as needed; drift across near-duplicate keys is handled by curation, not enforced by validation.
-_Avoid_: tag, property, attribute, field
+**Topic**:
+A user- and model-facing grouping of related Claims within Memory. The agent chooses Topic boundaries and organization, preferring coherent summaries while allowing a useful standalone Claim to remain alone.
+_Avoid_: category, folder, document
 
-**Loose**:
-The state of a Memory that has been captured but not yet tethered (by either path — Review or Recall). Provisional and not yet trusted by the assistant.
-_Avoid_: unreviewed, pending, draft
+**Claim**:
+A granular assertion in Memory supported by exact Evidence. Claims normally huddle within a Topic and are not independent lifecycle entities.
+_Avoid_: memory row, fact record
 
-**Tethered**:
-The state of a Memory that is trusted and part of the corpus the assistant searches and reasons over; a loose one is not. A Memory reaches this state by one of two paths: **Review** (a human asserted it is true) or **Recall** (the human proved they learned it). ("Connection" between memories is not stored structure — it emerges from Search at the moment the assistant needs context.)
-_Avoid_: reviewed, confirmed, sediment
+**Evidence**:
+Canonical durable source material that may support a Claim, such as a user Message or a scoped verified external record. Assistant output may explain Evidence in context but cannot independently support a Claim about the user.
+_Avoid_: Memory, summary, inference
 
-**Review**:
-The human act of promoting a loose Memory to tethered — vetting it so it becomes trusted and searchable. The provisional-to-trusted gate every Memory passes through.
-_Avoid_: triage, approve, accept
+**Dreaming**:
+The automatic behavior that assimilates settled Evidence and maintains current Memory without a per-item approval inbox. It is incremental, bounded, evidence-linked, correctable, and inspectable.
+_Avoid_: reflection, review, extraction
+
+**Dream run**:
+One bounded execution of Dreaming over immutable Evidence bounds or a bounded set of due Topics. A successful no-op is still a completed Dream run.
+_Avoid_: consolidation run, reflection run
+
+**Suppression**:
+A user instruction that selected retained Evidence must not produce or recreate Memory. It is policy over Evidence, not a hidden or deleted Topic.
+_Avoid_: dismissal, soft delete, ignore
+
+**Conversation**:
+A durable Tether-owned chat thread and its canonical ordered Messages. It may span many disposable pi sessions, which are execution segments rather than conversational authority.
+_Avoid_: pi session, chat session
+
+**Message**:
+One canonical ordered transcript entry within a Conversation, including its speaker or execution role. User Messages are conversational Evidence; assistant, reasoning, and tool Messages are context only unless they contain separately verified Evidence.
+_Avoid_: pi message, session entry, turn
 
 **Recall**:
-The second path a Memory can take to become tethered: instead of being reviewed, the human must *prove they retained* the material by answering spaced recall prompts correctly across multiple rounds over days. Used for educational material (chiefly YouTube transcripts). Full completion tethers the memory; failure reschedules and extends. The counterpart to Review — asserted-true vs. demonstrably-learned.
-_Avoid_: spaced-recall review, quiz gate, study review
+A spaced learning workflow in which the human practices distilled material through scheduled prompts. It measures learning progress and does not gate whether content enters Memory.
+_Avoid_: memory review, quiz gate, study review
 
 **Recall prompt**:
 A single challenge in a Recall — a multiple-choice or short-answer question (or essay) generated from the distilled learnings of a source. Answer correctness and response time feed adaptive scheduling of the next round.
 _Avoid_: quiz, flashcard, question
 
 **Study item**:
-A loose Memory currently progressing through Recall — distilled from a source (e.g. a video transcript) and being drilled across scheduled rounds, not yet tethered.
-_Avoid_: flashcard deck, course, lesson
+Material currently progressing through Recall, distilled from a source and practiced across scheduled rounds.
+_Avoid_: Memory, flashcard deck, course, lesson
 
 **Curriculum**:
 A learning objective broken into ordered units with progress state (e.g. "learn conversational Spanish").
 _Avoid_: course, syllabus, program
 
 **Lesson**:
-A generated Artifact within a Curriculum. Its quiz results (Artifact events) feed regeneration of the next Lesson. Not Recall: a Lesson quiz is a feedback instrument shaping what's taught next, not a trust instrument that tethers a Memory.
+A generated Artifact within a Curriculum. Its quiz results (Artifact events) feed regeneration of the next Lesson. Not Recall: a Lesson quiz is a feedback instrument shaping what's taught next, not a measure of retained material.
 _Avoid_: quiz, exercise, unit
 
-**Knowledge base**:
-The body of tethered Memories, exposed as derived read-only markdown files (Obsidian-compatible). The trusted corpus the assistant searches and reasons over. Its source of truth is SQLite; the markdown is a projection.
-_Avoid_: vault, notes, sediment, wiki
-
-**projection** (common noun, not a coined term):
-The single read-only markdown file a tethered Memory is rendered into. A loose Memory has none; rejecting a Memory removes its projection. The *set* of all projections **is** the Knowledge base — projection is the part, Knowledge base the whole. Its filename is the Memory's opaque id (`<id>.md`), never a content slug (ADR 0007).
-_Avoid_: note, page, file, entry
-
 **Search**:
-Reading Memories by query, by filters, or both, with relevance ranking. State-agnostic as a mechanism — the same operation lists the loose review queue and pulls tethered context — so the trust boundary is not in the word: when the *assistant* searches for context it searches only tethered Memories (ADR 0001), and a Search is recomputed every time, never cached (ADR 0006). The sole means by which Memories connect — there is no stored graph; relevance emerges at the moment context is needed.
-_Avoid_: retrieval, lookup, recall, fetch
+Reading current Memory by query and relevance ranking. It is recomputed at the moment of use; topic organization is durable curated state, while prompt-specific relevance still emerges from Search.
+_Avoid_: lookup, recall, fetch
 
 **Commons**:
-The pool of faceted Memories where long-tail life domains live as conventions rather than code — no dedicated tables, panels, or lifecycle, just Memories plus Facets. The staging ground a domain occupies before it earns Promotion to a Vertical.
+The part of Memory where long-tail life domains remain agent-organized Topics rather than typed code. It is the staging ground a domain occupies before it earns Promotion to a Vertical.
 _Avoid_: pool, general memories, unstructured store
 
 **Vertical**:
-A hand-built, typed slice of the domain (e.g. Cooking, Health) with its own tables and lifecycle. Admitted only when a domain actually needs a lifecycle, typed queries over time, or a dedicated panel — not merely because it has accumulated many Memories.
+A hand-built, typed slice of the domain (e.g. Cooking, Health) with its own records and lifecycle. Admitted only when a domain needs typed queries over time, a dedicated lifecycle, or a dedicated panel — not merely because it has accumulated many Topics.
 _Avoid_: module, feature, app
 
 **Promotion**:
-The graduation of a Commons domain into a Vertical, justified once accumulated Facet shapes make the case (recurring keys, values that want structure, lifecycle needs). One-directional in practice — Verticals aren't demoted back to Commons.
+The graduation of a Commons domain into a Vertical, justified when repeated Evidence and workflows reveal stable structure or lifecycle needs. One-directional in practice — Verticals aren't demoted back to Commons.
 _Avoid_: migration, upgrade, graduation
 
 **Sensitivity**:
-A Facet governing presentation discretion only — which Memories are hidden in Public mode or suppressed from proactive surfacing. It never limits what the agent may reason over or send to an external LLM provider; that boundary doesn't exist in Tether.
+Topic metadata governing presentation discretion only — which Memory is hidden in Public mode or suppressed from proactive surfacing. It never limits what the agent may reason over or send to an external LLM provider; that boundary doesn't exist in Tether.
 _Avoid_: privacy, visibility, access level
 
 **Public mode**:
-A session state that excludes sensitivity-faceted Memories from display and proactive surfacing (e.g. presenting Tether on a shared screen). A presentation-layer switch, not a trust or reasoning boundary.
+A session state that excludes sensitivity-marked Memory from display and proactive surfacing (e.g. presenting Tether on a shared screen). A presentation-layer switch, not a trust or reasoning boundary.
 _Avoid_: private mode, incognito, safe mode
 
 **Ingestion gate**:
-A scheduled sync that brings external data in without a chat turn (Readwise, Gmail, Health Connect, ebooks). Content it produces carries machine-synced Provenance, trusted at capture.
+A scheduled sync that brings canonical external Evidence in without a chat turn (Readwise, Gmail, Health Connect, ebooks). Dreaming may later assimilate appropriate settled Evidence into Memory.
 _Avoid_: sync job, importer, connector
 
 **Transcript status**:
@@ -87,16 +95,16 @@ The acquisition state of a saved video's transcript: pending, retrying, needs re
 _Avoid_: terminal, caption state, transcript error
 
 **Telemetry**:
-Raw time-series data landing through an Ingestion gate (heart rate, location, read events). Vertical data — it never enters the Memory pool as-is; only a Distillation derived from it can.
+Raw time-series Evidence landing through an Ingestion gate (heart rate, location, read events). It remains in typed Vertical storage and never becomes Memory as-is.
 _Avoid_: metrics, events, raw data
 
 **Distillation**:
-An agent-derived conclusion drawn from Telemetry or a Fusion (e.g. "sleep quality drops after late screen time"). Enters the Memory pool as agent-inferred content, so it takes the loose→tethered gate like any other agent guess.
-_Avoid_: insight, summary, inference
+An evidence-backed agent-derived Claim drawn from Telemetry or a Fusion (e.g. "sleep quality drops after late screen time"). Dreaming may incorporate it into a current Topic while its supporting records remain canonical Evidence.
+_Avoid_: summary, raw measurement
 
 **Fusion**:
-Cross-source correlation across Telemetry and/or Memories (e.g. location × heart rate) that produces a Distillation. The mechanism, not the output — the output is always a Distillation.
-_Avoid_: correlation, join, merge
+Cross-source correlation across Evidence that produces a Distillation. The mechanism, not the output — the output is always a Distillation.
+_Avoid_: join, merge
 
 **Widget**:
 An inline, vetted, Tether-styled render spec placed in a chat turn (tables, Mermaid, Vega-Lite) — a constrained vocabulary, safe because it's constrained. Presentation only, never a source of truth.
@@ -111,7 +119,7 @@ An append-only JSON record an Artifact posts about itself (e.g. a quiz answer, a
 _Avoid_: callback, webhook, artifact message
 
 **Synthetic panel**:
-A saved faceted query over the Commons, rendered through Widgets — a panel assembled from convention, with no dedicated code.
+A saved query over the Commons, rendered through Widgets — a panel assembled from convention, with no dedicated Vertical code.
 _Avoid_: dashboard, view, report
 
 **Scheduled trigger**:
@@ -119,7 +127,7 @@ A time-triggered action the human sets up: it fires once or on a recurrence (dai
 _Avoid_: scheduled prompt task, reminder, cron job, alert
 
 **Bucket item**:
-An intention to act on something later. It lives in an active state and then moves to a terminal state — completed or deleted — where it is retained permanently as history (so dedup can warn you when you try to re-add something you have already dealt with). It is never tethered. It is of exactly one item type, which determines its structure, and records why it was saved (its intent context). The test that distinguishes it from a Memory: a Bucket item can be *finished*.
+An intention to act on something later. It lives in an active state and then moves to a terminal state — completed or deleted — where it is retained permanently as history (so dedup can warn you when you try to re-add something you have already dealt with). It is not Memory. It is of exactly one item type, which determines its structure, and records why it was saved (its intent context). The test that distinguishes it from Memory: a Bucket item can be *finished*.
 _Avoid_: backlog item, bucket-list entry
 
 **Todo**:
@@ -127,19 +135,19 @@ One actionable thing to do — a single action, no steps ("bring the book next t
 _Avoid_: task, reminder, bucket item, project, waiting-on flag
 
 **Item type**:
-What kind of thing a Bucket item is (movie, book, place, travel, …). Different item types carry different fields, which is why Bucket items aren't all one shape. Applies only to Bucket items; Memories have none. (The word "domain" is deliberately avoided here to prevent confusion with domain-driven-design vocabulary.)
+What kind of thing a Bucket item is (movie, book, place, travel, …). Different item types carry different fields, which is why Bucket items aren't all one shape. Applies only to Bucket items; Memory Topics have none. (The word "domain" is deliberately avoided here to prevent confusion with domain-driven-design vocabulary.)
 _Avoid_: domain, category, kind, tag
 
 **Intent context**:
-The human's subjective reason for saving a Bucket item — *why* it was worth capturing ("a podcast recommended it," "relates to my interest in X"). Immutable once set; it answers "why did I save this?" months later, when the item alone no longer explains itself. Bucket items only — a Memory is a self-justifying fact and has none.
+The human's subjective reason for saving a Bucket item — *why* it was worth capturing ("a podcast recommended it," "relates to my interest in X"). Immutable once set; it answers "why did I save this?" months later, when the item alone no longer explains itself. Bucket items only; Memory Claims instead carry supporting Evidence.
 _Avoid_: reason, rationale, note, why
 
 **Triage**:
-An agent-produced report over the *active* Bucket items that surfaces problems — under-specified, duplicate, and stale items — for the human to act on. A pull action, optionally run on a Scheduled trigger. It produces no new stored state. Distinct from Review, which is the Memory trust gate; the two never share vocabulary.
+An agent-produced report over the *active* Bucket items that surfaces problems — under-specified, duplicate, and stale items — for the human to act on. A pull action, optionally run on a Scheduled trigger. It produces no new stored state and is unrelated to automatic Memory maintenance.
 _Avoid_: review, grooming, cleanup, backlog review
 
 **Candidate**:
-An agent-*proposed* capture awaiting human acceptance — produced when the agent guesses at memories or bucket items rather than the human directly asking (most notably during conversation import). For a Memory this coincides with the loose state (Review accepts it). For a Bucket item it is a pre-active holding state that must be accepted before the item becomes active. The gate follows authorship: human-authored bucket items skip it; agent-proposed ones do not. Confidence may order or weight a candidate but never bypasses acceptance. Kin to Proposal: a Candidate awaits acceptance of a *thing*, a Proposal awaits approval of a *doing* — the gate follows authorship in both.
+An agent-proposed typed thing awaiting human acceptance, such as a Bucket item inferred during conversation import. Memory has no Candidate state: Dreaming curates it automatically. Kin to Proposal: a Candidate awaits acceptance of a thing, while a Proposal awaits approval of a doing.
 _Avoid_: suggestion, proposal, draft
 
 **Proposal**:
@@ -151,24 +159,24 @@ An earned, per-action-category removal of the Proposal gate for a specific kind 
 _Avoid_: permission, trust level, auto-approve
 
 **Provenance**:
-The objective origin of a captured thing — *where* it came from (a URL, a conversation import, a specific YouTube video, a manual entry, a synced external source). Recorded on every Memory and Bucket item. On a Memory it now determines trust class: human-asserted and machine-synced content is trusted at the moment of capture, while agent-inferred content (guesses, Distillations, Fusions) still takes the loose→tethered gate — Review or Recall (ADR 0010).
-_Avoid_: source, source reference, citation, origin
+The objective origin of Evidence or a captured typed thing — where it came from, such as a URL, Conversation, specific video, manual entry, or synced external system. Memory Claims cite Evidence rather than treating generated summaries as fresh Provenance.
+_Avoid_: authority, confidence
 
 **Capture client**:
-A deliberately dumb client (phone app, watch tile) whose only job is getting a capture off the human quickly — share-target, voice-to-text, a tap. All intelligence (parsing, tethering, scheduling) stays server-side.
+A deliberately dumb client (phone app, watch tile) whose only job is getting a capture off the human quickly — share-target, voice-to-text, a tap. All intelligence (parsing, routing, scheduling) stays server-side.
 _Avoid_: mobile app, frontend, client app
 
 **Voice input**:
-Speech recorded in the web chat client and transcribed to text, entering the conversation as a chat turn — either filled into the composer for the human to review before sending, or sent immediately. Never becomes a Memory directly; it is just another way of producing a chat turn.
+Speech recorded in the web chat client and transcribed to text, entering the Conversation as a Message — either filled into the composer for the human to review before sending, or sent immediately. It becomes canonical Evidence like any other user Message, not Memory directly.
 _Avoid_: voice memo, dictation, voice command
 
 **Voice capture**:
-Recorded audio a Capture client uploads straight to the host, outside of chat. Today it lands directly as a Memory; this is slated to change so it instead becomes a chat turn, the same way Voice input does.
+Recorded audio a Capture client uploads straight to the host, outside of chat. It becomes a Message and therefore canonical conversational Evidence, the same as Voice input.
 _Avoid_: voice memo, audio capture, voice note
 
 ## Cooking
 
-A deferred vertical with its own entities. These terms will migrate to `src/cooking/CONTEXT.md` (and a `CONTEXT-MAP.md` will appear) when the vertical is actually built. It connects to the core at two points: the cooking profile is a view over relevant tethered Memories, and recipe import uses the Candidate pattern.
+A deferred vertical with its own entities. These terms will migrate to `src/cooking/CONTEXT.md` (and a `CONTEXT-MAP.md` will appear) when the vertical is actually built. It connects to the core at two points: the cooking profile is a view over relevant current Memory, and recipe import uses the Candidate pattern.
 
 **Ingredient**:
 A canonical, normalized food identity (e.g. "garlic", "all-purpose flour") that both Recipe lines and Pantry items reference. The shared key that makes pantry coverage and shopping-list diffing possible; messy ingredient text is normalized onto it (agent-assisted, sometimes via a Candidate pick).

@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0021
+---
+
 # The knowledge base has two tethering paths: Review and Recall
 
 A loose Memory can become tethered (trusted and retrievable) by **either** of two paths:

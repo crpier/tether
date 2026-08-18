@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0021
+---
+
 # Knowledge-base filenames are the Memory's UUIDv7, not a title slug
 
 Each tethered Memory projects to a markdown file whose **basename is the Memory's id** (a UUIDv7): `<id>.md`. The filename is an **opaque, stable identifier** — it is not derived from the Memory's content, and a human-readable title lives *inside* the file (frontmatter / H1), never in the filename.

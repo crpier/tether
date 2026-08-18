@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0021
+---
+
 # Trust is determined by provenance class, not uniformly by the loose→tethered gate
 
 Until now every Memory, regardless of origin, entered the corpus loose and needed Review or Recall to become tethered (ADR 0001, ADR 0004). As Tether grows Ingestion gates (Readwise, Gmail, Health Connect, ebooks) and Fusion/Distillation over Telemetry, that uniform gate stops making sense: a human-asserted fact, a machine-synced calendar event, and an agent's inferred conclusion about your sleep are not the same kind of claim, and treating them identically either drowns the Review queue in machine noise or forces high-volume sync data through a gate it doesn't need.
