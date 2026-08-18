@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0021
+---
+
 # Captured memories are provisional until human review
 
 Captured memories start **loose** — stored but untrusted, and excluded from the corpus the agent retrieves over. A memory only becomes **tethered** (trusted and retrievable) after the human reviews it. The assistant reasons exclusively from tethered memories.

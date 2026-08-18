@@ -7,3 +7,5 @@ We chose this because a single source of truth removes the "two stores to index 
 Most of the desired markdown workflows — browsing, copy-paste, walking files in an editor, exposing a webpage — are read-only and fully satisfied by this. True external editing is deferred to a later, separate project (a mediated write-gateway plus a real import/parse pipeline), not retrofitted as a sync afterthought.
 
 **Refinement (ADR 0009):** the "the retrieval index lives in SQLite" clause above no longer holds — the retrieval index is now an embedded LanceDB dataset, a *second* derived projection alongside the markdown KB. SQLite remains the single source of truth (it holds the canonical embedding vectors); only the index's storage location moved out.
+
+**Supersession (ADR 0021):** this decision remains historical context and continues to describe non-Memory host data, but is reversed for Memory: the editable Markdown workspace is canonical and SQLite stores evidence, orchestration, full-file history, and rebuildable projections.

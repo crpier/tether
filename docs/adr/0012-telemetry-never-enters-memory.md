@@ -17,3 +17,5 @@ This is hard to reverse in practice: Telemetry cannot be backfilled (a missed sy
 - Every new Telemetry source needs its own vertical table before it can sync at all — there is no generic "just write a Memory" shortcut, which is a deliberate floor to keep the Memory pool's shape stable.
 - Distillation and Fusion logic can evolve freely (new correlations, better inference) without touching how raw Telemetry was captured, since the raw data was never shaped around any particular Distillation.
 - The Memory pool's size stays bounded by human-meaningful facts and agent conclusions, not sensor volume, which is what keeps Search (ADR 0006, recomputed every time) fast without needing telemetry-aware filtering.
+
+**Refinement (ADR 0021):** raw Telemetry still remains canonical typed Evidence outside Memory. Evidence-backed Distillations may now be applied automatically through Dreaming instead of entering the superseded loose-to-tethered gate.

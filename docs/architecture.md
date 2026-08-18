@@ -2,6 +2,8 @@
 
 A map of Tether's stack and the load-bearing decisions, with pointers to the ADRs that record the hard-to-reverse ones. This is a map, not a spec — it says *what* and *why*, not *how* in detail.
 
+> **Pending #507 cutover:** the Memory/Review/Markdown passages below still describe the deployed legacy implementation. ADRs 0021–0024 accept its replacement with canonical agent-curated files; see `docs/plans/507-curated-memory.md` for delivery order. Update this map when that implementation lands.
+
 ## Shape
 
 ```
@@ -63,16 +65,22 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 
 ## Decision records
 
-- **0001** — memories are provisional (loose) until human review tethers them.
+- **0001** — memories are provisional until Review (superseded by 0021).
 - **0002** — one agent *definition* with a tool belt; concurrency via multiple pi processes, not sub-agents.
-- **0003** — SQLite is the single source of truth; markdown is a derived read-only projection.
-- **0004** — two tethering paths: Review (asserted true) and Recall (proved learned).
-- **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host.
+- **0003** — SQLite is the source of truth and Markdown derived (superseded for Memory by 0021).
+- **0004** — Review and Recall tether Memory (superseded by 0021).
+- **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host (refined by 0022/0023).
 - **0006** — search is recomputed at the moment of use, never cached across actions.
-- **0007** — knowledge-base filenames are the Memory's UUIDv7 (opaque id), not a title slug.
+- **0007** — knowledge-base filenames are opaque Memory UUIDs (superseded by 0021).
 - **0008** — custom Starlette route contract layer (superseded by 0020).
-- **0009** — hybrid Search is an embedded LanceDB projection, not FTS5 + sqlite-vec (refines 0003's retrieval-index clause).
+- **0009** — hybrid Search is an embedded LanceDB projection, not FTS5 + sqlite-vec (refined by 0021).
+- **0010** — provenance classes govern Memory trust (superseded by 0021).
+- **0012** — raw Telemetry remains typed Evidence outside Memory (refined by 0021).
 - **0020** — FastAPI owns REST validation, routing, and OpenAPI generation.
+- **0021** — Memory is a canonical agent-curated Markdown workspace.
+- **0022** — Dreaming mutates Memory through confined native-shaped pi file tools.
+- **0023** — Tether Conversations own history and receive fresh Memory projections independently of pi sessions.
+- **0024** — Delete everywhere physically prunes all retained backups.
 
 ## Build order
 
