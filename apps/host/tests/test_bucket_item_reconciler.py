@@ -11,8 +11,8 @@ not already hold are (re-)embedded, and ids the index holds that are no longer
 Three paths are exercised here, mirroring `test_reconciler.py`:
 
 - `reconcile()` — the idempotent full pass (startup + periodic): embed owed
-  active items, upsert them, drop orphans, run `optimize()`, and stamp the
-  active-model marker. A model change re-embeds every active item and rebuilds
+  active items, upsert them, drop orphans, and stamp the active-model marker. A
+  model change re-embeds every active item and rebuilds
   the index.
 - `index_item` / `deindex_item` — the per-item latency hooks `BucketItemService`
   calls on Add / terminate (complete or delete).
@@ -307,15 +307,14 @@ async def a_model_change_reembeds_the_corpus_and_rebuilds() -> None:
 
 
 @test()
-async def reconcile_runs_optimize_each_pass() -> None:
-    """Every reconcile runs the index's background hygiene."""
+async def reconcile_keeps_live_index_compaction_out_of_the_hot_path() -> None:
+    """A reconcile never lets optional compaction block concurrent searches."""
     h = await load_fixture(harness())
     _ = await _add_bucket_item(h.database, "Blade Runner")
 
     _ = await h.reconciler.reconcile(logger=_logger())
-    _ = await h.reconciler.reconcile(logger=_logger())
 
-    assert_eq(h.index.optimize_calls, 2)
+    assert_eq(h.index.optimize_calls, 0)
 
 
 @test()
@@ -329,11 +328,8 @@ async def reconcile_forever_runs_passes_until_cancelled() -> None:
     `except Exception`, deliberately, so cancellation isn't swallowed) — so a
     cancel delivered mid-transaction leaks the pooled connection and the
     fixture's teardown `db.close()` then hangs until it times out
-    (`DatabaseCloseTimeoutError`). `index.optimize_calls` ticks up *before* the
-    pass's final transaction (`meta.set`), so counting on it (as the naive
-    version of this test did) leaves that last transaction's `BEGIN` as an
-    unsafe cancellation window and flakes intermittently. Counting completed
-    passes instead — via a wrapper that increments only after the real
+    (`DatabaseCloseTimeoutError`). Counting completed passes via a wrapper that
+    increments only after the real
     `reconcile()` awaitable (and all its transactions) has returned — matches
     the safe pattern `test_reconcile_loop.py` uses: the only await between the
     signal and the next tick is `asyncio.sleep`, which cancels cleanly with no
@@ -365,7 +361,6 @@ async def reconcile_forever_runs_passes_until_cancelled() -> None:
         await task
 
     assert_true(passes >= 1)
-    assert_true(h.index.optimize_calls >= 1)
 
 
 @test()

@@ -1,4 +1,4 @@
-"""Behavior tests for the search reconciler (slice 4).
+"""Behavior tests for the search reconciler.
 
 The reconciler is the *sole* LanceDB writer: it converges the derived index
 with SQLite, the canonical store. It governs the two non-markdown derived
@@ -9,9 +9,9 @@ Three paths are exercised here:
 
 - `reconcile()` — the idempotent, marker-driven full pass (startup + periodic):
   embed any owed `tethered ∧ ¬deleted` Memory, upsert the desired set, drop
-  orphans left by a missed event, run `optimize()`, and stamp the active-model
-  marker. A model change re-embeds the whole corpus and rebuilds the index.
-- `index_memory` / `deindex_memory` — the per-Memory latency hooks slice 5 wires
+  orphans left by a missed event, and stamp the active-model marker. A model
+  change re-embeds the whole corpus and rebuilds the index.
+- `index_memory` / `deindex_memory` — the per-Memory latency hooks wired
   into tether / edit / delete so a change is searchable without waiting for a
   pass.
 - `candidates()` — the read path the Memory spine searches through: embed the
@@ -372,15 +372,14 @@ async def a_model_change_reembeds_the_corpus_and_rebuilds() -> None:
 
 
 @test()
-async def reconcile_runs_optimize_each_pass() -> None:
-    """Every reconcile runs the index's background hygiene."""
+async def reconcile_keeps_live_index_compaction_out_of_the_hot_path() -> None:
+    """A reconcile never lets optional compaction block concurrent searches."""
     h = await load_fixture(harness())
     _ = await _add_memory(h.database, "dentist appointment")
 
     _ = await h.reconciler.reconcile(logger=_logger())
-    _ = await h.reconciler.reconcile(logger=_logger())
 
-    assert_eq(h.index.optimize_calls, 2)
+    assert_eq(h.index.optimize_calls, 0)
 
 
 @test()
@@ -393,15 +392,14 @@ async def reconcile_forever_runs_passes_until_cancelled() -> None:
         h.reconciler.reconcile_forever(interval_seconds=0.001, logger=_logger())
     )
     for _ in range(1000):  # bounded wait so a broken loop fails fast, never hangs
-        marker = await h.meta.fetch(logger=_logger())
-        if h.index.optimize_calls >= 1 and marker is not None:
+        if await h.meta.fetch(logger=_logger()) is not None:
             break
         await asyncio.sleep(0.001)
     _ = task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
-    assert_true(h.index.optimize_calls >= 1)
+    assert_true(await h.meta.fetch(logger=_logger()) is not None)
 
 
 @test()
