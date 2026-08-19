@@ -24,6 +24,7 @@ import { FakeNotificationsHost } from "./fakes/notifications";
 import { FakePanelsHost } from "./fakes/panels";
 import { FakeProposalsHost } from "./fakes/proposals";
 import { FakeProviderAuthHost } from "./fakes/provider-auth";
+import { FakeGmailHost } from "./fakes/gmail";
 import { FakePushHost } from "./fakes/push";
 import { FakeRecallHost } from "./fakes/recall";
 import { FakeTodosHost } from "./fakes/todos";
@@ -40,6 +41,7 @@ export class FakeHost implements WebHost {
   readonly panels: FakePanelsHost;
   readonly proposals: FakeProposalsHost;
   readonly providerAuth = new FakeProviderAuthHost();
+  readonly gmail: FakeGmailHost;
   readonly push = new FakePushHost();
   readonly recall: FakeRecallHost;
   readonly todos: FakeTodosHost;
@@ -73,6 +75,7 @@ export class FakeHost implements WebHost {
     this.panels = new FakePanelsHost(options.panels, options.panelResults);
     this.proposals = new FakeProposalsHost(options);
     this.recall = new FakeRecallHost(options.duePrompts);
+    this.gmail = new FakeGmailHost();
     this.todos = new FakeTodosHost(options.todos);
     this.triggers = new FakeTriggersHost(options.triggers);
     this.youtube = new FakeYouTubeHost(options.transcriptDecisions);

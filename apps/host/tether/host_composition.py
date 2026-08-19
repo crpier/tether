@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from tether.app_runtime import AppRuntime, install_app_runtime
-from tether.gmail_client import GmailClient
+from tether.gmail_auth_service import GoogleGmailAuthService, ReauthorizableGmailClient
+from tether.gmail_oauth import HttpGmailTransport
 from tether.health_connect_ingestion import HealthConnectIngestion
 from tether.health_connect_persistence import create_health_connect_schema
 from tether.health_connect_telemetry import HealthConnectTelemetry
@@ -65,6 +66,19 @@ async def _compose_app_runtime(
         contextlib.AsyncExitStack()
     )
     _ = resources.push_async_callback(host.ingestion_lifecycle.stop)
+    gmail_client = ReauthorizableGmailClient()
+    if dependencies.config.gmail_transport is not None:
+        gmail_client.connect(dependencies.config.gmail_transport)
+
+    async def _activate_gmail_client() -> None:
+        if dependencies.config.gmail_oauth_config is None:
+            return
+        gmail_client.connect(HttpGmailTransport(dependencies.config.gmail_oauth_config))
+
+    gmail_auth_service = GoogleGmailAuthService(
+        dependencies.config.gmail_auth_backend,
+        on_authorized=_activate_gmail_client,
+    )
     youtube = await compose_ingestion(
         IngestionDependencies(
             bootstrap=dependencies.bootstrap,
@@ -81,13 +95,10 @@ async def _compose_app_runtime(
             tracer=host.telemetry.tracer,
             trigger_service=core.trigger_service,
             youtube_search=core.youtube_search,
+            gmail_client=gmail_client,
+            gmail_auth_service=gmail_auth_service,
         ),
         resources=ingestion_resources,
-    )
-    gmail_client = (
-        GmailClient(dependencies.config.gmail_transport)
-        if dependencies.config.gmail_transport is not None
-        else None
     )
     install_app_runtime(
         app,
@@ -118,6 +129,7 @@ async def _compose_app_runtime(
             provider_auth_service=core.provider_auth_service,
             public_origin=dependencies.config.public_origin,
             gmail_client=gmail_client,
+            gmail_auth_service=gmail_auth_service,
             push_service=core.push_service,
             dreaming_enabled=dependencies.config.dreaming_enabled,
             recall_service=core.recall_service,

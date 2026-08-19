@@ -16,6 +16,7 @@ from tether.ebook_stats import EbookStatsSyncService
 from tether.ebook_stats_store import EbookStatsStore
 from tether.events import EventHub
 from tether.gmail import GmailSyncService
+from tether.gmail_auth_service import GoogleGmailAuthService
 from tether.gmail_client import GmailAuthenticationFailure, GmailClient
 from tether.gmail_purge import GmailPurgeSweepService
 from tether.host_config import AppConfig
@@ -378,7 +379,7 @@ async def compose_reader(  # noqa: PLR0913 - composition owns every dependency
     )
 
 
-async def compose_gmail(  # noqa: PLR0913 - each param is an independent wiring dependency
+async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count are intentional
     *,
     bootstrap: HostBootstrap,
     config: AppConfig,
@@ -390,9 +391,19 @@ async def compose_gmail(  # noqa: PLR0913 - each param is an independent wiring 
     model_catalog: AgentModelCatalog,
     trigger_service: TriggerService,
     todo_service: TodoService,
+    gmail_client: GmailClient | None = None,
+    gmail_auth_service: GoogleGmailAuthService | None = None,
 ) -> None:
     """Compose the optional Gmail ingestion worker."""
-    if not config.gmail_sync_enabled or config.gmail_transport is None:
+    if not config.gmail_sync_enabled:
+        _ = ingestion_lifecycle.activate("gmail")
+        return
+    client = gmail_client or (
+        GmailClient(config.gmail_transport)
+        if config.gmail_transport is not None
+        else None
+    )
+    if client is None:
         _ = ingestion_lifecycle.activate("gmail")
         return
     triage_runner = EphemeralPiPromptRunner(
@@ -406,7 +417,7 @@ async def compose_gmail(  # noqa: PLR0913 - each param is an independent wiring 
     )
     sync = GmailSyncService(
         database=database,
-        client=GmailClient(transport=config.gmail_transport),
+        client=client,
         memory_service=memory_service,
         trigger_service=trigger_service,
         todo_service=todo_service,
@@ -415,6 +426,8 @@ async def compose_gmail(  # noqa: PLR0913 - each param is an independent wiring 
     )
 
     async def _boot_gmail() -> IngestionBootOutcome:
+        if gmail_auth_service is not None and not await gmail_auth_service.available():
+            return IngestionBootOutcome.REPEAT
         report = await sync.sync(logger=logger)
         if isinstance(report, Err):
             logger.warning(
@@ -427,9 +440,19 @@ async def compose_gmail(  # noqa: PLR0913 - each param is an independent wiring 
         return IngestionBootOutcome.REPEAT
 
     async def _repeat_gmail() -> None:
-        await sync.sync_forever(
-            interval_seconds=config.gmail_sync_interval_seconds, logger=logger
-        )
+        while True:
+            await asyncio.sleep(config.gmail_sync_interval_seconds)
+            if (
+                gmail_auth_service is not None
+                and not await gmail_auth_service.available()
+            ):
+                continue
+            try:
+                _ = await sync.sync(logger=logger)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Gmail sync pass failed")
 
     _ = ingestion_lifecycle.activate(
         "gmail", CallbackIngestionWorker(_boot_gmail, _repeat_gmail)
@@ -541,6 +564,8 @@ class IngestionDependencies:
     tracer: Tracer
     trigger_service: TriggerService
     youtube_search: YouTubeSearchService | None
+    gmail_client: GmailClient | None = None
+    gmail_auth_service: GoogleGmailAuthService | None = None
 
 
 async def compose_ingestion(
@@ -585,6 +610,8 @@ async def compose_ingestion(
         model_catalog=dependencies.model_catalog,
         trigger_service=dependencies.trigger_service,
         todo_service=dependencies.todo_service,
+        gmail_client=dependencies.gmail_client,
+        gmail_auth_service=dependencies.gmail_auth_service,
     )
     await compose_gmail_purge(
         bootstrap=dependencies.bootstrap,

@@ -21,6 +21,7 @@ from tether.chat_ws import websocket_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
+from tether.gmail_auth_service import GoogleGmailAuthBackend
 from tether.gmail_client import GmailTransport
 from tether.gmail_oauth import (
     GMAIL_MODIFY_SCOPE,
@@ -206,6 +207,16 @@ def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
     )
 
 
+def _gmail_oauth_config(settings: HostSettings) -> OAuthConfig:
+    """Build the shared OAuth config for Gmail adapters."""
+    return OAuthConfig(
+        token_path=settings.gmail_token_path,
+        client_secret_path=settings.gmail_client_secret_path,
+        scopes=(GMAIL_READONLY_SCOPE, GMAIL_MODIFY_SCOPE),
+        no_browser=settings.gmail_oauth_no_browser,
+    )
+
+
 def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport | None:
     """Build the OAuth-backed Gmail transport once a token has been authorized.
 
@@ -217,14 +228,7 @@ def build_configured_gmail_transport(settings: HostSettings) -> GmailTransport |
     """
     if not settings.gmail_token_path.exists():
         return None
-    return HttpGmailTransport(
-        OAuthConfig(
-            token_path=settings.gmail_token_path,
-            client_secret_path=settings.gmail_client_secret_path,
-            scopes=(GMAIL_READONLY_SCOPE, GMAIL_MODIFY_SCOPE),
-            no_browser=settings.gmail_oauth_no_browser,
-        )
-    )
+    return HttpGmailTransport(_gmail_oauth_config(settings))
 
 
 def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
@@ -273,6 +277,8 @@ def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
         web_dist=settings.web_dist,
         youtube_api=None,
         youtube_auth_backend=LocalYouTubeAuthBackend(),
+        gmail_auth_backend=None,
+        gmail_oauth_config=None,
         youtube_sync_enabled=False,
     )
 
@@ -350,6 +356,8 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         gmail_purge_enabled=settings.gmail_purge_enabled,
         gmail_purge_interval_seconds=settings.gmail_purge_interval_seconds,
         gmail_purge_chunk_size=settings.gmail_purge_chunk_size,
+        gmail_auth_backend=GoogleGmailAuthBackend(_gmail_oauth_config(settings)),
+        gmail_oauth_config=_gmail_oauth_config(settings),
         dreaming_enabled=settings.dreaming_enabled,
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,

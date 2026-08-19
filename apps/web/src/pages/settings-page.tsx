@@ -5,6 +5,7 @@ import { useHost } from "../app-context";
 import { queryKeys } from "../lib/query-keys";
 import { ProviderAuthPanel } from "../panels/provider-auth";
 import { PushControl } from "../panels/push";
+import { GmailSyncPanel } from "../panels/gmail";
 import { YouTubeSyncPanel } from "../panels/youtube";
 import { Button } from "@/components/ui/button";
 
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/button";
 export function SettingsPage() {
   const auth = useHost("auth");
   const providerAuth = useHost("providerAuth");
+  const gmail = useHost("gmail");
   const push = useHost("push");
   const youtube = useHost("youtube");
   const queryClient = useQueryClient();
@@ -47,6 +49,7 @@ export function SettingsPage() {
       </header>
       <div class="mx-auto w-full max-w-xl flex-1 space-y-4 p-4 sm:p-5">
         <ProviderAuthPanel api={providerAuth} />
+        <GmailSyncPanel api={gmail} />
         <YouTubeSyncPanel api={youtube} />
         <PushControl api={push} />
         <section class="bg-card text-card-foreground rounded-xl border p-4 shadow-sm">

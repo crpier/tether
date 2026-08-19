@@ -14,6 +14,7 @@ from tether.auth_routes import router as auth_router
 from tether.bucket_routes import router as bucket_router
 from tether.capture_routes import router as capture_router
 from tether.conversation_routes import router as conversation_router
+from tether.gmail_auth_routes import router as gmail_auth_router
 from tether.health_connect import router as health_connect_router
 from tether.kosync_routes import router as ebook_router
 from tether.model_selection import router as model_router
@@ -40,6 +41,7 @@ _PUBLIC_ROUTERS = (
     bucket_router,
     todo_router,
     search_router,
+    gmail_auth_router,
     youtube_router,
     youtube_auth_router,
     conversation_router,

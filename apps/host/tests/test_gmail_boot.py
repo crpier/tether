@@ -53,6 +53,12 @@ class FakeGmailTransport:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 
+    async def get_raw_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = message_id
+        raise AssertionError("the disabled gate must never call the Gmail transport")
+
     async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
@@ -94,6 +100,16 @@ class BootGmailTransport:
     ) -> Result[GmailResponse, GmailNetworkFailure]:
         _ = message_id
         return Ok(GmailResponse(payload={}, status_code=self.status_code))
+
+    async def get_raw_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        payload = {"id": message_id, "threadId": message_id, "raw": ""}
+        return Ok(
+            GmailResponse(payload=payload, status_code=self.status_code)
+            if self.status_code == 200
+            else GmailResponse(payload={}, status_code=self.status_code)
+        )
 
     async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
         self.label_calls += 1

@@ -804,7 +804,7 @@ async def a_successful_pass_runs_the_next_query_incrementally() -> None:
     assert_true("after:" in (transport.list_calls[1][0]))
 
 
-def _query_of(call: tuple[str, str | None]) -> str | None:
+def _query_of(call: tuple[str, str | None, int | None]) -> str | None:
     """Extract the `after:` presence signal from a recorded list call's query."""
     return call[0] if "after:" in call[0] else None
 

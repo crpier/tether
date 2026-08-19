@@ -13,6 +13,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tether.action_registry import ActionSpec
+from tether.gmail_auth_service import GmailAuthBackend
 from tether.gmail_client import GmailTransport
 from tether.model_selection import AgentModelConfig
 from tether.provider_auth import ProviderAuthBackend
@@ -26,6 +27,7 @@ from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSour
 from tether.transcripts.worker import TranscriptSyncConfig
 from tether.web_search import SearchProvider
 from tether.youtube_auth_service import YouTubeAuthBackend
+from tether.youtube_oauth import OAuthConfig
 from tether.youtube_quota import YouTubeApi
 
 
@@ -89,6 +91,8 @@ class AppConfig:
     readwise_reader_sync_interval_seconds: float = 60 * 60
     reader_transport: ReaderTransport | None = None
     gmail_transport: GmailTransport | None = None
+    gmail_auth_backend: GmailAuthBackend | None = None
+    gmail_oauth_config: OAuthConfig | None = None
     gmail_sync_enabled: bool = False
     gmail_sync_interval_seconds: float = 15 * 60
     gmail_triage_batch_size: int = 10

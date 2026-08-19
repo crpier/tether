@@ -15,6 +15,7 @@ import { createRecallHost, type RecallHost } from "./recall";
 import { createTodosHost, type TodosHost } from "./todos";
 import { createRestContext, type RestHostDependencies } from "./transport";
 import { createTriggersHost, type TriggersHost } from "./triggers";
+import { createGmailHost, type GmailHost } from "./gmail";
 import { createYouTubeHost, type YouTubeHost } from "./youtube";
 
 export * from "./artifacts";
@@ -32,6 +33,7 @@ export * from "./todos";
 export { ApiError } from "./error";
 export type { RestHostDependencies } from "./transport";
 export * from "./triggers";
+export * from "./gmail";
 export * from "./youtube";
 
 export interface WebHost {
@@ -48,6 +50,7 @@ export interface WebHost {
   recall: RecallHost;
   todos: TodosHost;
   triggers: TriggersHost;
+  gmail: GmailHost;
   youtube: YouTubeHost;
 }
 
@@ -69,6 +72,7 @@ export function createRestHost(
     recall: createRecallHost(context),
     todos: createTodosHost(context),
     triggers: createTriggersHost(context),
+    gmail: createGmailHost(context),
     youtube: createYouTubeHost(context),
   };
 }
