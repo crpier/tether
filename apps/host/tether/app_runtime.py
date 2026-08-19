@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from tether.bucket_items import BucketItemService
     from tether.chat_engine import ConversationRuntimeRegistry
     from tether.conversations import ConversationService
+    from tether.dreaming import DreamingService
     from tether.events import EventHub
     from tether.health_connect_ingestion import HealthConnectIngestion
     from tether.health_connect_telemetry import HealthConnectTelemetry
@@ -66,6 +67,7 @@ class AppRuntime:
     memory_service: MemoryService
     memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
+    dreaming_service: DreamingService
     notification_service: NotificationService
     panel_service: PanelService
     proposal_autonomy_service: ProposalAutonomyService
@@ -73,6 +75,7 @@ class AppRuntime:
     provider_auth_service: ProviderAuthService
     public_origin: str
     push_service: PushService
+    dreaming_enabled: bool
     recall_service: RecallService
     review_service: ReviewService
     search_fusion_service: SearchFusionService

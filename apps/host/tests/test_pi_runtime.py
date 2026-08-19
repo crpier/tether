@@ -37,6 +37,8 @@ from tether.server import WS_PROTOCOL, AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 from tether.tool_runtime import SessionRegistry
 
+AGENT_ROOT = Path(__file__).resolve().parents[2] / "agent"
+
 
 class ControlledByteReader:
     """Async byte source whose chunks are released by the test."""
@@ -525,7 +527,7 @@ async def spawn_command_allowlists_only_bundled_product_skills() -> None:
         ["grilling", "writing-great-skills"],
     )
     assert_in(
-        str(Path.cwd().parent / "agent/src/restricted-skill-read.ts"),
+        str(AGENT_ROOT / "src/restricted-skill-read.ts"),
         command,
     )
 
@@ -641,9 +643,7 @@ async def runtime_respawns_with_persisted_session_context() -> None:
             tool_secret="test-secret",
             session_dir=session_dir,
             session_id=session_id,
-            extra_extension_paths=[
-                Path.cwd().parent / "agent/tests/fixtures/faux-chat-text.ts"
-            ],
+            extra_extension_paths=[AGENT_ROOT / "tests/fixtures/faux-chat-text.ts"],
         ),
         session_registry=registry,
     )
@@ -662,9 +662,7 @@ async def runtime_respawns_with_persisted_session_context() -> None:
             tool_secret="test-secret",
             session_dir=session_dir,
             session_id=session_id,
-            extra_extension_paths=[
-                Path.cwd().parent / "agent/tests/fixtures/faux-chat-text.ts"
-            ],
+            extra_extension_paths=[AGENT_ROOT / "tests/fixtures/faux-chat-text.ts"],
         ),
         session_registry=registry,
     )
@@ -784,9 +782,10 @@ async def generated_shim_tool_call_reaches_loopback_and_returns_envelope() -> No
     session_dir = await load_fixture(pi_session_dir())
     host = await load_fixture(live_host())
     smoke_extension = session_dir / "capture-smoke.ts"
+    capture_tool_import_path = (AGENT_ROOT / "src/generated/capture.ts").as_posix()
     smoke_extension.write_text(
         f"""
-import {{ captureTool }} from "{(Path.cwd().parent / "agent/src/generated/capture.ts").as_posix()}";
+import {{ captureTool }} from "{capture_tool_import_path}";
 
 export default function captureSmoke(pi) {{
   pi.registerCommand("tether-capture-smoke", {{

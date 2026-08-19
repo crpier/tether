@@ -30,6 +30,7 @@ from tether.chat_prompt import local_timezone_name, prompt_with_time_context
 from tether.conversation_model import ConversationNotFoundError, MessageDraft
 from tether.conversation_store import Conversation
 from tether.conversations import SESSION_GAP, ConversationService
+from tether.dreaming import DreamingService
 from tether.pi_errors import PiRuntimeError
 from tether.pi_turn_events import (
     AgentEnded,
@@ -42,6 +43,7 @@ from tether.pi_turn_events import (
     ToolStarted,
     TurnEvent,
 )
+from tether.structured_logging import Logger
 
 _AGENT_EVENT_TIMEOUT_SECONDS = 60.0
 _TOOL_ONLY_TURN_MARKER = "Turn ended after tool use without a final answer."
@@ -93,8 +95,11 @@ class ChatTurnDependencies:
     """Explicit collaborators required to execute and settle one chat turn."""
 
     conversation_service: ConversationService
+    dreaming_service: DreamingService
+    dreaming_enabled: bool
     runtime_registry: ChatRuntimeRegistry
     trace_recorder: AgentTraceRecorder | None
+    logger: Logger
 
 
 @dataclass(slots=True)
@@ -327,6 +332,28 @@ async def _settle_tool_only_turn_marker(
     )
 
 
+async def _queue_dreaming_run(
+    dependencies: ChatTurnDependencies,
+    *,
+    conversation_id: UUID,
+) -> None:
+    """Queue a post-turn Dream assimilation run, ignoring malformed states."""
+    if not dependencies.dreaming_enabled:
+        return
+    try:
+        _ = await dependencies.dreaming_service.queue_assimilation_run(
+            conversation_id,
+            logger=dependencies.logger,
+            now=datetime.now(UTC),
+        )
+    except Exception as error:
+        _logger.warning(
+            "Dream assimilation queueing failed after chat turn",
+            conversation_id=str(conversation_id),
+            error=str(error),
+        )
+
+
 async def _handle_turn_event(
     context: _TurnContext,
     state: _TurnState,
@@ -501,6 +528,7 @@ async def run_chat_prompt(
                 runtime=runtime,
                 session_id=session_id,
             )
+            await _queue_dreaming_run(dependencies, conversation_id=conversation_id)
     except PiRuntimeError as error:
         await send_chat_error(
             websocket,
