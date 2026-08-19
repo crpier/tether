@@ -24,6 +24,13 @@ from tether.bucket_item_search import BucketItemSearchService
 from tether.bucket_items import BucketItemService
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
 from tether.conversations import ConversationService
+from tether.dreaming import (
+    ConversationWindowDreamingExecutor,
+    DreamingMutationCoordinator,
+    DreamingService,
+    DreamingWorker,
+    HttpDreamingMutationAcknowledger,
+)
 from tether.events import EventHub
 from tether.gmail_client import GmailClient
 from tether.host_config import AppConfig
@@ -568,6 +575,7 @@ class CoreServices:
     todo_service: TodoService
     triage_service: TriageService
     trigger_service: TriggerService
+    dreaming_service: DreamingService
     youtube_search: YouTubeSearchService | None
 
 
@@ -708,6 +716,12 @@ async def compose_core_services(
         event_publisher=event_hub,
         tracer=host.telemetry.tracer,
     )
+    dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
+    dreaming_mutation_coordinator = DreamingMutationCoordinator(
+        host.database,
+        memory_workspace_service.workspace_root,
+    )
+    _ = await dreaming_mutation_coordinator.reconcile_workspace(logger=host.logger)
     push_service = PushService(
         store=PushStore(host.database),
         event_publisher=event_hub,
@@ -736,6 +750,24 @@ async def compose_core_services(
         asyncio.create_task(runtime_registry.reap_idle_forever()),
         asyncio.create_task(scheduler_component.scheduler.run_forever()),
     ]
+    if config.dreaming_enabled:
+        background_tasks.append(
+            asyncio.create_task(
+                DreamingWorker(
+                    dreaming_service,
+                    ConversationWindowDreamingExecutor(
+                        conversation_service,
+                        memory_workspace_service.workspace_root,
+                        mutation_coordinator=dreaming_mutation_coordinator,
+                        mutation_acknowledger=HttpDreamingMutationAcknowledger(
+                            base_url=config.tool_base_url,
+                            tool_secret=bootstrap.tool_secret,
+                        ),
+                    ),
+                    logger=host.logger,
+                ).run_forever()
+            )
+        )
     # The periodic search-index reconcile loops (Memory + Bucket-item +
     # transcript), each started only when its index was wired (an
     # embedder was supplied).
@@ -779,5 +811,6 @@ async def compose_core_services(
         todo_service=todo_service,
         triage_service=triage_service,
         trigger_service=trigger_service,
+        dreaming_service=dreaming_service,
         youtube_search=youtube_searcher,
     )

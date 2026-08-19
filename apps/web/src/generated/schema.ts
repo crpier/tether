@@ -316,6 +316,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/conversations/{conversation_id}/dream-now": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Queue Dream Run
+     * @description Queue a manual Dream run for the latest evidence window.
+     */
+    post: operations["queue_dream_run_api_conversations__conversation_id__dream_now_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/dream-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Dream Runs
+     * @description List dream runs for one conversation.
+     */
+    get: operations["list_dream_runs_api_conversations__conversation_id__dream_runs_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/conversations/{conversation_id}/messages": {
     parameters: {
       query?: never;
@@ -354,6 +394,26 @@ export interface paths {
      * @description Select the model used for subsequent turns in one conversation.
      */
     post: operations["set_conversation_model_api_conversations__conversation_id__model_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/dream-runs/{run_id}/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Complete Dream Run
+     * @description Mark one dream run terminal from an external worker callback.
+     */
+    post: operations["complete_dream_run_api_dream_runs__run_id__complete_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1670,6 +1730,19 @@ export interface components {
       content: components["schemas"]["MemoryContent"];
     };
     /**
+     * CompleteDreamRunRequest
+     * @description Body for marking a Dream run terminal.
+     */
+    CompleteDreamRunRequest: {
+      /** Error */
+      error?: string | null;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "success" | "no_op" | "failed";
+    };
+    /**
      * CompleteHealthConnectBaselineRequest
      * @description Bounded authoritative scan used to reconcile expired-token gaps.
      */
@@ -1876,6 +1949,46 @@ export interface components {
       model?: string | null;
       /** Type */
       type?: number | null;
+    };
+    /**
+     * DreamRunRead
+     * @description HTTP representation of one Dream run row.
+     */
+    DreamRunRead: {
+      /** Attempts */
+      attempts: number;
+      /** Completed At */
+      completed_at: string | null;
+      /**
+       * Conversation Id
+       * Format: uuid
+       */
+      conversation_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Error */
+      error: string | null;
+      /** Evidence End Seq */
+      evidence_end_seq: number;
+      /** Evidence Start Seq */
+      evidence_start_seq: number;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Kind */
+      kind: string;
+      /** Status */
+      status: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
     };
     /**
      * DuePromptRead
@@ -3986,6 +4099,68 @@ export interface operations {
       };
     };
   };
+  queue_dream_run_api_conversations__conversation_id__dream_now_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_dream_runs_api_conversations__conversation_id__dream_runs_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DreamRunRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   list_messages_api_conversations__conversation_id__messages_get: {
     parameters: {
       query?: {
@@ -4073,6 +4248,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  complete_dream_run_api_dream_runs__run_id__complete_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CompleteDreamRunRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DreamRunRead"];
         };
       };
       /** @description Validation Error */

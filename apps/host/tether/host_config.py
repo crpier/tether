@@ -95,6 +95,7 @@ class AppConfig:
     gmail_purge_enabled: bool = False
     gmail_purge_interval_seconds: float = 60 * 60
     gmail_purge_chunk_size: int = 10
+    dreaming_enabled: bool = False
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     proposal_action_specs: Sequence[ActionSpec] | None = None
@@ -339,6 +340,8 @@ class HostSettings(BaseSettings):
     gmail_purge_chunk_size: int = 10
     """How many backlog messages one sweep chunk triages and one proposal
     bundles. Bounds both the prompt size and how large a single proposal gets."""
+    dreaming_enabled: bool = False
+    """Whether Dreaming orchestration is allowed to queue and complete runs."""
     ebook_statistics_db_path: str = ""
     """Host-visible path to a Syncthing-mirrored copy of KOReader's
     `statistics.sqlite`. Empty (the default) keeps the ingestion worker off, so

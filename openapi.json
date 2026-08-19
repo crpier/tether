@@ -475,6 +475,36 @@
         "title": "CaptureRequest",
         "type": "object"
       },
+      "CompleteDreamRunRequest": {
+        "description": "Body for marking a Dream run terminal.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "no_op",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "CompleteDreamRunRequest",
+        "type": "object"
+      },
       "CompleteHealthConnectBaselineRequest": {
         "additionalProperties": false,
         "description": "Bounded authoritative scan used to reconcile expired-token gaps.",
@@ -961,6 +991,92 @@
           }
         },
         "title": "Device",
+        "type": "object"
+      },
+      "DreamRunRead": {
+        "description": "HTTP representation of one Dream run row.",
+        "properties": {
+          "attempts": {
+            "exclusiveMinimum": 0.0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "evidence_end_seq": {
+            "exclusiveMinimum": 0.0,
+            "title": "Evidence End Seq",
+            "type": "integer"
+          },
+          "evidence_start_seq": {
+            "exclusiveMinimum": 0.0,
+            "title": "Evidence Start Seq",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "kind",
+          "status",
+          "evidence_start_seq",
+          "evidence_end_seq",
+          "attempts",
+          "error",
+          "completed_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DreamRunRead",
         "type": "object"
       },
       "DuePromptRead": {
@@ -5563,6 +5679,88 @@
         "summary": "List Conversations"
       }
     },
+    "/api/conversations/{conversation_id}/dream-now": {
+      "post": {
+        "description": "Queue a manual Dream run for the latest evidence window.",
+        "operationId": "queue_dream_run_api_conversations__conversation_id__dream_now_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Dream Run"
+      }
+    },
+    "/api/conversations/{conversation_id}/dream-runs": {
+      "get": {
+        "description": "List dream runs for one conversation.",
+        "operationId": "list_dream_runs_api_conversations__conversation_id__dream_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DreamRunRead"
+                  },
+                  "title": "Response List Dream Runs Api Conversations  Conversation Id  Dream Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Dream Runs"
+      }
+    },
     "/api/conversations/{conversation_id}/messages": {
       "delete": {
         "description": "Clear one conversation's transcript and rotate its pi session.",
@@ -5727,6 +5925,56 @@
           }
         },
         "summary": "Set Conversation Model"
+      }
+    },
+    "/api/dream-runs/{run_id}/complete": {
+      "post": {
+        "description": "Mark one dream run terminal from an external worker callback.",
+        "operationId": "complete_dream_run_api_dream_runs__run_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteDreamRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DreamRunRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Dream Run"
       }
     },
     "/api/ebooks/label": {

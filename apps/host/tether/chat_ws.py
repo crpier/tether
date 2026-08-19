@@ -17,7 +17,9 @@ from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame
 from tether.chat_turn import ChatTurnDependencies, run_chat_prompt, send_chat_error
 from tether.conversations import ConversationService
+from tether.dreaming import DreamingService
 from tether.events import EventHub, HubEvent, NotifyEvent
+from tether.structured_logging import Logger
 
 _POLICY_VIOLATION = 1008
 
@@ -43,7 +45,10 @@ class _ChatRuntime(Protocol):
 
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
+    dreaming_service: DreamingService
+    dreaming_enabled: bool
     event_hub: EventHub
+    logger: Logger
     session_secret: str
     trace_recorder: AgentTraceRecorder
 
@@ -58,8 +63,11 @@ def _turn_dependencies(websocket: WebSocket) -> ChatTurnDependencies:
     runtime = _runtime(websocket)
     return ChatTurnDependencies(
         conversation_service=runtime.conversation_service,
+        dreaming_service=runtime.dreaming_service,
+        dreaming_enabled=runtime.dreaming_enabled,
         runtime_registry=runtime.conversation_runtime_registry,
         trace_recorder=runtime.trace_recorder,
+        logger=runtime.logger,
     )
 
 

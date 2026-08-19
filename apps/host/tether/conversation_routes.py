@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+import hmac
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query
 from pydantic import UUID7, BaseModel, PositiveInt
-from snekql.sqlite import Fetched
+from snekql.sqlite import Fetched, select
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether.conversation_model import ConversationNotFoundError, MessageRole
 from tether.conversation_store import Conversation, Message
 from tether.conversations import SESSION_GAP, ConversationService
+from tether.dreaming import (
+    DreamingMutationCoordinator,
+    DreamingService,
+    DreamRunNotFoundError,
+)
+from tether.dreaming_store import DreamRun, DreamRunTerminalStatus
+from tether.memory_workspace_service import MemoryWorkspaceService
 from tether.model_selection import AgentModelConfig, ModelNotAllowedError
 from tether.pi_errors import PiRuntimeError
+from tether.structured_logging import Logger
+from tether.tool_runtime import TOOL_AUTH_HEADER
 
 
 class ConversationRead(BaseModel):
@@ -52,6 +62,39 @@ class ConversationRead(BaseModel):
             selected_model=conversation.selected_model,
             session_gap_seconds=int(SESSION_GAP.total_seconds()),
             title=conversation.title,
+        )
+
+
+class DreamRunRead(BaseModel):
+    """HTTP representation of one Dream run row."""
+
+    id: UUID7
+    conversation_id: UUID
+    kind: str
+    status: str
+    evidence_start_seq: PositiveInt
+    evidence_end_seq: PositiveInt
+    attempts: PositiveInt
+    error: str | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_run(cls, run: DreamRun[Fetched]) -> DreamRunRead:
+        """Render one persisted dream run for browser JSON payloads."""
+        return cls(
+            id=run.id,
+            conversation_id=run.conversation_id,
+            kind=run.kind,
+            status=run.status,
+            evidence_start_seq=run.evidence_start_seq,
+            evidence_end_seq=run.evidence_end_seq,
+            attempts=run.attempts,
+            error=run.error,
+            completed_at=run.completed_at,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
         )
 
 
@@ -105,6 +148,21 @@ class MessagesQuery(BaseModel):
     before_seq: PositiveInt | None = None
 
 
+class CompleteDreamRunRequest(BaseModel):
+    """Body for marking a Dream run terminal."""
+
+    status: DreamRunTerminalStatus
+    error: str | None = None
+
+
+class DreamMutationAckResponse(BaseModel):
+    """Result payload after a mutation acknowledgement attempt."""
+
+    run_id: UUID
+    tool_call_id: str
+    acknowledged: bool
+
+
 class _ConversationRuntimeRegistry(Protocol):
     """Live process operations required by conversation routes."""
 
@@ -122,11 +180,32 @@ class _ConversationRuntime(Protocol):
 
     conversation_runtime_registry: _ConversationRuntimeRegistry
     conversation_service: ConversationService
+    dreaming_enabled: bool
+    dreaming_service: DreamingService
+    memory_workspace_service: MemoryWorkspaceService
+    tool_secret: str
+    logger: Logger
+
+
+def _path_conversation_id(raw_conversation_id: str) -> UUID:
+    """Parse `{conversation_id}` and map malformed ids as `not found`."""
+    try:
+        return UUID(raw_conversation_id)
+    except ValueError as error:
+        raise ConversationNotFoundError(raw_conversation_id) from error
 
 
 def _runtime(request: Request) -> _ConversationRuntime:
     """Read conversation dependencies from the canonical host runtime."""
     return cast("_ConversationRuntime", request.app.state.runtime)
+
+
+def _path_dream_run_id(raw_run_id: str) -> UUID:
+    """Parse `{run_id}` and map malformed ids as `not found`."""
+    try:
+        return UUID(raw_run_id)
+    except ValueError as error:
+        raise DreamRunNotFoundError(raw_run_id) from error
 
 
 async def _to_read(
@@ -164,6 +243,18 @@ async def _messages_response(
     )
 
 
+async def _dream_runs_query(
+    runtime: _ConversationRuntime, *, conversation_id: UUID
+) -> list[DreamRun[Fetched]]:
+    """Read dream runs for one conversation ordered newest first."""
+    async with runtime.dreaming_service.database.transaction() as tx:
+        return await tx.fetch_all(
+            select(DreamRun)
+            .where(DreamRun.conversation_id.eq(conversation_id))
+            .order_by(DreamRun.created_at.desc())
+        )
+
+
 router = APIRouter()
 
 
@@ -180,6 +271,133 @@ async def list_conversations(request: Request) -> Response:
     )
 
 
+@router.get(
+    "/api/conversations/{conversation_id}/dream-runs",
+    response_model=list[DreamRunRead],
+)
+async def list_dream_runs(request: Request, conversation_id: str) -> Response:
+    """List dream runs for one conversation."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    runtime = _runtime(request)
+    try:
+        _ = await runtime.conversation_service.fetch_conversation(
+            parsed_conversation_id
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    runs = await _dream_runs_query(runtime, conversation_id=parsed_conversation_id)
+    return JSONResponse(
+        [DreamRunRead.from_run(run).model_dump(mode="json") for run in runs]
+    )
+
+
+@router.post("/api/conversations/{conversation_id}/dream-now", status_code=200)
+async def queue_dream_run(request: Request, conversation_id: str) -> Response:
+    """Queue a manual Dream run for the latest evidence window."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    runtime = _runtime(request)
+    if not runtime.dreaming_enabled:
+        return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)
+    try:
+        _ = await runtime.conversation_service.fetch_conversation(
+            parsed_conversation_id
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    run = await runtime.dreaming_service.queue_manual_run(
+        parsed_conversation_id,
+        logger=runtime.logger,
+        now=datetime.now(UTC),
+    )
+    if run is None:
+        return Response(status_code=204)
+    return JSONResponse(DreamRunRead.from_run(run).model_dump(mode="json"))
+
+
+@router.post(
+    "/api/dream-runs/{run_id}/complete",
+    response_model=DreamRunRead,
+)
+async def complete_dream_run(
+    request: Request,
+    body: CompleteDreamRunRequest,
+    run_id: str,
+) -> Response:
+    """Mark one dream run terminal from an external worker callback."""
+    try:
+        parsed_run_id = _path_dream_run_id(run_id)
+    except DreamRunNotFoundError:
+        return JSONResponse({"detail": "dream run not found"}, status_code=404)
+    runtime = _runtime(request)
+    if not runtime.dreaming_enabled:
+        return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)
+    try:
+        run = await runtime.dreaming_service.complete_run(
+            parsed_run_id,
+            logger=runtime.logger,
+            now=datetime.now(UTC),
+            status=body.status,
+            error=body.error,
+        )
+    except DreamRunNotFoundError:
+        return JSONResponse({"detail": "dream run not found"}, status_code=404)
+    return JSONResponse(DreamRunRead.from_run(run).model_dump(mode="json"))
+
+
+@router.post(
+    "/internal/dream-runs/{run_id}/mutations/{tool_call_id}/ack",
+    response_model=DreamMutationAckResponse,
+    include_in_schema=False,
+)
+async def acknowledge_dream_mutation(
+    request: Request,
+    run_id: str,
+    tool_call_id: str,
+) -> Response:
+    """Ack one Dream mutation from a PI tool callback."""
+    try:
+        parsed_run_id = _path_dream_run_id(run_id)
+    except DreamRunNotFoundError:
+        return JSONResponse({"detail": "dream run not found"}, status_code=404)
+    runtime = _runtime(request)
+    offered_secret = request.headers.get(TOOL_AUTH_HEADER, "")
+    if not hmac.compare_digest(offered_secret, runtime.tool_secret):
+        return JSONResponse({"detail": "invalid tool secret"}, status_code=401)
+    if not runtime.dreaming_enabled:
+        return JSONResponse(
+            {"detail": "dreaming not enabled"},
+            status_code=404,
+        )
+    coordinator = DreamingMutationCoordinator(
+        runtime.dreaming_service.database,
+        runtime.memory_workspace_service.workspace_root,
+    )
+    acknowledged, error = await coordinator.acknowledge_mutation(
+        run_id=parsed_run_id,
+        tool_call_id=tool_call_id,
+    )
+    if not acknowledged:
+        if error == "mutation not found":
+            return JSONResponse({"detail": "mutation not found"}, status_code=404)
+        return JSONResponse(
+            {"detail": error or "mutation acknowledgment failed"},
+            status_code=500,
+        )
+    return JSONResponse(
+        DreamMutationAckResponse(
+            run_id=parsed_run_id,
+            tool_call_id=tool_call_id,
+            acknowledged=True,
+        ).model_dump(mode="json")
+    )
+
+
 @router.post(
     "/api/conversations/{conversation_id}/model",
     response_model=ConversationRead,
@@ -191,8 +409,8 @@ async def set_conversation_model(
 ) -> Response:
     """Select the model used for subsequent turns in one conversation."""
     try:
-        parsed_conversation_id = UUID(conversation_id)
-    except ValueError:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+    except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     try:
         conversation, selected_model = await _runtime(
@@ -230,8 +448,8 @@ async def list_messages(
 ) -> Response:
     """List settled transcript rows for one conversation."""
     try:
-        parsed_conversation_id = UUID(conversation_id)
-    except ValueError:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+    except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     return await _messages_response(
         request,
@@ -248,8 +466,8 @@ async def list_messages(
 async def clear_messages(request: Request, conversation_id: str) -> Response:
     """Clear one conversation's transcript and rotate its pi session."""
     try:
-        parsed_conversation_id = UUID(conversation_id)
-    except ValueError:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+    except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     service = _runtime(request).conversation_service
     try:
@@ -260,4 +478,10 @@ async def clear_messages(request: Request, conversation_id: str) -> Response:
     return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
 
 
-__all__ = ["ConversationRead", "MessageRead", "MessagesQuery", "router"]
+__all__ = [
+    "ConversationRead",
+    "DreamRunRead",
+    "MessageRead",
+    "MessagesQuery",
+    "router",
+]
