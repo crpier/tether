@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -751,6 +751,18 @@ async def compose_core_services(
         asyncio.create_task(scheduler_component.scheduler.run_forever()),
     ]
     if config.dreaming_enabled:
+        dreaming_runner = EphemeralPiPromptRunner(
+            replace(
+                ephemeral_pi_config(
+                    bootstrap,
+                    config=config,
+                    kb_root=host.kb_root,
+                    run_kind="dreaming",
+                    model=model_catalog.default_config,
+                ),
+                load_tether_tools=False,
+            )
+        )
         background_tasks.append(
             asyncio.create_task(
                 DreamingWorker(
@@ -763,6 +775,7 @@ async def compose_core_services(
                             base_url=config.tool_base_url,
                             tool_secret=bootstrap.tool_secret,
                         ),
+                        curation_runner=dreaming_runner,
                     ),
                     logger=host.logger,
                 ).run_forever()

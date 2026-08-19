@@ -19,13 +19,14 @@ FastAPI derives OpenAPI from the same request and response models used at runtim
 
 from __future__ import annotations
 
+import hmac
 from typing import Annotated, Any, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from tether import memory_capabilities
 from tether.capabilities import rest_response, translate_domain_errors
@@ -33,6 +34,7 @@ from tether.memories import MemoryNotFoundError
 from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent, MemoryRead
 from tether.memory_store import MemoryState
 from tether.structured_logging import Logger
+from tether.tool_runtime import TOOL_AUTH_HEADER, SessionRegistry
 
 
 class CaptureRequest(BaseModel):
@@ -105,11 +107,42 @@ class MemoryWorkspaceDiagnosticRead(BaseModel):
     path: str
 
 
+class MemoryTopicQuery(BaseModel):
+    """Query and result bound for current canonical Memory Topics."""
+
+    limit: PositiveInt = 50
+    q: str = ""
+
+
+class MemoryContextRequest(BaseModel):
+    """Foreground pi identity and current prompt for transient Memory selection."""
+
+    query: str
+    session_id: str
+
+
+class MemoryContextRead(BaseModel):
+    """Complete current Topics selected for one foreground model call."""
+
+    context: str
+
+
+class MemoryTopicRead(BaseModel):
+    """One current canonical Topic rendered from its workspace file."""
+
+    body: str
+    evidence: list[str]
+    path: str
+    title: str
+
+
 class _MemoryRuntime(Protocol):
     """Memory workspace service + logger required for diagnostics."""
 
     logger: Logger
     memory_workspace_service: Any
+    session_registry: SessionRegistry
+    tool_secret: str
 
 
 def _path_memory_id(raw_memory_id: str) -> UUID:
@@ -154,6 +187,52 @@ async def search_memories(
     """Keyword Search over tethered Memories."""
     outcome = await memory_capabilities.search(request, query.q, limit=query.limit)
     return rest_response(outcome)
+
+
+@router.post(
+    "/internal/memory-context",
+    response_model=MemoryContextRead,
+    include_in_schema=False,
+)
+async def foreground_memory_context(
+    request: Request, body: MemoryContextRequest
+) -> Response:
+    """Return relevant current Topics to one authenticated live pi session."""
+    runtime = _runtime(request)
+    offered_secret = request.headers.get(TOOL_AUTH_HEADER, "")
+    if not hmac.compare_digest(offered_secret, runtime.tool_secret):
+        return JSONResponse({"detail": "invalid tool secret"}, status_code=401)
+    if body.session_id not in runtime.session_registry:
+        return JSONResponse({"detail": "unknown session"}, status_code=401)
+    context = await runtime.memory_workspace_service.render_context(
+        body.query,
+        limit=8,
+        logger=runtime.logger,
+    )
+    return JSONResponse(MemoryContextRead(context=context).model_dump(mode="json"))
+
+
+@router.get("/api/memory-topics", response_model=list[MemoryTopicRead])
+async def search_memory_topics(
+    request: Request, query: Annotated[MemoryTopicQuery, Query()]
+) -> list[MemoryTopicRead]:
+    """Search valid canonical Topic files without stale index dependence."""
+    runtime = _runtime(request)
+    topics = await runtime.memory_workspace_service.search(
+        query.q,
+        limit=query.limit,
+        logger=runtime.logger,
+    )
+    workspace_root = runtime.memory_workspace_service.workspace_root
+    return [
+        MemoryTopicRead(
+            body=topic.body,
+            evidence=list(topic.evidence),
+            path=str(topic.path.relative_to(workspace_root)),
+            title=topic.title,
+        )
+        for topic in topics
+    ]
 
 
 @router.get(

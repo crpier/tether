@@ -81,6 +81,7 @@ class EphemeralPiConfig:
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     pi_binary: Path | None = None
     event_timeout_seconds: float = 60.0
+    load_tether_tools: bool = True
     trace_recorder: AgentTraceRecorder | None = None
     run_kind: RunKind = "scheduled"
 
@@ -111,6 +112,7 @@ class EphemeralPiPromptRunner:
         runtime, session_id = await spawn_pi_runtime(
             PiSpawnRequest(
                 extra_extension_paths=self.config.extra_extension_paths,
+                load_tether_tools=self.config.load_tether_tools,
                 pi_binary=self.config.pi_binary,
                 session_dir=lambda sid: self.config.session_root / sid,
                 session_id=None,

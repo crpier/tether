@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-type RunKind = Literal["conversation", "scheduled", "recall", "gmail", "gmail_purge"]
+type RunKind = Literal[
+    "conversation", "scheduled", "recall", "gmail", "gmail_purge", "dreaming"
+]
 """Host entry point that opened an agent run."""
 type Termination = Literal["completed", "error", "aborted", "timeout"]
 """Reason an agent run stopped."""

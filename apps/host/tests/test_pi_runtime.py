@@ -533,6 +533,37 @@ async def spawn_command_allowlists_only_bundled_product_skills() -> None:
 
 
 @test()
+async def spawn_command_can_disable_foreground_tether_tools() -> None:
+    """Unattended model-only runs can omit every host capability extension."""
+    command = build_pi_spawn_command(
+        PiRuntimeConfig(
+            load_tether_tools=False,
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+        ),
+        "019f08f0-0000-7000-8000-000000000002",
+    )
+
+    assert_not_in(str(AGENT_ROOT / "src/generated/index.ts"), command)
+    assert_not_in(str(AGENT_ROOT / "src/restricted-skill-read.ts"), command)
+
+
+@test()
+async def spawn_command_loads_transient_memory_context_when_configured() -> None:
+    """Foreground pi loads the extension that injects current Memory per call."""
+    command = build_pi_spawn_command(
+        PiRuntimeConfig(
+            memory_context=True,
+            tool_base_url="http://127.0.0.1:9",
+            tool_secret="test-secret",
+        ),
+        "019f08f0-0000-7000-8000-000000000002",
+    )
+
+    assert_in(str(AGENT_ROOT / "src/memory-context.ts"), command)
+
+
+@test()
 async def spawn_command_replaces_the_default_prompt_when_one_is_configured() -> None:
     """A configured system prompt rides the command line as `--system-prompt`.
 

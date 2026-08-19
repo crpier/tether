@@ -126,6 +126,7 @@ class ConversationRuntimeRegistry:
         runtime, _ = await spawn_pi_runtime(
             PiSpawnRequest(
                 extra_extension_paths=self.config.extra_extension_paths,
+                memory_context=True,
                 pi_binary=self.config.pi_binary,
                 session_dir=self.config.session_root / conversation_key,
                 session_id=str(conversation.pi_session_id),

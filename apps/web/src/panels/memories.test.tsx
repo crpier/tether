@@ -31,6 +31,29 @@ async function openCorpus(): Promise<HTMLElement> {
 }
 
 describe("Memories panel (Browse corpus)", () => {
+  test("lists canonical Dreamed Topics", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      memoryTopics: [
+        {
+          body: "- Uses a controller for almost all games.",
+          evidence: ["tether://message/019f0000-0000-7000-8000-000000000001"],
+          path: "gaming.md",
+          title: "Gaming preferences",
+        },
+      ],
+    });
+    renderApp(host);
+
+    const panel = await openCorpus();
+
+    expect(
+      await within(panel).findByRole("article", {
+        name: "Memory Topic: Gaming preferences",
+      }),
+    ).toHaveTextContent("Uses a controller for almost all games");
+  });
+
   test("lists tethered memories with edit and reject but no tether", async () => {
     const host = new FakeHost({
       authenticated: true,

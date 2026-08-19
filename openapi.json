@@ -2722,6 +2722,38 @@
         ],
         "type": "string"
       },
+      "MemoryTopicRead": {
+        "description": "One current canonical Topic rendered from its workspace file.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "evidence",
+          "path",
+          "title"
+        ],
+        "title": "MemoryTopicRead",
+        "type": "object"
+      },
       "MemoryWorkspaceDiagnosticRead": {
         "description": "One workspace-scan issue surfaced through the REST API.",
         "properties": {
@@ -6498,6 +6530,62 @@
           }
         },
         "summary": "Tether Memory"
+      }
+    },
+    "/api/memory-topics": {
+      "get": {
+        "description": "Search valid canonical Topic files without stale index dependence.",
+        "operationId": "search_memory_topics_api_memory_topics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryTopicRead"
+                  },
+                  "title": "Response Search Memory Topics Api Memory Topics Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Memory Topics"
       }
     },
     "/api/models": {

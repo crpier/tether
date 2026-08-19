@@ -4,6 +4,7 @@ import { requireData, type RestContext } from "./transport";
 
 export type Memory = components["schemas"]["MemoryRead"];
 export type MemoryState = components["schemas"]["MemoryState"];
+export type MemoryTopic = components["schemas"]["MemoryTopicRead"];
 
 export interface MemoryWorkspaceDiagnostic {
   code: string;
@@ -13,6 +14,7 @@ export interface MemoryWorkspaceDiagnostic {
 
 export interface MemoriesHost {
   listMemories(state: MemoryState): Promise<Memory[]>;
+  listMemoryTopics(q?: string): Promise<MemoryTopic[]>;
   listWorkspaceDiagnostics(): Promise<MemoryWorkspaceDiagnostic[]>;
   searchMemories(q: string): Promise<Memory[]>;
   captureMemory(content: string): Promise<Memory>;
@@ -31,6 +33,15 @@ export function createMemoriesHost(context: RestContext): MemoriesHost {
       const { data, response } = await context.client.GET("/api/memories", {
         params: { query: { state } },
       });
+      return requireData(data, response);
+    },
+    async listMemoryTopics(q = "") {
+      const { data, response } = await context.client.GET(
+        "/api/memory-topics",
+        {
+          params: { query: { q } },
+        },
+      );
       return requireData(data, response);
     },
     async listWorkspaceDiagnostics() {

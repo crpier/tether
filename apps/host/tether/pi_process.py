@@ -26,6 +26,8 @@ class PiRuntimeConfig:
     cwd: Path | None = None
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
     extension_path: Path | None = None
+    load_tether_tools: bool = True
+    memory_context: bool = False
     pi_binary: Path | None = None
     session_dir: Path | None = None
     session_id: str | None = None
@@ -55,6 +57,8 @@ class PiSpawnRequest:
     tool_base_url: str
     tool_secret: str
     extra_extension_paths: Sequence[Path] = field(default_factory=tuple)
+    load_tether_tools: bool = True
+    memory_context: bool = False
     pi_binary: Path | None = None
 
 
@@ -77,6 +81,8 @@ async def spawn_pi_runtime[RuntimeT](
             tool_base_url=request.tool_base_url,
             tool_secret=request.tool_secret,
             extra_extension_paths=request.extra_extension_paths,
+            load_tether_tools=request.load_tether_tools,
+            memory_context=request.memory_context,
             pi_binary=request.pi_binary,
             session_dir=resolved_session_dir,
             session_id=resolved_session_id,
@@ -110,11 +116,18 @@ def build_pi_spawn_command(config: PiRuntimeConfig, session_id: str) -> list[str
         command.extend(["--session-dir", str(config.session_dir)])
     if config.system_prompt is not None:
         command.extend(["--system-prompt", config.system_prompt, "--no-context-files"])
-    for extension_path in [
-        config.extension_path or agent_root / "src/generated/index.ts",
-        agent_root / "src/restricted-skill-read.ts",
-        *config.extra_extension_paths,
-    ]:
+    extension_paths = (
+        [
+            config.extension_path or agent_root / "src/generated/index.ts",
+            agent_root / "src/restricted-skill-read.ts",
+        ]
+        if config.load_tether_tools
+        else []
+    )
+    if config.memory_context:
+        extension_paths.append(agent_root / "src/memory-context.ts")
+    extension_paths.extend(config.extra_extension_paths)
+    for extension_path in extension_paths:
         command.extend(["-e", str(extension_path)])
     for skill_name in BUNDLED_PI_SKILL_NAMES:
         command.extend(["--skill", str(agent_root / "skills" / skill_name)])
