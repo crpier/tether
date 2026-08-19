@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, screen, waitFor } from "@solidjs/testing-library";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { FakeHost, navigateTo, renderApp } from "../testing/harness";
@@ -6,12 +12,15 @@ import { FakeHost, navigateTo, renderApp } from "../testing/harness";
 afterEach(cleanup);
 
 describe("Settings page", () => {
-  test("shows YouTube sync status, push toggle and logout", async () => {
+  test("shows Gmail, YouTube sync status, push toggle and logout", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
     await navigateTo("Settings");
     await screen.findByRole("heading", { name: "Settings" });
 
+    expect(
+      await screen.findByRole("region", { name: "Gmail" }),
+    ).toBeInTheDocument();
     expect(
       await screen.findByRole("region", { name: "YouTube sync" }),
     ).toBeInTheDocument();
@@ -21,13 +30,16 @@ describe("Settings page", () => {
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });
 
-  test("offers YouTube reconnection when Google authorization is usable", async () => {
+  test("offers Google reconnection for Gmail and YouTube", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
     await navigateTo("Settings");
 
     expect(
       await screen.findByRole("button", { name: "Reconnect YouTube" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Connect Gmail" }),
     ).toBeInTheDocument();
   });
 
@@ -53,6 +65,33 @@ describe("Settings page", () => {
     expect(
       await screen.findByRole("link", { name: "Continue with Google" }),
     ).toHaveAttribute("href", "https://accounts.google.test/consent");
+  });
+
+  test("starts Gmail recovery and shows the Google consent link", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.gmail.gmailAuthStatus = {
+      authorization_url: null,
+      error: null,
+      state: "disconnected",
+    };
+    host.gmail.nextGmailAuthStatus = {
+      authorization_url: "https://accounts.google.test/gmail-consent",
+      error: null,
+      state: "authorizing",
+    };
+    renderApp(host);
+    await navigateTo("Settings");
+
+    const gmailPanel = await screen.findByRole("region", { name: "Gmail" });
+    fireEvent.click(
+      await within(gmailPanel).findByRole("button", { name: "Connect Gmail" }),
+    );
+
+    expect(
+      await within(gmailPanel).findByRole("link", {
+        name: "Continue with Google",
+      }),
+    ).toHaveAttribute("href", "https://accounts.google.test/gmail-consent");
   });
 
   test("shows the server-owned model provider connection", async () => {

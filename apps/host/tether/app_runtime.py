@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
     from tether.events import EventHub
+    from tether.gmail_auth_service import GoogleGmailAuthService
     from tether.gmail_client import GmailClient
     from tether.health_connect_ingestion import HealthConnectIngestion
     from tether.health_connect_telemetry import HealthConnectTelemetry
@@ -63,6 +64,7 @@ class AppRuntime:
     ingestion_lifecycle: IngestionLifecycle
     kosync_auth: KosyncAuth
     gmail_client: GmailClient | None
+    gmail_auth_service: GoogleGmailAuthService | None
     kosync_service: KosyncService
     logger: Logger
     memory_search_service: MemorySearchService

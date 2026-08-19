@@ -1539,6 +1539,48 @@
         "title": "GenericRecord",
         "type": "object"
       },
+      "GmailAuthState": {
+        "enum": [
+          "authorizing",
+          "connected",
+          "disconnected",
+          "error"
+        ],
+        "type": "string"
+      },
+      "GmailAuthStatus": {
+        "description": "Current authorization state without credential material.",
+        "properties": {
+          "authorization_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GmailAuthState",
+            "default": "disconnected"
+          }
+        },
+        "title": "GmailAuthStatus",
+        "type": "object"
+      },
       "GrantRead": {
         "description": "HTTP representation of a live autonomy grant.",
         "properties": {
@@ -6108,6 +6150,42 @@
           }
         },
         "summary": "List Unlabeled Ebooks"
+      }
+    },
+    "/api/gmail-auth": {
+      "get": {
+        "description": "Report whether the server has usable Gmail authorization.",
+        "operationId": "gmail_auth_status_api_gmail_auth_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailAuthStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Gmail Auth Status"
+      },
+      "post": {
+        "description": "Create a Google consent request for the authenticated browser.",
+        "operationId": "start_gmail_auth_api_gmail_auth_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailAuthStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Start Gmail Auth"
       }
     },
     "/api/grants": {

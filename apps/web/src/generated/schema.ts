@@ -480,6 +480,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/gmail-auth": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Gmail Auth Status
+     * @description Report whether the server has usable Gmail authorization.
+     */
+    get: operations["gmail_auth_status_api_gmail_auth_get"];
+    put?: never;
+    /**
+     * Start Gmail Auth
+     * @description Create a Google consent request for the authenticated browser.
+     */
+    post: operations["start_gmail_auth_api_gmail_auth_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/grants": {
     parameters: {
       query?: never;
@@ -2170,6 +2194,20 @@ export interface components {
       start_time?: number | null;
       /** Start Zone Offset Seconds */
       start_zone_offset_seconds?: number | null;
+    };
+    /** @enum {string} */
+    GmailAuthState: "authorizing" | "connected" | "disconnected" | "error";
+    /**
+     * GmailAuthStatus
+     * @description Current authorization state without credential material.
+     */
+    GmailAuthStatus: {
+      /** Authorization Url */
+      authorization_url?: string | null;
+      /** Error */
+      error?: string | null;
+      /** @default disconnected */
+      state: components["schemas"]["GmailAuthState"];
     };
     /**
      * GrantRead
@@ -4412,6 +4450,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["EbookDocumentRead"][];
+        };
+      };
+    };
+  };
+  gmail_auth_status_api_gmail_auth_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GmailAuthStatus"];
+        };
+      };
+    };
+  };
+  start_gmail_auth_api_gmail_auth_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GmailAuthStatus"];
         };
       };
     };

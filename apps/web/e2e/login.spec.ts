@@ -80,6 +80,67 @@ test.describe("YouTube authorization", () => {
   });
 });
 
+test.describe("Gmail authorization", () => {
+  test.use({ serviceWorkers: "block" });
+
+  test("can be completed from Settings", async ({ page, login }) => {
+    await page.route("**/api/gmail-auth**", async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/callback")) {
+        await route.fulfill({ status: 204 });
+        return;
+      }
+      const authorizationUrl = new URL(
+        "/api/gmail-auth/callback?state=fake-state&code=fake-code",
+        page.url() || "http://127.0.0.1",
+      ).href;
+      await route.fulfill({
+        contentType: "application/json",
+        json:
+          route.request().method() === "POST"
+            ? {
+                authorization_url: authorizationUrl,
+                error: null,
+                state: "authorizing",
+              }
+            : {
+                authorization_url: null,
+                error: null,
+                state: "disconnected",
+              },
+      });
+    });
+    await login();
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: /^Settings/u })
+      .click();
+
+    const gmail = page.getByRole("region", { name: "Gmail" });
+    await gmail.getByRole("button", { name: "Connect Gmail" }).click();
+    await gmail.getByRole("link", { name: "Continue with Google" }).click();
+    await expect(page).toHaveURL(/\/api\/gmail-auth\/callback\?/u);
+    await page.unroute("**/api/gmail-auth**");
+    await page.route("**/api/gmail-auth", async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        json: {
+          authorization_url: null,
+          error: null,
+          state: "connected",
+        },
+      });
+    });
+    await page.goto("/settings?gmail_auth=connected");
+
+    await expect(page).toHaveURL(/\/settings\?gmail_auth=connected$/u);
+    await expect(
+      page
+        .getByRole("region", { name: "Gmail" })
+        .getByRole("button", { name: "Reconnect Gmail" }),
+    ).toBeVisible();
+  });
+});
+
 test("unknown routes show not found without redirecting", async ({
   page,
   login,

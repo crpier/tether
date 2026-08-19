@@ -52,6 +52,7 @@ export const queryKeys = {
   // from any surface (agent tool or REST) refetches the ready/waiting list.
   todos: ["todos"] as const,
   triggers: ["triggers"] as const,
+  gmailAuth: ["gmail-auth"] as const,
   youtube: ["youtube"] as const,
   youtubeAuth: ["youtube-auth"] as const,
   youtubeTranscriptDecisions: ["youtube", "transcript-decisions"] as const,
