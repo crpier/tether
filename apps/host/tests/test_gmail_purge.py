@@ -65,10 +65,23 @@ class PurgeTransport:
     modify_calls: list[str] = field(default_factory=list[str])
     trash_calls: list[str] = field(default_factory=list[str])
 
-    async def list_messages(
-        self, *, query: str, page_token: str | None
+    async def get_raw_message(
+        self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        _ = page_token
+        payload = self.messages.get(message_id)
+        return Ok(
+            GmailResponse(
+                status_code=404 if payload is None else 200,
+                payload={"id": message_id, "threadId": message_id, "raw": ""}
+                if payload is not None
+                else {},
+            )
+        )
+
+    async def list_messages(
+        self, *, query: str, page_token: str | None, max_results: int | None = None
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = page_token, max_results
         self.list_calls.append(query)
         return Ok(GmailResponse(status_code=200, payload=self.message_pages.pop(0)))
 

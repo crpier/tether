@@ -9,6 +9,7 @@ from tether.bucket_tools import internal_bucket_tool_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
+from tether.gmail_tools import internal_gmail_tool_routes
 from tether.health_connect_tools import internal_health_connect_tool_routes
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
@@ -66,6 +67,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "ignore_youtube_video",
             "retry_youtube_video",
             "web_search",
+            "search_gmail",
+            "read_gmail_message",
             "create_trigger",
             "list_triggers",
             "delete_trigger",
@@ -187,6 +190,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_triage_tool_routes(),
             internal_youtube_tool_routes(),
             internal_search_tool_routes(),
+            internal_gmail_tool_routes(),
             internal_trigger_tool_routes(),
             internal_recall_tool_routes(),
             internal_conversation_history_tool_routes(),
@@ -257,3 +261,27 @@ def add_travel_tool_carries_its_typed_optional_field() -> None:
     assert_eq("intent_context" in add_travel_schema["required"], False)
     assert_in("season", add_travel_schema["properties"])
     assert_eq("season" in add_travel_schema["required"], False)
+
+
+@test()
+def search_gmail_schema_exposes_pagination_bounds_and_optional_page_token() -> None:
+    """`search_gmail` uses safe pagination defaults and a token cursor."""
+    tools = {tool["name"]: tool for tool in build_tool_schema_document()["tools"]}
+    schema = cast("dict[str, Any]", tools["search_gmail"]["schema"])
+
+    assert_eq(schema["properties"]["max_results"]["default"], 20)
+    assert_eq(schema["properties"]["max_results"]["maximum"], 50)
+    assert_in("page_token", schema["properties"])
+    assert_in("query", cast("str", schema["description"]).lower())
+
+
+@test()
+def read_gmail_message_schema_carries_strict_char_limiting() -> None:
+    """`read_gmail_message` caps raw text truncation at safe bounds."""
+    tools = {tool["name"]: tool for tool in build_tool_schema_document()["tools"]}
+    schema = cast("dict[str, Any]", tools["read_gmail_message"]["schema"])
+
+    assert_eq(schema["properties"]["max_chars"]["default"], 50_000)
+    assert_eq(schema["properties"]["max_chars"]["minimum"], 1_000)
+    assert_eq(schema["properties"]["max_chars"]["maximum"], 200_000)
+    assert_eq(schema["required"], ["message_id"])

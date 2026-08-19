@@ -27,6 +27,7 @@ from tether.gmail_oauth import (
     GMAIL_READONLY_SCOPE,
     HttpGmailTransport,
 )
+from tether.gmail_tools import internal_gmail_tool_routes
 from tether.health_connect_tools import internal_health_connect_tool_routes
 from tether.host_composition import app_lifespan
 from tether.host_config import AppConfig, HostSettings
@@ -139,6 +140,7 @@ def create_app(
             *internal_triage_tool_routes(),
             *internal_youtube_tool_routes(),
             *internal_search_tool_routes(),
+            *internal_gmail_tool_routes(),
             *internal_trigger_tool_routes(),
             *internal_recall_tool_routes(),
             *internal_conversation_history_tool_routes(),

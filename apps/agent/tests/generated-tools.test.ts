@@ -53,6 +53,8 @@ describe("generated tool extension", () => {
       "ignore_youtube_video",
       "retry_youtube_video",
       "web_search",
+      "search_gmail",
+      "read_gmail_message",
       "create_trigger",
       "list_triggers",
       "delete_trigger",

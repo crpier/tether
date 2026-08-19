@@ -988,6 +988,70 @@
       }
     },
     {
+      "endpoint": "/internal/tools/search_gmail",
+      "name": "search_gmail",
+      "params_model": "GmailSearchParams",
+      "schema": {
+        "description": "Search Gmail message metadata by query term, paged by token.",
+        "properties": {
+          "query": {
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 20,
+            "description": "Maximum rows to return in this page.",
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "page_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Token"
+          }
+        },
+        "required": ["query"],
+        "title": "GmailSearchParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/read_gmail_message",
+      "name": "read_gmail_message",
+      "params_model": "ReadGmailMessageParams",
+      "schema": {
+        "description": "Read one full raw RFC 2822 source text by message id.",
+        "properties": {
+          "message_id": {
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          },
+          "max_chars": {
+            "default": 50000,
+            "description": "Return only the first N characters of raw RFC 2822 text.",
+            "maximum": 200000,
+            "minimum": 1000,
+            "title": "Max Chars",
+            "type": "integer"
+          }
+        },
+        "required": ["message_id"],
+        "title": "ReadGmailMessageParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/create_trigger",
       "name": "create_trigger",
       "params_model": "CreateTriggerParams",
