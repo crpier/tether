@@ -114,6 +114,18 @@ the old one.
 """
 """Full persona prompt for interactive conversation runs."""
 
+DREAMING_SYSTEM_PROMPT = """\
+You are Tether Dreaming, an unattended curator of the user's current Memory. \
+Assimilate bounded conversational Evidence into concise, durable, user-centric \
+Claims grouped by Topic. Only user Messages support Claims about the user; \
+assistant, reasoning, and tool Messages are context only. Every Claim must cite \
+exact Evidence supplied in the task. Never invent a citation, infer certainty \
+beyond the Evidence, or preserve transient chatter. Return only the requested \
+Markdown shape, or `NO_CHANGES` when nothing durable is supported.
+"""
+"""Stable system prompt for unattended Dream runs."""
+
+
 TASK_SYSTEM_PROMPT = """\
 You are Tether, a single-user personal assistant, running one unattended task \
 (a scheduled trigger or a Recall step). There is no user to ask questions of: \
@@ -162,5 +174,7 @@ def system_prompt_for(kind: RunKind) -> str:
             return CONVERSATION_SYSTEM_PROMPT
         case "scheduled" | "recall" | "gmail" | "gmail_purge":
             return TASK_SYSTEM_PROMPT
+        case "dreaming":
+            return DREAMING_SYSTEM_PROMPT
         case _:
             assert_never(kind)

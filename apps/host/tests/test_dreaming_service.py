@@ -521,15 +521,15 @@ async def mutation_tool_call_id_is_deterministic_for_a_run() -> None:
 
 
 @test()
-async def production_executor_writes_dream_window_to_workspace() -> None:
-    """Production executor persists a conversation window as a workspace memory file."""
+async def production_executor_curates_evidence_into_claims() -> None:
+    """Production executor writes model-curated Claims instead of transcript text."""
     conversation_service, dreaming_service, conversation_id = await _fixture()
 
     message = await _append(
         conversation_service,
         conversation_id=conversation_id,
         role="user",
-        content="draft it",
+        content="I liked Roboquest",
     )
     await _retime(
         message.id,
@@ -544,24 +544,40 @@ async def production_executor_writes_dream_window_to_workspace() -> None:
     )
     assert run is not None
 
+    class _Runner:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def run(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return (
+                "## Gaming\n\n"
+                f"- Likes Roboquest. [source](tether://message/{message.id})"
+            )
+
     with TemporaryDirectory() as workspace_root:
         root = Path(workspace_root)
         coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
         expected_tool_call_id = coordinator.mutation_tool_call_id(run)
+        runner = _Runner()
         executor = ConversationWindowDreamingExecutor(
             conversation_service,
             workspace_root=root,
             mutation_coordinator=coordinator,
+            curation_runner=runner,
         )
         result = await executor(run, logger=test_logger())
 
         assert_eq(result.status, "success")
+        assert_eq(len(runner.prompts), 1)
+        assert "I liked Roboquest" in runner.prompts[0]
 
         written = root / str(run.conversation_id) / f"{run.id}.md"
         assert written.exists()
         document = written.read_text(encoding="utf-8")
-        assert "draft it" in document
-        assert f"{run.evidence_start_seq}" in document
+        assert "title: Gaming" in document
+        assert "Likes Roboquest" in document
+        assert "## Dream slice" not in document
 
         async with dreaming_service.database.transaction() as tx:
             mutations = await tx.fetch_all(
@@ -583,6 +599,79 @@ async def production_executor_writes_dream_window_to_workspace() -> None:
 
         repeat = await executor(run, logger=test_logger())
         assert_eq(repeat.status, "no_op")
+
+
+@test()
+async def production_executor_rejects_unsupported_claim_citations() -> None:
+    """Dreaming cannot write a Claim citing anything outside its Evidence bounds."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I liked Roboquest",
+    )
+    run = await dreaming_service.queue_manual_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+
+    class _Runner:
+        async def run(self, prompt: str) -> str:
+            return (
+                "## Gaming\n\n- Likes Roboquest. "
+                "[source](tether://message/019f0000-0000-7000-8000-000000000099)"
+            )
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        result = await ConversationWindowDreamingExecutor(
+            conversation_service,
+            workspace_root=root,
+            curation_runner=_Runner(),
+        )(run, logger=test_logger())
+
+        assert_eq(result.status, "failed")
+        assert result.error is not None
+        assert "outside bounded user Evidence" in result.error
+        assert not (root / str(conversation_id) / f"{run.id}.md").exists()
+
+
+@test()
+async def production_executor_requires_a_citation_for_every_claim() -> None:
+    """Uncited model prose cannot become a current Memory Claim."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I liked Roboquest",
+    )
+    run = await dreaming_service.queue_manual_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+
+    class _Runner:
+        async def run(self, prompt: str) -> str:
+            return "## Gaming\n\n- Likes Roboquest."
+
+    with TemporaryDirectory() as workspace_root:
+        result = await ConversationWindowDreamingExecutor(
+            conversation_service,
+            workspace_root=Path(workspace_root),
+            curation_runner=_Runner(),
+        )(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert result.error is not None
+    assert "must cite bounded user Evidence" in result.error
 
 
 @test()

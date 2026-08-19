@@ -79,6 +79,75 @@ def get_workspace_diagnostics_reports_malformed_files() -> None:
 
 
 @test()
+def get_memory_topics_searches_canonical_workspace() -> None:
+    """Canonical Topic files resurface through the Memory API by relevance."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        root = Path(directory) / ".tether" / "memory"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "gaming.md").write_text(
+            "\n".join(
+                (
+                    "---",
+                    "title: Gaming preferences",
+                    "evidence:",
+                    "  - tether://message/019f0000-0000-7000-8000-000000000001",
+                    "---",
+                    "Uses a controller for almost all games.",
+                )
+            ),
+            encoding="utf-8",
+        )
+        (root / "travel.md").write_text(
+            "---\ntitle: Travel\n---\nPrefers aisle seats.\n",
+            encoding="utf-8",
+        )
+
+        login(client)
+        response = client.get("/api/memory-topics", params={"q": "controller"})
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        response.json(),
+        [
+            {
+                "body": "Uses a controller for almost all games.",
+                "evidence": ["tether://message/019f0000-0000-7000-8000-000000000001"],
+                "path": "gaming.md",
+                "title": "Gaming preferences",
+            }
+        ],
+    )
+
+
+@test()
+def internal_memory_context_resurfaces_relevant_topics() -> None:
+    """Foreground pi receives current relevant Topics outside session history."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        root = Path(directory) / ".tether" / "memory"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "gaming.md").write_text(
+            "---\ntitle: Gaming preferences\n---\nLikes Roboquest.\n",
+            encoding="utf-8",
+        )
+        (root / "travel.md").write_text(
+            "---\ntitle: Travel\n---\nPrefers aisle seats.\n",
+            encoding="utf-8",
+        )
+
+        response = client.post(
+            "/internal/memory-context",
+            headers={"X-Tether-Tool-Secret": "test-process-secret"},
+            json={"query": "What games have I liked?", "session_id": SESSION},
+        )
+
+    assert_eq(response.status_code, 200)
+    context = response.json()["context"]
+    assert_in("Gaming preferences", context)
+    assert_in("Likes Roboquest", context)
+    assert_not_in("Prefers aisle seats", context)
+
+
+@test()
 def patch_memories_edits_content_and_keeps_version_checks() -> None:
     """`PATCH /api/memories/{id}` edits `content` at the observed version."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:

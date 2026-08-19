@@ -10,6 +10,7 @@ import {
 } from "solid-js";
 import type { Accessor, JSX, Setter } from "solid-js";
 
+import { MessageContent } from "../components/message-content";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -18,6 +19,7 @@ import {
 import type {
   Memory,
   MemoryState,
+  MemoryTopic,
   MemoryWorkspaceDiagnostic,
   MemoriesHost,
 } from "../host/memories";
@@ -140,6 +142,14 @@ export function MemoriesPanel(props: {
     queryFn: () => props.api.listMemories("tethered"),
     queryKey: queryKeys.memoriesState("tethered"),
   }));
+  const memoryTopicsQuery = createQuery(() => {
+    const term = searchTerm();
+    return {
+      enabled: view() === "corpus",
+      queryFn: () => props.api.listMemoryTopics(term),
+      queryKey: queryKeys.memoryTopics(term),
+    };
+  });
   const workspaceDiagnosticsQuery = createQuery(() => ({
     queryFn: () => props.api.listWorkspaceDiagnostics(),
     queryKey: queryKeys.memoriesWorkspaceDiagnostics,
@@ -160,6 +170,9 @@ export function MemoriesPanel(props: {
     };
   });
 
+  const memoryTopics = createMemo<MemoryTopic[]>(
+    () => memoryTopicsQuery.data ?? [],
+  );
   const workspaceDiagnostics = createMemo<MemoryWorkspaceDiagnostic[]>(
     () => workspaceDiagnosticsQuery.data ?? [],
   );
@@ -192,6 +205,9 @@ export function MemoriesPanel(props: {
         queryKey: queryKeys.memoriesState("tethered"),
       });
       const term = searchTerm();
+      void queryClient.refetchQueries({
+        queryKey: queryKeys.memoryTopics(term),
+      });
       if (term.length > 0) {
         void queryClient.refetchQueries({
           queryKey: queryKeys.memoriesSearch(term),
@@ -432,6 +448,17 @@ export function MemoriesPanel(props: {
     </div>
   );
 
+  const memoryTopic = (topic: MemoryTopic) => (
+    <article
+      aria-label={`Memory Topic: ${topic.title}`}
+      class="bg-muted rounded-md border px-3 py-2 text-sm"
+    >
+      <h3 class="font-semibold">{topic.title}</h3>
+      <MessageContent streaming={false} text={topic.body} />
+      <p class="text-muted-foreground mt-1 text-xs">{topic.path}</p>
+    </article>
+  );
+
   // Rows keep their actions right-aligned so a future bulk-select checkbox
   // column can slot in on the left without reshuffling the layout.
   const memoryRow = (item: Memory) => (
@@ -573,9 +600,14 @@ export function MemoriesPanel(props: {
                     : "No tethered memories yet"}
                 </p>
               }
-              when={corpusItems().length > 0}
+              when={memoryTopics().length > 0 || corpusItems().length > 0}
             >
-              <Show when={showingClosestMatches()}>
+              <div class="mt-3 space-y-2">
+                <For each={memoryTopics()}>{memoryTopic}</For>
+              </div>
+              <Show
+                when={showingClosestMatches() && memoryTopics().length === 0}
+              >
                 <p class="text-muted-foreground mt-3 text-sm">
                   No exact matches — showing closest memories
                 </p>

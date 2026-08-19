@@ -652,6 +652,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/memory-topics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Search Memory Topics
+     * @description Search valid canonical Topic files without stale index dependence.
+     */
+    get: operations["search_memory_topics_api_memory_topics_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/models": {
     parameters: {
       query?: never;
@@ -2595,6 +2615,20 @@ export interface components {
     };
     /** @enum {string} */
     MemoryState: "loose" | "tethered";
+    /**
+     * MemoryTopicRead
+     * @description One current canonical Topic rendered from its workspace file.
+     */
+    MemoryTopicRead: {
+      /** Body */
+      body: string;
+      /** Evidence */
+      evidence: string[];
+      /** Path */
+      path: string;
+      /** Title */
+      title: string;
+    };
     /**
      * MemoryWorkspaceDiagnosticRead
      * @description One workspace-scan issue surfaced through the REST API.
@@ -4690,6 +4724,38 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["MemoryRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  search_memory_topics_api_memory_topics_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        q?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryTopicRead"][];
         };
       };
       /** @description Validation Error */

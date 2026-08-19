@@ -4,6 +4,7 @@ import type {
   Grant,
   GrantSuggestion,
   Memory,
+  MemoryTopic,
   Message,
   MemoryWorkspaceDiagnostic,
   Panel,
@@ -52,6 +53,7 @@ export class FakeHost implements WebHost {
     grants?: Grant[];
     grantSuggestions?: GrantSuggestion[];
     memories?: Memory[];
+    memoryTopics?: MemoryTopic[];
     memoryWorkspaceDiagnostics?: MemoryWorkspaceDiagnostic[];
     messages?: Message[];
     panelResults?: Record<string, PanelResults>;
@@ -65,6 +67,7 @@ export class FakeHost implements WebHost {
     this.bucket = new FakeBucketHost(options.bucketItems);
     this.chat = new FakeChatHost(options.messages);
     this.memories = new FakeMemoriesHost(options.memories);
+    this.memories.storedTopics = options.memoryTopics ?? [];
     this.memories.storedWorkspaceDiagnostics =
       options.memoryWorkspaceDiagnostics ?? [];
     this.panels = new FakePanelsHost(options.panels, options.panelResults);

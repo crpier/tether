@@ -453,6 +453,12 @@ class DreamRunExecutor(Protocol):
     ) -> Awaitable[DreamRunExecutionResult]: ...
 
 
+class DreamingCurationRunner(Protocol):
+    """Model-backed text runner that curates bounded Evidence into Claims."""
+
+    async def run(self, prompt: str) -> str: ...
+
+
 class ConversationWindowDreamingExecutor:
     """Apply one Dreaming window to the canonical Memory workspace."""
 
@@ -462,9 +468,11 @@ class ConversationWindowDreamingExecutor:
         workspace_root: Path,
         mutation_coordinator: DreamingMutationCoordinator | None = None,
         mutation_acknowledger: DreamingMutationAcknowledger | None = None,
+        curation_runner: DreamingCurationRunner | None = None,
     ) -> None:
         self.conversation_service: ConversationService = conversation_service
         self.workspace_root: Path = workspace_root
+        self.curation_runner: DreamingCurationRunner | None = curation_runner
         self.mutation_coordinator: DreamingMutationCoordinator = (
             mutation_coordinator
             if mutation_coordinator is not None
@@ -511,15 +519,31 @@ class ConversationWindowDreamingExecutor:
                 acknowledged=acknowledged,
                 error=error,
             )
-            if not acknowledged:
-                return DreamRunExecutionResult(status="failed", error=error)
-            return DreamRunExecutionResult(status="success")
+            return DreamRunExecutionResult(
+                status="success" if acknowledged else "failed",
+                error=None if acknowledged else error,
+            )
 
+        curated_body = (
+            await self.curation_runner.run(self._render_curation_prompt(run, evidence))
+            if self.curation_runner is not None
+            else None
+        )
+        if curated_body is not None:
+            normalized_curated_body = curated_body.strip()
+            if normalized_curated_body == "NO_CHANGES":
+                return DreamRunExecutionResult(status="no_op")
+            if validation_error := self._validate_curated_body(
+                normalized_curated_body, evidence
+            ):
+                return DreamRunExecutionResult(status="failed", error=validation_error)
+            curated_body = normalized_curated_body
         written = await self._write_dream_document(
             run=run,
             evidence=evidence,
             workspace_path=workspace_path,
             logger=logger,
+            curated_body=curated_body,
         )
         logger.info(
             "Dream run wrote evidence file",
@@ -541,9 +565,10 @@ class ConversationWindowDreamingExecutor:
             payload=payload,
         )
         acknowledged, error = await self.mutation_acknowledger(run.id, tool_call_id)
-        if not acknowledged:
-            return DreamRunExecutionResult(status="failed", error=error)
-        return DreamRunExecutionResult(status="success")
+        return DreamRunExecutionResult(
+            status="success" if acknowledged else "failed",
+            error=None if acknowledged else error,
+        )
 
     async def _write_dream_document(
         self,
@@ -552,6 +577,7 @@ class ConversationWindowDreamingExecutor:
         evidence: list[Message[Fetched]],
         workspace_path: AsyncPath,
         logger: Logger,
+        curated_body: str | None = None,
     ) -> AsyncPath | None:
         """Write deterministic dream evidence and report no-op when unchanged."""
         if not await workspace_path.parent.exists():
@@ -583,11 +609,15 @@ class ConversationWindowDreamingExecutor:
                 )
                 return None
 
-        content = self._render_dream_document(
-            run=run,
-            evidence=evidence,
-            previous_frontmatter=existing_frontmatter,
-            existing_document=existing_document,
+        content = (
+            self._render_curated_document(run, evidence, curated_body)
+            if curated_body is not None
+            else self._render_dream_document(
+                run=run,
+                evidence=evidence,
+                previous_frontmatter=existing_frontmatter,
+                existing_document=existing_document,
+            )
         )
         async with NamedTemporaryFile(
             mode="w",
@@ -606,6 +636,100 @@ class ConversationWindowDreamingExecutor:
         target = root / str(run.conversation_id)
         await target.mkdir(parents=True, exist_ok=True)
         return target / f"{run.id}.md"
+
+    @staticmethod
+    def _render_curation_prompt(
+        run: DreamRun[Fetched], evidence: list[Message[Fetched]]
+    ) -> str:
+        """Render exact bounded Evidence for unattended Claim curation."""
+        evidence_blocks = "\n\n".join(
+            "\n".join(
+                (
+                    f"seq: {message.seq}",
+                    f"role: {message.role}",
+                    f"created_at: {message.created_at.isoformat()}",
+                    f"uri: tether://message/{message.id}",
+                    "content:",
+                    message.content,
+                )
+            )
+            for message in evidence
+        )
+        return f"""Curate durable, user-centric Claims from this bounded Conversation Evidence.
+
+Rules:
+- Only user Messages support Claims about the user.
+- Assistant, reasoning, and tool Messages are context only.
+- Omit transient requests, implementation chatter, and assistant-authored facts.
+- Return Markdown only, grouped under `##` Topic headings.
+- Every Claim is one `- ` bullet with an inline `[source](tether://message/<id>)` citation.
+- Use only exact Message URIs below. Preserve uncertainty and corrections.
+- Return `NO_CHANGES` when no durable Claim is supported.
+
+run_id: {run.id}
+evidence_start_seq: {run.evidence_start_seq}
+evidence_end_seq: {run.evidence_end_seq}
+
+{evidence_blocks}
+"""
+
+    @staticmethod
+    def _validate_curated_body(
+        curated_body: str, evidence: list[Message[Fetched]]
+    ) -> str | None:
+        """Refuse citations that cannot support Claims in this bounded run."""
+        user_evidence_uris = {
+            f"tether://message/{message.id}"
+            for message in evidence
+            if message.role == "user"
+        }
+        claim_lines = [
+            line for line in curated_body.splitlines() if line.startswith("- ")
+        ]
+        if not claim_lines or any(
+            not re.search(r"tether://message/[0-9A-Za-z-]+", claim)
+            for claim in claim_lines
+        ):
+            return "every curated Claim must cite bounded user Evidence"
+        cited_uris = set(re.findall(r"tether://message/[0-9A-Za-z-]+", curated_body))
+        unsupported = sorted(cited_uris - user_evidence_uris)
+        if unsupported:
+            return "curated Claim cites outside bounded user Evidence: " + ", ".join(
+                unsupported
+            )
+        return None
+
+    @staticmethod
+    def _render_curated_document(
+        run: DreamRun[Fetched],
+        evidence: list[Message[Fetched]],
+        curated_body: str,
+    ) -> str:
+        """Wrap curated Claims in canonical Topic frontmatter."""
+        normalized_body = curated_body.strip()
+        heading = next(
+            (
+                line.removeprefix("##").strip()
+                for line in normalized_body.splitlines()
+                if line.startswith("##") and line.removeprefix("##").strip()
+            ),
+            "Conversation insights",
+        )
+        frontmatter = {
+            "title": heading,
+            "kind": run.kind,
+            "conversation": str(run.conversation_id),
+            "evidence_start_seq": run.evidence_start_seq,
+            "evidence_end_seq": run.evidence_end_seq,
+            "evidence": ConversationWindowDreamingExecutor._message_uris(evidence),
+        }
+        return (
+            "---\n"
+            + yaml_dump(frontmatter, default_flow_style=False, sort_keys=False)
+            + "---\n\n"
+            + normalized_body
+            + "\n"
+        )
 
     def _render_dream_document(
         self,

@@ -3,12 +3,14 @@ import type {
   MemoriesHost,
   Memory,
   MemoryState,
+  MemoryTopic,
 } from "../../host/memories";
 import { ApiError } from "../../host/error";
 import { memory } from "../fixtures";
 
 export class FakeMemoriesHost implements MemoriesHost {
   storedMemories: Memory[];
+  storedTopics: MemoryTopic[] = [];
   captureMemoryCalls: string[] = [];
   editMemoryCalls: { content: string; memoryId: string; version: number }[] =
     [];
@@ -33,6 +35,17 @@ export class FakeMemoriesHost implements MemoriesHost {
     this.listMemoriesCalls += 1;
     return Promise.resolve(
       this.storedMemories.filter((candidate) => candidate.state === state),
+    );
+  }
+
+  listMemoryTopics(q = ""): Promise<MemoryTopic[]> {
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return Promise.resolve(
+      this.storedTopics.filter((topic) =>
+        terms.every((term) =>
+          `${topic.title} ${topic.body}`.toLowerCase().includes(term),
+        ),
+      ),
     );
   }
 
