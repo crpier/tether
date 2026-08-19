@@ -180,6 +180,24 @@ restarts live conversation runtimes. `pi-agent/auth.json` is durable across
 deploys but is not currently in the backup set; web reauthorization or a
 separately secured server-side backup is the recovery path.
 
+For Gmail support, keep the token directories on the `data` volume for durability,
+matching `compose.yaml`:
+- `TETHER_GMAIL_CLIENT_SECRET_PATH=/data/gmail/client-secret.json`
+- `TETHER_GMAIL_TOKEN_PATH=/data/gmail/token.json`
+
+To enable raw Gmail tools, ensure both Gmail paths in `.env` are set, then authorize on the VM:
+```sh
+# After editing .env under /srv/tether and confirming .env lists:
+# TETHER_GMAIL_CLIENT_SECRET_PATH=/data/gmail/client-secret.json
+# TETHER_GMAIL_TOKEN_PATH=/data/gmail/token.json
+ssh tether@<box> 'cd /srv/tether && just gmail-auth'
+```
+Background triage is opt-in and independent:
+```sh
+TETHER_GMAIL_SYNC_ENABLED=false  # leave off for tools-only access
+# set true for background proposal flow once the token is in place
+```
+
 Fill in `restic.env` — see [Backups](#backups) below.
 
 ### 3. First deploy

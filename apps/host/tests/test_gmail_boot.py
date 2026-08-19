@@ -42,10 +42,10 @@ class FakeGmailTransport:
     """A transport that would fail the test if ever called."""
 
     async def list_messages(
-        self, *, query: str, page_token: str | None
+        self, *, query: str, page_token: str | None, max_results: int | None = None
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        message = "the disabled gate must never call the Gmail transport"
-        raise AssertionError(message)
+        _ = query, page_token, max_results
+        raise AssertionError("the disabled gate must never call the Gmail transport")
 
     async def get_message(
         self, message_id: str
@@ -83,9 +83,9 @@ class BootGmailTransport:
     list_calls: int = 0
 
     async def list_messages(
-        self, *, query: str, page_token: str | None
+        self, *, query: str, page_token: str | None, max_results: int | None = None
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        _ = query, page_token
+        _ = query, page_token, max_results
         self.list_calls += 1
         return Ok(GmailResponse(payload={"messages": []}, status_code=self.status_code))
 

@@ -65,10 +65,15 @@ class WriteTransport:
     trash_calls: list[str] = field(default_factory=list[str])
     write_status: int = 200
 
-    async def list_messages(
-        self, *, query: str, page_token: str | None
+    async def get_raw_message(
+        self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        _ = query, page_token
+        return Ok(GmailResponse(status_code=200, payload={}))
+
+    async def list_messages(
+        self, *, query: str, page_token: str | None, max_results: int | None = None
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = query, page_token, max_results
         return Ok(GmailResponse(status_code=200, payload={}))
 
     async def get_message(

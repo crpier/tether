@@ -24,11 +24,13 @@ services:
       TETHER_TELEMETRY_DATABASE_PATH: /data/telemetry.sqlite3
       TETHER_KB_ROOT: /data/kb
       FASTEMBED_CACHE_PATH: /cache/fastembed
-      # YouTube's Web OAuth client secret and UI-authorized token live on the
-      # durable data volume. Settings writes and refreshes the token here, so
-      # reconnecting and redeploying never require image changes.
+      # Gmail and YouTube OAuth client secrets and tokens live on the
+      # durable data volume. Settings writes refresh tokens here, so reconnecting
+      # and redeploying never require image changes.
       TETHER_YOUTUBE_TOKEN_PATH: /data/youtube/token.json
       TETHER_YOUTUBE_CLIENT_SECRET_PATH: /data/youtube/client-secret.json
+      TETHER_GMAIL_TOKEN_PATH: /data/gmail/token.json
+      TETHER_GMAIL_CLIENT_SECRET_PATH: /data/gmail/client-secret.json
       # Provider credentials for the embedded pi runtime. This is deliberately
       # separate from pi sessions (stored under /data/kb/pi-sessions) and from
       # Tether app secrets in .env. It holds pi's auth.json, e.g. Codex OAuth

@@ -109,11 +109,13 @@ class HttpGmailTransport:
         await self._client.aclose()
 
     async def list_messages(
-        self, *, query: str, page_token: str | None
+        self, *, query: str, page_token: str | None, max_results: int | None = None
     ) -> Result[GmailResponse, GmailTransportFailure]:
         params: dict[str, str] = {"q": query}
         if page_token is not None:
             params["pageToken"] = page_token
+        if max_results is not None:
+            params["maxResults"] = str(max_results)
         return await self._get(
             f"/gmail/v1/users/{_USER_ID}/messages",
             operation="list-messages",
@@ -127,6 +129,15 @@ class HttpGmailTransport:
             f"/gmail/v1/users/{_USER_ID}/messages/{message_id}",
             operation="get-message",
             params={"format": "full"},
+        )
+
+    async def get_raw_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailTransportFailure]:
+        return await self._get(
+            f"/gmail/v1/users/{_USER_ID}/messages/{message_id}",
+            operation="get-raw-message",
+            params={"format": "raw"},
         )
 
     async def list_labels(

@@ -13,6 +13,7 @@ from __future__ import annotations
 from tether.artifact_tools import ARTIFACT_TOOL_SPECS
 from tether.bucket_tools import BUCKET_TOOL_SPECS
 from tether.conversation_history_tools import CONVERSATION_HISTORY_TOOL_SPECS
+from tether.gmail_tools import GMAIL_TOOL_SPECS
 from tether.health_connect_tools import HEALTH_CONNECT_TOOL_SPECS
 from tether.kosync_tools import KOSYNC_TOOL_SPECS
 from tether.panel_tools import PANEL_TOOL_SPECS
@@ -40,6 +41,7 @@ def all_tool_specs() -> tuple[ToolSpec, ...]:
         *TRIAGE_TOOL_SPECS,
         *YOUTUBE_TOOL_SPECS,
         *SEARCH_TOOL_SPECS,
+        *GMAIL_TOOL_SPECS,
         *TRIGGER_TOOL_SPECS,
         *RECALL_TOOL_SPECS,
         *CONVERSATION_HISTORY_TOOL_SPECS,

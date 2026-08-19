@@ -103,8 +103,8 @@ class FakeGmailTransport:
     message_pages: list[dict[str, object]]
     messages: dict[str, dict[str, object]]
     labels: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
-    list_calls: list[tuple[str, str | None]] = field(
-        default_factory=list[tuple[str, str | None]]
+    list_calls: list[tuple[str, str | None, int | None]] = field(
+        default_factory=list[tuple[str, str | None, int | None]]
     )
     modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...], tuple[str, ...]]]
@@ -112,10 +112,23 @@ class FakeGmailTransport:
     trash_calls: list[str] = field(default_factory=list[str])
     write_status: int = 200
 
-    async def list_messages(
-        self, *, query: str, page_token: str | None
+    async def get_raw_message(
+        self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        self.list_calls.append((query, page_token))
+        payload = self.messages.get(message_id)
+        return Ok(
+            GmailResponse(
+                status_code=404 if payload is None else 200,
+                payload={"id": message_id, "threadId": message_id, "raw": ""}
+                if payload is not None
+                else {},
+            )
+        )
+
+    async def list_messages(
+        self, *, query: str, page_token: str | None, max_results: int | None = None
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        self.list_calls.append((query, page_token, max_results))
         return Ok(GmailResponse(status_code=200, payload=self.message_pages.pop(0)))
 
     async def get_message(

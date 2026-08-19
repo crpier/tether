@@ -427,7 +427,8 @@ def environment_app_factory_requires_app_password_and_session_secret() -> None:
         [
             sys.executable,
             "-c",
-            "from tether.server import create_app_from_environment; create_app_from_environment()",
+            "from tether.server import create_app_from_environment; "
+            "create_app_from_environment()",
         ],
         capture_output=True,
         check=False,
@@ -526,10 +527,21 @@ def app_lifespan_closes_gmail_transport_after_its_worker_stops() -> None:
         async def aclose(self) -> None:
             self.close_calls += 1
 
-        async def list_messages(
-            self, *, query: str, page_token: str | None
+        async def get_raw_message(
+            self, message_id: str
         ) -> Result[GmailResponse, GmailNetworkFailure]:
-            _ = query, page_token
+            _ = message_id
+            return Ok(
+                GmailResponse(
+                    payload={"id": "m1", "threadId": "t1", "raw": ""},
+                    status_code=200,
+                )
+            )
+
+        async def list_messages(
+            self, *, query: str, page_token: str | None, max_results: int | None = None
+        ) -> Result[GmailResponse, GmailNetworkFailure]:
+            _ = query, page_token, max_results
             self.list_calls += 1
             return Ok(GmailResponse(payload={"messages": []}, status_code=200))
 

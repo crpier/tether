@@ -27,6 +27,7 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 type GmailOperation = Literal[
     "get-message",
+    "get-raw-message",
     "list-labels",
     "list-messages",
     "modify-labels",
@@ -113,6 +114,32 @@ class GmailMessage:
     thread_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class GmailMessageIdentity:
+    """One validated Gmail search row identity."""
+
+    message_id: str
+    thread_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GmailSearchPage:
+    """One validated Gmail search page."""
+
+    messages: tuple[GmailMessageIdentity, ...]
+    next_page_token: str | None
+    result_size_estimate: int
+
+
+@dataclass(frozen=True, slots=True)
+class GmailRawMessage:
+    """One validated raw RFC 2822 payload."""
+
+    message_id: str
+    raw_rfc2822: str
+    thread_id: str
+
+
 class GmailTransport(Protocol):
     """Async HTTP port consumed by `GmailClient`."""
 
@@ -128,8 +155,14 @@ class GmailTransport(Protocol):
         """Fetch account labels."""
         ...
 
+    async def get_raw_message(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailTransportFailure]:
+        """Fetch one message as RFC 2822 raw text."""
+        ...
+
     async def list_messages(
-        self, *, query: str, page_token: str | None
+        self, *, query: str, page_token: str | None, max_results: int | None = None
     ) -> Result[GmailResponse, GmailTransportFailure]:
         """Fetch one page of message identities."""
         ...
@@ -162,6 +195,19 @@ def _decode_base64url(data: str) -> str:
         return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
     except binascii.Error:
         return ""
+
+
+def _decode_base64url_strict(data: str) -> str | None:
+    """Decode an unpadded Gmail body part, failing on malformed input."""
+    padded = data + "=" * (-len(data) % 4)
+    try:
+        return base64.b64decode(
+            padded.encode("ascii"),
+            altchars=b"-_",
+            validate=True,
+        ).decode("utf-8")
+    except binascii.Error, UnicodeDecodeError, ValueError:
+        return None
 
 
 def _strip_html(html_body: str) -> str:
@@ -269,6 +315,113 @@ def _parse_message(
     )
 
 
+def _parse_search_page(  # noqa: PLR0911 - each branch maps one protocol failure
+    payload: Mapping[str, object], *, operation: GmailOperation
+) -> Result[GmailSearchPage, GmailProtocolFailure]:
+    """Validate one search response before exposing identities and metadata."""
+    raw_messages = payload.get("messages")
+    if not isinstance(raw_messages, list):
+        return Err(
+            GmailProtocolFailure(
+                message="search page payload has invalid messages",
+                operation=operation,
+            )
+        )
+    identities: list[GmailMessageIdentity] = []
+    for raw_identity in cast("list[object]", raw_messages):
+        if not isinstance(raw_identity, Mapping):
+            return Err(
+                GmailProtocolFailure(
+                    message="search page payload has an invalid identity",
+                    operation=operation,
+                )
+            )
+        identity = cast("Mapping[str, object]", raw_identity)
+        message_id = identity.get("id")
+        thread_id = identity.get("threadId")
+        if not isinstance(message_id, str) or not message_id:
+            return Err(
+                GmailProtocolFailure(
+                    message="search page payload has an invalid message_id",
+                    operation=operation,
+                )
+            )
+        if not isinstance(thread_id, str) or not thread_id:
+            return Err(
+                GmailProtocolFailure(
+                    message="search page payload has an invalid thread_id",
+                    operation=operation,
+                )
+            )
+        identities.append(
+            GmailMessageIdentity(message_id=message_id, thread_id=thread_id)
+        )
+    raw_estimate = payload.get("resultSizeEstimate")
+    if not isinstance(raw_estimate, int) or raw_estimate < 0:
+        return Err(
+            GmailProtocolFailure(
+                message="search page payload has invalid result_size_estimate",
+                operation=operation,
+            )
+        )
+    next_page_token = payload.get("nextPageToken")
+    if next_page_token is not None and not isinstance(next_page_token, str):
+        return Err(
+            GmailProtocolFailure(
+                message="search page payload has an invalid next page token",
+                operation=operation,
+            )
+        )
+    return Ok(
+        GmailSearchPage(
+            messages=tuple(identities),
+            next_page_token=next_page_token or None,
+            result_size_estimate=raw_estimate,
+        )
+    )
+
+
+def _parse_raw_message(
+    payload: Mapping[str, object], *, operation: GmailOperation
+) -> Result[GmailRawMessage, GmailProtocolFailure]:
+    """Validate a `messages.get?format=raw` payload before returning RFC 2822."""
+    message_id = payload.get("id")
+    thread_id = payload.get("threadId")
+    raw = payload.get("raw")
+    if not isinstance(message_id, str) or not message_id:
+        return Err(
+            GmailProtocolFailure(
+                message="raw message payload has an invalid message_id",
+                operation=operation,
+            )
+        )
+    if not isinstance(thread_id, str) or not thread_id:
+        return Err(
+            GmailProtocolFailure(
+                message="raw message payload has an invalid thread_id",
+                operation=operation,
+            )
+        )
+    if not isinstance(raw, str):
+        return Err(
+            GmailProtocolFailure(
+                message="raw message payload has no raw body",
+                operation=operation,
+            )
+        )
+    decoded = _decode_base64url_strict(raw)
+    if decoded is None:
+        return Err(
+            GmailProtocolFailure(
+                message="raw message payload has invalid raw content",
+                operation=operation,
+            )
+        )
+    return Ok(
+        GmailRawMessage(message_id=message_id, raw_rfc2822=decoded, thread_id=thread_id)
+    )
+
+
 def _response_failure(
     response: GmailResponse, *, operation: GmailOperation
 ) -> GmailAuthenticationFailure | GmailHttpFailure | None:
@@ -299,7 +452,9 @@ class GmailClient:
         page_token: str | None = None
         while True:
             transported = await self.transport.list_messages(
-                query=query, page_token=page_token
+                query=query,
+                page_token=page_token,
+                max_results=None,
             )
             if isinstance(transported, Err):
                 return Err(transported.error)
@@ -348,6 +503,26 @@ class GmailClient:
                 )
                 return Ok(message_ids)
 
+    async def search_messages(
+        self,
+        *,
+        query: str,
+        logger: Logger,
+        max_results: int | None = None,
+        page_token: str | None = None,
+    ) -> Result[GmailSearchPage, GmailFailure]:
+        """Fetch and validate one bounded search page."""
+        _ = logger
+        transported = await self.transport.list_messages(
+            query=query, page_token=page_token, max_results=max_results
+        )
+        if isinstance(transported, Err):
+            return Err(transported.error)
+        response = transported.value
+        if failure := _response_failure(response, operation="list-messages"):
+            return Err(failure)
+        return _parse_search_page(response.payload, operation="list-messages")
+
     async def get_message(self, message_id: str) -> Result[GmailMessage, GmailFailure]:
         """Fetch and validate one message."""
         transported = await self.transport.get_message(message_id)
@@ -357,6 +532,18 @@ class GmailClient:
         if failure := _response_failure(response, operation="get-message"):
             return Err(failure)
         return _parse_message(response.payload, operation="get-message")
+
+    async def get_raw_message(
+        self, message_id: str
+    ) -> Result[GmailRawMessage, GmailFailure]:
+        """Fetch one message and decode strict RFC 2822 raw source."""
+        transported = await self.transport.get_raw_message(message_id)
+        if isinstance(transported, Err):
+            return Err(transported.error)
+        response = transported.value
+        if failure := _response_failure(response, operation="get-raw-message"):
+            return Err(failure)
+        return _parse_raw_message(response.payload, operation="get-raw-message")
 
     async def resolve_label_id(  # noqa: PLR0911 - provider failures exit explicitly
         self, name: str
@@ -480,10 +667,13 @@ __all__ = [
     "GmailFailure",
     "GmailHttpFailure",
     "GmailMessage",
+    "GmailMessageIdentity",
     "GmailNetworkFailure",
     "GmailOperation",
     "GmailProtocolFailure",
+    "GmailRawMessage",
     "GmailResponse",
+    "GmailSearchPage",
     "GmailTransport",
     "GmailTransportFailure",
     "GmailWriteOutcome",
