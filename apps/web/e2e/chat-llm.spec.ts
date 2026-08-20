@@ -21,15 +21,42 @@ test.describe("chat (live LLM)", () => {
     "set TETHER_E2E_LLM=1 with a configured default model + provider key and an installed apps/agent runtime",
   );
 
+  test("a scheduled prompt enters chat and receives an assistant reply", async ({
+    page,
+    login,
+  }) => {
+    await login();
+
+    const prompt = `Scheduled e2e ${String(Date.now())}: reply with pong.`;
+    const assistantMessages = page.getByLabel("Tether message");
+    const assistantCount = await assistantMessages.count();
+    const response = await page.request.post("/api/triggers", {
+      data: {
+        action_kind: "prompt",
+        fire_at: new Date(Date.now() + 1_000).toISOString(),
+        payload: prompt,
+        recurrence: "once",
+      },
+    });
+    expect(response.status()).toBe(201);
+
+    await expect(
+      page.getByLabel("You message").filter({ hasText: prompt }),
+    ).toBeVisible({ timeout: 60_000 });
+    await expect(assistantMessages).toHaveCount(assistantCount + 1, {
+      timeout: 60_000,
+    });
+  });
+
   test("sends a message and receives an assistant reply", async ({
     page,
     login,
   }) => {
     await login();
 
-    const composer = page.getByLabel("Message");
+    const composer = page.getByRole("textbox", { name: "Message" });
     await composer.fill("Reply with the single word: pong.");
-    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
 
     // The user's message echoes into the transcript immediately.
     await expect(page.locator('[aria-label="Chat transcript"]')).toContainText(

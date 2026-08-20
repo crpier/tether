@@ -104,15 +104,17 @@ class TriggerDispatcher:
         *,
         notifier: TriggerNotifier,
         agent_runner: AgentPromptRunner,
+        prompt_push_sender: PushSender | None = None,
     ) -> None:
         self.agent_runner: AgentPromptRunner = agent_runner
         self.notifier: TriggerNotifier = notifier
+        self.prompt_push_sender: PushSender | None = prompt_push_sender
 
     async def dispatch(self, trigger: ScheduledTrigger[Fetched]) -> None:
-        """Deliver a message payload or first resolve an agent prompt."""
-        message = (
-            trigger.payload
-            if trigger.action_kind == "message"
-            else await self.agent_runner.run(trigger.payload)
-        )
-        await self.notifier.deliver(trigger=trigger, message=message)
+        """Route fixed messages to Inbox and agent prompts to chat plus Web Push."""
+        if trigger.action_kind == "message":
+            await self.notifier.deliver(trigger=trigger, message=trigger.payload)
+            return
+        answer = await self.agent_runner.run(trigger.payload)
+        if self.prompt_push_sender is not None:
+            await self.prompt_push_sender.send(answer)

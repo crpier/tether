@@ -740,7 +740,7 @@ describe("Triggers panel", () => {
 
     expect(
       screen.getByText(
-        "The agent runs your text when it fires; its answer arrives as a notification.",
+        "Your text is sent to chat when it fires; the agent answers there.",
       ),
     ).toBeInTheDocument();
   });

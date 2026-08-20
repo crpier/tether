@@ -238,10 +238,10 @@ async def tick_claims_each_trigger_before_dispatch() -> None:
 
 
 @test()
-async def tick_runs_an_agent_prompt_and_delivers_the_result() -> None:
-    """An agent-prompt trigger runs through the runner; its output is delivered."""
+async def tick_runs_an_agent_prompt_through_the_prompt_runner() -> None:
+    """An agent-prompt trigger submits its payload to the chat runner."""
     service = await load_fixture(scheduler_service())
-    trigger = await service.create(
+    _ = await service.create(
         OnceTriggerSpec(
             action_kind="prompt",
             payload="summarise my day",
@@ -260,7 +260,37 @@ async def tick_runs_an_agent_prompt_and_delivers_the_result() -> None:
     await scheduler.drain()
 
     assert_eq(runner.prompts, ["summarise my day"])
-    assert_eq(notifier.delivered, [(str(trigger.id), "you have 3 meetings")])
+
+
+@test()
+async def an_agent_prompt_answer_is_sent_over_web_push() -> None:
+    """The chat answer retains closed-tab Web Push delivery."""
+    service = await load_fixture(scheduler_service())
+    _ = await service.create(
+        OnceTriggerSpec(
+            action_kind="prompt",
+            payload="summarise my day",
+            fire_at=BASE,
+        ),
+        now=BASE,
+        logger=LOGGER,
+    )
+    push_sender = RecordingPushSender()
+    scheduler = Scheduler(
+        service=service,
+        dispatcher=TriggerDispatcher(
+            notifier=RecordingNotifier(),
+            agent_runner=StubRunner("you have 3 meetings"),
+            prompt_push_sender=push_sender,
+        ),
+        clock=ManualClock(BASE),
+        logger=LOGGER,
+    )
+
+    _ = await scheduler.tick()
+    await scheduler.drain()
+
+    assert_eq(push_sender.sent, ["you have 3 meetings"])
 
 
 @test()

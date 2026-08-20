@@ -9,10 +9,9 @@ completes, a recurring one re-arms) and a failed one is backed off via
 `next_attempt_at` for a later retry.
 
 Dispatch itself is a `TriggerDispatcher`: a fixed-message trigger delivers its
-payload verbatim, while an agent-prompt trigger runs the payload through an
-ephemeral pi process and delivers the result. Delivery is a `TriggerNotifier`,
-which by default fans a `NotifyEvent` out over the in-process event hub to every
-connected browser.
+payload through Inbox notification channels, while an agent-prompt trigger runs
+as a normal turn in the default Conversation. The resulting assistant message
+also retains configured Web Push delivery.
 
 The loop takes its time from a `Clock`, so tests drive it with a controlled
 clock and a fake dispatcher and assert fire + retry behaviour without sleeping.
@@ -26,13 +25,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from snekql.sqlite import Fetched
 
 from tether.agent_run import record_run
 from tether.agent_trace_model import RunKind
 from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.chat_turn import ChatTurnDependencies, run_chat_prompt
+from tether.events import EventPublisher, InvalidateEvent
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime
@@ -159,6 +160,49 @@ class EphemeralPiPromptRunner:
                 case _:
                     pass
         return final_text
+
+
+class _BackgroundChatSink:
+    """Discard streaming frames while a scheduled turn settles durably."""
+
+    async def send_json(self, data: Any) -> None:
+        """Drop one transient frame; the transcript is refreshed after the turn."""
+        _ = data
+
+
+class ScheduledChatPromptRunner:
+    """Run a scheduled prompt through the default Conversation.
+
+    The canonical transcript receives the same user and agent rows as an
+    interactive prompt. Connected browsers reload the settled transcript once
+    the unattended turn ends.
+    """
+
+    def __init__(
+        self,
+        dependencies: ChatTurnDependencies,
+        *,
+        event_publisher: EventPublisher,
+    ) -> None:
+        self.dependencies: ChatTurnDependencies = dependencies
+        self.event_publisher: EventPublisher = event_publisher
+
+    async def run(self, prompt: str) -> str:
+        """Submit `prompt` to the default chat and return its settled answer."""
+        conversation = (
+            await self.dependencies.conversation_service.list_conversations()
+        )[0]
+        try:
+            return await run_chat_prompt(
+                _BackgroundChatSink(),
+                self.dependencies,
+                conversation_id=conversation.id,
+                content=prompt,
+            )
+        finally:
+            await self.event_publisher.publish(
+                InvalidateEvent(keys=["messages", "conversations"])
+            )
 
 
 @dataclass(frozen=True, slots=True)

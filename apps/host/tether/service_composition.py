@@ -23,6 +23,7 @@ from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_item_search import BucketItemSearchService
 from tether.bucket_items import BucketItemService
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
+from tether.chat_turn import ChatTurnDependencies, ConversationTurnQueue
 from tether.conversations import ConversationService
 from tether.dreaming import (
     ConversationWindowDreamingExecutor,
@@ -53,6 +54,7 @@ from tether.model_selection import AgentModelCatalog
 from tether.notification_delivery import (
     EventNotifier,
     PushDeliveryNotifier,
+    PushSender,
     TriggerDispatcher,
     TriggerNotifier,
 )
@@ -77,6 +79,7 @@ from tether.recall_grading import AnswerGrader, PiAnswerGrader
 from tether.review import ReviewService
 from tether.scheduler import (
     EphemeralPiPromptRunner,
+    ScheduledChatPromptRunner,
     Scheduler,
     SchedulerConfig,
     SystemClock,
@@ -105,11 +108,14 @@ class _SchedulerDependencies:
 
     bootstrap: HostBootstrap
     config: AppConfig
+    conversation_runtime_registry: ConversationRuntimeRegistry
+    conversation_service: ConversationService
+    conversation_turn_queue: ConversationTurnQueue
     database: Database
+    dreaming_enabled: bool
+    dreaming_service: DreamingService
     event_hub: EventHub
-    kb_root: Path
     logger: Logger
-    model_catalog: AgentModelCatalog
     push_service: PushService
     trigger_service: TriggerService
 
@@ -125,51 +131,53 @@ class _SchedulerComponent:
 def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponent:
     """Wire the Scheduled-trigger scheduler over its dispatch collaborators.
 
-    Agent-prompt triggers spawn ephemeral pi processes under a dedicated session
-    root; fixed-message triggers never touch pi. Delivery goes out over the
-    in-process event hub as `notify` frames and is persisted through the
-    notification service so a fired reminder survives a reload. The typed
-    dependency bundle keeps every collaborator explicit at this boundary.
+    Agent-prompt triggers run through the default Conversation; fixed-message
+    triggers retain durable Inbox delivery. Both action kinds retain configured
+    Web Push delivery. The typed dependency bundle keeps every collaborator
+    explicit at this boundary.
     """
     notification_service = NotificationService(
         store=NotificationStore(dependencies.database),
         event_publisher=dependencies.event_hub,
     )
-    prompt_runner = EphemeralPiPromptRunner(
-        ephemeral_pi_config(
-            dependencies.bootstrap,
-            config=dependencies.config,
-            kb_root=dependencies.kb_root,
-            run_kind="scheduled",
-            model=dependencies.model_catalog.default_config,
-        )
+    prompt_runner = ScheduledChatPromptRunner(
+        ChatTurnDependencies(
+            conversation_service=dependencies.conversation_service,
+            dreaming_enabled=dependencies.dreaming_enabled,
+            dreaming_service=dependencies.dreaming_service,
+            logger=dependencies.logger,
+            runtime_registry=dependencies.conversation_runtime_registry,
+            trace_recorder=dependencies.bootstrap.trace_recorder,
+            turn_queue=dependencies.conversation_turn_queue,
+        ),
+        event_publisher=dependencies.event_hub,
     )
     notifier: TriggerNotifier = EventNotifier(
         dependencies.event_hub, notification_service
     )
+    prompt_push_sender: PushSender | None = None
     if (
         dependencies.config.vapid_public_key
         and dependencies.config.vapid_private_key
         and dependencies.config.vapid_subject
     ):
-        notifier = PushDeliveryNotifier(
-            notifier,
-            StoredPushSender(
-                push_service=dependencies.push_service,
-                transport=VapidWebPushTransport(
-                    VapidConfig(
-                        private_key=dependencies.config.vapid_private_key,
-                        public_key=dependencies.config.vapid_public_key,
-                        subject=dependencies.config.vapid_subject,
-                    )
-                ),
+        prompt_push_sender = StoredPushSender(
+            push_service=dependencies.push_service,
+            transport=VapidWebPushTransport(
+                VapidConfig(
+                    private_key=dependencies.config.vapid_private_key,
+                    public_key=dependencies.config.vapid_public_key,
+                    subject=dependencies.config.vapid_subject,
+                )
             ),
         )
+        notifier = PushDeliveryNotifier(notifier, prompt_push_sender)
     scheduler = Scheduler(
         service=dependencies.trigger_service,
         dispatcher=TriggerDispatcher(
             notifier=notifier,
             agent_runner=prompt_runner,
+            prompt_push_sender=prompt_push_sender,
         ),
         clock=SystemClock(),
         logger=dependencies.logger,
@@ -555,6 +563,7 @@ class CoreServices:
     bucket_item_service: BucketItemService
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
+    conversation_turn_queue: ConversationTurnQueue
     event_hub: EventHub
     kosync_auth: KosyncAuth
     kosync_service: KosyncService
@@ -690,6 +699,7 @@ async def compose_core_services(
         tracer=host.telemetry.tracer,
         logger=host.logger,
     )
+    conversation_turn_queue = ConversationTurnQueue()
     runtime_registry = ConversationRuntimeRegistry(
         RuntimeRegistryConfig(
             model_catalog=model_catalog,
@@ -730,11 +740,14 @@ async def compose_core_services(
         _SchedulerDependencies(
             bootstrap=bootstrap,
             config=config,
+            conversation_runtime_registry=runtime_registry,
+            conversation_service=conversation_service,
+            conversation_turn_queue=conversation_turn_queue,
             database=host.database,
+            dreaming_enabled=config.dreaming_enabled,
+            dreaming_service=dreaming_service,
             event_hub=event_hub,
-            kb_root=host.kb_root,
             logger=host.logger,
-            model_catalog=model_catalog,
             push_service=push_service,
             trigger_service=trigger_service,
         )
@@ -804,6 +817,7 @@ async def compose_core_services(
         bucket_item_service=bucket_item_service,
         conversation_runtime_registry=runtime_registry,
         conversation_service=conversation_service,
+        conversation_turn_queue=conversation_turn_queue,
         event_hub=event_hub,
         kosync_auth=presentation.kosync_auth,
         kosync_service=presentation.kosync_service,

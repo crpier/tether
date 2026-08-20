@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from tether.bucket_item_search import BucketItemSearchService
     from tether.bucket_items import BucketItemService
     from tether.chat_engine import ConversationRuntimeRegistry
+    from tether.chat_turn import ConversationTurnQueue
     from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
     from tether.events import EventHub
@@ -58,6 +59,7 @@ class AppRuntime:
     bucket_item_service: BucketItemService
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
+    conversation_turn_queue: ConversationTurnQueue
     event_hub: EventHub
     health_connect_ingestion: HealthConnectIngestion
     health_connect_telemetry: HealthConnectTelemetry
