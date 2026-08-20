@@ -101,6 +101,14 @@ class GmailWriteResult:
 
 
 @dataclass(frozen=True, slots=True)
+class GmailLabel:
+    """One Gmail account label available for searching or mutation."""
+
+    label_id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class GmailMessage:
     """One validated and parsed Gmail message."""
 
@@ -319,7 +327,7 @@ def _parse_search_page(  # noqa: PLR0911 - each branch maps one protocol failure
     payload: Mapping[str, object], *, operation: GmailOperation
 ) -> Result[GmailSearchPage, GmailProtocolFailure]:
     """Validate one search response before exposing identities and metadata."""
-    raw_messages = payload.get("messages")
+    raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list):
         return Err(
             GmailProtocolFailure(
@@ -545,45 +553,60 @@ class GmailClient:
             return Err(failure)
         return _parse_raw_message(response.payload, operation="get-raw-message")
 
-    async def resolve_label_id(  # noqa: PLR0911 - provider failures exit explicitly
-        self, name: str
-    ) -> Result[str | None, GmailFailure]:
-        """Resolve a display name to a label id."""
+    async def list_labels(self) -> Result[tuple[GmailLabel, ...], GmailFailure]:
+        """Fetch and validate every Gmail account label."""
         transported = await self.transport.list_labels()
         if isinstance(transported, Err):
             return Err(transported.error)
         response = transported.value
         if failure := _response_failure(response, operation="list-labels"):
             return Err(failure)
-        labels = response.payload.get("labels")
-        if not isinstance(labels, list):
+        raw_labels = response.payload.get("labels")
+        if not isinstance(raw_labels, list):
             return Err(
                 GmailProtocolFailure(
                     message="label listing has invalid labels",
                     operation="list-labels",
                 )
             )
-        for label in cast("list[object]", labels):
-            if not isinstance(label, Mapping):
+        labels: list[GmailLabel] = []
+        for raw_label in cast("list[object]", raw_labels):
+            if not isinstance(raw_label, Mapping):
                 return Err(
                     GmailProtocolFailure(
                         message="label listing has an invalid label",
                         operation="list-labels",
                     )
                 )
-            label_mapping = cast("Mapping[str, object]", label)
-            label_id = label_mapping.get("id")
-            label_name = label_mapping.get("name")
-            if not isinstance(label_id, str) or not isinstance(label_name, str):
+            label = cast("Mapping[str, object]", raw_label)
+            label_id = label.get("id")
+            label_name = label.get("name")
+            if (
+                not isinstance(label_id, str)
+                or not label_id
+                or not isinstance(label_name, str)
+                or not label_name
+            ):
                 return Err(
                     GmailProtocolFailure(
                         message="label listing has an invalid label",
                         operation="list-labels",
                     )
                 )
-            if label_name == name:
-                return Ok(label_id)
-        return Ok(None)
+            labels.append(GmailLabel(label_id=label_id, name=label_name))
+        return Ok(tuple(labels))
+
+    async def resolve_label_id(self, name: str) -> Result[str | None, GmailFailure]:
+        """Resolve a display name to a label id."""
+        listed = await self.list_labels()
+        if isinstance(listed, Err):
+            return Err(listed.error)
+        return Ok(
+            next(
+                (label.label_id for label in listed.value if label.name == name),
+                None,
+            )
+        )
 
     async def archive(self, message_id: str) -> Result[GmailWriteResult, GmailFailure]:
         """Remove `INBOX` when the message still needs archiving."""
@@ -611,6 +634,34 @@ class GmailClient:
             return Ok(GmailWriteResult("already", "message already carries the label"))
         return await self._modify_labels(
             message_id, add_label_ids=(label_id,), remove_label_ids=()
+        )
+
+    async def update_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> Result[GmailWriteResult, GmailFailure]:
+        """Atomically add and remove only labels whose state needs changing."""
+        fetched = await self._get_or_none(message_id)
+        if isinstance(fetched, Err):
+            return Err(fetched.error)
+        if fetched.value is None:
+            return Ok(GmailWriteResult("gone", "message no longer exists"))
+        current_label_ids = set(fetched.value.label_ids)
+        additions = tuple(
+            label_id for label_id in add_label_ids if label_id not in current_label_ids
+        )
+        removals = tuple(
+            label_id for label_id in remove_label_ids if label_id in current_label_ids
+        )
+        if not additions and not removals:
+            return Ok(GmailWriteResult("already", "message labels already updated"))
+        return await self._modify_labels(
+            message_id,
+            add_label_ids=additions,
+            remove_label_ids=removals,
         )
 
     async def trash(self, message_id: str) -> Result[GmailWriteResult, GmailFailure]:
@@ -666,6 +717,7 @@ __all__ = [
     "GmailClient",
     "GmailFailure",
     "GmailHttpFailure",
+    "GmailLabel",
     "GmailMessage",
     "GmailMessageIdentity",
     "GmailNetworkFailure",

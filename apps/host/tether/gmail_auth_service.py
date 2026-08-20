@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal, Protocol
 
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from tether.gmail_client import (
     GmailAuthenticationFailure,
     GmailClient,
     GmailFailure,
+    GmailLabel,
     GmailMessage,
     GmailOperation,
     GmailRawMessage,
@@ -136,6 +137,12 @@ class ReauthorizableGmailClient(GmailClient):
             return Err(self._require_client("get-raw-message"))
         return await self._delegate.get_raw_message(message_id)
 
+    async def list_labels(self) -> Result[tuple[GmailLabel, ...], GmailFailure]:
+        """List labels through the current delegate."""
+        if self._delegate is None:
+            return Err(self._require_client("list-labels"))
+        return await self._delegate.list_labels()
+
     async def resolve_label_id(self, name: str) -> Result[str | None, GmailFailure]:
         """Resolve one label id through the current delegate."""
         if self._delegate is None:
@@ -155,6 +162,22 @@ class ReauthorizableGmailClient(GmailClient):
         if self._delegate is None:
             return Err(self._require_client("modify-labels"))
         return await self._delegate.label(message_id, label_id)
+
+    async def update_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: Sequence[str],
+        remove_label_ids: Sequence[str],
+    ) -> Result[GmailWriteResult, GmailFailure]:
+        """Update labels through the current delegate."""
+        if self._delegate is None:
+            return Err(self._require_client("modify-labels"))
+        return await self._delegate.update_labels(
+            message_id,
+            add_label_ids=add_label_ids,
+            remove_label_ids=remove_label_ids,
+        )
 
     async def trash(self, message_id: str) -> Result[GmailWriteResult, GmailFailure]:
         """Trash through the current delegate."""
