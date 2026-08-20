@@ -362,7 +362,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
             </select>
             <span class="text-muted-foreground text-xs">
               {actionKind() === "prompt"
-                ? "The agent runs your text when it fires; its answer arrives as a notification."
+                ? "Your text is sent to chat when it fires; the agent answers there."
                 : "Your text is delivered verbatim as a notification when it fires."}
             </span>
           </div>

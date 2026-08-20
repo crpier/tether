@@ -140,6 +140,7 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_PORT="9001",
             TETHER_PUBLIC_ORIGIN="https://tether.example.test",
             TETHER_RELOAD="true",
+            TETHER_SCHEDULER_TICK_SECONDS="0.1",
             TETHER_SECURE_COOKIES="true",
             TETHER_SESSION_SECRET="configured-session-secret",
             TETHER_STT_API_KEY="configured-stt-key",
@@ -172,6 +173,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.port, 9001)
     assert_eq(settings.public_origin, "https://tether.example.test")
     assert_true(settings.reload)
+    assert_eq(settings.scheduler_tick_seconds, 0.1)
     assert_eq(settings.session_secret, "configured-session-secret")
     assert_eq(settings.stt_api_key, "configured-stt-key")
     assert_eq(settings.telemetry_database_path, Path(directory) / "health.sqlite3")
@@ -427,8 +429,12 @@ def environment_app_factory_requires_app_password_and_session_secret() -> None:
         [
             sys.executable,
             "-c",
-            "from tether.server import create_app_from_environment; "
-            "create_app_from_environment()",
+            "".join(
+                (
+                    "from tether.server import create_app_from_environment; ",
+                    "create_app_from_environment()",
+                )
+            ),
         ],
         capture_output=True,
         check=False,

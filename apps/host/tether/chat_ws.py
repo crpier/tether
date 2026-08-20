@@ -15,7 +15,12 @@ from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame
-from tether.chat_turn import ChatTurnDependencies, run_chat_prompt, send_chat_error
+from tether.chat_turn import (
+    ChatTurnDependencies,
+    ConversationTurnQueue,
+    run_chat_prompt,
+    send_chat_error,
+)
 from tether.conversations import ConversationService
 from tether.dreaming import DreamingService
 from tether.events import EventHub, HubEvent, NotifyEvent
@@ -45,6 +50,7 @@ class _ChatRuntime(Protocol):
 
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
+    conversation_turn_queue: ConversationTurnQueue
     dreaming_service: DreamingService
     dreaming_enabled: bool
     event_hub: EventHub
@@ -67,6 +73,7 @@ def _turn_dependencies(websocket: WebSocket) -> ChatTurnDependencies:
         dreaming_enabled=runtime.dreaming_enabled,
         runtime_registry=runtime.conversation_runtime_registry,
         trace_recorder=runtime.trace_recorder,
+        turn_queue=runtime.conversation_turn_queue,
         logger=runtime.logger,
     )
 
@@ -74,7 +81,7 @@ def _turn_dependencies(websocket: WebSocket) -> ChatTurnDependencies:
 async def _handle_frame(
     websocket: WebSocket,
     frame: InboundFrame,
-    running_generations: dict[UUID, asyncio.Task[None]],
+    running_generations: dict[UUID, asyncio.Task[str]],
 ) -> None:
     """Dispatch one validated browser event without blocking the socket reader."""
     match frame.type:
@@ -144,7 +151,7 @@ async def websocket_bus(websocket: WebSocket) -> None:
     await websocket.accept()
     subscription = _runtime(websocket).event_hub.subscribe()
     event_task = asyncio.create_task(_event_pump(websocket, subscription))
-    running_generations: dict[UUID, asyncio.Task[None]] = {}
+    running_generations: dict[UUID, asyncio.Task[str]] = {}
     try:
         while True:
             try:

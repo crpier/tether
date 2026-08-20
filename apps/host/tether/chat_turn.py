@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from json import dumps
@@ -11,7 +13,6 @@ from uuid import UUID
 
 import structlog
 from snekql.sqlite import Fetched
-from starlette.websockets import WebSocket
 
 from tether.agent_run import record_run
 from tether.agent_trace_recorder import AgentTraceRecorder
@@ -54,6 +55,12 @@ _TOOL_RESULT_FRAME_LIMIT_BYTES = 64 * 1_024
 _logger = structlog.stdlib.get_logger("tether.chat_turn")
 
 
+class ChatFrameSink(Protocol):
+    """Destination for chat frames produced while running one prompt."""
+
+    async def send_json(self, data: Any) -> None: ...
+
+
 class ChatRpcClient(Protocol):
     """RPC operation required to submit one prompt."""
 
@@ -90,6 +97,20 @@ class ChatRuntimeRegistry(Protocol):
     ) -> ChatPiRuntime: ...
 
 
+class ConversationTurnQueue:
+    """Serialize every prompt targeting the same Conversation."""
+
+    def __init__(self) -> None:
+        self._locks: dict[UUID, asyncio.Lock] = {}
+
+    @asynccontextmanager
+    async def serialize(self, conversation_id: UUID) -> AsyncGenerator[None]:
+        """Wait for prior turns, then hold exclusive generation ownership."""
+        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
+            yield
+
+
 @dataclass(frozen=True, slots=True)
 class ChatTurnDependencies:
     """Explicit collaborators required to execute and settle one chat turn."""
@@ -99,6 +120,7 @@ class ChatTurnDependencies:
     dreaming_enabled: bool
     runtime_registry: ChatRuntimeRegistry
     trace_recorder: AgentTraceRecorder | None
+    turn_queue: ConversationTurnQueue
     logger: Logger
 
 
@@ -111,6 +133,7 @@ class _TurnState:
     )
     streamed_reasoning: list[str] = field(default_factory=list[str])
     streamed_text: list[str] = field(default_factory=list[str])
+    final_text: str = ""
     needs_final_answer: bool = False
 
 
@@ -121,7 +144,7 @@ class _TurnContext:
     conversation_id: UUID
     dependencies: ChatTurnDependencies
     session_id: str
-    websocket: WebSocket
+    websocket: ChatFrameSink
 
 
 def _compact_tool_result(tool_result: dict[str, Any]) -> dict[str, Any]:
@@ -151,7 +174,7 @@ def _prompt_failure_detail(response: dict[str, object]) -> str:
 
 
 async def send_chat_error(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     *,
     detail: str,
     conversation_id: UUID | None = None,
@@ -163,7 +186,7 @@ async def send_chat_error(
 
 
 async def _relay_stream_update(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     *,
     conversation_id: UUID,
     update: TextDelta | ThinkingDelta | AssistantStreamNote,
@@ -191,13 +214,13 @@ async def _relay_stream_update(
 
 
 async def _settle_message_end(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
     conversation_id: UUID,
     settled: MessageSettled,
     state: _TurnState,
-) -> bool:
-    """Persist reasoning before answer text and close its browser message."""
+) -> str:
+    """Persist reasoning before answer text and return the settled answer."""
     reasoning = settled.reasoning or "".join(state.streamed_reasoning)
     if reasoning:
         _ = await dependencies.conversation_service.append_message(
@@ -217,11 +240,11 @@ async def _settle_message_end(
             )
         )
     await websocket.send_json(MessageEndFrame(conversation_id=conversation_id).wire())
-    return bool(content)
+    return content
 
 
 async def _forward_tool_start(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     *,
     conversation_id: UUID,
     started: ToolStarted,
@@ -241,7 +264,7 @@ async def _forward_tool_start(
 
 
 async def _settle_tool_end(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
     *,
     conversation_id: UUID,
@@ -276,7 +299,7 @@ async def _settle_tool_end(
 
 
 async def _relay_tool_event(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
     *,
     conversation_id: UUID,
@@ -388,14 +411,15 @@ async def _handle_turn_event(
                 detail=error,
             )
         case MessageSettled():
-            answered = await _settle_message_end(
+            settled_text = await _settle_message_end(
                 context.websocket,
                 context.dependencies,
                 context.conversation_id,
                 turn_event,
                 state,
             )
-            state.needs_final_answer = state.needs_final_answer and not answered
+            state.final_text = settled_text or state.final_text
+            state.needs_final_answer = state.needs_final_answer and not settled_text
             state.streamed_text.clear()
             state.streamed_reasoning.clear()
         case ToolStarted() | ToolSettled():
@@ -415,20 +439,21 @@ async def _handle_turn_event(
                     context.dependencies,
                     conversation_id=context.conversation_id,
                 )
+                state.final_text = _TOOL_ONLY_TURN_MARKER
             await context.websocket.send_json(
                 AgentEndFrame(conversation_id=context.conversation_id).wire()
             )
 
 
 async def stream_chat_turn(
-    websocket: WebSocket,
+    websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
     *,
     conversation_id: UUID,
     runtime: ChatPiRuntime,
     session_id: str,
-) -> None:
-    """Relay and settle one ordered stream of typed pi turn events."""
+) -> str:
+    """Relay one ordered pi turn and return its final assistant text."""
     context = _TurnContext(
         conversation_id=conversation_id,
         dependencies=dependencies,
@@ -440,16 +465,17 @@ async def stream_chat_turn(
         wait_seconds=_AGENT_EVENT_TIMEOUT_SECONDS
     ):
         await _handle_turn_event(context, state, turn_event)
+    return state.final_text
 
 
-async def run_chat_prompt(
-    websocket: WebSocket,
+async def _run_chat_prompt(
+    websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
     *,
     conversation_id: UUID,
     content: str,
-) -> None:
-    """Persist, submit, stream, and settle one user prompt."""
+) -> str:
+    """Persist, submit, stream, and settle one prompt with ownership held."""
     try:
         conversation = await dependencies.conversation_service.fetch_conversation(
             conversation_id
@@ -472,7 +498,7 @@ async def run_chat_prompt(
             conversation_id=conversation_id,
             detail="conversation not found",
         )
-        return
+        return ""
     await websocket.send_json(
         UserMessageFrame(
             conversation_id=conversation_id,
@@ -520,8 +546,8 @@ async def run_chat_prompt(
                     conversation_id=conversation_id,
                     detail=failure_detail,
                 )
-                return
-            await stream_chat_turn(
+                return ""
+            final_text = await stream_chat_turn(
                 websocket,
                 dependencies,
                 conversation_id=conversation_id,
@@ -529,12 +555,14 @@ async def run_chat_prompt(
                 session_id=session_id,
             )
             await _queue_dreaming_run(dependencies, conversation_id=conversation_id)
+            return final_text
     except PiRuntimeError as error:
         await send_chat_error(
             websocket,
             conversation_id=conversation_id,
             detail=str(error),
         )
+        return ""
     except TimeoutError:
         await send_chat_error(
             websocket,
@@ -543,12 +571,32 @@ async def run_chat_prompt(
                 f"agent timed out (no response in {int(_AGENT_EVENT_TIMEOUT_SECONDS)}s)"
             ),
         )
+        return ""
+
+
+async def run_chat_prompt(
+    websocket: ChatFrameSink,
+    dependencies: ChatTurnDependencies,
+    *,
+    conversation_id: UUID,
+    content: str,
+) -> str:
+    """Queue, persist, submit, stream, and settle one user prompt."""
+    async with dependencies.turn_queue.serialize(conversation_id):
+        return await _run_chat_prompt(
+            websocket,
+            dependencies,
+            conversation_id=conversation_id,
+            content=content,
+        )
 
 
 __all__ = [
+    "ChatFrameSink",
     "ChatPiRuntime",
     "ChatRuntimeRegistry",
     "ChatTurnDependencies",
+    "ConversationTurnQueue",
     "run_chat_prompt",
     "send_chat_error",
     "stream_chat_turn",

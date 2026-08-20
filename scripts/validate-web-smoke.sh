@@ -55,6 +55,7 @@ app_password="dev"
 echo "Starting host on $host_url"
 TETHER_DATABASE_PATH="$runtime_dir/tether.sqlite3" \
 TETHER_KB_ROOT="$runtime_dir/kb" \
+TETHER_LOCAL_DATA_ROOT="$runtime_dir/local" \
 TETHER_YOUTUBE_TOKEN_PATH="$runtime_dir/youtube-oauth-token.json" \
 TETHER_YOUTUBE_CLIENT_SECRET_PATH="$runtime_dir/youtube-client-secret.json" \
 TETHER_HOST=127.0.0.1 \
@@ -62,6 +63,7 @@ TETHER_PORT="$host_port" \
 TETHER_RELOAD=false \
 TETHER_APP_PASSWORD="$app_password" \
 TETHER_SESSION_SECRET=web-smoke-session-secret \
+TETHER_SCHEDULER_TICK_SECONDS=0.1 \
 TETHER_STT_API_KEY=dummy \
 uv --project apps/host run python -m tether >"$host_log" 2>&1 &
 host_pid="$!"

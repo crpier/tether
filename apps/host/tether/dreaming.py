@@ -424,11 +424,11 @@ class HttpDreamingMutationAcknowledger:
 def _extract_json_detail(response: httpx2.Response) -> str:
     """Read a compact callback error message from one failed host response."""
     try:
-        payload = response.json()
+        payload: Any = response.json()
     except ValueError:
         return response.text
     if isinstance(payload, dict):
-        detail = payload.get("detail")
+        detail = cast("dict[str, object]", payload).get("detail")
         if isinstance(detail, str):
             return detail
     return response.text

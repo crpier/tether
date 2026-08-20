@@ -109,6 +109,7 @@ async def _compose_app_runtime(
             bucket_item_service=core.bucket_item_service,
             conversation_runtime_registry=core.conversation_runtime_registry,
             conversation_service=core.conversation_service,
+            conversation_turn_queue=core.conversation_turn_queue,
             event_hub=core.event_hub,
             health_connect_ingestion=HealthConnectIngestion(host.telemetry_database),
             health_connect_telemetry=HealthConnectTelemetry.from_database(

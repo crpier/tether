@@ -18,11 +18,12 @@ async def list_messages_forwards_query_page_token_and_max_results() -> None:
     """A bounded search request uses the documented query, cursor, and maxResults."""
 
     captured: dict[str, object] = {}
+    captured_params: dict[str, str] = {}
 
     def capture(request: httpx2.Request) -> httpx2.Response:
         captured["method"] = request.method
         captured["path"] = str(request.url.path)
-        captured["params"] = dict(request.url.params)
+        captured_params.update(dict(request.url.params))
         captured["auth"] = request.headers.get("authorization")
         return httpx2.Response(
             200,
@@ -51,11 +52,10 @@ async def list_messages_forwards_query_page_token_and_max_results() -> None:
     assert_eq(captured["method"], "GET")
     assert_eq(captured["path"], "/gmail/v1/users/me/messages")
     assert_eq(captured["auth"], "Bearer test-token")
-    params = captured["params"]
-    assert_eq(params.get("q"), "from:alice")
-    assert_eq(params.get("pageToken"), "page-1")
-    assert_eq(params.get("maxResults"), "20")
-    assert "maxResults" in params
+    assert_eq(captured_params.get("q"), "from:alice")
+    assert_eq(captured_params.get("pageToken"), "page-1")
+    assert_eq(captured_params.get("maxResults"), "20")
+    assert "maxResults" in captured_params
 
 
 @test()

@@ -189,6 +189,7 @@ class HostSettings(BaseSettings):
     Reverse proxies may expose HTTPS while forwarding plain HTTP to Tether, so
     request-derived URLs are not authoritative in production."""
     reload: bool = False
+    scheduler_tick_seconds: float = 30.0
     secure_cookies: bool = False
     vapid_private_key: str = ""
     vapid_public_key: str = ""

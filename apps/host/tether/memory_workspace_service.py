@@ -111,7 +111,7 @@ class MemoryWorkspaceService:
             return ""
         rendered_topics = "\n\n".join(
             f"## {topic.title} ({topic.path.relative_to(self.workspace_root)})\n"
-            f"{topic.body.strip()}"
+            + topic.body.strip()
             for topic in topics
         )
         return f"<current_memory>\n{rendered_topics}\n</current_memory>"
