@@ -215,24 +215,47 @@ class GenericRecord(HealthConnectWireModel):
     payload: dict[str, object] = Field(default_factory=dict)
 
 
+def _typed_record_list_field() -> int:
+    # A long sync gap replays one Health Connect changes page as a single
+    # batch; the cap must absorb a multi-week backlog (observed: >1000
+    # heart-rate records after 12 days of continuous watch data) or the page
+    # is rejected wholesale and the changes token never advances.
+    return 25_000
+
+
 def _generic_record_list_field() -> list[GenericRecord]:
-    return cast("list[GenericRecord]", Field(default_factory=list, max_length=1_000))
+    return cast(
+        "list[GenericRecord]",
+        Field(default_factory=list, max_length=_typed_record_list_field()),
+    )
 
 
 def _exercise_record_list_field() -> list[ExerciseRecord]:
-    return cast("list[ExerciseRecord]", Field(default_factory=list, max_length=1_000))
+    return cast(
+        "list[ExerciseRecord]",
+        Field(default_factory=list, max_length=_typed_record_list_field()),
+    )
 
 
 def _heart_rate_record_list_field() -> list[HeartRateRecord]:
-    return cast("list[HeartRateRecord]", Field(default_factory=list, max_length=1_000))
+    return cast(
+        "list[HeartRateRecord]",
+        Field(default_factory=list, max_length=_typed_record_list_field()),
+    )
 
 
 def _sleep_record_list_field() -> list[SleepRecord]:
-    return cast("list[SleepRecord]", Field(default_factory=list, max_length=1_000))
+    return cast(
+        "list[SleepRecord]",
+        Field(default_factory=list, max_length=_typed_record_list_field()),
+    )
 
 
 def _steps_record_list_field() -> list[StepsRecord]:
-    return cast("list[StepsRecord]", Field(default_factory=list, max_length=1_000))
+    return cast(
+        "list[StepsRecord]",
+        Field(default_factory=list, max_length=_typed_record_list_field()),
+    )
 
 
 class HealthConnectRecords(HealthConnectWireModel):
