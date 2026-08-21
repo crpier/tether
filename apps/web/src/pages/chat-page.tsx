@@ -588,6 +588,15 @@ export function ChatPage() {
   // stands down for that cycle. Stopping playback early never re-arms.
   let spokeAt = 0;
   let lastInteractionAt = 0;
+  // True once `spokeAt` has been stamped for the current stretch of speech;
+  // tool activity resets it because the post-tool answer is a fresh start.
+  let markedSpeechStart = false;
+  const markSpeechStart = () => {
+    if (!markedSpeechStart) {
+      spokeAt = Date.now();
+      markedSpeechStart = true;
+    }
+  };
   const [voiceAutoStart, setVoiceAutoStart] = createSignal(0);
   onMount(() => {
     const markInteraction = () => {
@@ -636,14 +645,39 @@ export function ChatPage() {
         void queryClient.invalidateQueries({ queryKey: ["messages"] });
       },
     },
-    onSettledReply: (text) => {
-      // Only the authoritative settled final answer reaches playback, exactly
-      // once, normalized for speech; failure never touches the transcript.
-      const spoken = toSpeechText(text);
-      if (spoken.length > 0) {
-        spokeAt = Date.now();
-        speechPlayer.speak(spoken);
-      }
+    spokenTurn: {
+      // Sentences stream in as they complete (#545): normalized and queued
+      // for speech immediately, before the turn settles.
+      sentence: (text) => {
+        const spoken = toSpeechText(text);
+        if (spoken.length > 0) {
+          markSpeechStart();
+          speechPlayer.enqueue(spoken);
+        }
+      },
+      // Tool activity invalidates provisional prose: stop talking so the
+      // settled answer (which plays whole at settle) isn't preceded by a
+      // now-stale lead-in.
+      restart: () => {
+        markedSpeechStart = false;
+        speechPlayer.cancel();
+      },
+      settle: (unspokenTail, toolOnly) => {
+        if (toolOnly) {
+          // The settled text is a host-side tool-only marker, not real
+          // prose — silence beats speaking internal scaffolding.
+          return;
+        }
+        const spoken = toSpeechText(unspokenTail);
+        if (spoken.length > 0) {
+          markSpeechStart();
+          speechPlayer.enqueue(spoken);
+        }
+      },
+      discard: () => {
+        markedSpeechStart = false;
+        speechPlayer.cancel();
+      },
     },
     transport: {
       abort: (id) => {

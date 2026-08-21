@@ -25,6 +25,8 @@ export interface SpeechSynthesisLike {
 
 export interface SpeechPlayer {
   cancel(): void;
+  /** Appends speech without cancelling what is already playing/queued. */
+  enqueue(text: string): void;
   speak(text: string): void;
   state(): SpeechPlayerState;
 }
@@ -70,21 +72,15 @@ export function createSpeechPlayer(
     setState("idle");
   };
 
-  const speak = (text: string) => {
-    if (synthesis === null || text.trim().length === 0) {
-      return;
-    }
-    // A new spoken reply replaces stale queued speech instead of overlapping.
-    playbackToken += 1;
-    const token = playbackToken;
-    synthesis.cancel();
-    const utterance = utteranceFactory(text);
+  const attach = (utterance: SpeakableUtterance, token: number) => {
     utterance.onend = () => {
       if (token !== playbackToken) {
         return;
       }
       // Idempotent: some environments can deliver end more than once.
       utterance.onend = null;
+      // Only the most recently queued utterance completing means the whole
+      // queue finished — intermediate completions are not natural ends.
       setState("idle");
       options.onEnded?.();
     };
@@ -94,9 +90,27 @@ export function createSpeechPlayer(
       }
       setState("error");
     };
+  };
+
+  const enqueue = (text: string) => {
+    if (synthesis === null || text.trim().length === 0) {
+      return;
+    }
+    const token = ++playbackToken;
+    const utterance = utteranceFactory(text);
+    attach(utterance, token);
     setState("playing");
     synthesis.speak(utterance);
   };
 
-  return { cancel, speak, state };
+  const speak = (text: string) => {
+    if (synthesis === null || text.trim().length === 0) {
+      return;
+    }
+    // A new spoken reply replaces stale queued speech instead of overlapping.
+    cancel();
+    enqueue(text);
+  };
+
+  return { cancel, enqueue, speak, state };
 }

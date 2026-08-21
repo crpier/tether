@@ -444,17 +444,20 @@ async def _handle_turn_event(
                 or state.needs_final_answer
             )
         case AgentEnded():
+            tool_only = False
             if state.needs_final_answer:
                 await _settle_tool_only_turn_marker(
                     context.dependencies,
                     conversation_id=context.conversation_id,
                 )
                 state.final_text = _TOOL_ONLY_TURN_MARKER
+                tool_only = True
             await context.websocket.send_json(
                 AgentEndFrame(
                     conversation_id=context.conversation_id,
                     reply_mode=context.reply_mode,
                     final_text=state.final_text,
+                    tool_only=tool_only,
                 ).wire()
             )
 

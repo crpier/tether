@@ -10,9 +10,11 @@ import {
   reduceFrame,
   stabilizeRows,
   startTurn,
+  deltaText,
   type StoredMessage,
   type TimelineRow,
 } from "./live-chat-turn-state";
+import { createSpokenStream } from "./spoken-stream";
 
 const MESSAGES_PAGE_SIZE = 30;
 
@@ -39,14 +41,29 @@ export interface LiveChatTransport {
   ): void;
 }
 
+/**
+ * Receives provisional and settled speech for captured-spoken turns (#545).
+ *
+ * Sentences arrive while the reply streams; `settle` delivers whatever the
+ * authoritative final text added (or the whole reply after tool activity);
+ * `discard` fires when a turn aborts or errors so nothing half-true is
+ * spoken.
+ */
+export interface SpokenTurnSink {
+  discard(): void;
+  sentence(text: string): void;
+  settle(unspokenTail: string, toolOnly: boolean): void;
+  restart(): void;
+}
+
 export interface LiveChatTurnDependencies {
   conversationId: Accessor<string | undefined>;
   history: LiveChatHistory;
   now?: () => number;
   /** Current composer toggle value, read once when a prompt is enqueued. */
   replyMode?: Accessor<ReplyMode>;
-  /** Invoked once when a captured-spoken turn settles successfully. */
-  onSettledReply?: (text: string) => void;
+  /** Speech receiver for captured-spoken turns. */
+  spokenTurn?: SpokenTurnSink;
   transport: LiveChatTransport;
 }
 
@@ -70,6 +87,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   let historyRequest = 0;
   let nextQueuedPromptId = 1;
   let runningReplyMode: ReplyMode = "text";
+  // Per-running-turn speech stream (#545): null unless this prompt was
+  // captured as spoken and a sink was provided.
+  let spokenStream: ReturnType<typeof createSpokenStream> | null = null;
 
   const busy = createMemo(() => turn().generating || awaitingAgentEnd());
   const generating = createMemo(() => turn().generating);
@@ -192,6 +212,13 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     setOutboundPrompt(prompt);
     setTurn(startTurn(prompt.content, now()));
     runningReplyMode = prompt.replyMode;
+    spokenStream =
+      runningReplyMode === "spoken" && dependencies.spokenTurn !== undefined
+        ? createSpokenStream(
+            (sentence) => dependencies.spokenTurn?.sentence(sentence),
+            () => dependencies.spokenTurn?.restart(),
+          )
+        : null;
     dependencies.transport.sendPrompt(
       conversationId,
       prompt.content,
@@ -308,9 +335,13 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     }
     if (frame.event === "abort_ack") {
       setInterrupted(true);
+      spokenStream = null;
+      dependencies.spokenTurn?.discard();
     }
     if (frame.event === "error") {
       setError(frame.detail ?? "Chat error");
+      spokenStream = null;
+      dependencies.spokenTurn?.discard();
       const rejected = outboundPrompt();
       if (rejected !== null) {
         setQueuedPrompts((current) => [rejected, ...current]);
@@ -318,8 +349,20 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       }
       refreshSettledHistory();
     }
+    // Provisional speech (#545): stream complete sentences as they arrive.
+    // Only for captured-spoken turns; tool activity restarts the stream so
+    // the settled answer plays whole once the context switches back.
+    if (spokenStream !== null) {
+      if (frame.event === "text_delta") {
+        spokenStream.push(deltaText(frame.delta));
+      } else if (frame.event === "tool_start") {
+        spokenStream.restart();
+      }
+    }
     if (frame.event === "agent_end") {
       const settledReplyMode = runningReplyMode;
+      const stream = spokenStream;
+      spokenStream = null;
       setOutboundPrompt(null);
       setAwaitingAgentEnd(false);
       refreshSettledHistory();
@@ -329,11 +372,21 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       if (
         settledReplyMode === "spoken" &&
         !stopped() &&
-        error() === undefined &&
-        typeof frame.final_text === "string" &&
-        frame.final_text.length > 0
+        error() === undefined
       ) {
-        dependencies.onSettledReply?.(frame.final_text);
+        if (frame.tool_only === true) {
+          // The final text is a host-side marker, not real prose — flag it so
+          // the sink can decide what (if anything) a listener should hear.
+          dependencies.spokenTurn?.settle("", true);
+        } else if (
+          typeof frame.final_text === "string" &&
+          frame.final_text.length > 0
+        ) {
+          dependencies.spokenTurn?.settle(
+            stream === null ? frame.final_text : stream.tail(frame.final_text),
+            false,
+          );
+        }
       }
     }
   };

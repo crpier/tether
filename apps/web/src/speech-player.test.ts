@@ -158,3 +158,76 @@ describe("speech player", () => {
     });
   });
 });
+
+describe("speech queueing (#545)", () => {
+  test("enqueue appends without cancelling what is playing", () => {
+    const { player, synthesis } = makePlayer();
+    player.speak("first");
+    const cancellationsAfterSpeak = synthesis.cancellations;
+
+    player.enqueue("second");
+
+    expect(synthesis.cancellations).toBe(cancellationsAfterSpeak);
+    expect(synthesis.spoken.map((utterance) => utterance.text)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(player.state()).toBe("playing");
+  });
+
+  test("enqueue on an idle player starts playback", () => {
+    const { player, synthesis } = makePlayer();
+
+    player.enqueue("only");
+
+    expect(synthesis.spoken.map((utterance) => utterance.text)).toEqual([
+      "only",
+    ]);
+    expect(player.state()).toBe("playing");
+  });
+
+  test("onEnded fires only after the last queued utterance ends", () => {
+    let ended = 0;
+    const { player, synthesis } = makePlayer(() => {
+      ended += 1;
+    });
+    player.speak("first");
+    player.enqueue("second");
+    player.enqueue("third");
+
+    synthesis.spoken[0].onend?.();
+    synthesis.spoken[1].onend?.();
+    expect(ended).toBe(0);
+
+    synthesis.spoken[2].onend?.();
+    expect(ended).toBe(1);
+    expect(player.state()).toBe("idle");
+  });
+
+  test("cancel drops the whole queue and suppresses pending end callbacks", () => {
+    let ended = 0;
+    const { player, synthesis } = makePlayer(() => {
+      ended += 1;
+    });
+    player.speak("first");
+    player.enqueue("second");
+    const queued = [...synthesis.spoken];
+
+    player.cancel();
+    for (const utterance of queued) {
+      utterance.onend?.();
+    }
+
+    expect(ended).toBe(0);
+    expect(player.state()).toBe("idle");
+  });
+
+  test("blank enqueue is a no-op", () => {
+    const { player, synthesis } = makePlayer();
+
+    player.enqueue("   ");
+
+    expect(synthesis.spoken).toHaveLength(0);
+    expect(player.state()).toBe("idle");
+  });
+});

@@ -17,6 +17,8 @@ export type ChatFrame =
       content_index?: number | null;
       reply_mode?: ReplyMode;
       final_text?: string;
+      /** True when the turn ended after tools without a final answer. */
+      tool_only?: boolean;
     }
   | { type: "invalidate"; keys: string[] }
   | {

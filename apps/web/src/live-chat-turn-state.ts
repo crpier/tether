@@ -109,7 +109,7 @@ export function startTurn(text: string, now: number): LiveTurn {
   };
 }
 
-function deltaText(delta: unknown): string {
+export function deltaText(delta: unknown): string {
   if (typeof delta === "string") {
     return delta;
   }
