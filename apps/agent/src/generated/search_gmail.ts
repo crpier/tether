@@ -9,7 +9,10 @@ import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const search_gmailParameters = Type.Object({
-  query: Type.String({ minLength: 1 }),
+  query: Type.Optional(Type.String({ default: "" })),
+  after: Type.Optional(Type.String({ format: "date" })),
+  before: Type.Optional(Type.String({ format: "date" })),
+  labels: Type.Optional(Type.Array(Type.String())),
   max_results: Type.Optional(
     Type.Integer({ default: 20, maximum: 50, minimum: 1 }),
   ),
@@ -24,8 +27,10 @@ export const search_gmailTool: ToolDefinition<
 > = {
   name: "search_gmail",
   label: "SearchGmail",
-  description: "Search Gmail message metadata by query term, paged by token.",
-  promptSnippet: "Search Gmail message metadata by query term, paged by token.",
+  description:
+    "Search Gmail message metadata by query, labels, and date bounds.",
+  promptSnippet:
+    "Search Gmail message metadata by query, labels, and date bounds.",
   parameters: search_gmailParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

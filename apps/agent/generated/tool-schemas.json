@@ -988,16 +988,71 @@
       }
     },
     {
+      "endpoint": "/internal/tools/archive_gmail_message",
+      "name": "archive_gmail_message",
+      "params_model": "ArchiveGmailMessageParams",
+      "schema": {
+        "description": "Archive one Gmail message by removing its inbox label.",
+        "properties": {
+          "message_id": {
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": ["message_id"],
+        "title": "ArchiveGmailMessageParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/search_gmail",
       "name": "search_gmail",
       "params_model": "GmailSearchParams",
       "schema": {
-        "description": "Search Gmail message metadata by query term, paged by token.",
+        "description": "Search Gmail message metadata by query, labels, and date bounds.",
         "properties": {
           "query": {
-            "minLength": 1,
+            "default": "",
+            "description": "Optional Gmail search text or native Gmail query operators.",
             "title": "Query",
             "type": "string"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Include messages on or after this ISO date.",
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Include messages before this ISO date.",
+            "title": "Before"
+          },
+          "labels": {
+            "description": "Human-readable Gmail labels that every result must carry.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
           },
           "max_results": {
             "default": 20,
@@ -1020,7 +1075,6 @@
             "title": "Page Token"
           }
         },
-        "required": ["query"],
         "title": "GmailSearchParams",
         "type": "object"
       }
@@ -1048,6 +1102,67 @@
         },
         "required": ["message_id"],
         "title": "ReadGmailMessageParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_gmail_labels",
+      "name": "list_gmail_labels",
+      "params_model": "ListGmailLabelsParams",
+      "schema": {
+        "description": "List every Gmail account label available to the agent.",
+        "properties": {},
+        "title": "ListGmailLabelsParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/trash_gmail_message",
+      "name": "trash_gmail_message",
+      "params_model": "TrashGmailMessageParams",
+      "schema": {
+        "description": "Move one Gmail message to Trash without permanently deleting it.",
+        "properties": {
+          "message_id": {
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": ["message_id"],
+        "title": "TrashGmailMessageParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/update_gmail_labels",
+      "name": "update_gmail_labels",
+      "params_model": "UpdateGmailLabelsParams",
+      "schema": {
+        "description": "Add and remove human-readable labels on one Gmail message.",
+        "properties": {
+          "add_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Add Labels",
+            "type": "array"
+          },
+          "message_id": {
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          },
+          "remove_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Remove Labels",
+            "type": "array"
+          }
+        },
+        "required": ["message_id"],
+        "title": "UpdateGmailLabelsParams",
         "type": "object"
       }
     },

@@ -1,4 +1,4 @@
-"""Behavior tests for the read-only Gmail tools available to agents."""
+"""Behavior tests for the Gmail tools available to agents."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from tether.gmail_client import GmailNetworkFailure, GmailResponse
 
 @dataclass
 class ScriptedGmailTransport:
-    """A tiny transport that returns scripted list and raw responses."""
+    """A tiny transport that records scripted Gmail reads and writes."""
 
     responses: list[Result[GmailResponse, GmailNetworkFailure]] = field(
         default_factory=list[Result[GmailResponse, GmailNetworkFailure]]
@@ -25,7 +25,20 @@ class ScriptedGmailTransport:
     list_calls: list[tuple[str, str | None, int | None]] = field(
         default_factory=list[tuple[str, str | None, int | None]]
     )
+    labels_response: Result[GmailResponse, GmailNetworkFailure] = field(
+        default_factory=lambda: Ok(
+            GmailResponse(status_code=200, payload={"labels": []})
+        )
+    )
+    labels_calls: int = 0
+    message_response: Result[GmailResponse, GmailNetworkFailure] = field(
+        default_factory=lambda: Ok(GmailResponse(status_code=404, payload={}))
+    )
+    modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = field(
+        default_factory=list[tuple[str, tuple[str, ...], tuple[str, ...]]]
+    )
     raw_calls: list[str] = field(default_factory=list[str])
+    trash_calls: list[str] = field(default_factory=list[str])
 
     async def list_messages(
         self, *, query: str, page_token: str | None, max_results: int | None = None
@@ -42,10 +55,11 @@ class ScriptedGmailTransport:
     async def get_message(
         self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        return Ok(GmailResponse(status_code=404, payload={}))
+        return self.message_response
 
     async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
-        return Ok(GmailResponse(status_code=200, payload={"labels": []}))
+        self.labels_calls += 1
+        return self.labels_response
 
     async def modify_labels(
         self,
@@ -54,12 +68,30 @@ class ScriptedGmailTransport:
         add_label_ids: Sequence[str],
         remove_label_ids: Sequence[str],
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        raise AssertionError("read-only tool path must never mutate labels")
+        self.modify_calls.append(
+            (message_id, tuple(add_label_ids), tuple(remove_label_ids))
+        )
+        return Ok(GmailResponse(status_code=200, payload={}))
 
     async def trash_message(
         self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
-        raise AssertionError("read-only tool path must never trash messages")
+        self.trash_calls.append(message_id)
+        return Ok(GmailResponse(status_code=200, payload={}))
+
+
+def gmail_message_response(*, labels: list[str]) -> GmailResponse:
+    """Build one valid Gmail full-message response."""
+    return GmailResponse(
+        status_code=200,
+        payload={
+            "id": "m1",
+            "threadId": "t1",
+            "internalDate": "1767225600000",
+            "labelIds": labels,
+            "payload": {"headers": []},
+        },
+    )
 
 
 @test()
@@ -73,6 +105,149 @@ def disabled_gmail_tools_return_tool_unavailable() -> None:
 
     assert_eq(envelope["success"], False)
     assert_eq(envelope["error"]["code"], "upstream_error")
+
+
+@test()
+def archive_gmail_message_removes_the_inbox_label() -> None:
+    """Archiving through pi removes `INBOX` without deleting the message."""
+    transport = ScriptedGmailTransport(
+        message_response=Ok(gmail_message_response(labels=["INBOX", "STARRED"]))
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(client, "archive_gmail_message", message_id="m1")
+
+    assert_eq(envelope["success"], True)
+    assert_eq(
+        envelope["result"],
+        {"detail": None, "message_id": "m1", "outcome": "done"},
+    )
+    assert_eq(transport.modify_calls, [("m1", (), ("INBOX",))])
+    assert_eq(transport.trash_calls, [])
+
+
+@test()
+def trash_gmail_message_moves_the_message_to_trash() -> None:
+    """Deleting through pi stays reversible by using Gmail Trash."""
+    transport = ScriptedGmailTransport(
+        message_response=Ok(gmail_message_response(labels=["INBOX"]))
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(client, "trash_gmail_message", message_id="m1")
+
+    assert_eq(envelope["success"], True)
+    assert_eq(
+        envelope["result"],
+        {"detail": None, "message_id": "m1", "outcome": "done"},
+    )
+    assert_eq(transport.trash_calls, ["m1"])
+
+
+@test()
+def update_gmail_labels_adds_and_removes_labels_by_name() -> None:
+    """The label tool resolves human names before one atomic Gmail update."""
+    transport = ScriptedGmailTransport(
+        labels_response=Ok(
+            GmailResponse(
+                status_code=200,
+                payload={
+                    "labels": [
+                        {"id": "Label_42", "name": "Project X", "type": "user"},
+                        {"id": "Label_7", "name": "Old", "type": "user"},
+                    ]
+                },
+            )
+        ),
+        message_response=Ok(gmail_message_response(labels=["INBOX", "Label_7"])),
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(
+            client,
+            "update_gmail_labels",
+            message_id="m1",
+            add_labels=["Project X"],
+            remove_labels=["Old"],
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(
+        envelope["result"],
+        {"detail": None, "message_id": "m1", "outcome": "done"},
+    )
+    assert_eq(transport.labels_calls, 1)
+    assert_eq(transport.modify_calls, [("m1", ("Label_42",), ("Label_7",))])
+
+
+@test()
+def list_gmail_labels_returns_account_labels() -> None:
+    """The agent can read every Gmail system and user label."""
+    transport = ScriptedGmailTransport(
+        labels_response=Ok(
+            GmailResponse(
+                status_code=200,
+                payload={
+                    "labels": [
+                        {"id": "INBOX", "name": "INBOX", "type": "system"},
+                        {"id": "Label_42", "name": "Project X", "type": "user"},
+                    ]
+                },
+            )
+        )
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(client, "list_gmail_labels")
+
+    assert_eq(envelope["success"], True)
+    assert_eq(
+        envelope["result"],
+        {
+            "labels": [
+                {"label_id": "INBOX", "name": "INBOX"},
+                {"label_id": "Label_42", "name": "Project X"},
+            ]
+        },
+    )
+    assert_eq(transport.labels_calls, 1)
+
+
+@test()
+def search_gmail_returns_an_empty_page_when_gmail_omits_messages() -> None:
+    """Gmail omits the `messages` member when a search has no matches."""
+    transport = ScriptedGmailTransport(
+        responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={"resultSizeEstimate": 0},
+                )
+            )
+        ]
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(client, "search_gmail", labels=["No matches"])
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"]["messages"], [])
+    assert_eq(envelope["result"]["result_size_estimate"], 0)
 
 
 @test()
@@ -121,6 +296,124 @@ def search_gmail_returns_paginated_message_rows() -> None:
         },
     )
     assert_eq(transport.list_calls, [("in:inbox", "page", 2)])
+
+
+@test()
+def search_gmail_matches_every_requested_label() -> None:
+    """Label filters become AND-ed Gmail search terms."""
+    transport = ScriptedGmailTransport(
+        responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={"messages": [], "resultSizeEstimate": 0},
+                )
+            )
+        ]
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        _ = call_tool(
+            client,
+            "search_gmail",
+            query="project kickoff",
+            labels=["Receipts", "Project X"],
+        )
+
+    assert_eq(
+        transport.list_calls,
+        [('project kickoff label:"Receipts" label:"Project X"', None, 20)],
+    )
+
+
+@test()
+def search_gmail_supports_a_label_only_search() -> None:
+    """A text query is optional when labels identify the desired messages."""
+    transport = ScriptedGmailTransport(
+        responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={"messages": [], "resultSizeEstimate": 0},
+                )
+            )
+        ]
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(client, "search_gmail", labels=["Receipts"])
+
+    assert_eq(envelope["success"], True)
+    assert_eq(transport.list_calls, [('label:"Receipts"', None, 20)])
+
+
+@test()
+def search_gmail_applies_an_inclusive_exclusive_date_window() -> None:
+    """ISO date bounds become Gmail's inclusive `after` and exclusive `before`."""
+    transport = ScriptedGmailTransport(
+        responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={"messages": [], "resultSizeEstimate": 0},
+                )
+            )
+        ]
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        _ = call_tool(
+            client,
+            "search_gmail",
+            query="invoice",
+            after="2026-01-01",
+            before="2026-02-01",
+        )
+
+    assert_eq(
+        transport.list_calls,
+        [("invoice after:2026/01/01 before:2026/02/01", None, 20)],
+    )
+
+
+@test()
+def search_gmail_rejects_a_reversed_date_window() -> None:
+    """A search period must end after it starts."""
+    transport = ScriptedGmailTransport(
+        responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={"messages": [], "resultSizeEstimate": 0},
+                )
+            )
+        ]
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        envelope = call_tool(
+            client,
+            "search_gmail",
+            query="invoice",
+            after="2026-02-01",
+            before="2026-01-01",
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "invalid_input")
+    assert_eq(transport.list_calls, [])
 
 
 @test()
@@ -227,3 +520,5 @@ def read_tool_does_not_use_write_methods() -> None:
 
     assert_eq(transport.raw_calls, ["m1"])
     assert_eq(transport.list_calls, [])
+    assert_eq(transport.modify_calls, [])
+    assert_eq(transport.trash_calls, [])
