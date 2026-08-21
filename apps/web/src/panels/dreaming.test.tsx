@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, screen, within } from "@solidjs/testing-library";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { FakeHost, dreamRun, renderApp } from "../testing/harness";
@@ -178,5 +184,44 @@ describe("Dreaming panel", () => {
         name: /No changes.*No-op conversation/,
       }),
     ).not.toBeInTheDocument();
+  });
+
+  test("Dream now queues an instant run and surfaces it in history", async () => {
+    const queued = dreamRun({
+      conversation_title: "Fresh evidence",
+      id: "019f0000-0000-7000-8000-000000000051",
+      kind: "manual",
+      status: "queued",
+    });
+    const host = new FakeHost({
+      authenticated: true,
+      dreamNowRuns: [queued],
+    });
+    renderApp(host, undefined, { path: "/browse/dreaming" });
+
+    const panel = await screen.findByRole("region", { name: "Dreaming" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Dream now" }));
+
+    await waitFor(() => {
+      expect(host.dreaming.dreamNowCalls).toBe(1);
+    });
+    expect(
+      await within(panel).findByRole("button", {
+        name: /Queued.*Fresh evidence/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  test("Dream now failure surfaces an alert", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.dreaming.dreamNow = () => Promise.reject(new Error("nope"));
+    renderApp(host, undefined, { path: "/browse/dreaming" });
+
+    const panel = await screen.findByRole("region", { name: "Dreaming" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Dream now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not start a Dream run",
+    );
   });
 });

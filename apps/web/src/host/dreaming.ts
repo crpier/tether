@@ -8,12 +8,18 @@ export type DreamingMutation = components["schemas"]["DreamingMutationRead"];
 export interface DreamingHost {
   listDreamRuns(): Promise<DreamRun[]>;
   getDreamRun(runId: string): Promise<DreamRunDetail>;
+  /** Queue an instant manual run for every conversation with new evidence. */
+  dreamNow(): Promise<DreamRun[]>;
 }
 
 export function createDreamingHost(context: RestContext): DreamingHost {
   return {
     async listDreamRuns() {
       const { data, response } = await context.client.GET("/api/dream-runs");
+      return requireData(data, response);
+    },
+    async dreamNow() {
+      const { data, response } = await context.client.POST("/api/dream-now");
       return requireData(data, response);
     },
     async getDreamRun(runId) {

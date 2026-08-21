@@ -1,6 +1,11 @@
-import { createQuery } from "@tanstack/solid-query";
+import {
+  createMutation,
+  createQuery,
+  useQueryClient,
+} from "@tanstack/solid-query";
 import { For, Show, createMemo, createSignal } from "solid-js";
 
+import { Button } from "@/components/ui/button";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -186,6 +191,13 @@ function mutationRow(mutation: DreamingMutation) {
 export function DreamingPanel(props: { api: DreamingHost }) {
   const [filter, setFilter] = createSignal<DreamRunFilter>("all");
   const [selectedRunId, setSelectedRunId] = createSignal<string>();
+  const queryClient = useQueryClient();
+  const dreamNowMutation = createMutation(() => ({
+    mutationFn: () => props.api.dreamNow(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dreamRuns });
+    },
+  }));
   const runsQuery = createQuery(() => ({
     queryFn: () => props.api.listDreamRuns(),
     queryKey: queryKeys.dreamRuns,
@@ -240,14 +252,32 @@ export function DreamingPanel(props: { api: DreamingHost }) {
             Memory.
           </p>
         </div>
-        <Show
-          when={runs().some((run) =>
-            ["queued", "running"].includes(run.status),
-          )}
-        >
-          <Badge variant="secondary">Dreaming active</Badge>
-        </Show>
+        <div class="flex items-center gap-2">
+          <Show
+            when={runs().some((run) =>
+              ["queued", "running"].includes(run.status),
+            )}
+          >
+            <Badge variant="secondary">Dreaming active</Badge>
+          </Show>
+          <Button
+            disabled={dreamNowMutation.isPending}
+            onClick={() => {
+              dreamNowMutation.mutate();
+            }}
+            size="sm"
+            title="Assimilate settled Evidence into Memory right now"
+            type="button"
+          >
+            Dream now
+          </Button>
+        </div>
       </div>
+      <Show when={dreamNowMutation.isError}>
+        <p class="text-destructive mb-3 text-sm" role="alert">
+          Could not start a Dream run. Try again shortly.
+        </p>
+      </Show>
       <Show when={runsQuery.isError}>
         <p class="text-destructive text-sm" role="alert">
           Could not load Dream history. Try again shortly.

@@ -57,6 +57,7 @@ export class FakeHost implements WebHost {
     bucketItems?: BucketItem[];
     duePrompts?: DuePrompt[];
     dreamRunDetails?: Record<string, DreamRunDetail>;
+    dreamNowRuns?: DreamRun[];
     dreamRuns?: DreamRun[];
     grants?: Grant[];
     grantSuggestions?: GrantSuggestion[];
@@ -77,6 +78,7 @@ export class FakeHost implements WebHost {
     this.dreaming = new FakeDreamingHost(
       options.dreamRuns,
       options.dreamRunDetails,
+      options.dreamNowRuns,
     );
     this.memories = new FakeMemoriesHost(options.memories);
     this.memories.storedTopics = options.memoryTopics ?? [];

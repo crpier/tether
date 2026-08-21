@@ -29,7 +29,7 @@ from snekql.sqlite import (
 from yaml import dump as yaml_dump
 from yaml import safe_load
 
-from tether.conversation_store import Message
+from tether.conversation_store import Conversation, Message
 from tether.conversations import ConversationService
 from tether.dreaming_store import (
     DreamConversationCursor,
@@ -42,6 +42,7 @@ from tether.dreaming_store import (
     DreamRunTerminalStatus,
 )
 from tether.memory_workspace import MemoryWorkspace
+from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
 
@@ -974,6 +975,88 @@ class DreamingService:
             explicit=False,
             now=now,
         )
+
+    async def queue_pending_manual_runs(
+        self,
+        *,
+        logger: Logger,
+        now: datetime,
+    ) -> list[DreamRun[Fetched]]:
+        """Queue an immediate manual run for every conversation with new evidence.
+
+        Backs the browser's "Dream now" action: instant, settle-window-free,
+        and conversation-agnostic. Conversations whose cursor already sits at
+        their latest message resolve no window and are skipped.
+        """
+        return await self._queue_for_all_conversations(
+            kind="manual",
+            explicit=True,
+            logger=logger,
+            now=now,
+        )
+
+    async def queue_settled_assimilation_runs(
+        self,
+        *,
+        logger: Logger,
+        now: datetime,
+    ) -> list[DreamRun[Fetched]]:
+        """Scan every conversation and queue runs for settled evidence.
+
+        The periodic backstop for post-turn queueing: without it, evidence
+        only assimilates when the next chat turn happens, so a quiet stretch
+        leaves Memory stale indefinitely.
+        """
+        return await self._queue_for_all_conversations(
+            kind="assimilation",
+            explicit=False,
+            logger=logger,
+            now=now,
+        )
+
+    async def scan_forever(
+        self, *, interval_seconds: float = 60.0, logger: Logger
+    ) -> None:
+        """Queue assimilation runs for settled evidence on a fixed interval.
+
+        The correctness backstop for post-turn queueing: assimilation used to
+        depend on the *next* chat turn noticing settled evidence, so any quiet
+        stretch left Memory stale indefinitely. A failed pass is logged and
+        swallowed; the next tick retries.
+        """
+        await run_reconcile_loop(
+            lambda: self.queue_settled_assimilation_runs(
+                logger=logger,
+                now=datetime.now(UTC),
+            ),
+            interval_seconds=interval_seconds,
+            initial_delay_seconds=interval_seconds,
+            logger=logger,
+            failure_message="Dream assimilation scan failed",
+        )
+
+    async def _queue_for_all_conversations(
+        self,
+        *,
+        kind: DreamRunKind,
+        explicit: bool,
+        logger: Logger,
+        now: datetime,
+    ) -> list[DreamRun[Fetched]]:
+        async with self.database.transaction() as tx:
+            rows = await tx.fetch_all(select(Conversation).all())
+        queued: list[DreamRun[Fetched]] = []
+        for conversation in rows:
+            run = await self._queue_run(
+                conversation.id,
+                kind=kind,
+                logger=logger,
+                explicit=explicit,
+                now=now,
+            )
+            if run is not None:
+                queued.append(run)
+        return queued
 
     async def claim_next_run(
         self,

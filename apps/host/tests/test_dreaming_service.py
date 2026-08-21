@@ -30,7 +30,11 @@ from snektest import (
 from yaml import dump as yaml_dump
 
 from tether.conversation_model import MessageDraft, MessageRole
-from tether.conversation_store import Message, create_conversation_schema
+from tether.conversation_store import (
+    Conversation,
+    Message,
+    create_conversation_schema,
+)
 from tether.conversations import ConversationService
 from tether.dreaming import (
     ConversationWindowDreamingExecutor,
@@ -904,6 +908,96 @@ async def settle_reports_acknowledger_failure_without_touching_the_record() -> N
             )
         assert mutation is not None
         assert_eq(mutation.status, "executed")
+
+
+@test()
+async def manual_scan_queues_runs_only_for_conversations_with_new_evidence() -> None:
+    """Dream-now covers every conversation; assimilated ones are skipped."""
+    conversation_service, dreaming_service, first_id = await _fixture()
+
+    await _append(
+        conversation_service,
+        conversation_id=first_id,
+        role="user",
+        content="pending evidence",
+    )
+
+    conversations = await conversation_service.list_conversations()
+    template = conversations[0]
+    async with conversation_service.database.transaction() as tx:
+        second = await tx.execute(
+            insert(Conversation(selected_model=template.selected_model)).returning()
+        )
+    await _append(
+        conversation_service,
+        conversation_id=second.id,
+        role="user",
+        content="already dreamed",
+    )
+    assimilated = await dreaming_service.queue_manual_run(
+        second.id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert assimilated is not None
+    _ = await dreaming_service.complete_run(
+        assimilated.id,
+        status="success",
+        logger=test_logger(),
+    )
+
+    runs = await dreaming_service.queue_pending_manual_runs(
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+
+    assert_eq(len(runs), 1)
+    assert_eq(runs[0].conversation_id, first_id)
+    assert_eq(runs[0].kind, "manual")
+    assert_eq(runs[0].status, "queued")
+
+
+@test()
+async def assimilation_scan_queues_settled_evidence_and_skips_recent() -> None:
+    """The periodic scan queues settled evidence but honors the settle window."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    settled = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="old enough to dream",
+    )
+    await _retime(
+        settled.id,
+        database=conversation_service.database,
+        when=datetime.now(UTC) - timedelta(minutes=25),
+    )
+
+    runs = await dreaming_service.queue_settled_assimilation_runs(
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert_eq(len(runs), 1)
+    assert_eq(runs[0].kind, "assimilation")
+
+    recent = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="too fresh",
+    )
+    await _retime(
+        recent.id,
+        database=conversation_service.database,
+        when=datetime.now(UTC),
+    )
+
+    again = await dreaming_service.queue_settled_assimilation_runs(
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert_eq(again, [])
 
 
 @test()

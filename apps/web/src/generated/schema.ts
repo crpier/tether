@@ -400,6 +400,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/dream-now": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Dream Now
+     * @description Queue an instant manual Dream run for every conversation with new evidence.
+     */
+    post: operations["dream_now_api_dream_now_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/dream-runs": {
     parameters: {
       query?: never;
@@ -4452,6 +4472,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  dream_now_api_dream_now_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DreamRunRead"][];
         };
       };
     };
