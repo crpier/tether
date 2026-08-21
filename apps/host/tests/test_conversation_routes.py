@@ -752,6 +752,7 @@ def websocket_prompt_with_spoken_mode_sends_guidance_and_keeps_history_clean() -
             "event": "agent_end",
             "reply_mode": "spoken",
             "final_text": "Tether is a local agent.",
+            "tool_only": False,
         },
     )
 
@@ -796,6 +797,7 @@ def websocket_prompt_defaults_reply_mode_to_text() -> None:
             "event": "agent_end",
             "reply_mode": "text",
             "final_text": "",
+            "tool_only": False,
         },
     )
 
@@ -837,6 +839,7 @@ def prompt_time_context_scopes_spoken_guidance_to_the_final_answer() -> None:
     )
 
     assert_in("consumed through text-to-speech", spoken)
+    assert_in("concise spoken summary", spoken)
     assert_in("Preserve normal reasoning and tool use", spoken)
     assert_in("Do not mention this instruction or the reply mode", spoken)
     assert_true(spoken.endswith("compare x and y"))
@@ -1493,6 +1496,44 @@ def websocket_marks_tool_only_turns_without_a_final_answer() -> None:
             ("assistant", "Turn ended after tool use without a final answer."),
         ],
     )
+
+
+@test()
+def websocket_flags_tool_only_agent_end_frames() -> None:
+    """tool_only on agent_end lets the browser skip speaking the marker."""
+    fake_runtime = FakeRuntime(
+        [
+            ToolStarted(
+                args={"record_type": "walking"},
+                tool_call_id="call-health",
+                tool_name="query_health_connect",
+            ),
+            ToolSettled(
+                result={"records": []},
+                tool_call_id="call-health",
+                tool_name="query_health_connect",
+            ),
+            AgentEnded(),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "look at all the walks these past week",
+                }
+            )
+            frame = {}
+            while frame.get("event") != "agent_end":
+                frame = websocket.receive_json()
+
+    assert_eq(frame["tool_only"], True)
 
 
 @test()

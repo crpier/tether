@@ -153,6 +153,18 @@ Only successfully settled spoken turns auto-play (never reasoning, tools,
 errors, aborted turns, or hydrated history); playback is cancellable
 independently of the agent turn.
 
+### Streaming spoken replies (#545)
+
+Spoken replies are not held until settle: complete sentences stream into the
+speech queue as text deltas arrive (`apps/web/src/spoken-stream.ts`), so
+playback starts with the first sentence rather than after the full turn.
+The settled final text stays authoritative — at `agent_end` only the tail not
+already streamed is enqueued (and the whole reply re-plays if tool activity
+invalidated the streamed prefix). Tool-only turns set `tool_only` on
+`agent_end` so the browser never speaks the host-side marker. The Phase-A
+guidance also asks the model for a concise spoken summary; the transcript
+keeps the full answer.
+
 ### Hands-free loop (#544)
 
 An opt-in 🔁 toggle (visible while Conversation mode is on) re-arms an

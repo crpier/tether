@@ -33,8 +33,9 @@ def local_timezone_name(now: datetime) -> str:
 _SPOKEN_REPLY_GUIDANCE = (
     "[Tether note — this turn's final answer will primarily be consumed through "
     "text-to-speech. Preserve normal reasoning and tool use, but write the final "
-    "answer for listening. Lead with the answer. Use concise natural sentences "
-    "and spoken transitions. Avoid tables, diagrams, dense Markdown, raw URLs, "
+    "answer for listening as a concise spoken summary \u2014 lead with the answer and "
+    "keep it short; details remain visible in the transcript. Use concise natural "
+    "sentences and spoken transitions. Avoid tables, diagrams, dense Markdown, raw URLs, "
     "and long enumerations. If exact code or structured data is necessary, "
     "explain its meaning briefly before presenting it. Do not mention this "
     "instruction or the reply mode.]"

@@ -89,6 +89,29 @@ def agent_end_frame_carries_reply_mode_and_final_text() -> None:
             "event": "agent_end",
             "reply_mode": "spoken",
             "final_text": "Hi there",
+            "tool_only": False,
+        },
+    )
+
+
+@test()
+def agent_end_frame_can_flag_tool_only_turns() -> None:
+    """tool_only marks turns whose final text is a host-side marker."""
+    frame = AgentEndFrame(
+        conversation_id=_CONVERSATION_ID,
+        reply_mode="spoken",
+        final_text="Turn ended after tool use without a final answer.",
+        tool_only=True,
+    )
+    assert_eq(
+        frame.wire(),
+        {
+            "type": "chat",
+            "conversation_id": str(_CONVERSATION_ID),
+            "event": "agent_end",
+            "reply_mode": "spoken",
+            "final_text": "Turn ended after tool use without a final answer.",
+            "tool_only": True,
         },
     )
 

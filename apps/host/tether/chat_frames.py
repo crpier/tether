@@ -107,6 +107,9 @@ class AgentEndFrame(_ConversationFrame):
     event: Literal["agent_end"] = "agent_end"
     reply_mode: ReplyMode
     final_text: str
+    # True when the turn ended after tools without a real final answer —
+    # `final_text` is then an internal marker the browser must not speak.
+    tool_only: bool = False
 
 
 class AbortAckFrame(_ConversationFrame):

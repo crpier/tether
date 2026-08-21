@@ -26,6 +26,49 @@ function message(content: string, seq: number): Message {
   };
 }
 
+// Records every spoken-turn sink callback so tests can assert the exact
+// sentence/restart/settle/discard sequence (#545).
+function recordSpokenTurn() {
+  const sentences: string[] = [];
+  const settled: string[] = [];
+  let restarted = 0;
+  let discarded = 0;
+  let toolOnlySettles = 0;
+  return {
+    sentences,
+    settled,
+    get restarted() {
+      return restarted;
+    },
+    get discarded() {
+      return discarded;
+    },
+    get toolOnlySettles() {
+      return toolOnlySettles;
+    },
+    sink: {
+      sentence: (text: string) => {
+        sentences.push(text);
+      },
+      restart: () => {
+        restarted += 1;
+      },
+      settle: (unspokenTail: string, toolOnly: boolean) => {
+        if (toolOnly) {
+          toolOnlySettles += 1;
+          return;
+        }
+        if (unspokenTail.length > 0) {
+          settled.push(unspokenTail);
+        }
+      },
+      discard: () => {
+        discarded += 1;
+      },
+    },
+  };
+}
+
 describe("live chat turn", () => {
   test("frames form one ordered reasoning, tool, and answer transcript", () => {
     createRoot((dispose) => {
@@ -306,9 +349,9 @@ describe("live chat turn", () => {
     });
   });
 
-  test("only a settled spoken turn invokes playback, exactly once", () => {
+  test("only a settled spoken turn settles playback, exactly once", () => {
     createRoot((dispose) => {
-      const onSettledReply = vi.fn();
+      const spoken = recordSpokenTurn();
       const replyMode = vi.fn<() => "spoken" | "text">(() => "text");
       const turn = createLiveChatTurn({
         conversationId: () => "conversation-1",
@@ -316,8 +359,8 @@ describe("live chat turn", () => {
           listMessages: () => Promise.resolve([]),
           settled: () => undefined,
         },
-        onSettledReply,
         replyMode,
+        spokenTurn: spoken.sink,
         transport: {
           abort: () => undefined,
           sendPrompt: () => undefined,
@@ -326,7 +369,8 @@ describe("live chat turn", () => {
 
       turn.sendPrompt("text question");
       turn.handleFrame(chat({ event: "agent_end", final_text: "text answer" }));
-      expect(onSettledReply).not.toHaveBeenCalled();
+      expect(spoken.settled).toEqual([]);
+      expect(spoken.discarded).toBe(0);
 
       replyMode.mockReturnValue("spoken");
       turn.sendPrompt("spoken question");
@@ -336,28 +380,28 @@ describe("live chat turn", () => {
       ]) {
         turn.handleFrame(frame);
       }
-      expect(onSettledReply).not.toHaveBeenCalled();
+      // No sentence boundary yet: nothing provisional has been spoken.
+      expect(spoken.sentences).toEqual([]);
 
       turn.handleFrame(
         chat({ event: "agent_end", final_text: "spoken answer" }),
       );
-      expect(onSettledReply).toHaveBeenCalledTimes(1);
-      expect(onSettledReply).toHaveBeenCalledWith("spoken answer");
+      expect(spoken.settled).toEqual(["spoken answer"]);
       dispose();
     });
   });
 
-  test("aborted and errored turns never invoke playback", () => {
+  test("aborted and errored turns discard playback", () => {
     createRoot((dispose) => {
-      const onSettledReply = vi.fn();
+      const spoken = recordSpokenTurn();
       const turn = createLiveChatTurn({
         conversationId: () => "conversation-1",
         history: {
           listMessages: () => Promise.resolve([]),
           settled: () => undefined,
         },
-        onSettledReply,
         replyMode: () => "spoken",
+        spokenTurn: spoken.sink,
         transport: {
           abort: () => undefined,
           sendPrompt: () => undefined,
@@ -369,12 +413,116 @@ describe("live chat turn", () => {
       turn.handleFrame(
         chat({ event: "agent_end", final_text: "partial answer" }),
       );
-      expect(onSettledReply).not.toHaveBeenCalled();
+      expect(spoken.settled).toEqual([]);
+      expect(spoken.discarded).toBeGreaterThanOrEqual(1);
 
       turn.sendPrompt("errored question");
       turn.handleFrame(chat({ detail: "provider down", event: "error" }));
       turn.handleFrame(chat({ event: "agent_end", final_text: "whatever" }));
-      expect(onSettledReply).not.toHaveBeenCalled();
+      expect(spoken.settled).toEqual([]);
+      dispose();
+    });
+  });
+
+  test("streams complete sentences as they arrive (#545)", () => {
+    createRoot((dispose) => {
+      const spoken = recordSpokenTurn();
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        replyMode: () => "spoken",
+        spokenTurn: spoken.sink,
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("question");
+      turn.handleFrame(
+        chat({ event: "text_delta", delta: "First one. Second" }),
+      );
+      expect(spoken.sentences).toEqual(["First one. "]);
+
+      turn.handleFrame(chat({ event: "text_delta", delta: " one. Tail" }));
+      expect(spoken.sentences).toEqual(["First one. ", "Second one. "]);
+
+      turn.handleFrame(
+        chat({
+          event: "agent_end",
+          final_text: "First one. Second one. Tail.",
+        }),
+      );
+      expect(spoken.settled).toEqual(["Tail."]);
+      dispose();
+    });
+  });
+
+  test("tool activity restarts speech so the settled answer plays whole", () => {
+    createRoot((dispose) => {
+      const spoken = recordSpokenTurn();
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        replyMode: () => "spoken",
+        spokenTurn: spoken.sink,
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("question");
+      turn.handleFrame(chat({ event: "text_delta", delta: "Let me check. " }));
+      expect(spoken.sentences).toEqual(["Let me check. "]);
+
+      turn.handleFrame(
+        chat({ event: "tool_start", tool_name: "search", tool_id: "t1" }),
+      );
+      expect(spoken.restarted).toBeGreaterThanOrEqual(1);
+
+      turn.handleFrame(chat({ event: "tool_end", tool_id: "t1" }));
+      turn.handleFrame(chat({ event: "text_delta", delta: "Found it." }));
+      turn.handleFrame(
+        chat({ event: "agent_end", final_text: "Found it. Done." }),
+      );
+
+      // Prefix was invalidated by the tool start: the full settled text is
+      // re-delivered at settle (the player cancels the stale queue first).
+      expect(spoken.settled).toEqual(["Found it. Done."]);
+      dispose();
+    });
+  });
+
+  test("tool-only turns settle flagged so nonsense markers are never spoken", () => {
+    createRoot((dispose) => {
+      const spoken = recordSpokenTurn();
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        replyMode: () => "spoken",
+        spokenTurn: spoken.sink,
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("do a thing");
+      turn.handleFrame(chat({ event: "tool_start", tool_name: "x" }));
+      turn.handleFrame(chat({ event: "agent_end", tool_only: true }));
+
+      expect(spoken.settled).toEqual([]);
+      expect(spoken.toolOnlySettles).toBe(1);
       dispose();
     });
   });
