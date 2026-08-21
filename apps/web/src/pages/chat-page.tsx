@@ -17,10 +17,9 @@ import type { JSX } from "solid-js";
 import { useAppContext, useHost } from "../app-context";
 import type { ChatHost, Conversation } from "../host/chat";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
+import { createConversationMode } from "../conversation-mode";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
-import { createSpeechPlayer } from "../speech-player";
-import { toSpeechText } from "../speech-text";
 import { willStartFreshSession } from "../session-freshness";
 import { ArtifactOverlay } from "../components/artifact-viewer";
 import { MessageContent } from "../components/message-content";
@@ -596,83 +595,18 @@ export function ChatPage() {
     );
   });
 
-  const [conversationMode, setConversationMode] = createSignal(false);
-  const [handsFree, setHandsFree] = createSignal(false);
-
-  // Hands-free loop (#544): after a spoken reply finishes playing naturally,
-  // re-arm an auto-send recording so the user can just talk. Any interaction
-  // during playback (typing, clicking) means the user took over — the loop
-  // stands down for that cycle. Stopping playback early never re-arms.
-  let spokeAt = 0;
-  let lastInteractionAt = 0;
-  // True once `spokeAt` has been stamped for the current stretch of speech;
-  // tool activity resets it because the post-tool answer is a fresh start.
-  let markedSpeechStart = false;
-  const markSpeechStart = () => {
-    if (!markedSpeechStart) {
-      spokeAt = Date.now();
-      markedSpeechStart = true;
-    }
-  };
-  const [voiceAutoStart, setVoiceAutoStart] = createSignal(0);
-  // Transcript rows whose settled text was spoken this session (#546): the
-  // 🔊 chip. Session-scoped by design — durable per-message mode flags need a
-  // host schema change and are deliberately out of scope here.
-  const [spokenTexts, setSpokenTexts] = createSignal<Set<string>>(new Set());
+  // The whole spoken loop — speech player, hands-free re-arm, barge-in,
+  // interaction tracking — lives behind this one interface; the page only
+  // renders its state and forwards user intent into it.
+  const conversationMode = createConversationMode();
   const [stopPlaybackRef, setStopPlaybackRef] =
     createSignal<HTMLButtonElement | null>(null);
-  onMount(() => {
-    const markInteraction = () => {
-      lastInteractionAt = Date.now();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && speechPlayer.state() === "playing") {
-        event.preventDefault();
-        speechPlayer.cancel();
-        return;
-      }
-      // Ctrl+Shift+V flips conversation mode without leaving the keyboard.
-      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "v") {
-        event.preventDefault();
-        setConversationMode((enabled) => !enabled);
-      }
-    };
-    window.addEventListener("keydown", markInteraction, { capture: true });
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("pointerdown", markInteraction, { capture: true });
-    onCleanup(() => {
-      window.removeEventListener("keydown", markInteraction, {
-        capture: true,
-      });
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("pointerdown", markInteraction, {
-        capture: true,
-      });
-    });
-  });
-
-  const speechPlayer = createSpeechPlayer({
-    onEnded: () => {
-      if (
-        conversationMode() &&
-        handsFree() &&
-        lastInteractionAt < spokeAt &&
-        spokeAt > 0
-      ) {
-        setVoiceAutoStart((tick) => tick + 1);
-      }
-    },
-  });
-  // Leaving the chat page must never leave speech running.
-  onCleanup(() => {
-    speechPlayer.cancel();
-  });
 
   // When playback starts, put keyboard focus on Stop so Escape/Enter work
   // immediately — but never steal focus from something in active use.
   createEffect(() => {
     if (
-      speechPlayer.state() === "playing" &&
+      conversationMode.playbackState() === "playing" &&
       document.activeElement === document.body
     ) {
       stopPlaybackRef()?.focus();
@@ -683,7 +617,9 @@ export function ChatPage() {
     conversationId,
     // Read once per queued prompt, so toggling never mutates queued or
     // running turns.
-    replyMode: () => (conversationMode() ? "spoken" : "text"),
+    // Read once per queued prompt, so toggling never mutates queued or
+    // running turns.
+    replyMode: () => conversationMode.replyMode(),
     history: {
       listMessages: (id, options) => api.listMessages(id, options),
       settled: () => {
@@ -693,45 +629,7 @@ export function ChatPage() {
         void queryClient.invalidateQueries({ queryKey: ["messages"] });
       },
     },
-    spokenTurn: {
-      // Sentences stream in as they complete (#545): normalized and queued
-      // for speech immediately, before the turn settles.
-      sentence: (text) => {
-        const spoken = toSpeechText(text);
-        if (spoken.length > 0) {
-          markSpeechStart();
-          speechPlayer.enqueue(spoken);
-        }
-      },
-      // Tool activity invalidates provisional prose: stop talking so the
-      // settled answer (which plays whole at settle) isn't preceded by a
-      // now-stale lead-in.
-      restart: () => {
-        markedSpeechStart = false;
-        speechPlayer.cancel();
-      },
-      settle: (unspokenTail, info) => {
-        if (info.toolOnly) {
-          // The settled text is a host-side tool-only marker, not real
-          // prose — silence beats speaking internal scaffolding.
-          return;
-        }
-        setSpokenTexts((current) => {
-          const next = new Set(current);
-          next.add(info.fullText);
-          return next;
-        });
-        const spoken = toSpeechText(unspokenTail);
-        if (spoken.length > 0) {
-          markSpeechStart();
-          speechPlayer.enqueue(spoken);
-        }
-      },
-      discard: () => {
-        markedSpeechStart = false;
-        speechPlayer.cancel();
-      },
-    },
+    spokenTurn: conversationMode.spokenTurn,
     transport: {
       abort: (id) => {
         bus()?.abort(id);
@@ -777,7 +675,7 @@ export function ChatPage() {
       return;
     }
     // Barge-in (#546): the user taking over stops active playback.
-    speechPlayer.cancel();
+    conversationMode.onPromptSent();
     setDraft("");
     sendLivePrompt(content);
   };
@@ -885,7 +783,7 @@ export function ChatPage() {
         >
           <MessageRows
             historyReady={historyReady()}
-            isSpoken={(text) => spokenTexts().has(text)}
+            isSpoken={(text) => conversationMode.isSpoken(text)}
             onNearTop={loadOlderMessages}
             onOpenArtifact={setOpenArtifact}
             rows={rows()}
@@ -924,26 +822,28 @@ export function ChatPage() {
             </div>
           </div>
           <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
-            <Show when={conversationMode() && !speechPlayer.supported()}>
+            <Show
+              when={conversationMode.enabled() && !conversationMode.supported()}
+            >
               <p class="text-muted-foreground text-xs" role="note">
                 Speech output isn't available in this browser; spoken replies
                 will only appear as text.
               </p>
             </Show>
-            <Show when={speechPlayer.state() !== "idle"}>
+            <Show when={conversationMode.playbackState() !== "idle"}>
               <div
                 aria-live="polite"
                 class="bg-muted/40 flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
                 role="status"
               >
                 <span class="flex-1">
-                  {speechPlayer.state() === "error"
+                  {conversationMode.playbackState() === "error"
                     ? "Speech playback failed."
                     : "Speaking reply…"}
                 </span>
                 <Button
                   onClick={() => {
-                    speechPlayer.cancel();
+                    conversationMode.stopPlayback();
                   }}
                   ref={setStopPlaybackRef}
                   size="sm"
@@ -1074,7 +974,9 @@ export function ChatPage() {
                   }}
                   onKeyDown={onMessageKeyDown}
                   placeholder={
-                    conversationMode() ? "Reply spoken…" : "Message Tether…"
+                    conversationMode.enabled()
+                      ? "Reply spoken…"
+                      : "Message Tether…"
                   }
                   ref={(element) => {
                     messageInput = element;
@@ -1091,47 +993,48 @@ export function ChatPage() {
               <div class="flex shrink-0 items-center gap-1">
                 <Button
                   aria-label="Conversation mode"
-                  aria-pressed={conversationMode()}
+                  aria-pressed={conversationMode.enabled()}
                   class="rounded-full"
                   onClick={() => {
-                    setConversationMode((enabled) => !enabled);
+                    conversationMode.toggle();
                   }}
                   size="sm"
                   title={
-                    conversationMode()
+                    conversationMode.enabled()
                       ? "Conversation mode is on: replies are spoken"
                       : "Conversation mode is off"
                   }
                   type="button"
-                  variant={conversationMode() ? "default" : "outline"}
+                  variant={conversationMode.enabled() ? "default" : "outline"}
                 >
                   <span aria-hidden="true">🔊</span>
                 </Button>
-                <Show when={conversationMode()}>
+                <Show when={conversationMode.enabled()}>
                   <Button
                     aria-label="Hands-free"
-                    aria-pressed={handsFree()}
+                    aria-pressed={conversationMode.handsFree()}
                     class="rounded-full"
                     onClick={() => {
-                      setHandsFree((enabled) => !enabled);
+                      conversationMode.toggleHandsFree();
                     }}
                     size="sm"
                     title={
-                      handsFree()
+                      conversationMode.handsFree()
                         ? "Hands-free is on: recording re-arms after each spoken reply"
                         : "Hands-free is off"
                     }
                     type="button"
-                    variant={handsFree() ? "default" : "outline"}
+                    variant={
+                      conversationMode.handsFree() ? "default" : "outline"
+                    }
                   >
                     <span aria-hidden="true">🔁</span>
                   </Button>
                 </Show>
                 <VoiceComposerControls
-                  autoStartSignal={voiceAutoStart}
+                  autoStartSignal={() => conversationMode.voiceAutoStart()}
                   onRecordingStart={() => {
-                    // Avoid microphone feedback from an ongoing reply.
-                    speechPlayer.cancel();
+                    conversationMode.onRecordingStart();
                   }}
                   onTranscript={handleVoiceTranscript}
                   transcribe={(blob) => api.transcribeAudio(blob)}
