@@ -22,7 +22,16 @@ from tether.dreaming import (
     DreamingService,
     DreamRunNotFoundError,
 )
-from tether.dreaming_store import DreamRun, DreamRunTerminalStatus
+from tether.dreaming_store import (
+    DreamingMutation,
+    DreamingMutationActor,
+    DreamingMutationOperation,
+    DreamingMutationStatus,
+    DreamRun,
+    DreamRunKind,
+    DreamRunStatus,
+    DreamRunTerminalStatus,
+)
 from tether.memory_workspace_service import MemoryWorkspaceService
 from tether.model_selection import AgentModelConfig, ModelNotAllowedError
 from tether.pi_errors import PiRuntimeError
@@ -70,8 +79,8 @@ class DreamRunRead(BaseModel):
 
     id: UUID7
     conversation_id: UUID
-    kind: str
-    status: str
+    kind: DreamRunKind
+    status: DreamRunStatus
     evidence_start_seq: PositiveInt
     evidence_end_seq: PositiveInt
     attempts: PositiveInt
@@ -79,9 +88,17 @@ class DreamRunRead(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    conversation_title: str | None = None
+    mutation_count: int = 0
 
     @classmethod
-    def from_run(cls, run: DreamRun[Fetched]) -> DreamRunRead:
+    def from_run(
+        cls,
+        run: DreamRun[Fetched],
+        *,
+        conversation_title: str | None = None,
+        mutation_count: int = 0,
+    ) -> DreamRunRead:
         """Render one persisted dream run for browser JSON payloads."""
         return cls(
             id=run.id,
@@ -95,7 +112,47 @@ class DreamRunRead(BaseModel):
             completed_at=run.completed_at,
             created_at=run.created_at,
             updated_at=run.updated_at,
+            conversation_title=conversation_title,
+            mutation_count=mutation_count,
         )
+
+
+class DreamingMutationRead(BaseModel):
+    """Inspectable effect of one Dreaming filesystem mutation."""
+
+    id: UUID7
+    tool_call_id: str
+    actor: DreamingMutationActor
+    operation: DreamingMutationOperation
+    workspace_path: str
+    status: DreamingMutationStatus
+    attempts: int
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_mutation(cls, mutation: DreamingMutation[Fetched]) -> DreamingMutationRead:
+        """Render mutation metadata without duplicating Memory content."""
+        return cls(
+            id=mutation.id,
+            tool_call_id=mutation.tool_call_id,
+            actor=mutation.actor,
+            operation=mutation.operation,
+            workspace_path=mutation.workspace_path,
+            status=mutation.status,
+            attempts=mutation.attempts,
+            error=mutation.error,
+            created_at=mutation.created_at,
+            updated_at=mutation.updated_at,
+        )
+
+
+class DreamRunDetailRead(BaseModel):
+    """One Dream run and its ordered canonical Memory effects."""
+
+    run: DreamRunRead
+    mutations: list[DreamingMutationRead]
 
 
 class MessageRead(BaseModel):
@@ -271,6 +328,38 @@ async def list_conversations(request: Request) -> Response:
     )
 
 
+@router.get("/api/dream-runs", response_model=list[DreamRunRead])
+async def list_all_dream_runs(request: Request) -> Response:
+    """List Dream runs across conversations for the inspectable history UI."""
+    runtime = _runtime(request)
+    async with runtime.dreaming_service.database.transaction() as tx:
+        runs = await tx.fetch_all(
+            select(DreamRun).all().order_by(DreamRun.created_at.desc())
+        )
+        mutations = await tx.fetch_all(select(DreamingMutation).all())
+        conversations = await tx.fetch_all(select(Conversation).all())
+    conversation_by_id = {
+        conversation.id: conversation for conversation in conversations
+    }
+    mutation_counts: dict[UUID, int] = {}
+    for mutation in mutations:
+        mutation_counts[mutation.run_id] = mutation_counts.get(mutation.run_id, 0) + 1
+    return JSONResponse(
+        [
+            DreamRunRead.from_run(
+                run,
+                conversation_title=(
+                    conversation_by_id[run.conversation_id].title
+                    if run.conversation_id in conversation_by_id
+                    else None
+                ),
+                mutation_count=mutation_counts.get(run.id, 0),
+            ).model_dump(mode="json")
+            for run in runs
+        ]
+    )
+
+
 @router.get(
     "/api/conversations/{conversation_id}/dream-runs",
     response_model=list[DreamRunRead],
@@ -292,6 +381,44 @@ async def list_dream_runs(request: Request, conversation_id: str) -> Response:
     return JSONResponse(
         [DreamRunRead.from_run(run).model_dump(mode="json") for run in runs]
     )
+
+
+@router.get("/api/dream-runs/{run_id}", response_model=DreamRunDetailRead)
+async def get_dream_run(request: Request, run_id: str) -> Response:
+    """Return one Dream run with the Memory mutations it attempted."""
+    try:
+        parsed_run_id = _path_dream_run_id(run_id)
+    except DreamRunNotFoundError:
+        return JSONResponse({"detail": "dream run not found"}, status_code=404)
+    runtime = _runtime(request)
+    async with runtime.dreaming_service.database.transaction() as tx:
+        run = await tx.fetch_one_or_none(
+            select(DreamRun).where(DreamRun.id.eq(parsed_run_id))
+        )
+        mutations = await tx.fetch_all(
+            select(DreamingMutation)
+            .where(DreamingMutation.run_id.eq(parsed_run_id))
+            .order_by(DreamingMutation.created_at.asc())
+        )
+    if run is None:
+        return JSONResponse({"detail": "dream run not found"}, status_code=404)
+    try:
+        conversation = await runtime.conversation_service.fetch_conversation(
+            run.conversation_id
+        )
+    except ConversationNotFoundError:
+        conversation = None
+    detail = DreamRunDetailRead(
+        run=DreamRunRead.from_run(
+            run,
+            conversation_title=conversation.title if conversation is not None else None,
+            mutation_count=len(mutations),
+        ),
+        mutations=[
+            DreamingMutationRead.from_mutation(mutation) for mutation in mutations
+        ],
+    )
+    return JSONResponse(detail.model_dump(mode="json"))
 
 
 @router.post("/api/conversations/{conversation_id}/dream-now", status_code=200)
@@ -480,7 +607,9 @@ async def clear_messages(request: Request, conversation_id: str) -> Response:
 
 __all__ = [
     "ConversationRead",
+    "DreamRunDetailRead",
     "DreamRunRead",
+    "DreamingMutationRead",
     "MessageRead",
     "MessagesQuery",
     "router",

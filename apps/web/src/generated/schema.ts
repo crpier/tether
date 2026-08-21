@@ -400,6 +400,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/dream-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List All Dream Runs
+     * @description List Dream runs across conversations for the inspectable history UI.
+     */
+    get: operations["list_all_dream_runs_api_dream_runs_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/dream-runs/{run_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Dream Run
+     * @description Return one Dream run with the Memory mutations it attempted.
+     */
+    get: operations["get_dream_run_api_dream_runs__run_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/dream-runs/{run_id}/complete": {
     parameters: {
       query?: never;
@@ -1995,6 +2035,15 @@ export interface components {
       type?: number | null;
     };
     /**
+     * DreamRunDetailRead
+     * @description One Dream run and its ordered canonical Memory effects.
+     */
+    DreamRunDetailRead: {
+      /** Mutations */
+      mutations: components["schemas"]["DreamingMutationRead"][];
+      run: components["schemas"]["DreamRunRead"];
+    };
+    /**
      * DreamRunRead
      * @description HTTP representation of one Dream run row.
      */
@@ -2008,6 +2057,8 @@ export interface components {
        * Format: uuid
        */
       conversation_id: string;
+      /** Conversation Title */
+      conversation_title?: string | null;
       /**
        * Created At
        * Format: date-time
@@ -2024,15 +2075,70 @@ export interface components {
        * Format: uuid7
        */
       id: string;
-      /** Kind */
-      kind: string;
-      /** Status */
-      status: string;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "assimilation" | "maintenance" | "manual";
+      /**
+       * Mutation Count
+       * @default 0
+       */
+      mutation_count: number;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "queued" | "running" | "success" | "no_op" | "failed";
       /**
        * Updated At
        * Format: date-time
        */
       updated_at: string;
+    };
+    /**
+     * DreamingMutationRead
+     * @description Inspectable effect of one Dreaming filesystem mutation.
+     */
+    DreamingMutationRead: {
+      /**
+       * Actor
+       * @enum {string}
+       */
+      actor: "dream" | "human_external" | "restore";
+      /** Attempts */
+      attempts: number;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Error */
+      error: string | null;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /**
+       * Operation
+       * @enum {string}
+       */
+      operation: "delete" | "move" | "restore" | "write";
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "executed" | "acknowledged" | "failed";
+      /** Tool Call Id */
+      tool_call_id: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Workspace Path */
+      workspace_path: string;
     };
     /**
      * DuePromptRead
@@ -4320,6 +4426,57 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_all_dream_runs_api_dream_runs_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DreamRunRead"][];
+        };
+      };
+    };
+  };
+  get_dream_run_api_dream_runs__run_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DreamRunDetailRead"];
         };
       };
       /** @description Validation Error */

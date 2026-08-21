@@ -2,6 +2,7 @@ import { createArtifactsHost, type ArtifactsHost } from "./artifacts";
 import { createAuthHost, type AuthHost } from "./auth";
 import { createBucketHost, type BucketHost } from "./bucket";
 import { createChatHost, type ChatHost } from "./chat";
+import { createDreamingHost, type DreamingHost } from "./dreaming";
 import { createMemoriesHost, type MemoriesHost } from "./memories";
 import {
   createNotificationsHost,
@@ -22,6 +23,7 @@ export * from "./artifacts";
 export * from "./auth";
 export * from "./bucket";
 export * from "./chat";
+export * from "./dreaming";
 export * from "./memories";
 export * from "./notifications";
 export * from "./panels";
@@ -41,6 +43,7 @@ export interface WebHost {
   auth: AuthHost;
   bucket: BucketHost;
   chat: ChatHost;
+  dreaming: DreamingHost;
   memories: MemoriesHost;
   notifications: NotificationsHost;
   panels: PanelsHost;
@@ -63,6 +66,7 @@ export function createRestHost(
     auth: createAuthHost(context),
     bucket: createBucketHost(context),
     chat: createChatHost(context),
+    dreaming: createDreamingHost(context),
     memories: createMemoriesHost(context),
     notifications: createNotificationsHost(context),
     panels: createPanelsHost(context),

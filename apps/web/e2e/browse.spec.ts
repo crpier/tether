@@ -14,6 +14,22 @@ test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
   );
 });
 
+test("Browse deep-links to inspectable Dream history", async ({
+  page,
+  login,
+}) => {
+  await login();
+
+  await page.goto("/browse/dreaming", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dreaming" })).toBeVisible();
+  await expect(page.getByText("No Dream runs yet")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Dreaming" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 test("Browse tab clicks update the shareable URL", async ({ page, login }) => {
   await login();
 

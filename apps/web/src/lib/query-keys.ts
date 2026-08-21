@@ -10,6 +10,8 @@ export const queryKeys = {
     ["bucket-items", view] as const,
   bucketSearch: (q: string) => ["bucket-items", "search", q] as const,
   conversations: ["conversations"] as const,
+  dreamRuns: ["dream-runs"] as const,
+  dreamRun: (runId: string) => ["dream-runs", runId] as const,
   // The "memories" prefix matches the host's InvalidateEvent key (it emits
   // ["memories", "review-queue"]; the prefix alone already covers every
   // memories query — queue, corpus and search).
