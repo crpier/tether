@@ -14,7 +14,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
-from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame
+from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame, ReplyMode
 from tether.chat_turn import (
     ChatTurnDependencies,
     ConversationTurnQueue,
@@ -43,6 +43,8 @@ class InboundFrame(BaseModel):
         ]
         | None
     ) = None
+    reply_mode: ReplyMode | None = None
+    """Turn-level presentation mode; omitted values default to text."""
 
 
 class _ChatRuntime(Protocol):
@@ -107,6 +109,7 @@ async def _handle_frame(
                     _turn_dependencies(websocket),
                     conversation_id=frame.conversation_id,
                     content=frame.content,
+                    reply_mode=frame.reply_mode or "text",
                 )
             )
         case "abort":

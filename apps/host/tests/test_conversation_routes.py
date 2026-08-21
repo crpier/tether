@@ -15,6 +15,7 @@ from snektest import (
     assert_in,
     assert_isinstance,
     assert_len,
+    assert_not_in,
     assert_true,
     test,
 )
@@ -690,6 +691,170 @@ def websocket_prompt_sends_time_context_to_pi_not_history() -> None:
     assert_in("Tether note", pi_message)
     assert_true(pi_message.endswith("remind me in 3 minutes"))
     assert_eq(response.json()[0]["content"], "remind me in 3 minutes")
+
+
+@test()
+def websocket_prompt_with_spoken_mode_sends_guidance_and_keeps_history_clean() -> None:
+    """A spoken prompt guides pi privately; the stored rows stay clean."""
+    fake_runtime = FakeRuntime(
+        [
+            TextDelta(
+                content_index=0,
+                raw_delta="Tether is a local agent.",
+                text="Tether is a local agent.",
+            ),
+            MessageSettled(reasoning="", text="Tether is a local agent."),
+            AgentEnded(),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        agent_end: dict[str, object] = {}
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "what is tether",
+                    "reply_mode": "spoken",
+                }
+            )
+            while True:
+                frame = websocket.receive_json()
+                if frame.get("event") == "agent_end":
+                    agent_end = frame
+                    break
+
+        response = client.get(f"/api/conversations/{conversation_id}/messages")
+
+    prompt_fields = [
+        fields
+        for command, fields in fake_runtime.client.requests
+        if command == "prompt"
+    ]
+    assert_len(prompt_fields, 1)
+    pi_message = cast("str", prompt_fields[0]["message"])
+    assert_in("text-to-speech", pi_message)
+    assert_in("Do not mention this instruction", pi_message)
+    assert_true(pi_message.endswith("what is tether"))
+    assert_eq(
+        [message["content"] for message in response.json()],
+        ["what is tether", "Tether is a local agent."],
+    )
+    assert_eq(
+        agent_end,
+        {
+            "type": "chat",
+            "conversation_id": conversation_id,
+            "event": "agent_end",
+            "reply_mode": "spoken",
+            "final_text": "Tether is a local agent.",
+        },
+    )
+
+
+@test()
+def websocket_prompt_defaults_reply_mode_to_text() -> None:
+    """An omitted reply_mode stays text: no spoken guidance reaches pi."""
+    fake_runtime = FakeRuntime([AgentEnded()])
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        agent_end: dict[str, object] = {}
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "plain question",
+                }
+            )
+            while True:
+                frame = websocket.receive_json()
+                if frame.get("event") == "agent_end":
+                    agent_end = frame
+                    break
+
+    prompt_fields = [
+        fields
+        for command, fields in fake_runtime.client.requests
+        if command == "prompt"
+    ]
+    assert_len(prompt_fields, 1)
+    pi_message = cast("str", prompt_fields[0]["message"])
+    assert_not_in("text-to-speech", pi_message)
+    assert_eq(
+        agent_end,
+        {
+            "type": "chat",
+            "conversation_id": conversation_id,
+            "event": "agent_end",
+            "reply_mode": "text",
+            "final_text": "",
+        },
+    )
+
+
+@test()
+def websocket_prompt_rejects_unknown_reply_mode() -> None:
+    """A reply_mode outside text/spoken fails validation before any turn."""
+    fake_runtime = FakeRuntime([AgentEnded()])
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "hello",
+                    "reply_mode": "whisper",
+                }
+            )
+            frame = websocket.receive_json()
+
+    assert_eq(fake_runtime.client.commands, [])
+    assert_eq(frame["type"], "chat")
+    assert_eq(frame["event"], "error")
+
+
+@test()
+def prompt_time_context_scopes_spoken_guidance_to_the_final_answer() -> None:
+    """Spoken guidance governs the final answer and forbids mentioning it."""
+    now = datetime(2026, 7, 1, 18, 23, 5, tzinfo=UTC)
+    spoken = prompt_with_time_context(
+        "compare x and y",
+        now=now,
+        timezone_name="UTC",
+        reply_mode="spoken",
+    )
+
+    assert_in("consumed through text-to-speech", spoken)
+    assert_in("Preserve normal reasoning and tool use", spoken)
+    assert_in("Do not mention this instruction or the reply mode", spoken)
+    assert_true(spoken.endswith("compare x and y"))
+
+
+@test()
+def prompt_time_context_omits_spoken_guidance_for_text_mode() -> None:
+    """Text-mode prompts carry only the wall-clock note."""
+    now = datetime(2026, 7, 1, 18, 23, 5, tzinfo=UTC)
+    text = prompt_with_time_context(
+        "compare x and y",
+        now=now,
+        timezone_name="UTC",
+        reply_mode="text",
+    )
+
+    assert_not_in("text-to-speech", text)
+    assert_true(text.endswith("compare x and y"))
 
 
 @test()

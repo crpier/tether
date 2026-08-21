@@ -27,7 +27,7 @@ from tether.chat_frames import (
     ToolStartFrame,
     UserMessageFrame,
 )
-from tether.chat_prompt import local_timezone_name, prompt_with_time_context
+from tether.chat_prompt import ReplyMode, local_timezone_name, prompt_with_time_context
 from tether.conversation_model import ConversationNotFoundError, MessageDraft
 from tether.conversation_store import Conversation
 from tether.conversations import SESSION_GAP, ConversationService
@@ -138,11 +138,21 @@ class _TurnState:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnSpec:
+    """Identity of one queued turn: where it runs and how it replies."""
+
+    conversation_id: UUID
+    reply_mode: ReplyMode
+    session_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class _TurnContext:
     """Stable collaborators and identity shared by each event in one turn."""
 
     conversation_id: UUID
     dependencies: ChatTurnDependencies
+    reply_mode: ReplyMode
     session_id: str
     websocket: ChatFrameSink
 
@@ -441,7 +451,11 @@ async def _handle_turn_event(
                 )
                 state.final_text = _TOOL_ONLY_TURN_MARKER
             await context.websocket.send_json(
-                AgentEndFrame(conversation_id=context.conversation_id).wire()
+                AgentEndFrame(
+                    conversation_id=context.conversation_id,
+                    reply_mode=context.reply_mode,
+                    final_text=state.final_text,
+                ).wire()
             )
 
 
@@ -449,15 +463,15 @@ async def stream_chat_turn(
     websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
     *,
-    conversation_id: UUID,
     runtime: ChatPiRuntime,
-    session_id: str,
+    spec: TurnSpec,
 ) -> str:
     """Relay one ordered pi turn and return its final assistant text."""
     context = _TurnContext(
-        conversation_id=conversation_id,
+        conversation_id=spec.conversation_id,
         dependencies=dependencies,
-        session_id=session_id,
+        reply_mode=spec.reply_mode,
+        session_id=spec.session_id,
         websocket=websocket,
     )
     state = _TurnState()
@@ -474,6 +488,7 @@ async def _run_chat_prompt(
     *,
     conversation_id: UUID,
     content: str,
+    reply_mode: ReplyMode,
 ) -> str:
     """Persist, submit, stream, and settle one prompt with ownership held."""
     try:
@@ -536,6 +551,7 @@ async def _run_chat_prompt(
                     content,
                     now=now,
                     timezone_name=local_timezone_name(now),
+                    reply_mode=reply_mode,
                 ),
             )
             if prompt_response.get("success") is not True:
@@ -550,9 +566,12 @@ async def _run_chat_prompt(
             final_text = await stream_chat_turn(
                 websocket,
                 dependencies,
-                conversation_id=conversation_id,
                 runtime=runtime,
-                session_id=session_id,
+                spec=TurnSpec(
+                    conversation_id=conversation_id,
+                    reply_mode=reply_mode,
+                    session_id=session_id,
+                ),
             )
             await _queue_dreaming_run(dependencies, conversation_id=conversation_id)
             return final_text
@@ -580,6 +599,7 @@ async def run_chat_prompt(
     *,
     conversation_id: UUID,
     content: str,
+    reply_mode: ReplyMode = "text",
 ) -> str:
     """Queue, persist, submit, stream, and settle one user prompt."""
     async with dependencies.turn_queue.serialize(conversation_id):
@@ -588,6 +608,7 @@ async def run_chat_prompt(
             dependencies,
             conversation_id=conversation_id,
             content=content,
+            reply_mode=reply_mode,
         )
 
 
@@ -597,6 +618,7 @@ __all__ = [
     "ChatRuntimeRegistry",
     "ChatTurnDependencies",
     "ConversationTurnQueue",
+    "TurnSpec",
     "run_chat_prompt",
     "send_chat_error",
     "stream_chat_turn",

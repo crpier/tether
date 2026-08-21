@@ -212,7 +212,12 @@ describe("Chat view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(bus.sent).toEqual([
-      { content: "Hello", conversationId: conversation.id, type: "prompt" },
+      {
+        content: "Hello",
+        conversationId: conversation.id,
+        replyMode: "text",
+        type: "prompt",
+      },
     ]);
     expect(screen.getByText("Hello")).toBeInTheDocument();
 
@@ -441,7 +446,12 @@ describe("Chat view", () => {
     fireEvent.keyDown(messageBox, { key: "Enter" });
 
     expect(bus.sent).toEqual([
-      { content: "Hello", conversationId: conversation.id, type: "prompt" },
+      {
+        content: "Hello",
+        conversationId: conversation.id,
+        replyMode: "text",
+        type: "prompt",
+      },
     ]);
     expect(screen.getByText("Hello")).toBeInTheDocument();
   });
@@ -457,7 +467,12 @@ describe("Chat view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
 
     expect(bus.sent).toEqual([
-      { content: "First", conversationId: conversation.id, type: "prompt" },
+      {
+        content: "First",
+        conversationId: conversation.id,
+        replyMode: "text",
+        type: "prompt",
+      },
     ]);
     const queue = screen.getByRole("region", { name: "Queued messages" });
     expect(within(queue).getByText("Follow up")).toBeInTheDocument();
@@ -474,7 +489,12 @@ describe("Chat view", () => {
       fireEvent.keyDown(messageBox, { key: "Enter" });
     }
     expect(bus.sent).toEqual([
-      { content: "First", conversationId: conversation.id, type: "prompt" },
+      {
+        content: "First",
+        conversationId: conversation.id,
+        replyMode: "text",
+        type: "prompt",
+      },
     ]);
 
     bus.emit({
@@ -485,6 +505,7 @@ describe("Chat view", () => {
     expect(bus.sent.at(-1)).toEqual({
       content: "Second",
       conversationId: conversation.id,
+      replyMode: "text",
       type: "prompt",
     });
     expect(screen.queryByText("Second")).toBeInTheDocument();
@@ -497,6 +518,7 @@ describe("Chat view", () => {
     expect(bus.sent.at(-1)).toEqual({
       content: "Third",
       conversationId: conversation.id,
+      replyMode: "text",
       type: "prompt",
     });
     expect(
@@ -579,6 +601,7 @@ describe("Chat view", () => {
     expect(bus.sent.at(-1)).toEqual({
       content: "Urgent correction",
       conversationId: conversation.id,
+      replyMode: "text",
       type: "prompt",
     });
     expect(screen.getByText("Second")).toBeInTheDocument();
@@ -605,11 +628,13 @@ describe("Chat view", () => {
       {
         content: "Do not lose this",
         conversationId: conversation.id,
+        replyMode: "text",
         type: "prompt",
       },
       {
         content: "Do not lose this",
         conversationId: conversation.id,
+        replyMode: "text",
         type: "prompt",
       },
     ]);
@@ -640,6 +665,7 @@ describe("Chat view", () => {
       {
         content: "Keep going",
         conversationId: conversation.id,
+        replyMode: "text",
         type: "prompt",
       },
       { conversationId: conversation.id, type: "abort" },
@@ -1026,6 +1052,7 @@ describe("Chat view", () => {
           {
             content: "call the dentist",
             conversationId: conversation.id,
+            replyMode: "text",
             type: "prompt",
           },
         ]);
@@ -1051,7 +1078,12 @@ describe("Chat view", () => {
       });
       expect(within(queue).getByText("voice follow up")).toBeInTheDocument();
       expect(bus.sent).toEqual([
-        { content: "First", conversationId: conversation.id, type: "prompt" },
+        {
+          content: "First",
+          conversationId: conversation.id,
+          replyMode: "text",
+          type: "prompt",
+        },
       ]);
     });
 

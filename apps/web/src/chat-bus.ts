@@ -1,3 +1,5 @@
+export type ReplyMode = "text" | "spoken";
+
 export type ChatFrame =
   | {
       type: "chat";
@@ -13,6 +15,8 @@ export type ChatFrame =
       tool_args?: unknown;
       tool_result?: unknown;
       content_index?: number | null;
+      reply_mode?: ReplyMode;
+      final_text?: string;
     }
   | { type: "invalidate"; keys: string[] }
   | {
@@ -36,7 +40,11 @@ const MAX_RETRY_MS = 16_000;
 export interface ChatBus {
   abort(conversationId: string): void;
   close(): void;
-  sendPrompt(conversationId: string, content: string): void;
+  sendPrompt(
+    conversationId: string,
+    content: string,
+    replyMode: ReplyMode,
+  ): void;
 }
 
 export type CreateChatBus = (handlers: ChatBusHandlers) => ChatBus;
@@ -124,11 +132,12 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
       }
       socket?.close();
     },
-    sendPrompt(conversationId, content) {
+    sendPrompt(conversationId, content, replyMode) {
       sendSerialized(
         JSON.stringify({
           content,
           conversation_id: conversationId,
+          reply_mode: replyMode,
           type: "prompt",
         }),
       );

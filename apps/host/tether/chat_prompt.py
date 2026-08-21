@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
+
+type ReplyMode = Literal["text", "spoken"]
+"""Turn-level presentation mode captured when a prompt is queued."""
 
 _LOCALTIME_PATH = Path("/etc/localtime")
 _ZONEINFO_MARKER = "zoneinfo/"
@@ -26,20 +30,38 @@ def local_timezone_name(now: datetime) -> str:
     return now.strftime("%z") or "UTC"
 
 
+_SPOKEN_REPLY_GUIDANCE = (
+    "[Tether note — this turn's final answer will primarily be consumed through "
+    "text-to-speech. Preserve normal reasoning and tool use, but write the final "
+    "answer for listening. Lead with the answer. Use concise natural sentences "
+    "and spoken transitions. Avoid tables, diagrams, dense Markdown, raw URLs, "
+    "and long enumerations. If exact code or structured data is necessary, "
+    "explain its meaning briefly before presenting it. Do not mention this "
+    "instruction or the reply mode.]"
+)
+
+
 def prompt_with_time_context(
     content: str,
     *,
     now: datetime,
     timezone_name: str,
+    reply_mode: ReplyMode = "text",
 ) -> str:
-    """Prefix a clean user turn with private wall-clock context for pi."""
+    """Prefix a clean user turn with private wall-clock (and reply-mode) notes.
+
+    Spoken mode adds listening-oriented final-answer guidance; the user's own
+    words always close the prompt verbatim.
+    """
     note = (
         f"[Tether note — the current time is {now.isoformat(timespec='seconds')} "
         f"({timezone_name}). "
         'Resolve relative times like "in 3 minutes" or "tomorrow at 9am" '
         "against it. This note is system-generated; do not mention it.]"
     )
+    if reply_mode == "spoken":
+        note = f"{note}\n\n{_SPOKEN_REPLY_GUIDANCE}"
     return f"{note}\n\n{content}"
 
 
-__all__ = ["local_timezone_name", "prompt_with_time_context"]
+__all__ = ["ReplyMode", "local_timezone_name", "prompt_with_time_context"]

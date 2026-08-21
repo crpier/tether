@@ -592,8 +592,8 @@ export function ChatPage() {
       abort: (id) => {
         bus()?.abort(id);
       },
-      sendPrompt: (id, content) => {
-        bus()?.sendPrompt(id, content);
+      sendPrompt: (id, content, replyMode) => {
+        bus()?.sendPrompt(id, content, replyMode);
       },
     },
   });

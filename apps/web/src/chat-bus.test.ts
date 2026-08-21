@@ -111,7 +111,7 @@ describe("createBrowserChatBus reconnection", () => {
 
   test("queued prompts flush once the socket opens", () => {
     const bus = createBrowserChatBus({ onDisconnect: noop, onFrame: noop });
-    bus.sendPrompt("c1", "hello");
+    bus.sendPrompt("c1", "hello", "text");
 
     const socket = FakeSocket.instances[0];
     expect(socket.sent).toEqual([]);
@@ -121,6 +121,20 @@ describe("createBrowserChatBus reconnection", () => {
       conversation_id: "c1",
       content: "hello",
       type: "prompt",
+      reply_mode: "text",
+    });
+  });
+
+  test("spoken prompts carry their captured reply mode", () => {
+    const bus = createBrowserChatBus({ onDisconnect: noop, onFrame: noop });
+    bus.sendPrompt("c1", "hello", "spoken");
+
+    FakeSocket.instances[0].open();
+    expect(JSON.parse(FakeSocket.instances[0].sent[0])).toMatchObject({
+      conversation_id: "c1",
+      content: "hello",
+      type: "prompt",
+      reply_mode: "spoken",
     });
   });
 

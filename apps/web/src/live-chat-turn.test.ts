@@ -189,7 +189,9 @@ describe("live chat turn", () => {
       });
 
       expect(turn.error()).toBe("provider unavailable");
-      expect(turn.queuedPrompts()).toEqual([{ content: "keep me", id: 1 }]);
+      expect(turn.queuedPrompts()).toEqual([
+        { content: "keep me", id: 1, replyMode: "text" },
+      ]);
       dispose();
     });
   });
@@ -197,7 +199,12 @@ describe("live chat turn", () => {
   test("a chosen queued prompt waits for agent_end after abort acknowledgement", () => {
     createRoot((dispose) => {
       const sent: (
-        | { content: string; conversationId: string; type: "prompt" }
+        | {
+            content: string;
+            conversationId: string;
+            replyMode: "spoken" | "text";
+            type: "prompt";
+          }
         | { conversationId: string; type: "abort" }
       )[] = [];
       const turn = createLiveChatTurn({
@@ -211,8 +218,8 @@ describe("live chat turn", () => {
           abort: (conversationId) => {
             sent.push({ conversationId, type: "abort" });
           },
-          sendPrompt: (conversationId, content) => {
-            sent.push({ content, conversationId, type: "prompt" });
+          sendPrompt: (conversationId, content, replyMode) => {
+            sent.push({ content, conversationId, replyMode, type: "prompt" });
           },
         },
       });
@@ -227,6 +234,7 @@ describe("live chat turn", () => {
         {
           content: "active",
           conversationId: "conversation-1",
+          replyMode: "text",
           type: "prompt",
         },
         { conversationId: "conversation-1", type: "abort" },
@@ -237,8 +245,136 @@ describe("live chat turn", () => {
       expect(sent.at(-1)).toEqual({
         content: "chosen",
         conversationId: "conversation-1",
+        replyMode: "text",
         type: "prompt",
       });
+      dispose();
+    });
+  });
+
+  test("queued prompts capture the reply mode at enqueue and keep it", () => {
+    createRoot((dispose) => {
+      const sent: {
+        content: string;
+        conversationId: string;
+        replyMode: "spoken" | "text";
+        type: "prompt";
+      }[] = [];
+      const replyMode = vi.fn<() => "spoken" | "text">(() => "spoken");
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        replyMode,
+        transport: {
+          abort: () => undefined,
+          sendPrompt: (conversationId, content, mode) => {
+            sent.push({
+              content,
+              conversationId,
+              replyMode: mode,
+              type: "prompt",
+            });
+          },
+        },
+      });
+
+      turn.sendPrompt("first");
+      turn.sendPrompt("second");
+      expect(turn.queuedPrompts()).toEqual([
+        { content: "second", id: 2, replyMode: "spoken" },
+      ]);
+
+      // The toggle flips while the first turn runs; queued modes stay captured.
+      replyMode.mockReturnValue("text");
+      turn.editQueuedPrompt(2, "second edited");
+      expect(turn.queuedPrompts()).toEqual([
+        { content: "second edited", id: 2, replyMode: "spoken" },
+      ]);
+
+      turn.handleFrame(chat({ event: "agent_end", final_text: "answer one" }));
+
+      expect(sent.at(-1)).toEqual({
+        content: "second edited",
+        conversationId: "conversation-1",
+        replyMode: "spoken",
+        type: "prompt",
+      });
+      dispose();
+    });
+  });
+
+  test("only a settled spoken turn invokes playback, exactly once", () => {
+    createRoot((dispose) => {
+      const onSettledReply = vi.fn();
+      const replyMode = vi.fn<() => "spoken" | "text">(() => "text");
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        onSettledReply,
+        replyMode,
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("text question");
+      turn.handleFrame(chat({ event: "agent_end", final_text: "text answer" }));
+      expect(onSettledReply).not.toHaveBeenCalled();
+
+      replyMode.mockReturnValue("spoken");
+      turn.sendPrompt("spoken question");
+      for (const frame of [
+        chat({ event: "message_start" }),
+        chat({ event: "text_delta", delta: "partial" }),
+      ]) {
+        turn.handleFrame(frame);
+      }
+      expect(onSettledReply).not.toHaveBeenCalled();
+
+      turn.handleFrame(
+        chat({ event: "agent_end", final_text: "spoken answer" }),
+      );
+      expect(onSettledReply).toHaveBeenCalledTimes(1);
+      expect(onSettledReply).toHaveBeenCalledWith("spoken answer");
+      dispose();
+    });
+  });
+
+  test("aborted and errored turns never invoke playback", () => {
+    createRoot((dispose) => {
+      const onSettledReply = vi.fn();
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        onSettledReply,
+        replyMode: () => "spoken",
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("aborted question");
+      turn.handleFrame(chat({ event: "abort_ack" }));
+      turn.handleFrame(
+        chat({ event: "agent_end", final_text: "partial answer" }),
+      );
+      expect(onSettledReply).not.toHaveBeenCalled();
+
+      turn.sendPrompt("errored question");
+      turn.handleFrame(chat({ detail: "provider down", event: "error" }));
+      turn.handleFrame(chat({ event: "agent_end", final_text: "whatever" }));
+      expect(onSettledReply).not.toHaveBeenCalled();
       dispose();
     });
   });
