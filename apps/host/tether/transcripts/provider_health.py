@@ -15,7 +15,7 @@ from tether.escalating_pause import (
     TrippedPause,
     load_pause_state,
 )
-from tether.youtube_quota import YouTubeSyncState, state_get, state_set
+from tether.youtube import YouTubeSyncState, state_get, state_set
 
 _TRANSCRIPT_PAUSED_UNTIL_PREFIX = "transcript_provider_paused_until:"
 _TRANSCRIPT_BLOCK_STREAK_PREFIX = "transcript_provider_block_streak:"

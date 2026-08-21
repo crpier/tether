@@ -17,10 +17,8 @@ if TYPE_CHECKING:
     from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
     from tether.events import EventHub
-    from tether.gmail_auth_service import GoogleGmailAuthService
-    from tether.gmail_client import GmailClient
-    from tether.health_connect_ingestion import HealthConnectIngestion
-    from tether.health_connect_telemetry import HealthConnectTelemetry
+    from tether.gmail import GmailClient, GoogleGmailAuthService
+    from tether.health_connect import HealthConnectIngestion, HealthConnectTelemetry
     from tether.ingestion_lifecycle import IngestionLifecycle
     from tether.kosync import KosyncService
     from tether.kosync_routes import KosyncAuth
@@ -45,8 +43,7 @@ if TYPE_CHECKING:
     from tether.triage import TriageService
     from tether.triggers import TriggerService
     from tether.web_search import SearchProvider
-    from tether.youtube import YouTubeService
-    from tether.youtube_auth_service import YouTubeAuthService
+    from tether.youtube import YouTubeAuthService, YouTubeService
 
 
 @dataclass(frozen=True, slots=True)

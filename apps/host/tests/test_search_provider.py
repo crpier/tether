@@ -18,7 +18,7 @@ from tether.web_search import (
     SearchDepth,
     SearchUpstreamFailure,
 )
-from tether.youtube_store import create_youtube_schema
+from tether.youtube.store import create_youtube_schema
 
 
 class FakeMonotonicClock:

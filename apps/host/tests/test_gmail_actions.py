@@ -19,7 +19,7 @@ from snekok import Ok, Result
 from snektest import assert_eq, assert_in, assert_true, test
 
 from tether.action_registry import ActionContext
-from tether.gmail_actions import (
+from tether.gmail.actions import (
     GMAIL_ACTION_SPECS,
     GmailArchiveParams,
     GmailDeleteParams,
@@ -28,7 +28,7 @@ from tether.gmail_actions import (
     _delete,
     _label,
 )
-from tether.gmail_client import GmailClient, GmailNetworkFailure, GmailResponse
+from tether.gmail.client import GmailClient, GmailNetworkFailure, GmailResponse
 from tether.structured_logging import Logger
 
 

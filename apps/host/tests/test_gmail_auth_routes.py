@@ -10,13 +10,13 @@ from snekok import Ok, Result
 from snektest import assert_eq, test
 
 from tests.surfaces import login, surface_client
-from tether.gmail_auth_service import (
+from tether.gmail.auth_service import (
     GmailAuthBackend,
     GmailAuthFailure,
     GmailAuthorization,
     GoogleGmailAuthBackend,
 )
-from tether.gmail_oauth import OAuthConfig
+from tether.gmail.oauth import GMAIL_READONLY_SCOPE, OAuthConfig
 
 
 class FakeGoogleCredentials:
@@ -99,6 +99,7 @@ def invalid_gmail_credentials_do_not_crash_host_startup() -> None:
         _ = token_path.write_text("not-json", encoding="utf-8")
         backend = GoogleGmailAuthBackend(
             OAuthConfig(
+                scopes=(GMAIL_READONLY_SCOPE,),
                 client_secret_path=root / "client-secret.json",
                 token_path=token_path,
             )
@@ -129,6 +130,7 @@ def successful_gmail_callback_persists_google_credentials() -> None:
         token_path = root / "gmail" / "token.json"
         backend = GoogleGmailAuthBackend(
             OAuthConfig(
+                scopes=(GMAIL_READONLY_SCOPE,),
                 client_secret_path=root / "client-secret.json",
                 token_path=token_path,
             ),

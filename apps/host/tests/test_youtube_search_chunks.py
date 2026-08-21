@@ -12,7 +12,7 @@ import time
 
 from snektest import assert_eq, assert_lt, assert_true, test
 
-from tether.youtube_search_chunks import chunk_youtube_text
+from tether.youtube.search_chunks import chunk_youtube_text
 
 
 @test()

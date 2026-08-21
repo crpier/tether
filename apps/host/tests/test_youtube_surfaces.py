@@ -4,7 +4,7 @@ One app, both shells, seeded with an `InMemoryYouTubeApi` so no live YouTube
 call is ever made. The REST routes serve full read models with quota + cache in
 the body; the `/internal/tools/*` endpoints serve deliberately compact,
 context-budgeted rows with quota + cache on the envelope. Both translate
-failures through `tether.youtube_capabilities.YOUTUBE_ERRORS`, and ignore/retry
+failures through `tether.youtube.capabilities.YOUTUBE_ERRORS`, and ignore/retry
 share one capability execute outright.
 """
 
@@ -21,8 +21,8 @@ from tether.transcripts.contracts import (
     TranscriptFetchResult,
     TranscriptSource,
 )
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_quota import RawYouTubeVideo
+from tether.youtube.local import InMemoryYouTubeApi
+from tether.youtube.quota import RawYouTubeVideo
 
 
 def video(

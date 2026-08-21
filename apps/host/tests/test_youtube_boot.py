@@ -19,12 +19,12 @@ from tether.events import EventHub
 from tether.host_config import AppConfig
 from tether.ingestion_composition import YouTubeComponent, compose_youtube
 from tether.ingestion_lifecycle import IngestionLifecycle
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_quota import (
+from tether.youtube.local import InMemoryYouTubeApi
+from tether.youtube.quota import (
     LikedPage,
     RawYouTubeVideo,
 )
-from tether.youtube_store import create_youtube_schema
+from tether.youtube.store import create_youtube_schema
 
 
 def video(video_id: str) -> RawYouTubeVideo:

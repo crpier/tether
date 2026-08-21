@@ -18,15 +18,15 @@ from starlette.routing import Route, request_response
 from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.bucket_item_store import BucketItemProvenance
 from tether.capability_contracts import (
+    CacheMeta,
     CapabilityOutcome,
     ErrorRule,
+    QuotaMeta,
     ToolErrorCode,
     catchable_exceptions,
     match_rule,
 )
 from tether.memory_store import MemoryProvenance
-from tether.youtube import CacheMeta
-from tether.youtube_quota import QuotaMeta
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
 """Header carrying the per-process credential injected into pi at spawn."""

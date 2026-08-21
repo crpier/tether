@@ -13,8 +13,8 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tether.action_registry import ActionSpec
-from tether.gmail_auth_service import GmailAuthBackend
-from tether.gmail_client import GmailTransport
+from tether.gmail import GmailAuthBackend, GmailTransport
+from tether.google_oauth import OAuthConfig
 from tether.model_selection import AgentModelConfig
 from tether.provider_auth import ProviderAuthBackend
 from tether.readwise_http import ReaderTransport, ReadwiseTransport
@@ -26,9 +26,7 @@ from tether.transcripts.acquisition import TranscriptAcquisitionConfig
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.worker import TranscriptSyncConfig
 from tether.web_search import SearchProvider
-from tether.youtube_auth_service import YouTubeAuthBackend
-from tether.youtube_oauth import OAuthConfig
-from tether.youtube_quota import YouTubeApi
+from tether.youtube import YouTubeApi, YouTubeAuthBackend
 
 
 @dataclass(frozen=True, slots=True)

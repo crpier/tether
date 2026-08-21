@@ -25,8 +25,8 @@ from tether.recall_generation import (
     StudyItemGenerationFailure,
 )
 from tether.recall_grading import AnswerGradingUnavailable, EssayGradeProposal
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_quota import RawYouTubeVideo
+from tether.youtube.local import InMemoryYouTubeApi
+from tether.youtube.quota import RawYouTubeVideo
 
 
 class FakeGenerator:

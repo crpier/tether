@@ -15,7 +15,7 @@ from uuid import uuid4
 from anyio import TemporaryDirectory
 from snektest import assert_eq, assert_gt, test
 
-from tether.youtube_search_index import ChunkDocument, YouTubeSearchIndex
+from tether.youtube.search_index import ChunkDocument, YouTubeSearchIndex
 
 _DIM = 4
 

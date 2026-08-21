@@ -90,6 +90,10 @@ _Avoid_: private mode, incognito, safe mode
 A scheduled sync that brings canonical external Evidence in without a chat turn (Readwise, Gmail, Health Connect, ebooks). Dreaming may later assimilate appropriate settled Evidence into Memory.
 _Avoid_: sync job, importer, connector
 
+**Integration**:
+A hand-built typed slice that brings one external service's Evidence into Tether and exposes tools over it. Each Integration presents exactly one interface to the rest of Tether; everything else inside it stays internal to the Integration.
+_Avoid_: connector, provider wrapper, adapter package
+
 **Transcript status**:
 The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. *Needs review* means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. *Unavailable* means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
 _Avoid_: terminal, caption state, transcript error

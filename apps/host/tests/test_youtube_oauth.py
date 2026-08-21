@@ -29,19 +29,19 @@ from snektest import (
     test,
 )
 
-from tether.youtube_oauth import (
+from tether.google_oauth import GoogleAuthError
+from tether.youtube.oauth import (
     REQUIRED_SCOPES,
     OAuthConfig,
     OAuthYouTubeApi,
-    YouTubeAuthError,
     load_credentials,
 )
-from tether.youtube_quota import (
+from tether.youtube.quota import (
     DailyQuota,
     YouTubeApiClient,
     YouTubeQuotaExceededError,
 )
-from tether.youtube_store import create_youtube_schema
+from tether.youtube.store import create_youtube_schema
 
 # --- Fake discovery resource ------------------------------------------------
 
@@ -480,6 +480,7 @@ def config_for(token_path: Path) -> OAuthConfig:
     return OAuthConfig(
         token_path=token_path,
         client_secret_path=token_path.parent / "client-secret.json",
+        scopes=REQUIRED_SCOPES,
     )
 
 
@@ -489,7 +490,7 @@ async def load_credentials_errors_when_token_absent() -> None:
     async with TemporaryDirectory() as tmp:
         config = config_for(Path(tmp) / "token.json")
 
-        with assert_raises(YouTubeAuthError):
+        with assert_raises(GoogleAuthError):
             _ = load_credentials(config)
 
 
@@ -536,7 +537,7 @@ async def load_credentials_errors_when_expired_without_refresh_token() -> None:
         path = write_token(tmp)
         creds = FakeCredentials(valid=False, scopes=REQUIRED_SCOPES, refresh_token=None)
 
-        with assert_raises(YouTubeAuthError):
+        with assert_raises(GoogleAuthError):
             _ = load_credentials(
                 config_for(path),
                 credentials_from_info=lambda _info, _scopes: creds,
@@ -555,7 +556,7 @@ async def load_credentials_maps_refresh_failure_to_auth_error() -> None:
             refresh_error=RuntimeError("invalid_grant"),
         )
 
-        with assert_raises(YouTubeAuthError):
+        with assert_raises(GoogleAuthError):
             _ = load_credentials(
                 config_for(path),
                 credentials_from_info=lambda _info, _scopes: creds,
@@ -570,7 +571,7 @@ async def load_credentials_rejects_token_missing_a_required_scope() -> None:
         path = write_token(tmp)
         creds = FakeCredentials(valid=True, scopes=())
 
-        with assert_raises(YouTubeAuthError):
+        with assert_raises(GoogleAuthError):
             _ = load_credentials(
                 config_for(path),
                 credentials_from_info=lambda _info, _scopes: creds,

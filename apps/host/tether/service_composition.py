@@ -33,7 +33,7 @@ from tether.dreaming import (
     HttpDreamingMutationAcknowledger,
 )
 from tether.events import EventHub
-from tether.gmail_client import GmailClient
+from tether.gmail import GmailClient
 from tether.host_config import AppConfig
 from tether.host_resources import (
     HostBootstrap,
@@ -97,9 +97,11 @@ from tether.triage import TriageService
 from tether.triggers import TriggerService
 from tether.web_push import StoredPushSender, VapidWebPushTransport
 from tether.web_search import SearchProvider
-from tether.youtube_search import YouTubeSearchService
-from tether.youtube_search_index import YouTubeSearchIndex
-from tether.youtube_search_reconciler import YouTubeSearchReconciler
+from tether.youtube import (
+    YouTubeSearchIndex,
+    YouTubeSearchReconciler,
+    YouTubeSearchService,
+)
 
 
 @dataclass(frozen=True, slots=True)

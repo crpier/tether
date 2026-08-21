@@ -21,15 +21,16 @@ from tether.chat_ws import websocket_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
-from tether.gmail_auth_service import GoogleGmailAuthBackend
-from tether.gmail_client import GmailTransport
-from tether.gmail_oauth import (
+from tether.gmail import (
     GMAIL_MODIFY_SCOPE,
     GMAIL_READONLY_SCOPE,
+    GmailTransport,
+    GoogleGmailAuthBackend,
     HttpGmailTransport,
+    internal_gmail_tool_routes,
 )
-from tether.gmail_tools import internal_gmail_tool_routes
-from tether.health_connect_tools import internal_health_connect_tool_routes
+from tether.google_oauth import OAuthConfig
+from tether.health_connect import internal_health_connect_tool_routes
 from tether.host_composition import app_lifespan
 from tether.host_config import AppConfig, HostSettings
 from tether.host_resources import HOST_QUIET_LOGGERS, HostBootstrap
@@ -71,14 +72,14 @@ from tether.transcripts.worker import TranscriptSyncConfig
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
 from tether.web_search import SearchProvider
-from tether.youtube_auth_service import (
+from tether.youtube import (
+    YOUTUBE_READONLY_SCOPE,
     GoogleYouTubeAuthBackend,
     ReauthorizableYouTubeApi,
+    YouTubeApi,
     YouTubeAuthBackend,
+    internal_youtube_tool_routes,
 )
-from tether.youtube_oauth import OAuthConfig
-from tether.youtube_quota import YouTubeApi
-from tether.youtube_tools import internal_youtube_tool_routes
 
 
 def _resolve_stt_client(config: AppConfig) -> SttClient:
@@ -205,6 +206,7 @@ def _youtube_oauth_config(settings: HostSettings) -> OAuthConfig:
     return OAuthConfig(
         token_path=settings.youtube_token_path,
         client_secret_path=settings.youtube_client_secret_path,
+        scopes=(YOUTUBE_READONLY_SCOPE,),
         no_browser=settings.youtube_oauth_no_browser,
     )
 

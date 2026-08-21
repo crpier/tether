@@ -10,7 +10,7 @@ import structlog
 from snekok import Err, Ok, Result
 from snektest import assert_eq, test
 
-from tether.gmail_client import (
+from tether.gmail.client import (
     GmailAuthenticationFailure,
     GmailClient,
     GmailNetworkFailure,

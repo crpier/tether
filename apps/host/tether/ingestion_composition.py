@@ -15,9 +15,12 @@ from snekql.sqlite import Database
 from tether.ebook_stats import EbookStatsSyncService
 from tether.ebook_stats_store import EbookStatsStore
 from tether.events import EventHub
-from tether.gmail import GmailSyncService
-from tether.gmail_auth_service import GoogleGmailAuthService
-from tether.gmail_client import GmailAuthenticationFailure, GmailClient
+from tether.gmail import (
+    GmailAuthenticationFailure,
+    GmailClient,
+    GmailSyncService,
+    GoogleGmailAuthService,
+)
 from tether.gmail_purge import GmailPurgeSweepService
 from tether.host_config import AppConfig
 from tether.host_resources import HostBootstrap, ephemeral_pi_config
@@ -41,23 +44,23 @@ from tether.structured_logging import Logger
 from tether.todos import TodoService
 from tether.transcripts.acquisition import TranscriptAcquisitionService
 from tether.transcripts.contracts import TranscriptProviderChain
+from tether.transcripts.provider_health import load_all_provider_pauses
 from tether.transcripts.worker import TranscriptSyncService
 from tether.triggers import TriggerService
-from tether.youtube import YouTubeService
-from tether.youtube_auth_service import YouTubeAuthService
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_quota import (
+from tether.youtube import (
     DailyQuota,
+    InMemoryYouTubeApi,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeApiGate,
     YouTubeApiGateConfig,
+    YouTubeAuthService,
+    YouTubeSearchService,
+    YouTubeService,
+    YouTubeSyncConfig,
+    YouTubeSyncService,
 )
-from tether.youtube_quota import (
-    SystemClock as YouTubeSystemClock,
-)
-from tether.youtube_search import YouTubeSearchService
-from tether.youtube_sync import YouTubeSyncConfig, YouTubeSyncService
+from tether.youtube import SystemClock as YouTubeSystemClock
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +143,7 @@ async def compose_youtube(  # noqa: PLR0913 - composition requires each dependen
         database=database,
         client=client,
         event_publisher=event_publisher,
+        provider_pauses=load_all_provider_pauses,
         tracer=tracer,
         youtube_search=youtube_search,
     )

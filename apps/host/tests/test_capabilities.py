@@ -25,7 +25,7 @@ from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.memory_store import MemoryProvenance
 from tether.tool_runtime import SessionRegistry, ToolEndpoint, ToolRoute
 from tether.youtube import CacheMeta
-from tether.youtube_quota import QuotaMeta
+from tether.youtube.quota import QuotaMeta
 
 SECRET = "test-process-secret"
 SECRET_HEADER = "X-Tether-Tool-Secret"

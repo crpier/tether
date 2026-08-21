@@ -18,7 +18,7 @@ from typing import Protocol, cast
 from pydantic import BaseModel
 from snekok import Err, Ok, Result
 
-from tether.youtube_oauth import OAuthConfig
+from tether.google_oauth import OAuthConfig
 
 
 class GoogleAuthFailure(BaseModel):

@@ -4,7 +4,7 @@ from snekok import Err
 from snekql.sqlite import Config, Database, Transaction
 from snektest import assert_eq, assert_raises, assert_true, test
 
-from tether.health_connect_contracts import (
+from tether.health_connect.contracts import (
     AuthoritativeScanRange,
     CompleteHealthConnectBaselineRequest,
     HealthConnectBatchRequest,
@@ -12,13 +12,13 @@ from tether.health_connect_contracts import (
     HealthConnectRecords,
     HealthRecordType,
 )
-from tether.health_connect_ingestion import (
+from tether.health_connect.ingestion import (
     HealthConnectCursorConflict,
     HealthConnectIngestion,
     HealthConnectRecordSink,
     HealthConnectRequestIdentityConflict,
 )
-from tether.health_connect_persistence import create_health_connect_schema
+from tether.health_connect.persistence import create_health_connect_schema
 
 
 @test()

@@ -12,7 +12,7 @@ from snekok import Ok, Result
 from snektest import assert_eq, test
 
 from tests.surfaces import call_tool, surface_client
-from tether.gmail_client import GmailNetworkFailure, GmailResponse
+from tether.gmail.client import GmailNetworkFailure, GmailResponse
 
 
 @dataclass
