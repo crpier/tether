@@ -62,6 +62,45 @@ describe("MessageContent", () => {
     expect(container.querySelector("img")?.getAttribute("onerror")).toBeNull();
   });
 
+  test("a settled known-language code fence renders highlighted token spans", async () => {
+    const { container } = render(() => (
+      <MessageContent text={"```ts\nconst answer: number = 42;\n```"} />
+    ));
+
+    await waitFor(() => {
+      expect(container.querySelector("pre.shiki code span")).not.toBeNull();
+    });
+    expect(
+      container.querySelector("pre.shiki code.language-ts"),
+    ).not.toBeNull();
+  });
+
+  test("a streaming known-language code fence stays a plain code block", async () => {
+    const { container } = render(() => (
+      <MessageContent
+        streaming={true}
+        text={"```ts\nconst answer = 42;\n```"}
+      />
+    ));
+
+    await Promise.resolve();
+    expect(container.querySelector("pre.shiki")).toBeNull();
+    expect(container.querySelector("pre code.language-ts")).not.toBeNull();
+  });
+
+  test("an unknown language code fence is never highlighted", async () => {
+    const { container } = render(() => (
+      <MessageContent text={"```plantuml\n@startuml\n@enduml\n```"} />
+    ));
+
+    // Give any (wrongly-scheduled) async highlight a turn to run.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(container.querySelector("pre.shiki")).toBeNull();
+    expect(
+      container.querySelector("pre code.language-plantuml"),
+    ).not.toBeNull();
+  });
+
   test("a settled message with a mermaid fence mounts the widget", async () => {
     const { container } = render(() => (
       <MessageContent text={mermaidFence} streaming={false} />
