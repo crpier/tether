@@ -231,3 +231,13 @@ describe("speech queueing (#545)", () => {
     expect(player.state()).toBe("idle");
   });
 });
+
+describe("speech support probe (#546)", () => {
+  test("supported reflects the presence of a synthesis adapter", () => {
+    const withSynthesis = makePlayer();
+    expect(withSynthesis.player.supported()).toBe(true);
+
+    const without = createSpeechPlayer({ synthesis: null });
+    expect(without.supported()).toBe(false);
+  });
+});

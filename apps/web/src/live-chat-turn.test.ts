@@ -53,8 +53,8 @@ function recordSpokenTurn() {
       restart: () => {
         restarted += 1;
       },
-      settle: (unspokenTail: string, toolOnly: boolean) => {
-        if (toolOnly) {
+      settle: (unspokenTail: string, info: { toolOnly: boolean }) => {
+        if (info.toolOnly) {
           toolOnlySettles += 1;
           return;
         }

@@ -49,10 +49,17 @@ export interface LiveChatTransport {
  * `discard` fires when a turn aborts or errors so nothing half-true is
  * spoken.
  */
+export interface SpokenSettleInfo {
+  /** True when the turn ended after tools without a real final answer. */
+  toolOnly: boolean;
+  /** The authoritative settled text, spoken or not. */
+  fullText: string;
+}
+
 export interface SpokenTurnSink {
   discard(): void;
   sentence(text: string): void;
-  settle(unspokenTail: string, toolOnly: boolean): void;
+  settle(unspokenTail: string, info: SpokenSettleInfo): void;
   restart(): void;
 }
 
@@ -374,17 +381,19 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         !stopped() &&
         error() === undefined
       ) {
+        const fullText =
+          typeof frame.final_text === "string" ? frame.final_text : "";
         if (frame.tool_only === true) {
           // The final text is a host-side marker, not real prose — flag it so
           // the sink can decide what (if anything) a listener should hear.
-          dependencies.spokenTurn?.settle("", true);
-        } else if (
-          typeof frame.final_text === "string" &&
-          frame.final_text.length > 0
-        ) {
+          dependencies.spokenTurn?.settle("", {
+            fullText,
+            toolOnly: true,
+          });
+        } else if (fullText.length > 0) {
           dependencies.spokenTurn?.settle(
-            stream === null ? frame.final_text : stream.tail(frame.final_text),
-            false,
+            stream === null ? fullText : stream.tail(fullText),
+            { fullText, toolOnly: false },
           );
         }
       }

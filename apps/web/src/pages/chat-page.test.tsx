@@ -1499,4 +1499,157 @@ describe("Chat view", () => {
       ).toBeInTheDocument();
     });
   });
+
+  describe("conversation quick wins (#546)", () => {
+    test("sending a prompt barge-ins over active playback", async () => {
+      stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      const messageBox = textarea(screen.getByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "a fairly long spoken answer",
+        type: "chat",
+      });
+      await screen.findByText("Speaking reply…");
+
+      // User takes over mid-playback: the follow-up send stops speech.
+      fireEvent.input(messageBox, { target: { value: "Stop it" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
+    });
+
+    test("Escape stops playback", async () => {
+      stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      const messageBox = textarea(screen.getByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "spoken answer",
+        type: "chat",
+      });
+      await screen.findByText("Speaking reply…");
+
+      fireEvent.keyDown(window, { key: "Escape" });
+
+      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
+    });
+
+    test("Ctrl+Shift+V toggles conversation mode from the keyboard", async () => {
+      const host = new FakeHost({ authenticated: true });
+      renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.keyDown(window, {
+        ctrlKey: true,
+        key: "V",
+        shiftKey: true,
+      });
+      expect(
+        screen
+          .getByRole("button", { name: "Conversation mode" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+
+      fireEvent.keyDown(window, {
+        ctrlKey: true,
+        key: "V",
+        shiftKey: true,
+      });
+      expect(
+        screen
+          .getByRole("button", { name: "Conversation mode" })
+          .getAttribute("aria-pressed"),
+      ).toBe("false");
+    });
+
+    test("the composer placeholder reflects the current mode", async () => {
+      const host = new FakeHost({ authenticated: true });
+      renderApp(host);
+
+      const messageBox = textarea(await screen.findByLabelText("Message"));
+      expect(messageBox.getAttribute("placeholder")).toContain("Tether");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      expect(messageBox.getAttribute("placeholder")).toBe("Reply spoken…");
+    });
+
+    test("enabling conversation mode without speech support shows a hint", async () => {
+      vi.stubGlobal("speechSynthesis", undefined);
+      const host = new FakeHost({ authenticated: true });
+      renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+
+      expect(
+        screen.getByText(/Speech output isn't available/u),
+      ).toBeInTheDocument();
+    });
+
+    test("settled spoken replies get a spoken chip on their transcript row", async () => {
+      stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      const messageBox = textarea(screen.getByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      host.chat.storedMessages = [
+        {
+          content: "Hello there. Done.",
+          conversation_id: conversation.id,
+          created_at: new Date().toISOString(),
+          id: "01930000-0000-7000-8000-000000000010",
+          pi_message_id: null,
+          role: "assistant",
+          seq: 2,
+          tool_args: null,
+          tool_name: null,
+          tool_result: null,
+        },
+      ];
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "text_delta",
+        delta: "Hello there. Done.",
+        type: "chat",
+      });
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "Hello there. Done.",
+        type: "chat",
+      });
+      await screen.findByText("Speaking reply…");
+
+      expect(screen.getAllByLabelText("Spoken reply")).toHaveLength(1);
+    });
+  });
 });
