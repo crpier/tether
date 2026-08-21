@@ -131,6 +131,28 @@ it stays a colorized TTY view. Unset in production; the docker container logs to
 stdout (`just logs`). To capture host logs to a file outside `just dev`, run e.g.
 `TETHER_LOG_FILE=.tether/logs/host.log just host`.
 
+## Conversation mode speech playback (#542)
+
+Spoken replies reuse the ordinary chat loop: the host captures a turn-level
+`reply_mode` when a prompt is queued, privately augments the pi user turn with
+listening-oriented guidance (`apps/host/tether/chat_prompt.py`), and the
+terminal `agent_end` frame carries the captured mode plus the authoritative
+settled text. The browser normalizes that Markdown for speech
+(`apps/web/src/speech-text.ts`) and plays it through the MVP TTS adapter
+(`apps/web/src/speech-player.ts`).
+
+The selected MVP adapter is the **browser Web Speech API**
+(`window.speechSynthesis`): no host endpoint, API key, storage, or generated
+audio transfer, with immediate access to installed voices. Its known risks —
+voice quality/availability variance, queue/cancel quirks, autoplay and
+background-tab restrictions, limited observability — are contained behind the
+small speak/cancel/state interface, so a provider-generated-speech adapter can
+replace it later without touching the chat state machine.
+
+Only successfully settled spoken turns auto-play (never reasoning, tools,
+errors, aborted turns, or hydrated history); playback is cancellable
+independently of the agent turn.
+
 ## Codegen
 
 Pydantic models are the single source of truth. After changing a model that

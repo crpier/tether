@@ -19,6 +19,8 @@ import type { ChatHost, Conversation } from "../host/chat";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
+import { createSpeechPlayer } from "../speech-player";
+import { toSpeechText } from "../speech-text";
 import { willStartFreshSession } from "../session-freshness";
 import { ArtifactOverlay } from "../components/artifact-viewer";
 import { MessageContent } from "../components/message-content";
@@ -577,6 +579,12 @@ export function ChatPage() {
     );
   });
 
+  const speechPlayer = createSpeechPlayer();
+  // Leaving the chat page must never leave speech running.
+  onCleanup(() => {
+    speechPlayer.cancel();
+  });
+
   const liveTurn = createLiveChatTurn({
     conversationId,
     history: {
@@ -587,6 +595,14 @@ export function ChatPage() {
         });
         void queryClient.invalidateQueries({ queryKey: ["messages"] });
       },
+    },
+    onSettledReply: (text) => {
+      // Only the authoritative settled final answer reaches playback, exactly
+      // once, normalized for speech; failure never touches the transcript.
+      const spoken = toSpeechText(text);
+      if (spoken.length > 0) {
+        speechPlayer.speak(spoken);
+      }
     },
     transport: {
       abort: (id) => {
@@ -777,6 +793,29 @@ export function ChatPage() {
             </div>
           </div>
           <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
+            <Show when={speechPlayer.state() !== "idle"}>
+              <div
+                aria-live="polite"
+                class="bg-muted/40 flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                role="status"
+              >
+                <span class="flex-1">
+                  {speechPlayer.state() === "error"
+                    ? "Speech playback failed."
+                    : "Speaking reply…"}
+                </span>
+                <Button
+                  onClick={() => {
+                    speechPlayer.cancel();
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Stop playback
+                </Button>
+              </div>
+            </Show>
             <Show when={queuedPrompts().length > 0}>
               <section
                 aria-label="Queued messages"
