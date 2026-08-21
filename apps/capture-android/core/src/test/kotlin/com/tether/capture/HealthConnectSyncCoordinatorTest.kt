@@ -46,6 +46,81 @@ class HealthConnectSyncCoordinatorTest {
     }
 
     @Test
+    fun oversizedChangesPageDrainsInBoundedBatchesAdvancingOnlyAtTheEnd() = runTest {
+        val records = (1..2_501).map { index ->
+            HealthConnectRecord.Steps(
+                metadata = HealthConnectMetadata("steps-$index", "com.example.phone"),
+                startTimeEpochMillis = index.toLong(),
+                endTimeEpochMillis = index.toLong() + 1,
+                count = index.toLong(),
+            )
+        }
+        val health = FakeHealthConnectSource(
+            events = mutableListOf(),
+            startingToken = "unused",
+            baselineRecords = emptyList(),
+            changes = HealthConnectChanges(
+                records = records,
+                deletions = listOf(HealthConnectDeletion(HealthConnectRecordType.STEPS, "gone-1")),
+                nextToken = "token-next",
+            ),
+        )
+        val host = RecordingChangesHost(initialState = HostSyncState.Changes, token = "token-page")
+        val coordinator = HealthConnectSyncCoordinator(
+            "installation",
+            setOf(HealthConnectRecordType.STEPS),
+            health,
+            host,
+            SequentialRequestIds("request"),
+        )
+
+        assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
+        assertTrue(host.batches.all { it.records.size <= HealthConnectSyncCoordinator.MAX_PARENT_RECORDS_PER_BATCH })
+        assertEquals(listOf(1_000, 1_000, 501), host.batches.map { it.records.size })
+        // The cursor must not move until every record of the page is accepted.
+        assertTrue(
+            host.batches.dropLast(1).all { it.nextToken == it.expectedToken },
+        )
+        val last = host.batches.last()
+        assertEquals("token-next", last.nextToken)
+        assertEquals(1, last.deletions.size)
+        assertTrue(host.batches.dropLast(1).all { it.deletions.isEmpty() })
+    }
+
+    @Test
+    fun conflictMidPageFailsWithoutAdoptingThePageToken() = runTest {
+        val records = (1..1_001).map { index ->
+            HealthConnectRecord.Steps(
+                metadata = HealthConnectMetadata("steps-$index", "com.example.phone"),
+                startTimeEpochMillis = index.toLong(),
+                endTimeEpochMillis = index.toLong() + 1,
+                count = index.toLong(),
+            )
+        }
+        val health = FakeHealthConnectSource(
+            events = mutableListOf(),
+            startingToken = "unused",
+            baselineRecords = emptyList(),
+            changes = HealthConnectChanges(records, emptyList(), "token-next"),
+        )
+        val host = RecordingChangesHost(
+            initialState = HostSyncState.Changes,
+            token = "token-page",
+            failAfterAcceptedChunks = 1,
+        )
+        val coordinator = HealthConnectSyncCoordinator(
+            "installation",
+            setOf(HealthConnectRecordType.STEPS),
+            health,
+            host,
+            SequentialRequestIds("request"),
+        )
+
+        assertEquals(HealthConnectSyncResult.Failed("boom"), coordinator.syncOnce())
+        assertEquals("token-page", host.adoptedToken)
+    }
+
+    @Test
     fun staleChangeTokenRefetchesHostStateAndConverges() = runTest {
         val events = mutableListOf<String>()
         val health = FakeHealthConnectSource(
@@ -254,4 +329,38 @@ private class FakeHealthConnectHost(
         events += "host.completeBaseline(${request.expectedToken})"
         return HostSyncCursor(state = HostSyncState.Changes, generation = request.generation, token = request.expectedToken)
     }
+}
+
+private class RecordingChangesHost(
+    private val initialState: HostSyncState,
+    private val token: String?,
+    private val failAfterAcceptedChunks: Int = Int.MAX_VALUE,
+) : HealthConnectHost {
+    val batches = mutableListOf<HealthConnectBatchRequest>()
+    private var accepted = 0
+
+    /** Cursor position a real host would hold: only batches that change the token adopt it. */
+    var adoptedToken: String? = token
+        private set
+
+    override suspend fun getSyncState(
+        installationId: String,
+        recordTypes: Set<HealthConnectRecordType>,
+    ): HostSyncCursor = HostSyncCursor(state = initialState, generation = 7, token = token)
+
+    override suspend fun startBaseline(request: StartBaselineRequest): HostSyncCursor =
+        error("baseline not expected")
+
+    override suspend fun uploadBatch(request: HealthConnectBatchRequest): BatchUploadResult {
+        batches += request
+        if (accepted >= failAfterAcceptedChunks) return BatchUploadResult.Conflict("boom")
+        accepted += 1
+        if (request.mode == HealthConnectBatchMode.Changes && request.nextToken != request.expectedToken) {
+            adoptedToken = request.nextToken
+        }
+        return BatchUploadResult.Accepted
+    }
+
+    override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor =
+        error("baseline not expected")
 }
