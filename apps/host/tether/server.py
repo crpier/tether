@@ -93,6 +93,8 @@ def _resolve_stt_client(config: AppConfig) -> SttClient:
     return SttClient(
         transport=HttpSttTransport(config.stt_api_key, base_url=config.stt_base_url),
         model=config.stt_model,
+        language=config.stt_language,
+        prompt=config.stt_vocabulary_prompt,
     )
 
 

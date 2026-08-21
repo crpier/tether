@@ -39,7 +39,7 @@ class ScriptedSttTransport:
         self.response: TranscriptionResponse = response
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str, prompt: str
+        self, *, audio: AudioUpload, model: str, prompt: str, language: str
     ) -> Result[TranscriptionResponse, SttFailure]:
         """Return the scripted response regardless of the upload."""
         return Ok(self.response)

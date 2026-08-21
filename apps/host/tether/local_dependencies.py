@@ -69,8 +69,8 @@ class LocalSttTransport:
     """Return stable text without uploading recorded audio."""
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str, prompt: str
+        self, *, audio: AudioUpload, model: str, prompt: str, language: str
     ) -> Result[TranscriptionResponse, SttFailure]:
         """Transcribe every local recording into one recognizable fixture phrase."""
-        _ = (audio, model, prompt)
+        _ = (audio, model, prompt, language)
         return Ok(TranscriptionResponse(status_code=200, text="Local transcription."))

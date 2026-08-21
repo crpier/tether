@@ -7,7 +7,14 @@ from datetime import timedelta
 
 import httpx2
 from snekok import Err, Ok, Result
-from snektest import assert_eq, assert_is_none, assert_raises, test
+from snektest import (
+    assert_eq,
+    assert_false,
+    assert_is_none,
+    assert_raises,
+    assert_true,
+    test,
+)
 
 from tether.stt import SttClient
 from tether.stt_errors import (
@@ -32,6 +39,7 @@ class TranscribeCall:
     audio: AudioUpload
     model: str
     prompt: str
+    language: str
 
 
 @dataclass
@@ -42,10 +50,12 @@ class FakeSttTransport:
     calls: list[TranscribeCall] = field(default_factory=list[TranscribeCall])
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str, prompt: str
+        self, *, audio: AudioUpload, model: str, prompt: str, language: str
     ) -> Result[TranscriptionResponse, SttFailure]:
         """Record the call and return the scripted outcome."""
-        self.calls.append(TranscribeCall(audio=audio, model=model, prompt=prompt))
+        self.calls.append(
+            TranscribeCall(audio=audio, model=model, prompt=prompt, language=language)
+        )
         return self.outcome
 
 
@@ -53,10 +63,10 @@ class DefectiveSttTransport:
     """Raise an unexpected defect instead of returning an expected failure."""
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str, prompt: str
+        self, *, audio: AudioUpload, model: str, prompt: str, language: str
     ) -> Result[TranscriptionResponse, SttFailure]:
         """Fail outside the typed expected-failure channel."""
-        _ = (audio, model, prompt)
+        _ = (audio, model, prompt, language)
         raise TransportDefect
 
 
@@ -93,14 +103,38 @@ async def client_passes_the_configured_model_to_the_transport() -> None:
 
 
 @test()
-async def client_seeds_transcription_with_voice_vocabulary() -> None:
-    """Every transcription carries the custom vocabulary as an STT prompt."""
+async def client_pins_the_configured_language_on_every_request() -> None:
+    """Every transcription carries the pinned language so detection never runs."""
+    transport = FakeSttTransport(Ok(TranscriptionResponse(status_code=200, text="hi")))
+    client = SttClient(transport=transport, model="whisper-1", language="en")
+
+    _ = await client.transcribe(_audio())
+
+    assert_eq(transport.calls[0].language, "en")
+
+
+@test()
+async def client_sends_no_prompt_until_a_glossary_is_configured() -> None:
+    """Without a configured glossary the vocabulary prompt stays empty."""
     transport = FakeSttTransport(Ok(TranscriptionResponse(status_code=200, text="hi")))
     client = SttClient(transport=transport, model="whisper-1")
 
     _ = await client.transcribe(_audio())
 
-    assert_eq(transport.calls[0].prompt, "snektest")
+    assert_eq(transport.calls[0].prompt, "")
+
+
+@test()
+async def client_carries_a_configured_glossary_prompt_through() -> None:
+    """A configured glossary rides every transcription as the STT prompt."""
+    transport = FakeSttTransport(Ok(TranscriptionResponse(status_code=200, text="hi")))
+    client = SttClient(
+        transport=transport, model="whisper-1", prompt="Tether, snekok, pi"
+    )
+
+    _ = await client.transcribe(_audio())
+
+    assert_eq(transport.calls[0].prompt, "Tether, snekok, pi")
 
 
 @test()
@@ -158,12 +192,53 @@ async def http_transport_returns_network_failure_as_data() -> None:
     )
 
     outcome = await transport.transcribe(
-        audio=_audio(), model="whisper-1", prompt="snektest"
+        audio=_audio(), model="whisper-1", prompt="", language="en"
     )
 
     assert isinstance(outcome, Err)
     assert isinstance(outcome.error, SttNetworkFailure)
     assert_eq(outcome.error.reason, "offline")
+
+
+@test()
+async def http_transport_sends_language_and_omits_an_empty_prompt() -> None:
+    """The multipart request pins `language` and carries no empty `prompt` field."""
+    bodies: list[bytes] = []
+
+    def capture(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(request.content)
+        return httpx2.Response(200, json={"text": "hi"})
+
+    transport = HttpSttTransport("secret", http_transport=httpx2.MockTransport(capture))
+
+    outcome = await transport.transcribe(
+        audio=_audio(), model="whisper-1", prompt="", language="en"
+    )
+
+    assert isinstance(outcome, Ok)
+    body = bodies[0]
+    assert_true(b'name="model"' in body)
+    assert_true(b'name="language"\r\n\r\nen' in body)
+    assert_false(b'name="prompt"' in body)
+
+
+@test()
+async def http_transport_sends_a_configured_prompt() -> None:
+    """A non-empty glossary prompt is sent verbatim as the `prompt` field."""
+    bodies: list[bytes] = []
+
+    def capture(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(request.content)
+        return httpx2.Response(200, json={"text": "hi"})
+
+    transport = HttpSttTransport("secret", http_transport=httpx2.MockTransport(capture))
+
+    outcome = await transport.transcribe(
+        audio=_audio(), model="whisper-1", prompt="Tether", language="en"
+    )
+
+    assert isinstance(outcome, Ok)
+    assert_true(b'name="prompt"\r\n\r\nTether' in bodies[0])
 
 
 @test()

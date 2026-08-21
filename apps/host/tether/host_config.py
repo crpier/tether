@@ -122,6 +122,8 @@ class AppConfig:
     inject a fake `stt_client` instead."""
     stt_base_url: str = "https://api.openai.com/v1"
     stt_model: str = "whisper-1"
+    stt_language: str = "en"
+    stt_vocabulary_prompt: str = ""
     study_item_generator: StudyItemGenerator | None = None
     answer_grader: AnswerGrader | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
@@ -304,6 +306,15 @@ class HostSettings(BaseSettings):
     stt_model: str = "whisper-1"
     """Transcription model requested with each upload (e.g. `whisper-1`,
     `whisper-large-v3`), passed through verbatim to the configured endpoint."""
+    stt_language: str = "en"
+    """Language pinned on every transcription request (ISO 639-1, e.g. `en`).
+    Pinning removes provider-side language detection, which is prone to drift
+    (notably into Polish) on short or quiet clips."""
+    stt_vocabulary_prompt: str = ""
+    """Optional custom-vocabulary prompt sent with each transcription (issue
+    #242). Empty by default: a nonsense or mismatched prompt conditions the
+    decoder badly and is a known language-drift trigger, so no placeholder is
+    ever sent until a real glossary is configured."""
     readwise_reader_sync_enabled: bool = False
     """Whether the background Readwise Reader v3 progress rider runs. Off by
     default and a no-op unless `readwise_api_key` is also set, so polling reading
