@@ -36,6 +36,68 @@ describe("Dreaming panel", () => {
     );
   });
 
+  test("shows fact-level additions and removals for a changed run", async () => {
+    const run = dreamRun({
+      conversation_title: "Travel preferences",
+      id: "019f0000-0000-7000-8000-000000000041",
+      mutation_count: 1,
+      status: "success",
+    });
+    const host = new FakeHost({
+      authenticated: true,
+      dreamRunDetails: {
+        [run.id]: {
+          mutations: [
+            {
+              actor: "dream",
+              attempts: 2,
+              created_at: "2026-08-21T08:01:03Z",
+              error: null,
+              fact_changes: [
+                {
+                  kind: "removed",
+                  text: "Prefers window seats.",
+                  topic: "Travel",
+                },
+                {
+                  kind: "added",
+                  text: "Prefers aisle seats.",
+                  topic: "Travel",
+                },
+              ],
+              id: "019f0000-0000-7000-8000-000000000042",
+              operation: "write",
+              status: "acknowledged",
+              tool_call_id: "tool-travel",
+              updated_at: "2026-08-21T08:01:04Z",
+              workspace_path: "conversation-id/run-id.md",
+            },
+          ],
+          run,
+        },
+      },
+      dreamRuns: [run],
+    });
+    renderApp(host, undefined, { path: "/browse/dreaming" });
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Changed.*Travel preferences/,
+      }),
+    );
+
+    const changes = await screen.findByRole("list", { name: "Fact changes" });
+    expect(within(changes).getByText("−")).toBeInTheDocument();
+    expect(
+      within(changes).getByText("Prefers window seats."),
+    ).toBeInTheDocument();
+    expect(within(changes).getByText("+")).toBeInTheDocument();
+    expect(
+      within(changes).getByText("Prefers aisle seats."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("conversation-id/run-id.md")).toBeInTheDocument();
+  });
+
   test("summarizes active work, the last change, and failures", async () => {
     const host = new FakeHost({
       authenticated: true,

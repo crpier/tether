@@ -127,7 +127,27 @@ class DreamingMutationCoordinator:
         payload: str,
     ) -> DreamingMutation[Fetched] | None:
         """Persist (or refresh) a concrete mutation attempt."""
+        relative_path = self._to_relative_path(self.workspace_root, workspace_path)
+        async_path = AsyncPath(workspace_path)
+        try:
+            after_content = (
+                await async_path.read_text(encoding="utf-8")
+                if await async_path.exists()
+                else None
+            )
+        except UnicodeDecodeError:
+            after_content = None
         async with self.database.transaction() as tx:
+            current_file = await tx.fetch_one_or_none(
+                select(DreamingWorkspaceFile).where(
+                    DreamingWorkspaceFile.path.eq(relative_path)
+                )
+            )
+            before_content = (
+                current_file.content
+                if current_file is not None and current_file.is_tombstone == 0
+                else None
+            )
             existing = await tx.fetch_one_or_none(
                 select(DreamingMutation)
                 .where(DreamingMutation.run_id.eq(run_id))
@@ -138,12 +158,9 @@ class DreamingMutationCoordinator:
                     update(DreamingMutation)
                     .set(DreamingMutation.actor.to(actor))
                     .set(DreamingMutation.operation.to(operation))
-                    .set(
-                        DreamingMutation.workspace_path.to(
-                            self._to_relative_path(self.workspace_root, workspace_path)
-                        )
-                    )
+                    .set(DreamingMutation.workspace_path.to(relative_path))
                     .set(DreamingMutation.payload.to(payload))
+                    .set(DreamingMutation.after_content.to(after_content))
                     .set(DreamingMutation.status.to("executed"))
                     .set(DreamingMutation.attempts.to(existing.attempts + 1))
                     .set(DreamingMutation.error.to(None))
@@ -157,11 +174,10 @@ class DreamingMutationCoordinator:
                         tool_call_id=tool_call_id,
                         actor=actor,
                         operation=operation,
-                        workspace_path=self._to_relative_path(
-                            self.workspace_root,
-                            workspace_path,
-                        ),
+                        workspace_path=relative_path,
                         payload=payload,
+                        before_content=before_content,
+                        after_content=after_content,
                         status="executed",
                     )
                 )

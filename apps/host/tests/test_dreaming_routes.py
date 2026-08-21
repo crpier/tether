@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from typing import cast
 from uuid import UUID
 
-from snekql.sqlite import select
+from snekql.sqlite import select, update
 from snektest import assert_eq, assert_len, assert_true, test
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -154,7 +154,7 @@ async def dream_run_detail_shows_memory_changes() -> None:
             _login(client)
             runtime = app_runtime(cast("Starlette", client.app))
             conversation_id = await _first_conversation(runtime)
-            _ = await runtime.conversation_service.append_message(
+            message = await runtime.conversation_service.append_message(
                 MessageDraft(
                     content="I prefer aisle seats",
                     conversation_id=conversation_id,
@@ -169,6 +169,30 @@ async def dream_run_detail_shows_memory_changes() -> None:
                 runtime.dreaming_service.database,
                 workspace,
             )
+            workspace.mkdir()
+            (workspace / "preferences.md").write_text(
+                f"""---
+title: Travel
+---
+
+## Travel
+
+- Prefers window seats. [source](tether://message/{message.id})
+""",
+                encoding="utf-8",
+            )
+            _ = await coordinator.reconcile_workspace(logger=runtime.logger)
+            (workspace / "preferences.md").write_text(
+                f"""---
+title: Travel
+---
+
+## Travel
+
+- Prefers aisle seats. [source](tether://message/{message.id})
+""",
+                encoding="utf-8",
+            )
             _ = await coordinator.record_mutation(
                 run_id=run_id,
                 tool_call_id="tool-write-preferences",
@@ -177,6 +201,12 @@ async def dream_run_detail_shows_memory_changes() -> None:
                 workspace_path=workspace / "preferences.md",
                 payload="updated preferences",
             )
+            acknowledged, error = await coordinator.acknowledge_mutation(
+                run_id,
+                "tool-write-preferences",
+            )
+            assert_eq(acknowledged, True)
+            assert_eq(error, None)
 
             detail = client.get(f"/api/dream-runs/{run_id}")
 
@@ -187,8 +217,96 @@ async def dream_run_detail_shows_memory_changes() -> None:
             assert_len(payload["mutations"], 1)
             assert_eq(payload["mutations"][0]["operation"], "write")
             assert_eq(payload["mutations"][0]["workspace_path"], "preferences.md")
-            assert_eq(payload["mutations"][0]["status"], "executed")
+            assert_eq(payload["mutations"][0]["status"], "acknowledged")
+            assert_eq(
+                payload["mutations"][0]["fact_changes"],
+                [
+                    {
+                        "kind": "removed",
+                        "text": "Prefers window seats.",
+                        "topic": "Travel",
+                    },
+                    {
+                        "kind": "added",
+                        "text": "Prefers aisle seats.",
+                        "topic": "Travel",
+                    },
+                ],
+            )
             assert_true("payload" not in payload["mutations"][0])
+
+
+@test()
+async def legacy_dream_run_detail_recovers_added_facts() -> None:
+    """Pre-snapshot Dream mutations recover their Claims from current Memory."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        app = _make_app(root, dreaming_enabled=True)
+        with TestClient(app) as client:
+            _login(client)
+            runtime = app_runtime(cast("Starlette", client.app))
+            conversation_id = await _first_conversation(runtime)
+            message = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="I like cooperative games",
+                    conversation_id=conversation_id,
+                    role="user",
+                )
+            )
+            queued = client.post(f"/api/conversations/{conversation_id}/dream-now")
+            run_id = UUID(queued.json()["id"])
+            workspace = root / "memory"
+            workspace.mkdir()
+            topic = workspace / "games.md"
+            topic.write_text(
+                f"""---
+title: Gaming
+---
+
+## Gaming
+
+- Likes cooperative games. [source](tether://message/{message.id})
+""",
+                encoding="utf-8",
+            )
+            coordinator = DreamingMutationCoordinator(
+                runtime.dreaming_service.database,
+                workspace,
+            )
+            _ = await coordinator.record_mutation(
+                run_id=run_id,
+                tool_call_id="legacy-tool-write",
+                actor="dream",
+                operation="write",
+                workspace_path=topic,
+                payload="legacy payload",
+            )
+            acknowledged, _ = await coordinator.acknowledge_mutation(
+                run_id,
+                "legacy-tool-write",
+            )
+            assert_eq(acknowledged, True)
+            async with runtime.dreaming_service.database.transaction() as tx:
+                _ = await tx.execute(
+                    update(DreamingMutation)
+                    .set(DreamingMutation.before_content.to(None))
+                    .set(DreamingMutation.after_content.to(None))
+                    .where(DreamingMutation.run_id.eq(run_id))
+                )
+
+            detail = client.get(f"/api/dream-runs/{run_id}")
+
+            assert_eq(detail.status_code, 200)
+            assert_eq(
+                detail.json()["mutations"][0]["fact_changes"],
+                [
+                    {
+                        "kind": "added",
+                        "text": "Likes cooperative games.",
+                        "topic": "Gaming",
+                    }
+                ],
+            )
 
 
 @test()
