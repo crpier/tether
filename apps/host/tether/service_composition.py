@@ -34,6 +34,11 @@ from tether.dreaming import (
 )
 from tether.events import EventHub
 from tether.gmail import GmailClient
+from tether.health_distillation import (
+    HealthDistillationExecutor,
+    HealthDistillationService,
+    HealthDreamingWorker,
+)
 from tether.host_config import AppConfig
 from tether.host_resources import (
     HostBootstrap,
@@ -800,6 +805,33 @@ async def compose_core_services(
         # the backstop that assimilates settled evidence during quiet spells.
         background_tasks.append(
             asyncio.create_task(dreaming_service.scan_forever(logger=host.logger))
+        )
+        # Health consolidation (ADR-0016 bespoke sibling): bounded Distillations
+        # over Health Connect episode summaries into the same Memory workspace.
+        health_distillation_service = HealthDistillationService(
+            host.database, host.telemetry_database
+        )
+        health_dreaming_worker = HealthDreamingWorker(
+            health_distillation_service,
+            HealthDistillationExecutor(
+                host.telemetry_database,
+                memory_workspace_service.workspace_root,
+                mutation_coordinator=dreaming_mutation_coordinator,
+                mutation_acknowledger=HttpDreamingMutationAcknowledger(
+                    base_url=config.tool_base_url,
+                    tool_secret=bootstrap.tool_secret,
+                ),
+                curation_runner=dreaming_runner,
+            ),
+            logger=host.logger,
+        )
+        background_tasks.append(
+            asyncio.create_task(health_dreaming_worker.run_forever())
+        )
+        background_tasks.append(
+            asyncio.create_task(
+                health_distillation_service.scan_forever(logger=host.logger)
+            )
         )
     # The periodic search-index reconcile loops (Memory + Bucket-item +
     # transcript), each started only when its index was wired (an

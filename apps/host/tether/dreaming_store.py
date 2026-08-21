@@ -119,6 +119,28 @@ class DreamRun[S = Pending](Model[S, "DreamRun[Fetched]"]):
     updated_at: DreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
+class HealthDreamRun[S = Pending](Model[S, "HealthDreamRun[Fetched]"]):
+    """One Health consolidation run over a bounded summary version window.
+
+    Bespoke sibling of DreamRun (ADR 0016): bounds are Health Connect source
+    version ids per session type rather than transcript sequence numbers.
+    """
+
+    id: HealthDreamRun.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
+    status: HealthDreamRun.Col[DreamRunStatus] = Text()
+    exercise_since_version_id: HealthDreamRun.Col[int] = Integer(default=0)
+    exercise_through_version_id: HealthDreamRun.Col[int] = Integer(nullable=False)
+    sleep_since_version_id: HealthDreamRun.Col[int] = Integer(default=0)
+    sleep_through_version_id: HealthDreamRun.Col[int] = Integer(nullable=False)
+    attempts: HealthDreamRun.Col[PositiveInt] = Integer(default=1)
+    error: HealthDreamRun.Col[str | None] = Text(default=None, nullable=True)
+    completed_at: HealthDreamRun.Col[UtcDatetime | None] = Text(
+        default=None, nullable=True
+    )
+    created_at: HealthDreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: HealthDreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+
+
 _DREAM_MIGRATIONS = {
     # Original scaffold, frozen so later model additions do not rewrite migrations
     # that production has already applied.
@@ -173,6 +195,19 @@ _DREAM_MIGRATIONS = {
     "007_dreaming_mutation_after_content": (
         'ALTER TABLE "dreaming_mutation" ADD COLUMN "after_content" TEXT'
     ),
+    "008_create_health_dream_run": (
+        'CREATE TABLE "health_dream_run" ('
+        '"id" TEXT PRIMARY KEY NOT NULL, "status" TEXT NOT NULL, '
+        '"exercise_since_version_id" INTEGER NOT NULL DEFAULT 0, '
+        '"exercise_through_version_id" INTEGER NOT NULL, '
+        '"sleep_since_version_id" INTEGER NOT NULL DEFAULT 0, '
+        '"sleep_through_version_id" INTEGER NOT NULL, '
+        '"attempts" INTEGER NOT NULL, "error" TEXT, "completed_at" TEXT, '
+        '"created_at" TEXT NOT NULL DEFAULT '
+        "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+        '"updated_at" TEXT NOT NULL DEFAULT '
+        "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))) STRICT"
+    ),
 }
 """Ordered startup migrations for Dreaming state tables."""
 
@@ -193,5 +228,6 @@ __all__ = [
     "DreamingMutationOperation",
     "DreamingMutationStatus",
     "DreamingWorkspaceFile",
+    "HealthDreamRun",
     "create_dreaming_schema",
 ]
