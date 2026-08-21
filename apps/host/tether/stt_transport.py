@@ -22,7 +22,7 @@ class SttTransport(Protocol):
     """Structural boundary to one configured transcription provider."""
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str, prompt: str
+        self, *, audio: AudioUpload, model: str, prompt: str, language: str
     ) -> Result[TranscriptionResponse, SttFailure]:
         """Submit one audio upload and return its normalized provider outcome."""
         ...
@@ -54,7 +54,7 @@ class HttpSttTransport:
         self._timeout: timedelta = timeout or _DEFAULT_TIMEOUT
 
     async def transcribe(
-        self, *, audio: AudioUpload, model: str, prompt: str
+        self, *, audio: AudioUpload, model: str, prompt: str, language: str
     ) -> Result[TranscriptionResponse, SttFailure]:
         """Post one multipart audio request, translating known network failures."""
         try:
@@ -63,11 +63,14 @@ class HttpSttTransport:
                 timeout=self._timeout.total_seconds(),
                 transport=self._http_transport,
             ) as client:
+                data: dict[str, str] = {"model": model, "language": language}
+                if prompt:
+                    data["prompt"] = prompt
                 response = await client.post(
                     _TRANSCRIPTIONS_PATH,
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     files={"file": (audio.filename, audio.content, audio.content_type)},
-                    data={"model": model, "prompt": prompt},
+                    data=data,
                 )
         except httpx2.RequestError as error:
             return Err(SttNetworkFailure(reason=str(error)))

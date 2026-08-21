@@ -12,7 +12,7 @@ from tether.stt_transport import SttTransport
 
 _RATE_LIMITED_STATUS = 429
 _SUCCESS_STATUS_RANGE = range(200, 300)
-_STT_VOCABULARY_PROMPT = "snektest"
+_DEFAULT_LANGUAGE = "en"
 
 
 class SttClient:
@@ -24,14 +24,26 @@ class SttClient:
     ```
     """
 
-    def __init__(self, transport: SttTransport, *, model: str) -> None:
+    def __init__(
+        self,
+        transport: SttTransport,
+        *,
+        model: str,
+        language: str = _DEFAULT_LANGUAGE,
+        prompt: str = "",
+    ) -> None:
         self._transport: SttTransport = transport
         self._model: str = model
+        self._language: str = language
+        self._prompt: str = prompt
 
     async def transcribe(self, audio: AudioUpload) -> Result[str, SttFailure]:
         """Return recognized text or a typed expected provider failure."""
         outcome = await self._transport.transcribe(
-            audio=audio, model=self._model, prompt=_STT_VOCABULARY_PROMPT
+            audio=audio,
+            model=self._model,
+            prompt=self._prompt,
+            language=self._language,
         )
         if isinstance(outcome, Err):
             return Err(outcome.error)
