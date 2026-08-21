@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 from datetime import UTC, datetime
-from typing import Annotated, Any, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -27,6 +28,7 @@ from tether.dreaming_store import (
     DreamingMutationActor,
     DreamingMutationOperation,
     DreamingMutationStatus,
+    DreamingWorkspaceFile,
     DreamRun,
     DreamRunKind,
     DreamRunStatus,
@@ -117,6 +119,14 @@ class DreamRunRead(BaseModel):
         )
 
 
+class DreamingFactChangeRead(BaseModel):
+    """One human-readable Claim addition or removal from a Dream mutation."""
+
+    kind: Literal["added", "removed"]
+    text: str
+    topic: str | None
+
+
 class DreamingMutationRead(BaseModel):
     """Inspectable effect of one Dreaming filesystem mutation."""
 
@@ -130,10 +140,16 @@ class DreamingMutationRead(BaseModel):
     error: str | None
     created_at: datetime
     updated_at: datetime
+    fact_changes: list[DreamingFactChangeRead]
 
     @classmethod
-    def from_mutation(cls, mutation: DreamingMutation[Fetched]) -> DreamingMutationRead:
-        """Render mutation metadata without duplicating Memory content."""
+    def from_mutation(
+        cls,
+        mutation: DreamingMutation[Fetched],
+        *,
+        fact_changes: list[DreamingFactChangeRead],
+    ) -> DreamingMutationRead:
+        """Render mutation metadata with its human-readable Claim changes."""
         return cls(
             id=mutation.id,
             tool_call_id=mutation.tool_call_id,
@@ -145,7 +161,52 @@ class DreamingMutationRead(BaseModel):
             error=mutation.error,
             created_at=mutation.created_at,
             updated_at=mutation.updated_at,
+            fact_changes=fact_changes,
         )
+
+
+_SOURCE_CITATION = re.compile(r"\s*\[source\]\(tether://message/[0-9A-Za-z-]+\)")
+
+
+def _memory_claims(content: str | None) -> list[tuple[str | None, str]]:
+    """Extract ordered, cited Claims from one canonical Memory document."""
+    if content is None:
+        return []
+    topic: str | None = None
+    claims: list[tuple[str | None, str]] = []
+    for line in content.splitlines():
+        if line.startswith("## "):
+            topic = line.removeprefix("## ").strip() or None
+            continue
+        if not line.startswith("- ") or _SOURCE_CITATION.search(line) is None:
+            continue
+        text = _SOURCE_CITATION.sub("", line.removeprefix("- ")).strip()
+        if text:
+            claims.append((topic, text))
+    return claims
+
+
+def _fact_changes(
+    before: str | None,
+    after: str | None,
+) -> list[DreamingFactChangeRead]:
+    """Describe exact Claim-level additions and removals between snapshots."""
+    before_claims = _memory_claims(before)
+    after_claims = _memory_claims(after)
+    before_set = set(before_claims)
+    after_set = set(after_claims)
+    return [
+        *(
+            DreamingFactChangeRead(kind="removed", topic=topic, text=text)
+            for topic, text in before_claims
+            if (topic, text) not in after_set
+        ),
+        *(
+            DreamingFactChangeRead(kind="added", topic=topic, text=text)
+            for topic, text in after_claims
+            if (topic, text) not in before_set
+        ),
+    ]
 
 
 class DreamRunDetailRead(BaseModel):
@@ -400,6 +461,11 @@ async def get_dream_run(request: Request, run_id: str) -> Response:
             .where(DreamingMutation.run_id.eq(parsed_run_id))
             .order_by(DreamingMutation.created_at.asc())
         )
+        workspace_files = await tx.fetch_all(
+            select(DreamingWorkspaceFile).where(
+                DreamingWorkspaceFile.source_run_id.eq(parsed_run_id)
+            )
+        )
     if run is None:
         return JSONResponse({"detail": "dream run not found"}, status_code=404)
     try:
@@ -408,15 +474,34 @@ async def get_dream_run(request: Request, run_id: str) -> Response:
         )
     except ConversationNotFoundError:
         conversation = None
+    workspace_file_by_mutation = {
+        (workspace_file.path, workspace_file.source_tool_call_id): workspace_file
+        for workspace_file in workspace_files
+    }
+    mutation_reads: list[DreamingMutationRead] = []
+    for mutation in mutations:
+        after_content = mutation.after_content
+        if mutation.before_content is None and after_content is None:
+            legacy_file = workspace_file_by_mutation.get(
+                (mutation.workspace_path, mutation.tool_call_id)
+            )
+            after_content = legacy_file.content if legacy_file is not None else None
+        mutation_reads.append(
+            DreamingMutationRead.from_mutation(
+                mutation,
+                fact_changes=_fact_changes(
+                    mutation.before_content,
+                    after_content,
+                ),
+            )
+        )
     detail = DreamRunDetailRead(
         run=DreamRunRead.from_run(
             run,
             conversation_title=conversation.title if conversation is not None else None,
             mutation_count=len(mutations),
         ),
-        mutations=[
-            DreamingMutationRead.from_mutation(mutation) for mutation in mutations
-        ],
+        mutations=mutation_reads,
     )
     return JSONResponse(detail.model_dump(mode="json"))
 

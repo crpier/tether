@@ -1128,6 +1128,41 @@
         "title": "DreamRunRead",
         "type": "object"
       },
+      "DreamingFactChangeRead": {
+        "description": "One human-readable Claim addition or removal from a Dream mutation.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "added",
+              "removed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "topic"
+        ],
+        "title": "DreamingFactChangeRead",
+        "type": "object"
+      },
       "DreamingMutationRead": {
         "description": "Inspectable effect of one Dreaming filesystem mutation.",
         "properties": {
@@ -1159,6 +1194,13 @@
               }
             ],
             "title": "Error"
+          },
+          "fact_changes": {
+            "items": {
+              "$ref": "#/components/schemas/DreamingFactChangeRead"
+            },
+            "title": "Fact Changes",
+            "type": "array"
           },
           "id": {
             "format": "uuid7",
@@ -1208,7 +1250,8 @@
           "attempts",
           "error",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "fact_changes"
         ],
         "title": "DreamingMutationRead",
         "type": "object"

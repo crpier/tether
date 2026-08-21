@@ -2097,6 +2097,21 @@ export interface components {
       updated_at: string;
     };
     /**
+     * DreamingFactChangeRead
+     * @description One human-readable Claim addition or removal from a Dream mutation.
+     */
+    DreamingFactChangeRead: {
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "added" | "removed";
+      /** Text */
+      text: string;
+      /** Topic */
+      topic: string | null;
+    };
+    /**
      * DreamingMutationRead
      * @description Inspectable effect of one Dreaming filesystem mutation.
      */
@@ -2115,6 +2130,8 @@ export interface components {
       created_at: string;
       /** Error */
       error: string | null;
+      /** Fact Changes */
+      fact_changes: components["schemas"]["DreamingFactChangeRead"][];
       /**
        * Id
        * Format: uuid7

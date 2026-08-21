@@ -54,6 +54,13 @@ describe("Browse page", () => {
               attempts: 1,
               created_at: "2026-08-21T08:01:04Z",
               error: null,
+              fact_changes: [
+                {
+                  kind: "added",
+                  text: "Prefers aisle seats.",
+                  topic: "Travel",
+                },
+              ],
               id: "019f0000-0000-7000-8000-000000000003",
               operation: "write",
               status: "acknowledged",
@@ -86,6 +93,7 @@ describe("Browse page", () => {
     });
     await within(detail).findByText("preferences/seating.md");
     expect(detail).toHaveTextContent("Wrote");
+    expect(detail).toHaveTextContent("+TravelPrefers aisle seats.");
     expect(detail).toHaveTextContent("Acknowledged");
   });
 
