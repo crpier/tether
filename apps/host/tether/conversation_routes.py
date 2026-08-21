@@ -506,6 +506,21 @@ async def get_dream_run(request: Request, run_id: str) -> Response:
     return JSONResponse(detail.model_dump(mode="json"))
 
 
+@router.post("/api/dream-now", response_model=list[DreamRunRead])
+async def dream_now(request: Request) -> Response:
+    """Queue an instant manual Dream run for every conversation with new evidence."""
+    runtime = _runtime(request)
+    if not runtime.dreaming_enabled:
+        return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)
+    runs = await runtime.dreaming_service.queue_pending_manual_runs(
+        logger=runtime.logger,
+        now=datetime.now(UTC),
+    )
+    return JSONResponse(
+        [run.model_dump(mode="json") for run in map(DreamRunRead.from_run, runs)]
+    )
+
+
 @router.post("/api/conversations/{conversation_id}/dream-now", status_code=200)
 async def queue_dream_run(request: Request, conversation_id: str) -> Response:
     """Queue a manual Dream run for the latest evidence window."""

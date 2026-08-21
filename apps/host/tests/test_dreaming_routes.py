@@ -670,3 +670,45 @@ def malformed_dream_mutation_ack_path_rejects_as_not_found() -> None:
                 headers={"X-Tether-Tool-Secret": "whatever"},
             )
             assert_eq(response.status_code, 404)
+
+
+@test()
+async def dream_now_queues_manual_runs_for_pending_evidence() -> None:
+    """The browser Dream-now action queues instant runs and reports them."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory), dreaming_enabled=True)
+        with TestClient(app) as client:
+            _login(client)
+            runtime = app_runtime(cast("Starlette", client.app))
+            conversation_id = await _first_conversation(runtime)
+            _ = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="dream about this",
+                    conversation_id=conversation_id,
+                    role="user",
+                )
+            )
+
+            response = client.post("/api/dream-now")
+            assert_eq(response.status_code, 200)
+            body = response.json()
+            assert_eq(len(body), 1)
+            assert_eq(body[0]["conversation_id"], str(conversation_id))
+            assert_eq(body[0]["kind"], "manual")
+            assert_eq(body[0]["status"], "queued")
+
+            # A repeat while the run is still active reuses it, not a new one.
+            again = client.post("/api/dream-now")
+            assert_eq(again.status_code, 200)
+            assert_eq([run["id"] for run in again.json()], [body[0]["id"]])
+
+
+@test()
+async def dream_now_is_disabled_without_dreaming() -> None:
+    """Dream-now returns 404 when dreaming is not configured."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory), dreaming_enabled=False)
+        with TestClient(app) as client:
+            _login(client)
+            response = client.post("/api/dream-now")
+            assert_eq(response.status_code, 404)

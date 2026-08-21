@@ -796,6 +796,11 @@ async def compose_core_services(
                 ).run_forever()
             )
         )
+        # Post-turn queueing only fires on the next chat turn; this scan is
+        # the backstop that assimilates settled evidence during quiet spells.
+        background_tasks.append(
+            asyncio.create_task(dreaming_service.scan_forever(logger=host.logger))
+        )
     # The periodic search-index reconcile loops (Memory + Bucket-item +
     # transcript), each started only when its index was wired (an
     # embedder was supplied).

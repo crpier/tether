@@ -6178,6 +6178,29 @@
         "summary": "Set Conversation Model"
       }
     },
+    "/api/dream-now": {
+      "post": {
+        "description": "Queue an instant manual Dream run for every conversation with new evidence.",
+        "operationId": "dream_now_api_dream_now_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DreamRunRead"
+                  },
+                  "title": "Response Dream Now Api Dream Now Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dream Now"
+      }
+    },
     "/api/dream-runs": {
       "get": {
         "description": "List Dream runs across conversations for the inspectable history UI.",
