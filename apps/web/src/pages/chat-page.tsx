@@ -579,6 +579,8 @@ export function ChatPage() {
     );
   });
 
+  const [conversationMode, setConversationMode] = createSignal(false);
+
   const speechPlayer = createSpeechPlayer();
   // Leaving the chat page must never leave speech running.
   onCleanup(() => {
@@ -587,6 +589,9 @@ export function ChatPage() {
 
   const liveTurn = createLiveChatTurn({
     conversationId,
+    // Read once per queued prompt, so toggling never mutates queued or
+    // running turns.
+    replyMode: () => (conversationMode() ? "spoken" : "text"),
     history: {
       listMessages: (id, options) => api.listMessages(id, options),
       settled: () => {
@@ -949,7 +954,29 @@ export function ChatPage() {
                 />
               </TextField>
               <div class="flex shrink-0 items-center gap-1">
+                <Button
+                  aria-label="Conversation mode"
+                  aria-pressed={conversationMode()}
+                  class="rounded-full"
+                  onClick={() => {
+                    setConversationMode((enabled) => !enabled);
+                  }}
+                  size="sm"
+                  title={
+                    conversationMode()
+                      ? "Conversation mode is on: replies are spoken"
+                      : "Conversation mode is off"
+                  }
+                  type="button"
+                  variant={conversationMode() ? "default" : "outline"}
+                >
+                  <span aria-hidden="true">🔊</span>
+                </Button>
                 <VoiceComposerControls
+                  onRecordingStart={() => {
+                    // Avoid microphone feedback from an ongoing reply.
+                    speechPlayer.cancel();
+                  }}
                   onTranscript={handleVoiceTranscript}
                   transcribe={(blob) => api.transcribeAudio(blob)}
                 />

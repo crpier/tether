@@ -50,6 +50,7 @@ function adaptMediaRecorder(
 }
 
 export function VoiceComposerControls(props: {
+  onRecordingStart?: () => void;
   onTranscript: (transcript: string, mode: VoiceMode) => void;
   transcribe: (blob: Blob) => Promise<string>;
 }) {
@@ -100,6 +101,7 @@ export function VoiceComposerControls(props: {
   });
 
   const start = (mode: VoiceMode) => {
+    props.onRecordingStart?.();
     void recorder.start(mode);
   };
 
