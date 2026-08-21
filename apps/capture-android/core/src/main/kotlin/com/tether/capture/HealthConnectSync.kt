@@ -363,33 +363,35 @@ class HealthConnectSyncCoordinator(
         changes: HealthConnectChanges,
         allowStaleRefresh: Boolean = true,
     ): HealthConnectSyncResult {
-        val result = host.uploadBatch(
-            HealthConnectBatchRequest(
-                installationId = installationId,
-                recordTypes = recordTypes,
-                requestId = stableRequestId(
-                    "changes:$installationId:$expectedToken:${changes.nextToken}:${changes.records.recordIdentityKey()}:${changes.deletions.deletionIdentityKey()}",
+        // A long sync gap can make one Health Connect changes page arbitrarily
+        // large. Drain it in bounded chunks: the host only advances its cursor
+        // to the page's nextToken when the final chunk is accepted, so a
+        // failure mid-page leaves the cursor on the page token and the retry
+        // replays the whole page — already-accepted chunks are deduplicated by
+        // their stable request ids.
+        val chunks =
+            changes.records.chunked(MAX_PARENT_RECORDS_PER_BATCH).ifEmpty { listOf(emptyList()) }
+        for ((index, records) in chunks.withIndex()) {
+            val finalChunk = index == chunks.lastIndex
+            val deletions = if (finalChunk) changes.deletions else emptyList()
+            val nextToken = if (finalChunk) changes.nextToken else expectedToken
+            val result = host.uploadBatch(
+                HealthConnectBatchRequest(
+                    installationId = installationId,
+                    recordTypes = recordTypes,
+                    requestId = stableRequestId(
+                        "changes:$installationId:$expectedToken:${changes.nextToken}:chunk$index:" +
+                            "${records.recordIdentityKey()}:${deletions.deletionIdentityKey()}",
+                    ),
+                    mode = HealthConnectBatchMode.Changes,
+                    expectedToken = expectedToken,
+                    nextToken = nextToken,
+                    records = records,
+                    deletions = deletions,
                 ),
-                mode = HealthConnectBatchMode.Changes,
-                expectedToken = expectedToken,
-                nextToken = changes.nextToken,
-                records = changes.records,
-                deletions = changes.deletions,
-            ),
-        )
-        return when (result) {
-            BatchUploadResult.Accepted -> {
-                if (changes.hasMore) {
-                    uploadChanges(
-                        expectedToken = changes.nextToken,
-                        changes = health.readChanges(changes.nextToken),
-                    )
-                } else {
-                    HealthConnectSyncResult.Success
-                }
-            }
-            BatchUploadResult.StaleToken -> {
-                if (!allowStaleRefresh) {
+            )
+            if (result == BatchUploadResult.StaleToken) {
+                return if (!allowStaleRefresh) {
                     HealthConnectSyncResult.Failed("host cursor kept changing")
                 } else {
                     val cursor = host.getSyncState(installationId, recordTypes)
@@ -402,7 +404,17 @@ class HealthConnectSyncCoordinator(
                     )
                 }
             }
-            is BatchUploadResult.Conflict -> HealthConnectSyncResult.Failed(result.reason)
+            if (result is BatchUploadResult.Conflict) {
+                return HealthConnectSyncResult.Failed(result.reason)
+            }
+        }
+        return if (changes.hasMore) {
+            uploadChanges(
+                expectedToken = changes.nextToken,
+                changes = health.readChanges(changes.nextToken),
+            )
+        } else {
+            HealthConnectSyncResult.Success
         }
     }
 
