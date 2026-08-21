@@ -381,6 +381,55 @@ class HcGenericRecordCurrent[S = Pending](Model[S, "HcGenericRecordCurrent[Fetch
     payload_json: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
 
 
+class HcExerciseEpisodeSummary[S = Pending](
+    Model[S, "HcExerciseEpisodeSummary[Fetched]"]
+):
+    """Deterministic aggregation of one settled exercise session version."""
+
+    record_uid: HcExerciseEpisodeSummary.Col[str] = Text(primary_key=True)
+    version_id: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+    payload_hash: HcExerciseEpisodeSummary.Col[str] = Text(nullable=False)
+    origin_id: HcExerciseEpisodeSummary.Col[int | None] = Integer(nullable=True)
+    exercise_type: HcExerciseEpisodeSummary.Col[int | None] = Integer(nullable=True)
+    title: HcExerciseEpisodeSummary.Col[str | None] = Text(nullable=True)
+    start_time: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+    end_time: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+    duration_minutes: HcExerciseEpisodeSummary.Col[float] = Real(nullable=False)
+    segment_count: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+    lap_count: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+    total_lap_meters: HcExerciseEpisodeSummary.Col[float | None] = Real(nullable=True)
+    processor_version: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+
+
+class HcSleepEpisodeSummary[S = Pending](Model[S, "HcSleepEpisodeSummary[Fetched]"]):
+    """Deterministic per-stage aggregation of one settled sleep session version."""
+
+    record_uid: HcSleepEpisodeSummary.Col[str] = Text(primary_key=True)
+    version_id: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
+    payload_hash: HcSleepEpisodeSummary.Col[str] = Text(nullable=False)
+    origin_id: HcSleepEpisodeSummary.Col[int | None] = Integer(nullable=True)
+    title: HcSleepEpisodeSummary.Col[str | None] = Text(nullable=True)
+    start_time: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
+    end_time: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
+    duration_minutes: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_awake: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_sleeping: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_out_of_bed: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_light: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_deep: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_rem: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_awake_in_bed: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    minutes_other: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
+    processor_version: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
+
+
+class HcEpisodeCursor[S = Pending](Model[S, "HcEpisodeCursor[Fetched]"]):
+    """High-water mark of source versions already reconsidered for one type."""
+
+    record_type: HcEpisodeCursor.Col[str] = Text(primary_key=True)
+    last_version_id: HcEpisodeCursor.Col[int] = Integer(nullable=False)
+
+
 _LEGACY_SCHEMA_MODELS = [
     HealthConnectSyncState,
     HcOrigin,
@@ -396,7 +445,13 @@ _LEGACY_SCHEMA_MODELS = [
     HcExerciseRoutePoint,
 ]
 _SCHEMA_MODELS = [*_LEGACY_SCHEMA_MODELS, HcGenericRecord]
-_MODELS = [*_SCHEMA_MODELS, HcBaselineSeen]
+_MODELS = [
+    *_SCHEMA_MODELS,
+    HcBaselineSeen,
+    HcExerciseEpisodeSummary,
+    HcSleepEpisodeSummary,
+    HcEpisodeCursor,
+]
 _PARENT_MODELS = {
     "exercise": HcExerciseSession,
     "heart_rate": HcHeartRateRecord,
@@ -466,6 +521,19 @@ def health_connect_migrations() -> dict[str, str]:
         migrations[f"{index:04d}_health_connect_schema"] = sql
     generic_view = _CURRENT_VIEW_MIGRATIONS["hc_generic_record_current"]
     migrations["0045_hc_generic_record_current"] = _create_if_not_exists(generic_view)
+
+    # Episode-summary tables: appended under fresh explicit keys so no already
+    # applied migration key or statement changes.
+    episode_models = [
+        HcExerciseEpisodeSummary,
+        HcSleepEpisodeSummary,
+        HcEpisodeCursor,
+    ]
+    episode_start = next_index
+    for offset, sql in enumerate(scaffold(episode_models).splitlines()):
+        migrations[f"{episode_start + offset:04d}_episode_summaries"] = (
+            _create_if_not_exists(sql)
+        )
     return migrations
 
 
