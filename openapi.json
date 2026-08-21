@@ -2300,7 +2300,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Active Calories Burned",
             "type": "array"
           },
@@ -2308,7 +2308,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Basal Body Temperature",
             "type": "array"
           },
@@ -2316,7 +2316,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Basal Metabolic Rate",
             "type": "array"
           },
@@ -2324,7 +2324,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Blood Glucose",
             "type": "array"
           },
@@ -2332,7 +2332,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Blood Pressure",
             "type": "array"
           },
@@ -2340,7 +2340,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Body Fat",
             "type": "array"
           },
@@ -2348,7 +2348,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Body Temperature",
             "type": "array"
           },
@@ -2356,7 +2356,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Body Water Mass",
             "type": "array"
           },
@@ -2364,7 +2364,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Bone Mass",
             "type": "array"
           },
@@ -2372,7 +2372,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Cervical Mucus",
             "type": "array"
           },
@@ -2380,7 +2380,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Cycling Pedaling Cadence",
             "type": "array"
           },
@@ -2388,7 +2388,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Distance",
             "type": "array"
           },
@@ -2396,7 +2396,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Elevation Gained",
             "type": "array"
           },
@@ -2404,7 +2404,7 @@
             "items": {
               "$ref": "#/components/schemas/ExerciseRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Exercise",
             "type": "array"
           },
@@ -2412,7 +2412,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Floors Climbed",
             "type": "array"
           },
@@ -2420,7 +2420,7 @@
             "items": {
               "$ref": "#/components/schemas/HeartRateRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Heart Rate",
             "type": "array"
           },
@@ -2428,7 +2428,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Heart Rate Variability Rmssd",
             "type": "array"
           },
@@ -2436,7 +2436,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Height",
             "type": "array"
           },
@@ -2444,7 +2444,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Hydration",
             "type": "array"
           },
@@ -2452,7 +2452,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Intermenstrual Bleeding",
             "type": "array"
           },
@@ -2460,7 +2460,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Lean Body Mass",
             "type": "array"
           },
@@ -2468,7 +2468,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Menstruation Flow",
             "type": "array"
           },
@@ -2476,7 +2476,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Menstruation Period",
             "type": "array"
           },
@@ -2484,7 +2484,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Mindfulness Session",
             "type": "array"
           },
@@ -2492,7 +2492,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Nutrition",
             "type": "array"
           },
@@ -2500,7 +2500,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Ovulation Test",
             "type": "array"
           },
@@ -2508,7 +2508,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Oxygen Saturation",
             "type": "array"
           },
@@ -2516,7 +2516,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Planned Exercise Session",
             "type": "array"
           },
@@ -2524,7 +2524,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Power",
             "type": "array"
           },
@@ -2532,7 +2532,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Respiratory Rate",
             "type": "array"
           },
@@ -2540,7 +2540,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Resting Heart Rate",
             "type": "array"
           },
@@ -2548,7 +2548,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Sexual Activity",
             "type": "array"
           },
@@ -2556,7 +2556,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Skin Temperature",
             "type": "array"
           },
@@ -2564,7 +2564,7 @@
             "items": {
               "$ref": "#/components/schemas/SleepRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Sleep",
             "type": "array"
           },
@@ -2572,7 +2572,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Speed",
             "type": "array"
           },
@@ -2580,7 +2580,7 @@
             "items": {
               "$ref": "#/components/schemas/StepsRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Steps",
             "type": "array"
           },
@@ -2588,7 +2588,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Steps Cadence",
             "type": "array"
           },
@@ -2596,7 +2596,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Total Calories Burned",
             "type": "array"
           },
@@ -2604,7 +2604,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Vo2 Max",
             "type": "array"
           },
@@ -2612,7 +2612,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Weight",
             "type": "array"
           },
@@ -2620,7 +2620,7 @@
             "items": {
               "$ref": "#/components/schemas/GenericRecord"
             },
-            "maxItems": 1000,
+            "maxItems": 25000,
             "title": "Wheelchair Pushes",
             "type": "array"
           }
