@@ -871,3 +871,34 @@ def rejected_batches_log_field_errors_without_payload_values() -> None:
     # Payload values must never reach diagnostics (privacy contract above).
     assert_true('"input"' not in logs)
     assert_true("beats_per_minute" not in logs or '"input"' not in logs)
+
+
+@test()
+def oversized_heart_rate_backlog_pages_are_accepted() -> None:
+    """A long sync gap replays >1000 typed records without a wire rejection."""
+    batch = json.loads((FIXTURE_ROOT / "representative-batch.json").read_text())
+    first = batch["records"]["heart_rate"][0]
+    batch["records"]["heart_rate"] = [
+        {**first, "metadata": {**first["metadata"], "id": f"heart-{n}"}}
+        for n in range(1_001)
+    ]
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        _ = client.post(
+            BASELINE_PATH,
+            headers=AUTHORIZATION,
+            json={
+                "contract_version": 2,
+                "installation_id": "pixel-installation",
+                "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                "request_id": "baseline-request-1",
+                "starting_token": "opaque-starting-token",
+            },
+        )
+
+        response = client.post(BATCH_PATH, headers=AUTHORIZATION, json=batch)
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["accepted"]["heart_rate"], 1_001)
