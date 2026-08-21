@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid7
 
 import httpx2
 import structlog
@@ -729,6 +729,181 @@ async def http_acknowledger_returns_detail_for_failed_callback() -> None:
 
     assert_eq(acknowledged, False)
     assert_eq(error, "mutation not found")
+
+
+@test()
+async def settle_reports_not_found_for_unknown_mutation() -> None:
+    """Settling an unrecorded mutation reports not_found without notifying."""
+    _conversation_service, dreaming_service, _ = await _fixture()
+
+    async def _acknowledger(run_id: UUID, tool_call_id: str) -> tuple[bool, str | None]:
+        raise AssertionError("acknowledger must not be called for unknown mutations")
+
+    with TemporaryDirectory() as workspace_root:
+        coordinator = DreamingMutationCoordinator(
+            dreaming_service.database,
+            Path(workspace_root),
+        )
+        settlement = await coordinator.settle(
+            uuid7(),
+            "nope",
+            acknowledger=_acknowledger,
+        )
+
+    assert_eq(settlement.outcome, "not_found")
+    assert_eq(settlement.error, None)
+
+
+@test()
+async def settle_drives_recorded_mutation_through_acknowledger() -> None:
+    """A recorded mutation is settled by notification and marked acknowledged."""
+    _conversation_service, dreaming_service, _ = await _fixture()
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
+        run_id = uuid7()
+        _ = await coordinator.record_mutation(
+            run_id=run_id,
+            tool_call_id="tc-1",
+            actor="dream",
+            operation="write",
+            workspace_path=root / "note.md",
+            payload="payload",
+        )
+        calls: list[tuple[UUID, str]] = []
+
+        async def _acknowledger(
+            ack_run_id: UUID,
+            ack_tool_call_id: str,
+        ) -> tuple[bool, str | None]:
+            # Mirror the production shape: the notifier (HTTP ack in prod)
+            # reaches the host, which performs the real acknowledgement.
+            calls.append((ack_run_id, ack_tool_call_id))
+            return await coordinator.acknowledge_mutation(ack_run_id, ack_tool_call_id)
+
+        settlement = await coordinator.settle(
+            run_id,
+            "tc-1",
+            acknowledger=_acknowledger,
+        )
+
+        assert_eq(settlement.outcome, "settled")
+        assert_eq(settlement.error, None)
+        assert_eq(calls, [(run_id, "tc-1")])
+        async with dreaming_service.database.transaction() as tx:
+            mutation = await tx.fetch_one_or_none(
+                select(DreamingMutation).where(DreamingMutation.run_id.eq(run_id))
+            )
+        assert mutation is not None
+        assert_eq(mutation.status, "acknowledged")
+
+
+@test()
+async def settle_is_idempotent_for_already_acknowledged_mutation() -> None:
+    """Re-settling an acknowledged mutation skips the notifier entirely."""
+    _conversation_service, dreaming_service, _ = await _fixture()
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
+        run_id = uuid7()
+        _ = await coordinator.record_mutation(
+            run_id=run_id,
+            tool_call_id="tc-1",
+            actor="dream",
+            operation="write",
+            workspace_path=root / "note.md",
+            payload="payload",
+        )
+        first = await coordinator.settle(run_id, "tc-1")
+
+        async def _acknowledger(
+            run_id: UUID, tool_call_id: str
+        ) -> tuple[bool, str | None]:
+            raise AssertionError("acknowledger must not rerun for settled mutations")
+
+        second = await coordinator.settle(
+            run_id,
+            "tc-1",
+            acknowledger=_acknowledger,
+        )
+
+    assert_eq(first.outcome, "settled")
+    assert_eq(second.outcome, "already_settled")
+    assert_eq(second.error, None)
+
+
+@test()
+async def settle_defaults_to_direct_acknowledgement() -> None:
+    """Without an injected notifier, settling reconciles in-process."""
+    _conversation_service, dreaming_service, _ = await _fixture()
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
+        run_id = uuid7()
+        note = root / "note.md"
+        note.write_text("dream body", encoding="utf-8")
+        _ = await coordinator.record_mutation(
+            run_id=run_id,
+            tool_call_id="tc-1",
+            actor="dream",
+            operation="write",
+            workspace_path=note,
+            payload="payload",
+        )
+
+        settlement = await coordinator.settle(run_id, "tc-1")
+
+        assert_eq(settlement.outcome, "settled")
+        async with dreaming_service.database.transaction() as tx:
+            file_row = await tx.fetch_one_or_none(
+                select(DreamingWorkspaceFile).where(
+                    DreamingWorkspaceFile.path.eq("note.md")
+                )
+            )
+        assert file_row is not None
+        assert_eq(file_row.source_run_id, run_id)
+
+
+@test()
+async def settle_reports_acknowledger_failure_without_touching_the_record() -> None:
+    """A failed notification leaves the mutation retryable (ADR-0022)."""
+    _conversation_service, dreaming_service, _ = await _fixture()
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
+        run_id = uuid7()
+        _ = await coordinator.record_mutation(
+            run_id=run_id,
+            tool_call_id="tc-1",
+            actor="dream",
+            operation="write",
+            workspace_path=root / "note.md",
+            payload="payload",
+        )
+
+        async def _acknowledger(
+            run_id: UUID, tool_call_id: str
+        ) -> tuple[bool, str | None]:
+            return False, "simulated notifier failure"
+
+        settlement = await coordinator.settle(
+            run_id,
+            "tc-1",
+            acknowledger=_acknowledger,
+        )
+
+        assert_eq(settlement.outcome, "failed")
+        assert_eq(settlement.error, "simulated notifier failure")
+        async with dreaming_service.database.transaction() as tx:
+            mutation = await tx.fetch_one_or_none(
+                select(DreamingMutation).where(DreamingMutation.run_id.eq(run_id))
+            )
+        assert mutation is not None
+        assert_eq(mutation.status, "executed")
 
 
 @test()
