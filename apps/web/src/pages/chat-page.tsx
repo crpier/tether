@@ -580,8 +580,43 @@ export function ChatPage() {
   });
 
   const [conversationMode, setConversationMode] = createSignal(false);
+  const [handsFree, setHandsFree] = createSignal(false);
 
-  const speechPlayer = createSpeechPlayer();
+  // Hands-free loop (#544): after a spoken reply finishes playing naturally,
+  // re-arm an auto-send recording so the user can just talk. Any interaction
+  // during playback (typing, clicking) means the user took over — the loop
+  // stands down for that cycle. Stopping playback early never re-arms.
+  let spokeAt = 0;
+  let lastInteractionAt = 0;
+  const [voiceAutoStart, setVoiceAutoStart] = createSignal(0);
+  onMount(() => {
+    const markInteraction = () => {
+      lastInteractionAt = Date.now();
+    };
+    window.addEventListener("keydown", markInteraction, { capture: true });
+    window.addEventListener("pointerdown", markInteraction, { capture: true });
+    onCleanup(() => {
+      window.removeEventListener("keydown", markInteraction, {
+        capture: true,
+      });
+      window.removeEventListener("pointerdown", markInteraction, {
+        capture: true,
+      });
+    });
+  });
+
+  const speechPlayer = createSpeechPlayer({
+    onEnded: () => {
+      if (
+        conversationMode() &&
+        handsFree() &&
+        lastInteractionAt < spokeAt &&
+        spokeAt > 0
+      ) {
+        setVoiceAutoStart((tick) => tick + 1);
+      }
+    },
+  });
   // Leaving the chat page must never leave speech running.
   onCleanup(() => {
     speechPlayer.cancel();
@@ -606,6 +641,7 @@ export function ChatPage() {
       // once, normalized for speech; failure never touches the transcript.
       const spoken = toSpeechText(text);
       if (spoken.length > 0) {
+        spokeAt = Date.now();
         speechPlayer.speak(spoken);
       }
     },
@@ -972,7 +1008,28 @@ export function ChatPage() {
                 >
                   <span aria-hidden="true">🔊</span>
                 </Button>
+                <Show when={conversationMode()}>
+                  <Button
+                    aria-label="Hands-free"
+                    aria-pressed={handsFree()}
+                    class="rounded-full"
+                    onClick={() => {
+                      setHandsFree((enabled) => !enabled);
+                    }}
+                    size="sm"
+                    title={
+                      handsFree()
+                        ? "Hands-free is on: recording re-arms after each spoken reply"
+                        : "Hands-free is off"
+                    }
+                    type="button"
+                    variant={handsFree() ? "default" : "outline"}
+                  >
+                    <span aria-hidden="true">🔁</span>
+                  </Button>
+                </Show>
                 <VoiceComposerControls
+                  autoStartSignal={voiceAutoStart}
                   onRecordingStart={() => {
                     // Avoid microphone feedback from an ongoing reply.
                     speechPlayer.cancel();

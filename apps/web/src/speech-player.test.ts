@@ -22,11 +22,12 @@ class FakeSynthesis {
   }
 }
 
-function makePlayer() {
+function makePlayer(onEnded?: () => void) {
   const synthesis = new FakeSynthesis();
   const player = createSpeechPlayer({
     synthesis,
     utteranceFactory: (text) => new FakeUtterance(text),
+    onEnded,
   });
   return { player, synthesis };
 }
@@ -96,5 +97,64 @@ describe("speech player", () => {
     player.speak("hello");
 
     expect(player.state()).toBe("idle");
+  });
+
+  describe("onEnded (hands-free loop, #544)", () => {
+    test("fires exactly once when playback completes naturally", () => {
+      let ended = 0;
+      const { player, synthesis } = makePlayer(() => {
+        ended += 1;
+      });
+      player.speak("hello");
+
+      synthesis.spoken[0].onend?.();
+      synthesis.spoken[0].onend?.();
+
+      expect(ended).toBe(1);
+      expect(player.state()).toBe("idle");
+    });
+
+    test("does not fire when cancel stops playback first", () => {
+      // Real browsers fire the cancelled utterance's onend after cancel();
+      // that must not count as a natural completion.
+      let ended = 0;
+      const { player, synthesis } = makePlayer(() => {
+        ended += 1;
+      });
+      player.speak("hello");
+      const spoken = synthesis.spoken[0];
+
+      player.cancel();
+      // Browsers deliver the cancelled utterance's onend after cancel().
+      spoken.onend?.();
+
+      expect(ended).toBe(0);
+    });
+
+    test("does not fire when a later speak supersedes the utterance", () => {
+      let ended = 0;
+      const { player, synthesis } = makePlayer(() => {
+        ended += 1;
+      });
+      player.speak("first");
+      player.speak("second");
+
+      synthesis.spoken[0]?.onend?.();
+      synthesis.spoken[0].onend?.();
+
+      expect(ended).toBe(1);
+    });
+
+    test("does not fire on error", () => {
+      let ended = 0;
+      const { player, synthesis } = makePlayer(() => {
+        ended += 1;
+      });
+      player.speak("hello");
+
+      synthesis.spoken[0].onerror?.();
+
+      expect(ended).toBe(0);
+    });
   });
 });
