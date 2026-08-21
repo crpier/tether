@@ -4,6 +4,7 @@ import type {
   BucketTriageReport,
   Conversation,
   DuePrompt,
+  DreamRun,
   Grant,
   GrantSuggestion,
   Memory,
@@ -68,6 +69,25 @@ export const models: ModelList = {
     },
   ],
 };
+
+export function dreamRun(overrides: Partial<DreamRun> = {}): DreamRun {
+  return {
+    attempts: 1,
+    completed_at: "2026-08-21T08:01:05Z",
+    conversation_id: conversation.id,
+    conversation_title: "Default conversation",
+    created_at: "2026-08-21T08:01:00Z",
+    error: null,
+    evidence_end_seq: 2,
+    evidence_start_seq: 1,
+    id: `019f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    kind: "assimilation",
+    mutation_count: 0,
+    status: "no_op",
+    updated_at: "2026-08-21T08:01:05Z",
+    ...overrides,
+  };
+}
 
 export function message(overrides: Partial<Message>): Message {
   return {

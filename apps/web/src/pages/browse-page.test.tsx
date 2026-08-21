@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, screen, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
+import type { DreamRun } from "../host";
 import {
   FakeHost,
   bucketItem,
@@ -25,6 +26,67 @@ describe("Browse page", () => {
     // The review-only affordance (capture form) never appears here; Inbox
     // owns memory review.
     expect(screen.queryByLabelText("Capture")).not.toBeInTheDocument();
+  });
+
+  test("shows Dream history and explains a selected run's Memory changes", async () => {
+    const run: DreamRun = {
+      attempts: 1,
+      completed_at: "2026-08-21T08:01:05Z",
+      conversation_id: "019f0000-0000-7000-8000-000000000001",
+      conversation_title: "Seat preferences",
+      created_at: "2026-08-21T08:01:00Z",
+      error: null,
+      evidence_end_seq: 18,
+      evidence_start_seq: 12,
+      id: "019f0000-0000-7000-8000-000000000002",
+      kind: "manual",
+      mutation_count: 1,
+      status: "success",
+      updated_at: "2026-08-21T08:01:05Z",
+    };
+    const host = new FakeHost({
+      authenticated: true,
+      dreamRunDetails: {
+        [run.id]: {
+          mutations: [
+            {
+              actor: "dream",
+              attempts: 1,
+              created_at: "2026-08-21T08:01:04Z",
+              error: null,
+              id: "019f0000-0000-7000-8000-000000000003",
+              operation: "write",
+              status: "acknowledged",
+              tool_call_id: "write-seat-preferences",
+              updated_at: "2026-08-21T08:01:05Z",
+              workspace_path: "preferences/seating.md",
+            },
+          ],
+          run,
+        },
+      },
+      dreamRuns: [run],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+
+    const tabs = await screen.findByRole("tablist", { name: "Browse view" });
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Dreaming" }));
+
+    const panel = await screen.findByRole("region", { name: "Dreaming" });
+    const historyItem = await within(panel).findByRole("button", {
+      name: /Changed.*Seat preferences/,
+    });
+    expect(historyItem).toHaveTextContent("Messages 12–18");
+    expect(historyItem).toHaveTextContent("1 Memory change");
+    fireEvent.click(historyItem);
+
+    const detail = await within(panel).findByRole("region", {
+      name: "Dream run details",
+    });
+    await within(detail).findByText("preferences/seating.md");
+    expect(detail).toHaveTextContent("Wrote");
+    expect(detail).toHaveTextContent("Acknowledged");
   });
 
   test("preserves an unsaved memory edit across Browse tabs", async () => {

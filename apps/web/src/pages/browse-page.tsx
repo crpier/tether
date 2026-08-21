@@ -7,16 +7,18 @@ import {
   segmentedTabId,
 } from "../components/segmented-control";
 import { BucketPanel, type BucketView } from "../panels/bucket";
+import { DreamingPanel } from "../panels/dreaming";
 import { MemoriesPanel, type MemoryEditing } from "../panels/memories";
 import { SyntheticPanels } from "../panels/synthetic";
 import { TodosPanel } from "../panels/todos";
 import { TriggersPanel } from "../panels/triggers";
 
 export type BrowseView =
-  "memories" | "bucket" | "todos" | "reminders" | "panels";
+  "memories" | "dreaming" | "bucket" | "todos" | "reminders" | "panels";
 
 const browsePaths: Record<BrowseView, string> = {
   bucket: "/browse/bucket",
+  dreaming: "/browse/dreaming",
   memories: "/browse/memories",
   panels: "/browse/panels",
   reminders: "/browse/reminders",
@@ -33,6 +35,7 @@ function browseViewFromLocation(): BrowseView | undefined {
 
   const queryView = new URLSearchParams(window.location.search).get("tab");
   return queryView === "memories" ||
+    queryView === "dreaming" ||
     queryView === "bucket" ||
     queryView === "todos" ||
     queryView === "reminders" ||
@@ -49,6 +52,7 @@ export function BrowsePage(
   props: { initialBucketView?: BucketView; initialView?: BrowseView } = {},
 ) {
   const bucket = useHost("bucket");
+  const dreaming = useHost("dreaming");
   const memories = useHost("memories");
   const panels = useHost("panels");
   const todos = useHost("todos");
@@ -96,6 +100,7 @@ export function BrowsePage(
           onChange={selectView}
           options={[
             { label: "Memories", value: "memories" },
+            { label: "Dreaming", value: "dreaming" },
             { label: "Bucket", value: "bucket" },
             { label: "Todos", value: "todos" },
             { label: "Reminders", value: "reminders" },
@@ -123,6 +128,15 @@ export function BrowsePage(
                 setDraft={setMemoryDraft}
                 setEditing={setMemoryEditing}
               />
+            </div>
+          </Match>
+          <Match when={view() === "dreaming"}>
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "dreaming")}
+              id={segmentedPanelId("browse-view", "dreaming")}
+              role="tabpanel"
+            >
+              <DreamingPanel api={dreaming} />
             </div>
           </Match>
           <Match when={view() === "bucket"}>

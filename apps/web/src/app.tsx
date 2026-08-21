@@ -50,6 +50,7 @@ function parseBucketTab(value: SearchValue): BucketView | undefined {
 function parseBrowseTab(value: SearchValue): BrowseView | undefined {
   const raw = singleSearchValue(value);
   return raw === "memories" ||
+    raw === "dreaming" ||
     raw === "bucket" ||
     raw === "todos" ||
     raw === "reminders" ||
@@ -78,6 +79,7 @@ function directBrowsePage(view: BrowseView, bucketView?: BucketView) {
 }
 
 const BrowseMemoriesPage = directBrowsePage("memories");
+const BrowseDreamingPage = directBrowsePage("dreaming");
 const BrowseBucketPage = directBrowsePage("bucket");
 const BrowseBucketHistoryPage = directBrowsePage("bucket", "history");
 const BrowseTodosPage = directBrowsePage("todos");
@@ -168,6 +170,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowseIndexPage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
+        <Route component={BrowseDreamingPage} path="/browse/dreaming" />
         <Route component={BrowseBucketPage} path="/browse/bucket" />
         <Route
           component={BrowseBucketHistoryPage}

@@ -101,6 +101,97 @@ async def manual_dream_now_returns_204_without_evidence() -> None:
 
 
 @test()
+async def listing_all_dream_runs_shows_history_newest_first() -> None:
+    """The global history route exposes every Dream run newest first."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory), dreaming_enabled=True)
+        with TestClient(app) as client:
+            _login(client)
+            runtime = app_runtime(cast("Starlette", client.app))
+            conversation_id = await _first_conversation(runtime)
+            _ = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="first settled preference",
+                    conversation_id=conversation_id,
+                    role="user",
+                )
+            )
+            first = client.post(f"/api/conversations/{conversation_id}/dream-now")
+            assert_eq(first.status_code, 200)
+            completed = client.post(
+                f"/api/dream-runs/{first.json()['id']}/complete",
+                json={"status": "no_op"},
+            )
+            assert_eq(completed.status_code, 200)
+            _ = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="second settled preference",
+                    conversation_id=conversation_id,
+                    role="user",
+                )
+            )
+            second = client.post(f"/api/conversations/{conversation_id}/dream-now")
+            assert_eq(second.status_code, 200)
+
+            runs = client.get("/api/dream-runs")
+
+            assert_eq(runs.status_code, 200)
+            payload = runs.json()
+            assert_len(payload, 2)
+            assert_eq(payload[0]["id"], second.json()["id"])
+            assert_eq(payload[0]["conversation_title"], None)
+            assert_eq(payload[0]["mutation_count"], 0)
+            assert_eq(payload[1]["id"], first.json()["id"])
+
+
+@test()
+async def dream_run_detail_shows_memory_changes() -> None:
+    """One run detail explains which canonical Memory paths it changed."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        app = _make_app(root, dreaming_enabled=True)
+        with TestClient(app) as client:
+            _login(client)
+            runtime = app_runtime(cast("Starlette", client.app))
+            conversation_id = await _first_conversation(runtime)
+            _ = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="I prefer aisle seats",
+                    conversation_id=conversation_id,
+                    role="user",
+                )
+            )
+            queued = client.post(f"/api/conversations/{conversation_id}/dream-now")
+            assert_eq(queued.status_code, 200)
+            run_id = UUID(queued.json()["id"])
+            workspace = root / "memory"
+            coordinator = DreamingMutationCoordinator(
+                runtime.dreaming_service.database,
+                workspace,
+            )
+            _ = await coordinator.record_mutation(
+                run_id=run_id,
+                tool_call_id="tool-write-preferences",
+                actor="dream",
+                operation="write",
+                workspace_path=workspace / "preferences.md",
+                payload="updated preferences",
+            )
+
+            detail = client.get(f"/api/dream-runs/{run_id}")
+
+            assert_eq(detail.status_code, 200)
+            payload = detail.json()
+            assert_eq(payload["run"]["id"], str(run_id))
+            assert_eq(payload["run"]["mutation_count"], 1)
+            assert_len(payload["mutations"], 1)
+            assert_eq(payload["mutations"][0]["operation"], "write")
+            assert_eq(payload["mutations"][0]["workspace_path"], "preferences.md")
+            assert_eq(payload["mutations"][0]["status"], "executed")
+            assert_true("payload" not in payload["mutations"][0])
+
+
+@test()
 async def listing_dream_runs_shows_queued_runs() -> None:
     """A conversation route exposes dream runs in newest-first order."""
     with TemporaryDirectory() as directory:
