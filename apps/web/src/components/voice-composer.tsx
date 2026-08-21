@@ -8,7 +8,14 @@
 // recording/uploading/failed UI — the state machine itself lives in
 // `voice-recorder.ts`, and what a successful transcript *does* (fill the
 // draft vs. send) is entirely the caller's call via `onTranscript`.
-import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import {
+  Show,
+  createEffect,
+  createSignal,
+  onCleanup,
+  onMount,
+  type Accessor,
+} from "solid-js";
 
 import type {
   MinimalMediaRecorder,
@@ -50,6 +57,12 @@ function adaptMediaRecorder(
 }
 
 export function VoiceComposerControls(props: {
+  /**
+   * Increment to programmatically start an auto-send recording — the
+   * hands-free loop (#544) re-arms the microphone after a spoken reply
+   * finishes. Ignored when a recording is already active.
+   */
+  autoStartSignal?: Accessor<number>;
   onRecordingStart?: () => void;
   onTranscript: (transcript: string, mode: VoiceMode) => void;
   transcribe: (blob: Blob) => Promise<string>;
@@ -104,6 +117,20 @@ export function VoiceComposerControls(props: {
     props.onRecordingStart?.();
     void recorder.start(mode);
   };
+
+  // Hands-free loop (#544): the page bumps `autoStartSignal` when a spoken
+  // reply finished playing; each increment past the last handled value arms
+  // one auto-send recording. Already-recording increments are dropped —
+  // never restart or stack a recording the user is in control of.
+  let handledAutoStart = 0;
+  createEffect(() => {
+    const tick = props.autoStartSignal?.() ?? 0;
+    if (tick <= handledAutoStart || state().kind !== "idle") {
+      return;
+    }
+    handledAutoStart = tick;
+    start("auto-send");
+  });
 
   // Which mode (if any) is currently recording — drives which of the two
   // buttons morphs into "Stop" in place, rather than popping up a separate

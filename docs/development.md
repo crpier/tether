@@ -153,6 +153,16 @@ Only successfully settled spoken turns auto-play (never reasoning, tools,
 errors, aborted turns, or hydrated history); playback is cancellable
 independently of the agent turn.
 
+### Hands-free loop (#544)
+
+An opt-in 🔁 toggle (visible while Conversation mode is on) re-arms an
+auto-send voice recording when a spoken reply **finishes playing naturally**.
+The speech player reports natural completion via `onEnded` — never on cancel,
+supersession by a later speak, or error — so Stop/Escape/barge-in always
+breaks the loop. Any key or pointer interaction during playback also stands
+the loop down for that cycle: the user took over, and the microphone must not
+be grabbed out from under them.
+
 ## Codegen
 
 Pydantic models are the single source of truth. After changing a model that

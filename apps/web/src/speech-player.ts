@@ -34,6 +34,12 @@ export interface SpeechPlayerOptions {
   synthesis?: SpeechSynthesisLike | null;
   /** Injectable utterance constructor for deterministic tests. */
   utteranceFactory?: (text: string) => SpeakableUtterance;
+  /**
+   * Invoked exactly once when an utterance finishes playing naturally —
+   * never on cancel, supersession by a later speak, or error. This is the
+   * hook the hands-free loop (#544) uses to re-arm recording.
+   */
+  onEnded?: () => void;
 }
 
 export function createSpeechPlayer(
@@ -51,7 +57,13 @@ export function createSpeechPlayer(
     options.utteranceFactory ??
     ((text: string): SpeakableUtterance => new SpeechSynthesisUtterance(text));
 
+  // Bumped whenever speech is cancelled or replaced. Real browsers fire the
+  // cancelled utterance's `onend` asynchronously after cancel(); the token
+  // lets stale handlers recognize they no longer represent live playback.
+  let playbackToken = 0;
+
   const cancel = () => {
+    playbackToken += 1;
     if (synthesis !== null) {
       synthesis.cancel();
     }
@@ -63,12 +75,23 @@ export function createSpeechPlayer(
       return;
     }
     // A new spoken reply replaces stale queued speech instead of overlapping.
+    playbackToken += 1;
+    const token = playbackToken;
     synthesis.cancel();
     const utterance = utteranceFactory(text);
     utterance.onend = () => {
+      if (token !== playbackToken) {
+        return;
+      }
+      // Idempotent: some environments can deliver end more than once.
+      utterance.onend = null;
       setState("idle");
+      options.onEnded?.();
     };
     utterance.onerror = () => {
+      if (token !== playbackToken) {
+        return;
+      }
       setState("error");
     };
     setState("playing");
