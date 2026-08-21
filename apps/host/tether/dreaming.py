@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx2
@@ -79,6 +79,19 @@ def _as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+@dataclass(frozen=True, slots=True)
+class MutationSettlement:
+    """Terminal outcome of one mutation settlement attempt."""
+
+    outcome: Literal["settled", "already_settled", "not_found", "failed"]
+    error: str | None = None
+
+    @property
+    def acknowledged(self) -> bool:
+        """Whether the mutation is (now) acknowledged."""
+        return self.outcome in ("settled", "already_settled")
+
+
 class DreamingMutationCoordinator:
     """Coordinate persisted mutation attempts and workspace reconciliation."""
 
@@ -102,19 +115,6 @@ class DreamingMutationCoordinator:
     def mutation_tool_call_id(run: DreamRun[Fetched]) -> str:
         seed = f"{run.id}:{run.kind}:{run.evidence_start_seq}:{run.evidence_end_seq}"
         return str(uuid5(NAMESPACE_URL, seed))
-
-    async def fetch_mutation(
-        self,
-        run_id: UUID,
-        tool_call_id: str,
-    ) -> DreamingMutation[Fetched] | None:
-        """Read one persisted attempt for the given run and tool-call."""
-        async with self.database.transaction() as tx:
-            return await tx.fetch_one_or_none(
-                select(DreamingMutation)
-                .where(DreamingMutation.run_id.eq(run_id))
-                .where(DreamingMutation.tool_call_id.eq(tool_call_id))
-            )
 
     async def record_mutation(  # noqa: PLR0913
         self,
@@ -230,6 +230,42 @@ class DreamingMutationCoordinator:
                 )
                 return False, f"{type(error).__name__}: {error}"
             return True, None
+
+    async def settle(
+        self,
+        run_id: UUID,
+        tool_call_id: str,
+        *,
+        acknowledger: DreamingMutationAcknowledger | None = None,
+    ) -> MutationSettlement:
+        """Drive one recorded mutation to acknowledged: the one ack policy.
+
+        Single home of the ADR-0022 lifecycle: pending lookup, the
+        retry-only-notification rule, idempotent recording, and
+        reconciliation repair all live here. Callers classify the returned
+        outcome; none of them re-implements the policy.
+
+        The notifier defaults to in-process acknowledgement (reconcile plus
+        record). Remote callers — the executor resuming after a crash —
+        inject a notification-only acknowledger (HTTP in production) so a
+        retry never repeats the filesystem operation.
+        """
+        notify = acknowledger if acknowledger is not None else self.acknowledge_mutation
+        async with self.database.transaction() as tx:
+            mutation = await tx.fetch_one_or_none(
+                select(DreamingMutation)
+                .where(DreamingMutation.run_id.eq(run_id))
+                .where(DreamingMutation.tool_call_id.eq(tool_call_id))
+            )
+        if mutation is None:
+            return MutationSettlement("not_found")
+        if mutation.status == "acknowledged":
+            return MutationSettlement("already_settled")
+        acknowledged, error = await notify(run_id, tool_call_id)
+        if not acknowledged:
+            # Leave the record untouched: it stays retryable.
+            return MutationSettlement("failed", error)
+        return MutationSettlement("settled")
 
     async def reconcile_workspace(
         self,
@@ -522,22 +558,25 @@ class ConversationWindowDreamingExecutor:
 
         workspace_path = await self._ensure_workspace_path(run)
         tool_call_id = self.mutation_coordinator.mutation_tool_call_id(run)
-        pending = await self.mutation_coordinator.fetch_mutation(
+        # Resume path: a prior execution may have recorded the mutation
+        # without a successful ack. Retry is notification-only (ADR-0022);
+        # the lifecycle module owns that policy.
+        settlement = await self.mutation_coordinator.settle(
             run.id,
             tool_call_id,
+            acknowledger=self.mutation_acknowledger,
         )
-        if pending is not None and pending.status != "acknowledged":
-            acknowledged, error = await self.mutation_acknowledger(run.id, tool_call_id)
+        if settlement.outcome in ("settled", "failed"):
             logger.info(
                 "Dream run mutation acknowledged after prior execution",
                 run_id=str(run.id),
                 workspace_path=str(workspace_path),
-                acknowledged=acknowledged,
-                error=error,
+                acknowledged=settlement.acknowledged,
+                error=settlement.error,
             )
             return DreamRunExecutionResult(
-                status="success" if acknowledged else "failed",
-                error=None if acknowledged else error,
+                status="success" if settlement.acknowledged else "failed",
+                error=settlement.error,
             )
 
         curated_body = (
@@ -580,10 +619,14 @@ class ConversationWindowDreamingExecutor:
             workspace_path=Path(workspace_path),
             payload=payload,
         )
-        acknowledged, error = await self.mutation_acknowledger(run.id, tool_call_id)
+        settlement = await self.mutation_coordinator.settle(
+            run.id,
+            tool_call_id,
+            acknowledger=self.mutation_acknowledger,
+        )
         return DreamRunExecutionResult(
-            status="success" if acknowledged else "failed",
-            error=None if acknowledged else error,
+            status="success" if settlement.acknowledged else "failed",
+            error=settlement.error,
         )
 
     async def _write_dream_document(

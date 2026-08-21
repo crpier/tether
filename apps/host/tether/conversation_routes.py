@@ -590,15 +590,14 @@ async def acknowledge_dream_mutation(
         runtime.dreaming_service.database,
         runtime.memory_workspace_service.workspace_root,
     )
-    acknowledged, error = await coordinator.acknowledge_mutation(
-        run_id=parsed_run_id,
-        tool_call_id=tool_call_id,
-    )
-    if not acknowledged:
-        if error == "mutation not found":
-            return JSONResponse({"detail": "mutation not found"}, status_code=404)
+    # The lifecycle module owns the ack policy; this route only maps the
+    # outcome onto HTTP. Default acknowledger = in-process settlement.
+    settlement = await coordinator.settle(parsed_run_id, tool_call_id)
+    if settlement.outcome == "not_found":
+        return JSONResponse({"detail": "mutation not found"}, status_code=404)
+    if not settlement.acknowledged:
         return JSONResponse(
-            {"detail": error or "mutation acknowledgment failed"},
+            {"detail": settlement.error or "mutation acknowledgment failed"},
             status_code=500,
         )
     return JSONResponse(
