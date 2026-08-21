@@ -25,7 +25,7 @@ from tether.transcripts.contracts import (
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
-from tether.youtube_store import (
+from tether.youtube.store import (
     IngestedVideo,
     create_youtube_schema,
 )

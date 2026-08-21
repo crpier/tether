@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from snektest import assert_eq, test
 
-from tether.gmail_triage import gmail_deadline_fire_at
+from tether.gmail.triage import gmail_deadline_fire_at
 
 
 @test()

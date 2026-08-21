@@ -11,16 +11,16 @@ from snekok import Ok, Result
 from snektest import assert_eq, assert_false, assert_true, test
 
 from tests.surfaces import login, surface_client
-from tether.youtube_auth_service import (
+from tether.youtube.auth_service import (
     GoogleYouTubeAuthBackend,
     ReauthorizableYouTubeApi,
     YouTubeAuthBackend,
     YouTubeAuthFailure,
     YouTubeAuthorization,
 )
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_oauth import OAuthConfig
-from tether.youtube_quota import LikedPage, RawYouTubeVideo
+from tether.youtube.local import InMemoryYouTubeApi
+from tether.youtube.oauth import REQUIRED_SCOPES, OAuthConfig
+from tether.youtube.quota import LikedPage, RawYouTubeVideo
 
 
 class FakeGoogleCredentials:
@@ -144,6 +144,7 @@ def invalid_youtube_credentials_do_not_crash_host_startup() -> None:
         _ = token_path.write_text("not-json", encoding="utf-8")
         backend = GoogleYouTubeAuthBackend(
             OAuthConfig(
+                scopes=REQUIRED_SCOPES,
                 client_secret_path=root / "client-secret.json",
                 token_path=token_path,
             ),
@@ -226,6 +227,7 @@ async def google_consent_does_not_request_previously_granted_scopes() -> None:
         )
         backend = GoogleYouTubeAuthBackend(
             OAuthConfig(
+                scopes=REQUIRED_SCOPES,
                 client_secret_path=client_secret_path,
                 token_path=root / "token.json",
             )
@@ -252,6 +254,7 @@ def successful_youtube_callback_persists_google_credentials() -> None:
         token_path = root / "youtube" / "token.json"
         backend = GoogleYouTubeAuthBackend(
             OAuthConfig(
+                scopes=REQUIRED_SCOPES,
                 client_secret_path=root / "client-secret.json",
                 token_path=token_path,
             ),

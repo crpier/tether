@@ -154,25 +154,25 @@ pi-auth:
 # set TETHER_YOUTUBE_OAUTH_NO_BROWSER=1 to print the URL instead of opening a browser
 # --group youtube ensures the optional Google client libraries are installed first
 youtube-auth:
-    uv run --group youtube python -m tether.youtube_auth
+    uv run --group youtube python -m tether.youtube.auth
 
 # one-time Gmail OAuth bootstrap (caches a token, prints a few recent subjects)
 # reuses the YouTube OAuth client secret by default; set TETHER_GMAIL_CLIENT_SECRET_PATH
 # to override. Set TETHER_GMAIL_OAUTH_NO_BROWSER=1 to print the URL instead of opening one
 # --group youtube ensures the shared Google client libraries are installed first
 gmail-auth:
-    uv run --group youtube python -m tether.gmail_auth
+    uv run --group youtube python -m tether.gmail.auth
 
 # one-shot import of an active-workbench backup (likes + transcripts) into Tether
 # never calls YouTube; idempotent; pass --dry-run to preview counts without writing
 # e.g. just youtube-import-backup ~/active-workbench/state.db
 youtube-import-backup *args:
-    uv run python -m tether.youtube_import_backup {{args}}
+    uv run python -m tether.youtube.backup_import_cli {{args}}
 
 # force a full liked-history resync: clears the backfill cursor + completion marker
 # so the next sync pass re-walks history from the tail (never calls YouTube itself)
 youtube-reset-backfill:
-    uv run python -m tether.youtube_reset_backfill
+    uv run python -m tether.youtube.reset_backfill
 
 # sync/install all deps
 install:

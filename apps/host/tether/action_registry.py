@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from tether.gmail_client import GmailClient
+    from tether.gmail import GmailClient
     from tether.structured_logging import Logger
 
 type ActionOutcome = Literal["succeeded", "failed", "skipped"]
@@ -142,5 +142,5 @@ def all_action_specs() -> tuple[ActionSpec, ...]:
     # from this module, so a direct import here — even function-local — is a
     # static cycle. The consumer is resolved on first call, after both modules
     # are fully defined.
-    specs = importlib.import_module("tether.gmail_actions").GMAIL_ACTION_SPECS
+    specs = importlib.import_module("tether.gmail.actions").GMAIL_ACTION_SPECS
     return cast("tuple[ActionSpec, ...]", specs)

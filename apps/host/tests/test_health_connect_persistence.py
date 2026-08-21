@@ -6,7 +6,7 @@ import json
 from snekql.sqlite import Config, Database, scaffold
 from snektest import assert_eq, test
 
-from tether.health_connect_persistence import (
+from tether.health_connect.persistence import (
     _CURRENT_VIEW_MIGRATIONS,
     _SCHEMA_MODELS,
     HcGenericRecord,

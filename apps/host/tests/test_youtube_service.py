@@ -31,20 +31,17 @@ from snektest import (
 from tether.structured_logging import Logger
 from tether.transcripts.acquisition import TranscriptAcquisitionService
 from tether.transcripts.contracts import TranscriptNeedsReview, TranscriptProviderChain
-from tether.youtube import (
-    EmptyYouTubeSearchQueryError,
-    YouTubeService,
-    YouTubeVideoNotFoundError,
-)
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_quota import (
+from tether.youtube import YouTubeService, YouTubeVideoNotFoundError
+from tether.youtube.local import InMemoryYouTubeApi
+from tether.youtube.quota import (
     DailyQuota,
     LikedPage,
     RawYouTubeVideo,
     YouTubeApiClient,
     state_set,
 )
-from tether.youtube_store import (
+from tether.youtube.service import EmptyYouTubeSearchQueryError
+from tether.youtube.store import (
     IngestedVideo,
     TranscriptPersistedStatus,
     YouTubeTranscriptState,
@@ -52,7 +49,7 @@ from tether.youtube_store import (
     derive_ingest_state,
     upsert_ingested_video,
 )
-from tether.youtube_sync import (
+from tether.youtube.sync import (
     YouTubeSyncConfig,
     YouTubeSyncService,
 )

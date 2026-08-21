@@ -7,7 +7,7 @@ from tether.bucket_item_store import create_bucket_item_schema
 from tether.conversation_store import create_conversation_schema
 from tether.dreaming_store import create_dreaming_schema
 from tether.ebook_stats_store import create_ebook_stats_schema
-from tether.gmail_store import create_gmail_schema
+from tether.gmail import create_gmail_schema
 from tether.kosync_store import create_kosync_schema
 from tether.memory_store import create_memory_schema
 from tether.notification_store import create_notification_schema
@@ -19,7 +19,7 @@ from tether.recall_store import create_recall_schema
 from tether.search_projection.metadata import create_search_meta_schema
 from tether.todo_store import create_todo_schema
 from tether.trigger_store import create_trigger_schema
-from tether.youtube_store import create_youtube_schema
+from tether.youtube import create_youtube_schema
 
 
 async def create_host_schema(database: Database) -> None:

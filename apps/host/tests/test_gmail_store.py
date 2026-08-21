@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, fixture, load_fixture, test
 
-from tether.gmail_store import (
+from tether.gmail.store import (
     GMAIL_WATERMARK_KEY,
     create_gmail_schema,
     read_sync_watermark,

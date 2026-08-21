@@ -16,7 +16,7 @@ from tether.web_search import (
     SearchResult,
     WebSearchFailure,
 )
-from tether.youtube_quota import QuotaMeta
+from tether.youtube.quota import QuotaMeta
 
 
 class ExhaustedSearchProvider:

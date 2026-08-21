@@ -11,11 +11,7 @@ from tether.provider_auth_errors import ProviderAuthFailure
 from tether.provider_auth_model import DeviceCode
 from tether.stt_errors import SttFailure
 from tether.stt_model import AudioUpload, TranscriptionResponse
-from tether.youtube_auth_service import (
-    YouTubeAuthBackend,
-    YouTubeAuthFailure,
-    YouTubeAuthorization,
-)
+from tether.youtube import YouTubeAuthBackend, YouTubeAuthFailure, YouTubeAuthorization
 
 
 class LocalProviderAuthBackend(ProviderAuthBackend):

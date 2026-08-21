@@ -10,11 +10,16 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from tether.app_runtime import AppRuntime, install_app_runtime
-from tether.gmail_auth_service import GoogleGmailAuthService, ReauthorizableGmailClient
-from tether.gmail_oauth import HttpGmailTransport
-from tether.health_connect_ingestion import HealthConnectIngestion
-from tether.health_connect_persistence import create_health_connect_schema
-from tether.health_connect_telemetry import HealthConnectTelemetry
+from tether.gmail import (
+    GoogleGmailAuthService,
+    HttpGmailTransport,
+    ReauthorizableGmailClient,
+)
+from tether.health_connect import (
+    HealthConnectIngestion,
+    HealthConnectTelemetry,
+    create_health_connect_schema,
+)
 from tether.host_config import AppConfig
 from tether.host_resources import (
     HostBootstrap,

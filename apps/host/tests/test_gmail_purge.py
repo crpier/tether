@@ -26,13 +26,13 @@ from snektest import (
     test,
 )
 
-from tether.gmail_client import (
+from tether.gmail.client import (
     GmailClient,
     GmailNetworkFailure,
     GmailResponse,
 )
+from tether.gmail.store import GmailSyncState, create_gmail_schema
 from tether.gmail_purge import GmailPurgeSweepService
-from tether.gmail_store import GmailSyncState, create_gmail_schema
 from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_execution import ProposalExecutor
 from tether.proposal_store import create_proposal_schema

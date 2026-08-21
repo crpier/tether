@@ -19,13 +19,13 @@ from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.structured_logging import Logger
 from tether.youtube import YouTubeService
-from tether.youtube_local import InMemoryYouTubeApi
-from tether.youtube_quota import (
+from tether.youtube.local import InMemoryYouTubeApi
+from tether.youtube.quota import (
     DailyQuota,
     YouTubeApiClient,
 )
-from tether.youtube_search import VideoMatch
-from tether.youtube_store import (
+from tether.youtube.search import VideoMatch
+from tether.youtube.store import (
     IngestedVideo,
     create_youtube_schema,
 )

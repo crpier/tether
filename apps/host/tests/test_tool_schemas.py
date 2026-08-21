@@ -9,8 +9,8 @@ from tether.bucket_tools import internal_bucket_tool_routes
 from tether.conversation_history_tools import (
     internal_conversation_history_tool_routes,
 )
-from tether.gmail_tools import internal_gmail_tool_routes
-from tether.health_connect_tools import internal_health_connect_tool_routes
+from tether.gmail.tools import internal_gmail_tool_routes
+from tether.health_connect.tools import internal_health_connect_tool_routes
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.proposal_tools import internal_proposal_tool_routes
@@ -21,7 +21,7 @@ from tether.tool_schemas import build_tool_schema_document
 from tether.tools import internal_tool_routes
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
-from tether.youtube_tools import internal_youtube_tool_routes
+from tether.youtube.tools import internal_youtube_tool_routes
 
 
 @test()

@@ -22,12 +22,12 @@ from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, Vector
 from tether.structured_logging import Logger
-from tether.youtube_search_index import ChunkDocument
-from tether.youtube_search_reconciler import (
+from tether.youtube.search_index import ChunkDocument
+from tether.youtube.search_reconciler import (
     YouTubeSearchReconciler,
     YouTubeSearchReconcileReport,
 )
-from tether.youtube_store import (
+from tether.youtube.store import (
     IngestedVideo,
     create_youtube_schema,
 )

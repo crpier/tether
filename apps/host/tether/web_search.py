@@ -8,7 +8,7 @@ from typing import Protocol
 
 from snekok import Result
 
-from tether.youtube_quota import QuotaMeta
+from tether.capability_contracts import QuotaMeta
 
 
 class SearchDepth(StrEnum):

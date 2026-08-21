@@ -8,9 +8,9 @@ import httpx2
 from snekok import Err, Ok
 from snektest import assert_eq, test
 
-from tether.gmail_client import GmailNetworkFailure
-from tether.gmail_oauth import HttpGmailTransport
-from tether.youtube_oauth import OAuthConfig
+from tether.gmail.client import GmailNetworkFailure
+from tether.gmail.oauth import HttpGmailTransport
+from tether.youtube.oauth import OAuthConfig
 
 
 @test()

@@ -8,8 +8,9 @@ from typing import Protocol
 from snekok import Err, Ok, Result
 from snekql.sqlite import Database, Transaction, insert, select, update
 
+from tether.capability_contracts import QuotaMeta
 from tether.web_search import SearchBudgetExhaustedFailure
-from tether.youtube_quota import QuotaMeta, SystemClock, YouTubeSyncState
+from tether.youtube import SystemClock, YouTubeSyncState
 
 _SPEND_KEY_PREFIX = "search_uses"
 """Prefix for persisted UTC-month Web Search credit counters."""

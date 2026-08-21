@@ -33,7 +33,7 @@ from starlette.testclient import TestClient
 
 from tether import server
 from tether.app_runtime import app_runtime
-from tether.gmail_client import GmailNetworkFailure, GmailResponse
+from tether.gmail.client import GmailNetworkFailure, GmailResponse
 from tether.host_resources import shutdown_background_tasks
 from tether.model_selection import AgentModelConfig
 from tether.server import (
@@ -49,7 +49,7 @@ from tether.transcripts.contracts import (
     TranscriptProviderChain,
     TranscriptUnavailableFailure,
 )
-from tether.youtube_auth_service import ReauthorizableYouTubeApi
+from tether.youtube.auth_service import ReauthorizableYouTubeApi
 
 
 class CapturedStdout(StringIO):

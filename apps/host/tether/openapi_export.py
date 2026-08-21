@@ -14,7 +14,7 @@ from tether.auth_routes import router as auth_router
 from tether.bucket_routes import router as bucket_router
 from tether.capture_routes import router as capture_router
 from tether.conversation_routes import router as conversation_router
-from tether.gmail_auth_routes import router as gmail_auth_router
+from tether.gmail import auth_routes_router as gmail_auth_router
 from tether.health_connect import router as health_connect_router
 from tether.kosync_routes import router as ebook_router
 from tether.model_selection import router as model_router
@@ -29,8 +29,8 @@ from tether.search_routes import router as search_router
 from tether.stt_routes import router as stt_router
 from tether.todo_routes import router as todo_router
 from tether.trigger_routes import router as trigger_router
-from tether.youtube_auth_routes import router as youtube_auth_router
-from tether.youtube_routes import router as youtube_router
+from tether.youtube import auth_routes_router as youtube_auth_router
+from tether.youtube import routes_router as youtube_router
 
 _EXPECTED_ARGUMENT_COUNT = 2
 _PUBLIC_ROUTERS = (

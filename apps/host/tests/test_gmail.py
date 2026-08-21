@@ -41,13 +41,13 @@ from snektest import (
 )
 
 from tether.gmail import GmailSyncService
-from tether.gmail_client import (
+from tether.gmail.client import (
     GmailAuthenticationFailure,
     GmailClient,
     GmailNetworkFailure,
     GmailResponse,
 )
-from tether.gmail_store import GmailMessageRecord, create_gmail_schema
+from tether.gmail.store import GmailMessageRecord, create_gmail_schema
 from tether.memories import MemoryService
 from tether.memory_projection import KnowledgeBaseService
 from tether.memory_store import (

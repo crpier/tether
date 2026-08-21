@@ -19,8 +19,7 @@ from tether.transcripts.contracts import (
     TranscriptStored,
 )
 from tether.transcripts.provider_health import load_all_provider_pauses
-from tether.youtube_quota import Clock
-from tether.youtube_store import IngestedVideo, YouTubeTranscriptState
+from tether.youtube import Clock, IngestedVideo, YouTubeTranscriptState
 
 _LIBRARY_SOURCE = "youtube_transcript_api"
 

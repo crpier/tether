@@ -1,7 +1,7 @@
 """Behaviour tests for the YouTube Data API budget/backoff trio.
 
 `DailyQuota`, `YouTubeApiGate`, and `YouTubeApiClient` moved to
-`tether.youtube_quota` (#203) because they are self-contained: unlike the rest
+`tether.youtube.quota` (#203) because they are self-contained: unlike the rest
 of the YouTube ingestion surface, they never touch `IngestedVideo` or the sync
 bookkeeping. These tests moved with them.
 """
@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_raises, test
 
-from tether.youtube_quota import (
+from tether.youtube.quota import (
     DailyQuota,
     LikedPage,
     RawYouTubeVideo,
@@ -21,7 +21,7 @@ from tether.youtube_quota import (
     YouTubeApiGateConfig,
     YouTubeQuotaExceededError,
 )
-from tether.youtube_store import create_youtube_schema
+from tether.youtube.store import create_youtube_schema
 
 
 class FakeClock:

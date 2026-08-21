@@ -34,7 +34,7 @@ from tether.transcripts.worker import (
     TranscriptSyncConfig,
     TranscriptSyncService,
 )
-from tether.youtube_store import (
+from tether.youtube.store import (
     IngestedVideo,
     YouTubeTranscriptState,
     create_youtube_schema,

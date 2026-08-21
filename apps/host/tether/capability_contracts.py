@@ -5,10 +5,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 from tether.bucket_item_store import BucketItemProvenance
 from tether.memory_store import MemoryProvenance
-from tether.youtube import CacheMeta
-from tether.youtube_quota import QuotaMeta
+
+
+class CacheMeta(BaseModel):
+    """Whether a result was served from the local cache or fetched live.
+
+    >>> CacheMeta(hit=False, source="live").source
+    'live'
+    """
+
+    hit: bool
+    source: Literal["live", "cache"]
+
+
+class QuotaMeta(BaseModel):
+    """The day's quota budget snapshot a guarded call reports.
+
+    >>> QuotaMeta(limit=100, used=3, remaining=97).remaining
+    97
+    """
+
+    limit: int
+    used: int
+    remaining: int
+
 
 type ToolErrorCode = Literal[
     "invalid_input",

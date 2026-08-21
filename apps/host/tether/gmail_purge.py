@@ -6,7 +6,7 @@ a bounded chunk of eligible backlog mail, asks the agent to decide a per-message
 hygiene action (archive / label / delete / keep) plus a sender-category scope,
 and folds the actionable verdicts into a **single Proposal per chunk** through
 `ProposalService`. It never touches the mailbox itself — approval-time execution
-runs the registered `gmail.*` executors (`tether.gmail_actions`); the sweep only
+runs the registered `gmail.*` executors (`tether.gmail.actions`); the sweep only
 proposes, so a human (or a standing autonomy grant) always gates the writes.
 
 It keeps its *own* resumable watermark under a separate `gmail_sync_state` key
@@ -41,13 +41,15 @@ from pydantic import BaseModel, ValidationError
 from snekok import Err, Ok, Result
 from snekql.sqlite import Database
 
-from tether.gmail_client import GmailClient, GmailFailure, GmailMessage
-from tether.gmail_store import (
+from tether.gmail import (
     GMAIL_PURGE_WATERMARK_KEY,
+    GmailClient,
+    GmailFailure,
+    GmailMessage,
+    GmailTriageRunner,
     read_sync_watermark,
     write_sync_watermark,
 )
-from tether.gmail_triage import GmailTriageRunner
 from tether.proposals import ActionDraft, ProposalDraft, ProposalService
 from tether.structured_logging import Logger
 
