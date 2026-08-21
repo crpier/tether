@@ -27,6 +27,8 @@ export interface SpeechPlayer {
   cancel(): void;
   /** Appends speech without cancelling what is already playing/queued. */
   enqueue(text: string): void;
+  /** Whether any speech adapter exists at all (#546 UX hint). */
+  supported(): boolean;
   speak(text: string): void;
   state(): SpeechPlayerState;
 }
@@ -112,5 +114,11 @@ export function createSpeechPlayer(
     enqueue(text);
   };
 
-  return { cancel, enqueue, speak, state };
+  return {
+    cancel,
+    enqueue,
+    speak,
+    state,
+    supported: () => synthesis !== null,
+  };
 }

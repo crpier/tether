@@ -258,6 +258,7 @@ function WorkingIndicator(props: { startedAt: number }) {
 }
 
 function MessageRow(props: {
+  isSpoken: (text: string) => boolean;
   row: TimelineRow;
   transcriptItemNumber: number;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
@@ -364,6 +365,19 @@ function MessageRow(props: {
               {messageLabel(message().role)}
             </strong>
             <Show
+              when={
+                message().role === "assistant" && props.isSpoken(message().text)
+              }
+            >
+              <span
+                aria-label="Spoken reply"
+                class="ml-1 align-middle text-xs"
+                title="This reply was spoken aloud"
+              >
+                🔊
+              </span>
+            </Show>
+            <Show
               fallback={
                 <p class="whitespace-pre-wrap break-words">
                   {message().role === "tool"
@@ -395,6 +409,8 @@ function MessageRows(props: {
   startedAt: number | null;
   stopped: boolean;
   historyReady: boolean;
+  /** Whether this text was spoken this session (🔊 chip, #546). */
+  isSpoken: (text: string) => boolean;
   // Triggers a fetch of the next-older page; a no-op if one is already in
   // flight or history is exhausted. Returns whether a fetch actually started,
   // so the caller only arms its scroll-position restore when rows are really
@@ -470,6 +486,7 @@ function MessageRows(props: {
         <For each={props.rows}>
           {(row, index) => (
             <MessageRow
+              isSpoken={props.isSpoken}
               onOpenArtifact={props.onOpenArtifact}
               row={row}
               transcriptItemNumber={index() + 1}
@@ -598,16 +615,36 @@ export function ChatPage() {
     }
   };
   const [voiceAutoStart, setVoiceAutoStart] = createSignal(0);
+  // Transcript rows whose settled text was spoken this session (#546): the
+  // 🔊 chip. Session-scoped by design — durable per-message mode flags need a
+  // host schema change and are deliberately out of scope here.
+  const [spokenTexts, setSpokenTexts] = createSignal<Set<string>>(new Set());
+  const [stopPlaybackRef, setStopPlaybackRef] =
+    createSignal<HTMLButtonElement | null>(null);
   onMount(() => {
     const markInteraction = () => {
       lastInteractionAt = Date.now();
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && speechPlayer.state() === "playing") {
+        event.preventDefault();
+        speechPlayer.cancel();
+        return;
+      }
+      // Ctrl+Shift+V flips conversation mode without leaving the keyboard.
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        setConversationMode((enabled) => !enabled);
+      }
+    };
     window.addEventListener("keydown", markInteraction, { capture: true });
+    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", markInteraction, { capture: true });
     onCleanup(() => {
       window.removeEventListener("keydown", markInteraction, {
         capture: true,
       });
+      window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", markInteraction, {
         capture: true,
       });
@@ -629,6 +666,17 @@ export function ChatPage() {
   // Leaving the chat page must never leave speech running.
   onCleanup(() => {
     speechPlayer.cancel();
+  });
+
+  // When playback starts, put keyboard focus on Stop so Escape/Enter work
+  // immediately — but never steal focus from something in active use.
+  createEffect(() => {
+    if (
+      speechPlayer.state() === "playing" &&
+      document.activeElement === document.body
+    ) {
+      stopPlaybackRef()?.focus();
+    }
   });
 
   const liveTurn = createLiveChatTurn({
@@ -662,12 +710,17 @@ export function ChatPage() {
         markedSpeechStart = false;
         speechPlayer.cancel();
       },
-      settle: (unspokenTail, toolOnly) => {
-        if (toolOnly) {
+      settle: (unspokenTail, info) => {
+        if (info.toolOnly) {
           // The settled text is a host-side tool-only marker, not real
           // prose — silence beats speaking internal scaffolding.
           return;
         }
+        setSpokenTexts((current) => {
+          const next = new Set(current);
+          next.add(info.fullText);
+          return next;
+        });
         const spoken = toSpeechText(unspokenTail);
         if (spoken.length > 0) {
           markSpeechStart();
@@ -723,6 +776,8 @@ export function ChatPage() {
     if (content.length === 0 || conversationId() === undefined) {
       return;
     }
+    // Barge-in (#546): the user taking over stops active playback.
+    speechPlayer.cancel();
     setDraft("");
     sendLivePrompt(content);
   };
@@ -830,6 +885,7 @@ export function ChatPage() {
         >
           <MessageRows
             historyReady={historyReady()}
+            isSpoken={(text) => spokenTexts().has(text)}
             onNearTop={loadOlderMessages}
             onOpenArtifact={setOpenArtifact}
             rows={rows()}
@@ -868,6 +924,12 @@ export function ChatPage() {
             </div>
           </div>
           <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
+            <Show when={conversationMode() && !speechPlayer.supported()}>
+              <p class="text-muted-foreground text-xs" role="note">
+                Speech output isn't available in this browser; spoken replies
+                will only appear as text.
+              </p>
+            </Show>
             <Show when={speechPlayer.state() !== "idle"}>
               <div
                 aria-live="polite"
@@ -883,6 +945,7 @@ export function ChatPage() {
                   onClick={() => {
                     speechPlayer.cancel();
                   }}
+                  ref={setStopPlaybackRef}
                   size="sm"
                   type="button"
                   variant="outline"
@@ -1010,7 +1073,9 @@ export function ChatPage() {
                     fitChatInputToContent(event.currentTarget);
                   }}
                   onKeyDown={onMessageKeyDown}
-                  placeholder="Message Tether…"
+                  placeholder={
+                    conversationMode() ? "Reply spoken…" : "Message Tether…"
+                  }
                   ref={(element) => {
                     messageInput = element;
                     queueMicrotask(() => {
