@@ -850,3 +850,24 @@ def a_new_installation_has_initial_sync_state() -> None:
             "status": "initial",
         },
     )
+
+
+@test()
+def rejected_batches_log_field_errors_without_payload_values() -> None:
+    """422s are diagnosable from logs: field paths only, never payload values."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        with health_connect_client(root, capture_logs=True) as client:
+            response = client.post(
+                BATCH_PATH,
+                headers=AUTHORIZATION,
+                json={"contract_version": 99},
+            )
+
+        assert_eq(response.status_code, 422)
+        logs = (root / "host.log").read_text()
+    assert_true("Request validation failed" in logs)
+    assert_true("contract_version" in logs)
+    # Payload values must never reach diagnostics (privacy contract above).
+    assert_true('"input"' not in logs)
+    assert_true("beats_per_minute" not in logs or '"input"' not in logs)

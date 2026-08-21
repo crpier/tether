@@ -9,8 +9,13 @@ import secrets
 from datetime import timedelta
 from pathlib import Path
 
+import structlog
 import uvicorn
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.requests import Request as StarletteRequest
 from uvicorn.config import WSProtocolType
 
 from tether.agent_trace_recorder import AgentTraceRecorder
@@ -99,6 +104,33 @@ def _resolve_stt_client(config: AppConfig) -> SttClient:
     )
 
 
+_validation_logger = structlog.stdlib.get_logger("tether.server")
+
+
+async def log_request_validation(
+    request: StarletteRequest, exc: Exception
+) -> JSONResponse:
+    """Log one request-validation failure and return the default 422 body."""
+    if not isinstance(exc, RequestValidationError):
+        raise exc
+    _validation_logger.warning(
+        "Request validation failed",
+        method=request.method,
+        path=request.url.path,
+        errors=[
+            {
+                "loc": ".".join(str(part) for part in error["loc"]),
+                "type": error["type"],
+            }
+            for error in exc.errors()
+        ],
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
+    )
+
+
 def create_app(
     *,
     config: AppConfig,
@@ -133,6 +165,13 @@ def create_app(
             embedder=embedder,
         ),
     )
+
+    # 422s used to vanish without a trace: the default response goes back to
+    # the client, but nothing landed in the host log, so a misbehaving sync
+    # client was undiagnosable after the fact. Field paths only — payload
+    # values never reach diagnostics (see the Health Connect privacy test).
+    app.add_exception_handler(RequestValidationError, log_request_validation)
+
     app.include_router(public_api_router())
     app.router.routes.extend(
         [
