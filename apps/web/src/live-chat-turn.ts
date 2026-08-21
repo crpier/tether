@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
 
 import type { Message } from "./host/chat";
-import type { ChatFrame } from "./chat-bus";
+import type { ChatFrame, ReplyMode } from "./chat-bus";
 import {
   deriveRows,
   emptyTurn,
@@ -19,6 +19,7 @@ const MESSAGES_PAGE_SIZE = 30;
 export interface QueuedPrompt {
   id: number;
   content: string;
+  replyMode: ReplyMode;
 }
 
 export interface LiveChatHistory {
@@ -31,13 +32,21 @@ export interface LiveChatHistory {
 
 export interface LiveChatTransport {
   abort(conversationId: string): void;
-  sendPrompt(conversationId: string, content: string): void;
+  sendPrompt(
+    conversationId: string,
+    content: string,
+    replyMode: ReplyMode,
+  ): void;
 }
 
 export interface LiveChatTurnDependencies {
   conversationId: Accessor<string | undefined>;
   history: LiveChatHistory;
   now?: () => number;
+  /** Current composer toggle value, read once when a prompt is enqueued. */
+  replyMode?: Accessor<ReplyMode>;
+  /** Invoked once when a captured-spoken turn settles successfully. */
+  onSettledReply?: (text: string) => void;
   transport: LiveChatTransport;
 }
 
@@ -60,6 +69,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const [loadingOlder, setLoadingOlder] = createSignal(false);
   let historyRequest = 0;
   let nextQueuedPromptId = 1;
+  let runningReplyMode: ReplyMode = "text";
 
   const busy = createMemo(() => turn().generating || awaitingAgentEnd());
   const generating = createMemo(() => turn().generating);
@@ -181,7 +191,12 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     setInterrupted(false);
     setOutboundPrompt(prompt);
     setTurn(startTurn(prompt.content, now()));
-    dependencies.transport.sendPrompt(conversationId, prompt.content);
+    runningReplyMode = prompt.replyMode;
+    dependencies.transport.sendPrompt(
+      conversationId,
+      prompt.content,
+      prompt.replyMode,
+    );
   };
 
   const dispatchNextQueuedPrompt = () => {
@@ -201,7 +216,11 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       return;
     }
     setError(undefined);
-    const prompt = { content, id: nextQueuedPromptId };
+    const prompt = {
+      content,
+      id: nextQueuedPromptId,
+      replyMode: dependencies.replyMode?.() ?? "text",
+    };
     nextQueuedPromptId += 1;
     if (busy()) {
       setQueuedPrompts((current) => [...current, prompt]);
@@ -300,10 +319,22 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       refreshSettledHistory();
     }
     if (frame.event === "agent_end") {
+      const settledReplyMode = runningReplyMode;
       setOutboundPrompt(null);
       setAwaitingAgentEnd(false);
       refreshSettledHistory();
       dispatchNextQueuedPrompt();
+      // Playback corresponds to the prompt's captured mode, not the toggle's
+      // current value, and never fires for aborted or errored turns.
+      if (
+        settledReplyMode === "spoken" &&
+        !stopped() &&
+        error() === undefined &&
+        typeof frame.final_text === "string" &&
+        frame.final_text.length > 0
+      ) {
+        dependencies.onSettledReply?.(frame.final_text);
+      }
     }
   };
 

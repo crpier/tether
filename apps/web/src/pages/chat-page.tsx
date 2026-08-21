@@ -19,6 +19,8 @@ import type { ChatHost, Conversation } from "../host/chat";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
+import { createSpeechPlayer } from "../speech-player";
+import { toSpeechText } from "../speech-text";
 import { willStartFreshSession } from "../session-freshness";
 import { ArtifactOverlay } from "../components/artifact-viewer";
 import { MessageContent } from "../components/message-content";
@@ -577,8 +579,19 @@ export function ChatPage() {
     );
   });
 
+  const [conversationMode, setConversationMode] = createSignal(false);
+
+  const speechPlayer = createSpeechPlayer();
+  // Leaving the chat page must never leave speech running.
+  onCleanup(() => {
+    speechPlayer.cancel();
+  });
+
   const liveTurn = createLiveChatTurn({
     conversationId,
+    // Read once per queued prompt, so toggling never mutates queued or
+    // running turns.
+    replyMode: () => (conversationMode() ? "spoken" : "text"),
     history: {
       listMessages: (id, options) => api.listMessages(id, options),
       settled: () => {
@@ -588,12 +601,20 @@ export function ChatPage() {
         void queryClient.invalidateQueries({ queryKey: ["messages"] });
       },
     },
+    onSettledReply: (text) => {
+      // Only the authoritative settled final answer reaches playback, exactly
+      // once, normalized for speech; failure never touches the transcript.
+      const spoken = toSpeechText(text);
+      if (spoken.length > 0) {
+        speechPlayer.speak(spoken);
+      }
+    },
     transport: {
       abort: (id) => {
         bus()?.abort(id);
       },
-      sendPrompt: (id, content) => {
-        bus()?.sendPrompt(id, content);
+      sendPrompt: (id, content, replyMode) => {
+        bus()?.sendPrompt(id, content, replyMode);
       },
     },
   });
@@ -777,6 +798,29 @@ export function ChatPage() {
             </div>
           </div>
           <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
+            <Show when={speechPlayer.state() !== "idle"}>
+              <div
+                aria-live="polite"
+                class="bg-muted/40 flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                role="status"
+              >
+                <span class="flex-1">
+                  {speechPlayer.state() === "error"
+                    ? "Speech playback failed."
+                    : "Speaking reply…"}
+                </span>
+                <Button
+                  onClick={() => {
+                    speechPlayer.cancel();
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Stop playback
+                </Button>
+              </div>
+            </Show>
             <Show when={queuedPrompts().length > 0}>
               <section
                 aria-label="Queued messages"
@@ -910,7 +954,29 @@ export function ChatPage() {
                 />
               </TextField>
               <div class="flex shrink-0 items-center gap-1">
+                <Button
+                  aria-label="Conversation mode"
+                  aria-pressed={conversationMode()}
+                  class="rounded-full"
+                  onClick={() => {
+                    setConversationMode((enabled) => !enabled);
+                  }}
+                  size="sm"
+                  title={
+                    conversationMode()
+                      ? "Conversation mode is on: replies are spoken"
+                      : "Conversation mode is off"
+                  }
+                  type="button"
+                  variant={conversationMode() ? "default" : "outline"}
+                >
+                  <span aria-hidden="true">🔊</span>
+                </Button>
                 <VoiceComposerControls
+                  onRecordingStart={() => {
+                    // Avoid microphone feedback from an ongoing reply.
+                    speechPlayer.cancel();
+                  }}
                   onTranscript={handleVoiceTranscript}
                   transcribe={(blob) => api.transcribeAudio(blob)}
                 />

@@ -16,6 +16,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from tether.chat_prompt import ReplyMode
+
 
 class _WireFrame(BaseModel):
     """Base for browser-bound frames; `wire()` is the exact send_json payload.
@@ -94,9 +96,17 @@ class ToolEndFrame(_ConversationFrame):
 
 
 class AgentEndFrame(_ConversationFrame):
-    """pi finished the whole turn; the terminal frame of a turn stream."""
+    """pi finished the whole turn; the terminal frame of a turn stream.
+
+    `reply_mode` is the mode captured when the prompt was queued (not the
+    toggle's current value) and `final_text` is the authoritative settled
+    assistant answer, so the browser can trigger exactly-once spoken playback
+    without guessing from stream rows.
+    """
 
     event: Literal["agent_end"] = "agent_end"
+    reply_mode: ReplyMode
+    final_text: str
 
 
 class AbortAckFrame(_ConversationFrame):

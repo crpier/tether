@@ -32,6 +32,7 @@ export function createBusHarness(): {
   sent: {
     content?: string;
     conversationId: string;
+    replyMode?: "spoken" | "text";
     type: "abort" | "prompt";
   }[];
 } {
@@ -40,6 +41,7 @@ export function createBusHarness(): {
   const sent: {
     content?: string;
     conversationId: string;
+    replyMode?: "spoken" | "text";
     type: "abort" | "prompt";
   }[] = [];
   const bus: ChatBus = {
@@ -49,8 +51,8 @@ export function createBusHarness(): {
     close() {
       closed = true;
     },
-    sendPrompt(conversationId, content) {
-      sent.push({ content, conversationId, type: "prompt" });
+    sendPrompt(conversationId, content, replyMode) {
+      sent.push({ content, conversationId, replyMode, type: "prompt" });
     },
   };
   return {

@@ -74,15 +74,21 @@ def message_end_frame_has_only_the_bare_event() -> None:
 
 
 @test()
-def agent_end_frame_has_only_the_bare_event() -> None:
-    """agent_end is the terminal turn frame."""
-    frame = AgentEndFrame(conversation_id=_CONVERSATION_ID)
+def agent_end_frame_carries_reply_mode_and_final_text() -> None:
+    """agent_end is terminal and names the captured mode + authoritative text."""
+    frame = AgentEndFrame(
+        conversation_id=_CONVERSATION_ID,
+        reply_mode="spoken",
+        final_text="Hi there",
+    )
     assert_eq(
         frame.wire(),
         {
             "type": "chat",
             "conversation_id": str(_CONVERSATION_ID),
             "event": "agent_end",
+            "reply_mode": "spoken",
+            "final_text": "Hi there",
         },
     )
 
