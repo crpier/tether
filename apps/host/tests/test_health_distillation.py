@@ -1,7 +1,7 @@
 """Health consolidation: bounded agent Distillations over episode summaries."""
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -413,3 +413,65 @@ async def worker_drains_multiple_queued_runs_in_order() -> None:
     ]
     assert_true(first_uris == ["uri: tether://health-connect/exercise/ex-1@v1"])
     assert_true(second_uris == ["uri: tether://health-connect/exercise/ex-2@v2"])
+
+
+@test()
+async def explicit_window_queues_a_run_bounded_to_the_period() -> None:
+    """A manual request distills only episodes ending inside the period."""
+    _, telemetry, _, service = await load_fixture(health_fixture())
+    start_one = _BASE_MILLIS
+    await _seed_summary(
+        telemetry,
+        record_id="ex-1",
+        start=start_one,
+        end=start_one + _HOUR_MILLIS,
+    )
+    start_two = _BASE_MILLIS + 24 * _HOUR_MILLIS
+    await _seed_summary(
+        telemetry,
+        record_id="ex-2",
+        start=start_two,
+        end=start_two + _HOUR_MILLIS,
+    )
+    end_one_ms = start_one + _HOUR_MILLIS
+
+    run = await service.queue_explicit_run(
+        start=datetime.fromtimestamp((end_one_ms - 60_000) / 1_000, UTC),
+        end=datetime.fromtimestamp((end_one_ms + 31 * 60_000) / 1_000, UTC),
+    )
+    assert run is not None
+    assert_eq(run.exercise_since_version_id, 0)
+    assert_eq(run.exercise_through_version_id, 1)
+
+    # A period covering both episodes yields the full window.
+    both = await service.queue_explicit_run(
+        start=datetime.fromtimestamp(start_one / 1_000, UTC),
+        end=datetime.fromtimestamp((start_two + _HOUR_MILLIS) / 1_000, UTC),
+    )
+    assert both is not None
+    assert_eq(both.exercise_through_version_id, 2)
+
+
+@test()
+async def explicit_window_refuses_empty_and_repeated_periods() -> None:
+    """No episodes in the period, or a repeat, queues nothing."""
+    _, telemetry, _, service = await load_fixture(health_fixture())
+    start_one = _BASE_MILLIS
+    await _seed_summary(
+        telemetry,
+        record_id="ex-1",
+        start=start_one,
+        end=start_one + _HOUR_MILLIS,
+    )
+    before_anything = await service.queue_explicit_run(
+        start=datetime.fromtimestamp(_BASE_MILLIS / 1_000, UTC) - timedelta(days=7),
+        end=datetime.fromtimestamp(_BASE_MILLIS / 1_000, UTC) - timedelta(days=6),
+    )
+    assert_is_none(before_anything)
+
+    period_start = datetime.fromtimestamp(start_one / 1_000, UTC)
+    period_end = datetime.fromtimestamp((start_one + _HOUR_MILLIS) / 1_000, UTC)
+    first = await service.queue_explicit_run(start=period_start, end=period_end)
+    assert first is not None
+    repeat = await service.queue_explicit_run(start=period_start, end=period_end)
+    assert_is_none(repeat)

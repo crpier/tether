@@ -1221,6 +1221,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/telemetry/health-connect/dream-now": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Health Dream Now
+     * @description Queue a manual consolidation run over Health Connect summaries.
+     *
+     *     Without a period, bounds cover every summary not yet captured by a prior
+     *     run; with `{start, end}`, only episodes ending inside the period are
+     *     reconsidered.
+     */
+    post: operations["health_dream_now_api_telemetry_health_connect_dream_now_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/telemetry/health-connect/sync-state": {
     parameters: {
       query?: never;
@@ -2695,6 +2719,16 @@ export interface components {
        * @enum {string}
        */
       status: "baseline" | "changes" | "initial";
+    };
+    /**
+     * HealthDreamNowRequest
+     * @description Optional episode period bounding a manual consolidation run.
+     */
+    HealthDreamNowRequest: {
+      /** End */
+      end?: string | null;
+      /** Start */
+      start?: string | null;
     };
     /** HeartRateRecord */
     HeartRateRecord: {
@@ -5838,6 +5872,40 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HealthConnectBatchRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  health_dream_now_api_telemetry_health_connect_dream_now_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json":
+          components["schemas"]["HealthDreamNowRequest"] | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
         };
       };
       /** @description Validation Error */
