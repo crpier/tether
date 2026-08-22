@@ -29,7 +29,6 @@ from snektest import (
     load_fixture,
     test,
 )
-from yaml import dump as yaml_dump
 
 from tether.conversation_model import MessageDraft, MessageRole
 from tether.conversation_store import (
@@ -56,22 +55,6 @@ from tether.dreaming_store import (
 )
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
-
-
-def _valid_memory_file(content: str, *, title: str = "Topic") -> str:
-    """Build one valid Memory topic with minimal required frontmatter."""
-
-    frontmatter = {"title": title}
-    return (
-        """---
-"""
-        + yaml_dump(frontmatter, default_flow_style=False, sort_keys=False)
-        + """---
-
-"""
-        + content
-        + "\n"
-    )
 
 
 class _Callback:
@@ -880,6 +863,39 @@ async def settle_is_idempotent_for_already_acknowledged_mutation() -> None:
 
 
 @test()
+async def reconciliation_waits_for_inflight_dream_mutation() -> None:
+    """Reconciliation cannot inspect a Dream write before its mutation is recorded."""
+    _, dreaming_service, _ = await _fixture()
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        topic_path = root / "new-topic.md"
+        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
+
+        async with coordinator.mutation_scope():
+            topic_path.write_text(
+                "---\ntitle: New topic\n---\nDreamed content.\n",
+                encoding="utf-8",
+            )
+            reconciliation = asyncio.create_task(
+                coordinator.reconcile_workspace(logger=test_logger())
+            )
+            await asyncio.sleep(0)
+            assert_eq(reconciliation.done(), False)
+            _ = await coordinator.record_mutation(
+                run_id=UUID("019f0000-0000-7000-8000-000000000001"),
+                tool_call_id="write-new-topic",
+                actor="dream",
+                operation="write",
+                workspace_path=topic_path,
+                payload="dream payload",
+            )
+
+        _ = await reconciliation
+        assert_eq(topic_path.exists(), True)
+
+
+@test()
 async def settle_defaults_to_direct_acknowledgement() -> None:
     """Without an injected notifier, settling reconciles in-process."""
     _conversation_service, dreaming_service, _ = await _fixture()
@@ -1255,103 +1271,3 @@ async def explicit_window_is_bounded_by_message_count() -> None:
     assert run is not None
     assert_eq(run.evidence_start_seq, 1)
     assert_eq(run.evidence_end_seq, 2)
-
-
-@test()
-async def reconcile_workspace_records_external_file_mutations() -> None:
-    """Reconciling the workspace snapshots authoritative file mutations from disk."""
-    conversation_service, dreaming_service, _ = await _fixture()
-    topic_path = "topic.md"
-    initial = _valid_memory_file("first draft", title="Initial")
-    changed = _valid_memory_file("revised draft", title="Initial")
-
-    with TemporaryDirectory() as workspace_root:
-        root = Path(workspace_root)
-        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
-        (root / topic_path).write_text(initial, encoding="utf-8")
-
-        first = await coordinator.reconcile_workspace(logger=test_logger())
-        assert_eq(first.updated_files, 1)
-        assert_eq(first.tombstones, 0)
-
-        async with conversation_service.database.transaction() as tx:
-            rows = await tx.fetch_all(
-                select(DreamingWorkspaceFile).where(
-                    DreamingWorkspaceFile.path.eq(topic_path)
-                )
-            )
-        assert_eq(len(rows), 1)
-        snapshot = rows[0]
-        assert_eq(snapshot.is_tombstone, 0)
-        assert_eq(snapshot.version, 1)
-        assert_eq(snapshot.actor, "human_external")
-
-        (root / topic_path).write_text(changed, encoding="utf-8")
-        second = await coordinator.reconcile_workspace(logger=test_logger())
-        assert_eq(second.updated_files, 1)
-        assert_eq(second.tombstones, 0)
-
-        async with conversation_service.database.transaction() as tx:
-            updated = await tx.fetch_one_or_none(
-                select(DreamingWorkspaceFile).where(
-                    DreamingWorkspaceFile.path.eq(topic_path)
-                )
-            )
-        assert updated is not None
-        assert_eq(updated.version, 2)
-        assert_eq(updated.actor, "human_external")
-
-        (root / topic_path).unlink()
-        third = await coordinator.reconcile_workspace(logger=test_logger())
-        assert_eq(third.updated_files, 0)
-        assert_eq(third.tombstones, 1)
-
-        async with conversation_service.database.transaction() as tx:
-            removed = await tx.fetch_one_or_none(
-                select(DreamingWorkspaceFile).where(
-                    DreamingWorkspaceFile.path.eq(topic_path)
-                )
-            )
-        assert removed is not None
-        assert_eq(removed.is_tombstone, 1)
-        assert_eq(removed.version, 3)
-
-
-@test()
-async def reconcile_workspace_preserves_existing_actor_when_tombstoning() -> None:
-    """A missing file keeps prior actor metadata on its tombstone row."""
-    _, dreaming_service, _ = await _fixture()
-
-    with TemporaryDirectory() as workspace_root:
-        root = Path(workspace_root)
-        coordinator = DreamingMutationCoordinator(dreaming_service.database, root)
-
-        async with dreaming_service.database.transaction() as tx:
-            _ = await tx.execute(
-                insert(
-                    DreamingWorkspaceFile(
-                        path="keep-actor.md",
-                        content_hash="abc",
-                        content="content",
-                        is_tombstone=0,
-                        version=4,
-                        source_run_id=UUID("019f0000-0000-7000-8000-000000000001"),
-                        source_tool_call_id="tool-1",
-                        actor="dream",
-                    )
-                )
-            )
-
-        report = await coordinator.reconcile_workspace(logger=test_logger())
-        assert_eq(report.updated_files, 0)
-        assert_eq(report.tombstones, 1)
-
-        async with dreaming_service.database.transaction() as tx:
-            snapshot = await tx.fetch_one_or_none(
-                select(DreamingWorkspaceFile).where(
-                    DreamingWorkspaceFile.path.eq("keep-actor.md")
-                )
-            )
-        assert snapshot is not None
-        assert_eq(snapshot.actor, "dream")
-        assert_eq(snapshot.is_tombstone, 1)

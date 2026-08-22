@@ -4,9 +4,9 @@ Tracks [#507](https://github.com/crpier/tether/issues/507). It establishes the M
 
 ## Outcome
 
-Tether automatically turns settled host-owned evidence into a small, current, agent-organized Markdown workspace. Those files are canonical Memory. SQLite owns evidence, suppressions, orchestration, full-file history, and rebuildable projections; pi sessions are execution/audit records only. Foreground chat receives a fresh bounded projection of relevant topic files on every model call.
+Tether automatically turns settled host-owned evidence into a small, current, agent-organized Markdown workspace. Those files are canonical Memory, and Dreaming is their sole writer. SQLite owns evidence, suppressions, orchestration, full-file history, and recorded file state used to authorize or repair mutations; pi sessions are execution/audit records only. Foreground chat receives a fresh bounded projection of relevant topic files on every model call.
 
-There is no legacy migration, loose/tethered compatibility, Review inbox, runtime shadow mode, first-class Claim table, or run-level atomic publish. Production is reset to an empty Memory workspace when this cutover deploys.
+There is no legacy migration, loose/tethered compatibility, Review inbox, direct Memory editing, runtime shadow mode, first-class Claim table, or run-level atomic publish. Production is reset to an empty Memory workspace when this cutover deploys.
 
 ## File contract
 
@@ -43,7 +43,7 @@ Canonical evidence locators use source-specific host-resolvable URIs, initially 
 
 Finalize typed snekql models and migrations test-first. The expected responsibilities are:
 
-- **File mutation** — idempotency key `(run_id, tool_call_id)`, actor (`dream`, `human_external`, `restore`), operation and arguments, timestamps, and acknowledgement state.
+- **File mutation** — idempotency key `(run_id, tool_call_id)`, Dreaming actor, operation and arguments, timestamps, and acknowledgement state.
 - **File version** — mutation, path, complete content or tombstone, content hash, and timestamp. Store complete contents without deltas/deduplication initially.
 - **Dream run** — kind (`assimilation`, `maintenance`, `manual`), immutable evidence bounds, model/prompt version, trigger, status, pending-retry state, timing/cost, report, and failure.
 - **Conversation cursor** — highest successfully assimilated host Message sequence per Tether Conversation.
@@ -52,7 +52,7 @@ Finalize typed snekql models and migrations test-first. The expected responsibil
 - **Context inclusion** — foreground run, selected path and exact content hash/version, selection reason, and token contribution.
 - **Purge request** — content-free target identities, live-purge state, remote-backup state, attempts, and terminal status.
 
-Do not store a canonical current-file row. Reconciliation compares the filesystem against the latest recorded path versions; files win disagreements.
+Store the latest recorded state for each path alongside complete history. Reconciliation accepts exact pending Dreaming mutations, repairs other edits and deletions from the latest recorded state, and removes unknown valid topic files.
 
 ## Delivery slices
 
@@ -77,25 +77,25 @@ Acceptance:
 
 ### 2. Canonical workspace and reconciliation
 
-Write filesystem/service tests for valid files, malformed frontmatter, external edits, deletion, moves, symlinks, editor artifacts, and crash gaps. Then implement:
+Write filesystem/service tests for valid files, malformed frontmatter, unauthorized additions/edits/deletions, moves, symlinks, editor artifacts, and crash gaps. Then implement:
 
 - canonical root creation and safe path resolution;
 - frontmatter parser and recognized metadata reader;
 - startup reconciliation plus lightweight filesystem-change reconciliation;
 - complete file versions and tombstones;
-- `external_reconciliation`/human-external mutations for valid unrecognized changes;
-- diagnostic exclusion, never overwrite, for malformed external Markdown;
-- per-file restore as a new mutation;
+- exact recognition of recorded but unacknowledged Dreaming mutations;
+- repair of unauthorized edits and deletions from recorded state;
+- removal of unknown valid topics and diagnostic exclusion of malformed files;
 - mutation-grouped before/after diff generation.
 
 Reconcile the complete workspace before each dream run so move/delete preimages are recorded. Ordinary history is retained indefinitely. Whole-run rollback and storage compaction are deferred.
 
 Acceptance:
 
-- rebuilding SQLite reconciliation/index state from files loses no current Memory;
+- rebuilding derived index state from recorded files loses no current Memory;
 - retrying a recorded mutation notification returns the original acknowledgement;
-- external valid files become immediately eligible for retrieval and carry human authority;
-- malformed files remain untouched and cannot enter model context.
+- external file changes cannot alter current Memory;
+- malformed files remain excluded from model context.
 
 ### 3. Dreaming pi harness and mutation tools
 
@@ -204,13 +204,12 @@ Replace Review/Inbox Memory UX with:
 - agent-created directory tree and rendered topic view;
 - recognized metadata and resolvable evidence links;
 - file history and readable grouped diffs;
-- per-file restore where policy permits;
 - Dream run list/detail with queued/running/no-op/changed/partial-failure/success states;
 - prominent diagnostics for invalid external files;
 - Don't remember this and Delete this everywhere with accurate pending-erasure state;
 - polished global Dream now action that queues behind foreground work, collapses repeated requests, and progressively exposes bounds/model/tools/timing/logs.
 
-Do not build an editor. Neovim/Obsidian workflows use canonical files directly; polished editor launching/vault integration is follow-up work.
+Do not build an editor. Neovim and Obsidian may inspect canonical files read-only; corrections go through conversation as Evidence.
 
 ### 9. Operations and cutover
 

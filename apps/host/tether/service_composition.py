@@ -55,7 +55,10 @@ from tether.memory_projection import KnowledgeBaseService
 from tether.memory_search import MemorySearchService
 from tether.memory_search_index import SearchIndex
 from tether.memory_search_reconciler import SearchReconciler
-from tether.memory_workspace_service import MemoryWorkspaceService
+from tether.memory_workspace_service import (
+    MemoryWorkspaceService,
+    memory_workspace_root,
+)
 from tether.model_selection import AgentModelCatalog
 from tether.notification_delivery import (
     EventNotifier,
@@ -624,7 +627,14 @@ async def compose_core_services(
     # (`create_app_from_environment`) passes a `FastEmbedder`; tests that
     # exercise search pass a `FakeEmbedder`; everything else runs with
     # search disabled and never opens the index or loads a model.
-    memory_workspace_service = MemoryWorkspaceService(kb_root=host.kb_root)
+    dreaming_mutation_coordinator = DreamingMutationCoordinator(
+        host.database,
+        memory_workspace_root(host.kb_root),
+    )
+    memory_workspace_service = MemoryWorkspaceService(
+        kb_root=host.kb_root,
+        reconciler=dreaming_mutation_coordinator,
+    )
     if embedder is None:
         _ = await memory_workspace_service.scan(logger=host.logger)
 
@@ -738,10 +748,6 @@ async def compose_core_services(
     dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
     health_distillation_service = HealthDistillationService(
         host.database, host.telemetry_database
-    )
-    dreaming_mutation_coordinator = DreamingMutationCoordinator(
-        host.database,
-        memory_workspace_service.workspace_root,
     )
     _ = await dreaming_mutation_coordinator.reconcile_workspace(logger=host.logger)
     push_service = PushService(

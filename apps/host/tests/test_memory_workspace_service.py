@@ -10,6 +10,14 @@ from tether.memory_workspace_service import (
     MemoryWorkspaceService,
     memory_workspace_root,
 )
+from tether.structured_logging import Logger
+
+
+class _NoopReconciler:
+    """Leave isolated parser fixtures untouched."""
+
+    async def reconcile_workspace(self, *, logger: Logger) -> None:
+        pass
 
 
 @test()
@@ -32,7 +40,9 @@ async def memory_workspace_service_scans_memory_subdirectory() -> None:
             encoding="utf-8",
         )
 
-        result = await MemoryWorkspaceService(root).scan(logger=logger)
+        result = await MemoryWorkspaceService(root, reconciler=_NoopReconciler()).scan(
+            logger=logger
+        )
 
     assert_eq(len(result.topics), 1)
     assert_eq(result.topics[0].title, "Service topic")
@@ -48,7 +58,9 @@ async def memory_workspace_service_produces_diagnostics() -> None:
         memory_root.mkdir(parents=True)
         (memory_root / "bad.md").write_text("no-frontmatter", encoding="utf-8")
 
-        result = await MemoryWorkspaceService(kb_root).scan(logger=logger)
+        result = await MemoryWorkspaceService(
+            kb_root, reconciler=_NoopReconciler()
+        ).scan(logger=logger)
 
     assert_eq(result.topics, [])
     assert_in(

@@ -18,3 +18,5 @@ This supersedes ADR 0005's closed-tool-world rule for background Dreaming only. 
 - Move is stored as delete-old/create-new. Directory moves expand to every contained Markdown file under one mutation; move never overwrites, and delete handles files or empty directories only.
 - If acknowledgement ultimately fails, pi receives an explicit error saying the filesystem mutation succeeded, the run fails, and reconciliation records the authoritative files.
 - Runtime shadow mode is unnecessary. Tests and offline model comparisons use temporary workspaces; production Dreaming writes canonically and can be operationally paused.
+
+**Refinement (ADR 0026):** reconciliation accepts only recorded Dreaming mutations. A crash after filesystem mutation but before mutation recording repairs the file from recorded state and retries the run instead of treating unrecorded bytes as authoritative.

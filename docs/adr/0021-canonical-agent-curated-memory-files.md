@@ -20,4 +20,6 @@ This supersedes ADRs 0001 and 0004, ADR 0003 for Memory, ADR 0007, and ADR 0010.
 - Topic quality and organization are prompt-shaped and maintained over time rather than schema-shaped.
 - Exact source records stay durable outside Memory; deleting a topic does not normally delete its evidence.
 - Whole-file deletion is the correction and erasure granularity. A later dream may reconstruct unrelated material from remaining evidence.
-- Obsidian, Neovim, and similar editors can operate directly on canonical files; a built-in editor is not required.
+- Obsidian, Neovim, and similar editors can inspect canonical files; a built-in editor is not required.
+
+**Refinement (ADR 0026):** Dreaming is now the sole Memory writer. External edits are unauthorized drift that reconciliation repairs from recorded Dreaming state. Human corrections enter through conversational Evidence instead.
