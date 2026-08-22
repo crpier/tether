@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from tether.tool_runtime import SessionRegistry
     from tether.triage import TriageService
     from tether.triggers import TriggerService
+    from tether.tts import TtsClient
     from tether.web_search import SearchProvider
     from tether.youtube import YouTubeAuthService, YouTubeService
 
@@ -84,6 +85,7 @@ class AppRuntime:
     session_secret: str
     stt_client: SttClient
     telemetry: Telemetry
+    tts_client: TtsClient
     todo_service: TodoService
     tool_secret: str
     trace_recorder: AgentTraceRecorder

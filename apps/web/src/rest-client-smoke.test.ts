@@ -64,6 +64,7 @@ async function startHost(
         TETHER_LOGGING_LEVEL: "ERROR",
         TETHER_SESSION_SECRET: SESSION_SECRET,
         TETHER_STT_API_KEY: "test-stt-key",
+        TETHER_TTS_API_KEY: "test-tts-key",
       },
     },
   );

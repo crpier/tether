@@ -25,7 +25,7 @@ from tether.host_config import AppConfig
 from tether.host_resources import HostBootstrap
 from tether.ingestion_composition import compose_gmail
 from tether.ingestion_lifecycle import IngestionLifecycle
-from tether.local_dependencies import LocalSttTransport
+from tether.local_dependencies import LocalSttTransport, LocalTtsTransport
 from tether.model_selection import AgentModelCatalog
 from tether.stt import SttClient
 from tether.todo_store import create_todo_schema
@@ -33,6 +33,7 @@ from tether.todos import TodoService
 from tether.tool_runtime import SessionRegistry
 from tether.trigger_store import create_trigger_schema
 from tether.triggers import TriggerService
+from tether.tts import TtsClient
 
 
 class FakeGmailTransport:
@@ -150,6 +151,11 @@ async def _wire(config: AppConfig) -> asyncio.Event:
                     ),
                     tool_secret="test-tool-secret",
                     trace_recorder=AgentTraceRecorder(),
+                    tts_client=TtsClient(
+                        transport=LocalTtsTransport(),
+                        model="test-tts",
+                        voice="test",
+                    ),
                 ),
                 config=config,
                 database=db,

@@ -65,6 +65,7 @@ TETHER_APP_PASSWORD="$app_password" \
 TETHER_SESSION_SECRET=web-smoke-session-secret \
 TETHER_SCHEDULER_TICK_SECONDS=0.1 \
 TETHER_STT_API_KEY=dummy \
+TETHER_TTS_API_KEY=dummy \
 uv --project apps/host run python -m tether >"$host_log" 2>&1 &
 host_pid="$!"
 

@@ -57,6 +57,7 @@ def search_provider_is_omitted_when_the_feature_flag_is_off() -> None:
         search_enabled=False,
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
     )
 
     provider = _build_search_provider(settings)
@@ -73,6 +74,7 @@ def search_provider_is_built_when_the_flag_and_key_are_set() -> None:
         search_enabled=True,
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
     )
 
     provider = _build_search_provider(settings)

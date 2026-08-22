@@ -29,6 +29,7 @@ from tether.routes import router as memory_router
 from tether.stt_routes import router as stt_router
 from tether.todo_routes import router as todo_router
 from tether.trigger_routes import router as trigger_router
+from tether.tts_routes import router as tts_router
 from tether.youtube import auth_routes_router as youtube_auth_router
 from tether.youtube import routes_router as youtube_router
 
@@ -54,6 +55,7 @@ _PUBLIC_ROUTERS = (
     panel_router,
     ebook_router,
     stt_router,
+    tts_router,
     proposal_router,
     provider_auth_router,
 )

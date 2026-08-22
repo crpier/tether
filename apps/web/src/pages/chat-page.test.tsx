@@ -18,6 +18,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -64,56 +65,71 @@ function latestFakeRecorder(): FakeMediaRecorder {
   return recorder;
 }
 
-// A scripted stand-in for the browser Web Speech API so conversation-mode
-// playback (#542) is deterministic: `speak` holds the utterance until the
-// test resolves it, and `cancel` drops everything queued.
-class FakeSpeechSynthesis {
-  cancellations = 0;
-  spoken: {
-    text: string;
-    onend?: () => void;
-    onerror?: () => void;
-  }[] = [];
+class FakeAudio {
+  currentTime = 0;
+  onended: (() => void) | null = null;
+  onerror: (() => void) | null = null;
 
-  speak(utterance: {
-    text: string;
-    onend?: () => void;
-    onerror?: () => void;
-  }): void {
-    this.spoken.push(utterance);
+  constructor(
+    public readonly text: string,
+    private readonly playback: FakeSpeechPlayback,
+  ) {}
+
+  pause(): void {
+    this.playback.cancellations += 1;
   }
 
-  cancel(): void {
-    this.cancellations += 1;
-    this.spoken = [];
-  }
-
-  /** Simulates playback finishing naturally (fires the live utterance's end). */
-  finishSpeaking(): void {
-    this.spoken.at(-1)?.onend?.();
+  play(): Promise<void> {
+    return Promise.resolve();
   }
 }
 
-let activeFakeSpeech: FakeSpeechSynthesis | null = null;
+class FakeSpeechPlayback {
+  cancellations = 0;
+  spoken: FakeAudio[] = [];
+  private objectUrls = new Map<string, string>();
+  private sequence = 0;
 
-function stubSpeech(): FakeSpeechSynthesis {
-  const fake = new FakeSpeechSynthesis();
+  createObjectURL(blob: Blob & { speechText?: string }): string {
+    const url = `blob:speech-${String(++this.sequence)}`;
+    this.objectUrls.set(url, blob.speechText ?? "");
+    return url;
+  }
+
+  createAudio(source: string): FakeAudio {
+    const audio = new FakeAudio(this.objectUrls.get(source) ?? "", this);
+    this.spoken.push(audio);
+    return audio;
+  }
+
+  finishSpeaking(): void {
+    this.spoken.at(-1)?.onended?.();
+  }
+}
+
+let activeFakeSpeech: FakeSpeechPlayback | null = null;
+
+function stubSpeech(): FakeSpeechPlayback {
+  const fake = new FakeSpeechPlayback();
   activeFakeSpeech = fake;
-  vi.stubGlobal("speechSynthesis", fake);
-  vi.stubGlobal(
-    "SpeechSynthesisUtterance",
-    class {
-      constructor(public text: string) {}
-    },
+  vi.spyOn(URL, "createObjectURL").mockImplementation((blob) =>
+    fake.createObjectURL(blob instanceof Blob ? blob : new Blob()),
   );
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  function AudioStub(source: string): FakeAudio {
+    return fake.createAudio(source);
+  }
+  vi.stubGlobal("Audio", AudioStub);
   return fake;
 }
 
-function speechFinishLast(): void {
+async function speechFinishLast(): Promise<void> {
   if (activeFakeSpeech === null) {
     throw new Error("expected speech to have been stubbed");
   }
-  activeFakeSpeech.finishSpeaking();
+  const speech = activeFakeSpeech;
+  await waitFor(() => expect(speech.spoken.length).toBeGreaterThan(0));
+  speech.finishSpeaking();
 }
 
 describe("Chat view", () => {
@@ -1312,12 +1328,55 @@ describe("Chat view", () => {
       });
 
       await screen.findByText("Speaking reply…");
-      expect(speech.spoken).toHaveLength(1);
+      await waitFor(() => expect(speech.spoken).toHaveLength(1));
       expect(speech.spoken[0].text).toBe("Hi there\n\nDone.");
 
       fireEvent.click(screen.getByRole("button", { name: "Stop playback" }));
       expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
       expect(speech.cancellations).toBeGreaterThanOrEqual(1);
+    });
+
+    test("speech provider failure preserves the visible answer", async () => {
+      const host = new FakeHost({ authenticated: true });
+      host.chat.synthesizeSpeechRejections.push(new ApiError(502));
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      const messageBox = textarea(screen.getByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "message_start",
+        type: "chat",
+      });
+      bus.emit({
+        conversation_id: conversation.id,
+        delta: "The visible answer survives.",
+        event: "text_delta",
+        type: "chat",
+      });
+      host.chat.storedMessages = [
+        message({ content: "The visible answer survives.", seq: 2 }),
+      ];
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "The visible answer survives.",
+        type: "chat",
+      });
+
+      expect(await screen.findByText("Speech playback failed.")).toBeVisible();
+      expect(screen.getByText("The visible answer survives.")).toBeVisible();
+
+      fireEvent.click(screen.getByRole("button", { name: "Stop playback" }));
+      expect(
+        screen.queryByText("Speech playback failed."),
+      ).not.toBeInTheDocument();
     });
 
     test("text replies never play even with the toggle enabled", async () => {
@@ -1362,6 +1421,7 @@ describe("Chat view", () => {
         type: "chat",
       });
       await screen.findByText("Speaking reply…");
+      await waitFor(() => expect(speech.spoken).toHaveLength(1));
 
       fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
 
@@ -1435,7 +1495,7 @@ describe("Chat view", () => {
       });
       await screen.findByText("Speaking reply…");
 
-      speechFinishLast();
+      await speechFinishLast();
       await screen.findByText("Recording…");
     });
 
@@ -1460,7 +1520,7 @@ describe("Chat view", () => {
       });
       await screen.findByText("Speaking reply…");
 
-      speechFinishLast();
+      await speechFinishLast();
       await waitFor(() => {
         expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
       });
@@ -1526,7 +1586,7 @@ describe("Chat view", () => {
       // Any user activity while the reply plays (typing here) means the user
       // took over; the loop must not grab the microphone out from under them.
       fireEvent.keyDown(window, { key: "a" });
-      speechFinishLast();
+      await speechFinishLast();
 
       await waitFor(() => {
         expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
@@ -1629,21 +1689,6 @@ describe("Chat view", () => {
         screen.getByRole("button", { name: "Conversation mode" }),
       );
       expect(messageBox.getAttribute("placeholder")).toBe("Reply spoken…");
-    });
-
-    test("enabling conversation mode without speech support shows a hint", async () => {
-      vi.stubGlobal("speechSynthesis", undefined);
-      const host = new FakeHost({ authenticated: true });
-      renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-
-      expect(
-        screen.getByText(/Speech output isn't available/u),
-      ).toBeInTheDocument();
     });
 
     test("settled spoken replies get a spoken chip on their transcript row", async () => {

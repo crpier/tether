@@ -21,14 +21,23 @@ import { createSignal, onCleanup } from "solid-js";
 
 import type { ReplyMode } from "./chat-bus";
 import { createSpeechPlayer } from "./speech-player";
-import type { SpeechPlayerState, SpeechSynthesisLike } from "./speech-player";
+import type {
+  SpeechPlayer,
+  SpeechPlayerState,
+  SynthesizeSpeech,
+} from "./speech-player";
 import { toSpeechText } from "./speech-text";
 import type { SpokenTurnSink } from "./live-chat-turn";
 
-export interface ConversationModeOptions {
-  /** Injectable synthesis; defaults to `window.speechSynthesis`. */
-  synthesis?: SpeechSynthesisLike | null;
-}
+export type ConversationModeOptions =
+  | {
+      playerFactory?: never;
+      synthesize: SynthesizeSpeech;
+    }
+  | {
+      playerFactory: (onEnded: () => void) => SpeechPlayer;
+      synthesize?: never;
+    };
 
 export interface ConversationMode {
   /** Whether replies are captured as spoken. */
@@ -51,12 +60,10 @@ export interface ConversationMode {
   voiceAutoStart(): number;
   playbackState(): SpeechPlayerState;
   stopPlayback(): void;
-  /** Whether any speech adapter exists at all (#546 UX hint). */
-  supported(): boolean;
 }
 
 export function createConversationMode(
-  options: ConversationModeOptions = {},
+  options: ConversationModeOptions,
 ): ConversationMode {
   const [enabled, setEnabled] = createSignal(false);
   const [handsFree, setHandsFree] = createSignal(false);
@@ -81,19 +88,23 @@ export function createConversationMode(
     }
   };
 
-  const speechPlayer = createSpeechPlayer({
-    onEnded: () => {
-      if (
-        enabled() &&
-        handsFree() &&
-        lastInteractionAt < spokeAt &&
-        spokeAt > 0
-      ) {
-        setVoiceAutoStart((tick) => tick + 1);
-      }
-    },
-    synthesis: options.synthesis,
-  });
+  const onPlaybackEnded = () => {
+    if (
+      enabled() &&
+      handsFree() &&
+      lastInteractionAt < spokeAt &&
+      spokeAt > 0
+    ) {
+      setVoiceAutoStart((tick) => tick + 1);
+    }
+  };
+  const speechPlayer =
+    options.playerFactory === undefined
+      ? createSpeechPlayer({
+          onEnded: onPlaybackEnded,
+          synthesize: options.synthesize,
+        })
+      : options.playerFactory(onPlaybackEnded);
 
   // Interaction tracking plus the two global shortcuts. Capture phase so the
   // stamp lands even when a focused control swallows the event.
@@ -189,6 +200,5 @@ export function createConversationMode(
     stopPlayback: () => {
       speechPlayer.cancel();
     },
-    supported: () => speechPlayer.supported(),
   };
 }
