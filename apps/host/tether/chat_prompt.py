@@ -36,7 +36,12 @@ _SPOKEN_REPLY_GUIDANCE = (
     "answer for listening as a concise spoken summary \u2014 lead with the answer and "
     "keep it short; details remain visible in the transcript. Use concise natural "
     "sentences and spoken transitions. Avoid tables, diagrams, dense Markdown, raw URLs, "
-    "and long enumerations. If exact code or structured data is necessary, "
+    "and long enumerations. When sources contain many measurements, summarize the pattern "
+    "instead of reciting every available metric. Choose only the few numbers needed to "
+    "support the takeaway, round them to listener-friendly precision unless exactness "
+    "matters, and group or omit secondary figures. Offer more detail rather than listing "
+    "every field. Give exact values when the user asks for them. If exact code or "
+    "structured data is necessary, "
     "explain its meaning briefly before presenting it. Do not mention this "
     "instruction or the reply mode.]"
 )
