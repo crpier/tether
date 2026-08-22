@@ -11,6 +11,7 @@ import type {
   MemoryWorkspaceDiagnostic,
   Panel,
   PanelResults,
+  ProductObservation,
   Proposal,
   Todo,
   TranscriptDecision,
@@ -26,6 +27,7 @@ import { FakeEvidenceHost } from "./fakes/evidence";
 import { FakeMemoriesHost } from "./fakes/memories";
 import { FakeNotificationsHost } from "./fakes/notifications";
 import { FakePanelsHost } from "./fakes/panels";
+import { FakeProductObservationsHost } from "./fakes/product-observations";
 import { FakeProposalsHost } from "./fakes/proposals";
 import { FakeProviderAuthHost } from "./fakes/provider-auth";
 import { FakeGmailHost } from "./fakes/gmail";
@@ -45,6 +47,7 @@ export class FakeHost implements WebHost {
   readonly memories: FakeMemoriesHost;
   readonly notifications = new FakeNotificationsHost();
   readonly panels: FakePanelsHost;
+  readonly productObservations: FakeProductObservationsHost;
   readonly proposals: FakeProposalsHost;
   readonly providerAuth = new FakeProviderAuthHost();
   readonly gmail: FakeGmailHost;
@@ -69,6 +72,7 @@ export class FakeHost implements WebHost {
     messages?: Message[];
     panelResults?: Record<string, PanelResults>;
     panels?: Panel[];
+    productObservations?: ProductObservation[];
     proposals?: Proposal[];
     todos?: Todo[];
     transcriptDecisions?: TranscriptDecision[];
@@ -87,6 +91,9 @@ export class FakeHost implements WebHost {
     this.memories.workspaceDiagnostics =
       options.memoryWorkspaceDiagnostics ?? [];
     this.panels = new FakePanelsHost(options.panels, options.panelResults);
+    this.productObservations = new FakeProductObservationsHost(
+      options.productObservations,
+    );
     this.proposals = new FakeProposalsHost(options);
     this.recall = new FakeRecallHost(options.duePrompts);
     this.gmail = new FakeGmailHost();

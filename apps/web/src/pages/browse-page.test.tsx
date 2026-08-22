@@ -111,6 +111,20 @@ describe("Browse page", () => {
     );
   });
 
+  test("opens Feedback from its direct Browse URL", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host, undefined, { path: "/browse/feedback" });
+
+    await screen.findByRole("heading", { name: "Browse" });
+    expect(
+      await screen.findByRole("region", { name: "Feedback" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Feedback" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   test("opens Reminders from the Browse tab query deep link", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host, undefined, { path: "/browse?tab=reminders" });

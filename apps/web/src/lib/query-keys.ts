@@ -43,6 +43,7 @@ export const queryKeys = {
   proposalsAll: ["proposals", "all"] as const,
   proposalCounts: ["proposals", "counts"] as const,
   providerAuth: ["provider-auth"] as const,
+  productObservations: ["product-observations"] as const,
   proposal: (proposalId: string) =>
     ["proposals", "detail", proposalId] as const,
   grants: ["proposals", "grants"] as const,

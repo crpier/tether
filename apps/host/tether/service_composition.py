@@ -66,6 +66,7 @@ from tether.notification_store import NotificationStore
 from tether.notifications import NotificationService
 from tether.panel_execution import PanelExecutor
 from tether.panels import PanelService
+from tether.product_observations import ProductObservationService
 from tether.proposal_autonomy import ProposalAutonomyService
 from tether.proposal_execution import ProposalExecutor
 from tether.proposals import ProposalService
@@ -511,6 +512,7 @@ class CoreServices:
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
     panel_service: PanelService
+    product_observation_service: ProductObservationService
     proposal_autonomy_service: ProposalAutonomyService
     proposal_service: ProposalService
     provider_auth_service: ProviderAuthService
@@ -665,6 +667,9 @@ async def compose_core_services(
         event_publisher=event_hub,
         notification_service=scheduler_component.notification_service,
     )
+    product_observation_service = ProductObservationService(
+        host.database, event_publisher=event_hub
+    )
     background_tasks = [
         asyncio.create_task(runtime_registry.reap_idle_forever()),
         asyncio.create_task(scheduler_component.scheduler.run_forever()),
@@ -769,6 +774,7 @@ async def compose_core_services(
         model_catalog=model_catalog,
         notification_service=scheduler_component.notification_service,
         panel_service=presentation.panel_service,
+        product_observation_service=product_observation_service,
         proposal_autonomy_service=proposal_component.autonomy_service,
         proposal_service=proposal_component.proposal_service,
         provider_auth_service=provider_auth_service,

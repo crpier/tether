@@ -53,6 +53,8 @@ import { registerAnalyzeHealthConnectTool } from "./analyze_health_connect.js";
 import { registerHealthConnectInventoryTool } from "./health_connect_inventory.js";
 import { registerQueryHealthConnectTool } from "./query_health_connect.js";
 import { registerSummarizeHealthConnectTool } from "./summarize_health_connect.js";
+import { registerRecordProductObservationTool } from "./record_product_observation.js";
+import { registerListProductObservationsTool } from "./list_product_observations.js";
 import { registerProposeTool } from "./propose.js";
 import { registerListProposalsTool } from "./list_proposals.js";
 
@@ -108,6 +110,8 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerHealthConnectInventoryTool(pi);
   registerQueryHealthConnectTool(pi);
   registerSummarizeHealthConnectTool(pi);
+  registerRecordProductObservationTool(pi);
+  registerListProductObservationsTool(pi);
   registerProposeTool(pi);
   registerListProposalsTool(pi);
 }

@@ -9,16 +9,24 @@ import {
 import { BucketPanel, type BucketView } from "../panels/bucket";
 import { DreamingPanel } from "../panels/dreaming";
 import { MemoriesPanel } from "../panels/memories";
+import { ProductObservationsPanel } from "../panels/product-observations";
 import { SyntheticPanels } from "../panels/synthetic";
 import { TodosPanel } from "../panels/todos";
 import { TriggersPanel } from "../panels/triggers";
 
 export type BrowseView =
-  "memories" | "dreaming" | "bucket" | "todos" | "reminders" | "panels";
+  | "memories"
+  | "dreaming"
+  | "bucket"
+  | "todos"
+  | "reminders"
+  | "feedback"
+  | "panels";
 
 const browsePaths: Record<BrowseView, string> = {
   bucket: "/browse/bucket",
   dreaming: "/browse/dreaming",
+  feedback: "/browse/feedback",
   memories: "/browse/memories",
   panels: "/browse/panels",
   reminders: "/browse/reminders",
@@ -39,6 +47,7 @@ function browseViewFromLocation(): BrowseView | undefined {
     queryView === "bucket" ||
     queryView === "todos" ||
     queryView === "reminders" ||
+    queryView === "feedback" ||
     queryView === "panels"
     ? queryView
     : undefined;
@@ -56,6 +65,7 @@ export function BrowsePage(
   const dreaming = useHost("dreaming");
   const memories = useHost("memories");
   const panels = useHost("panels");
+  const productObservations = useHost("productObservations");
   const todos = useHost("todos");
   const triggers = useHost("triggers");
   const [view, setView] = createSignal<BrowseView>(
@@ -101,6 +111,7 @@ export function BrowsePage(
             { label: "Bucket", value: "bucket" },
             { label: "Todos", value: "todos" },
             { label: "Reminders", value: "reminders" },
+            { label: "Feedback", value: "feedback" },
             { label: "Panels", value: "panels" },
           ]}
           value={view()}
@@ -155,6 +166,15 @@ export function BrowsePage(
               role="tabpanel"
             >
               <TriggersPanel api={triggers} />
+            </div>
+          </Match>
+          <Match when={view() === "feedback"}>
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "feedback")}
+              id={segmentedPanelId("browse-view", "feedback")}
+              role="tabpanel"
+            >
+              <ProductObservationsPanel api={productObservations} />
             </div>
           </Match>
           <Match when={view() === "panels"}>

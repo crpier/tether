@@ -3412,6 +3412,85 @@
         "title": "PostArtifactEventRequest",
         "type": "object"
       },
+      "ProductObservationRead": {
+        "description": "Browser and tool representation of one Product observation.",
+        "properties": {
+          "conversation_id": {
+            "format": "uuid7",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "interpretation": {
+            "title": "Interpretation",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid7",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProductObservationStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "wording": {
+            "title": "Wording",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "message_id",
+          "wording",
+          "interpretation",
+          "status",
+          "version",
+          "created_at",
+          "updated_at",
+          "resolved_at"
+        ],
+        "title": "ProductObservationRead",
+        "type": "object"
+      },
+      "ProductObservationStatus": {
+        "enum": [
+          "open",
+          "resolved"
+        ],
+        "type": "string"
+      },
       "ProposalActionRead": {
         "description": "HTTP representation of one action within a proposal.",
         "properties": {
@@ -4035,6 +4114,21 @@
           "revocable_grant_ids"
         ],
         "title": "RejectionRead",
+        "type": "object"
+      },
+      "ResolveProductObservationRequest": {
+        "description": "Observed version required to resolve Product feedback.",
+        "properties": {
+          "version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "ResolveProductObservationRequest",
         "type": "object"
       },
       "SessionResponse": {
@@ -7130,6 +7224,79 @@
           }
         },
         "summary": "Panel Results"
+      }
+    },
+    "/api/product-observations": {
+      "get": {
+        "description": "List unresolved Product observations newest first.",
+        "operationId": "list_product_observations_api_product_observations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProductObservationRead"
+                  },
+                  "title": "Response List Product Observations Api Product Observations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Product Observations"
+      }
+    },
+    "/api/product-observations/{observation_id}/resolve": {
+      "post": {
+        "description": "Resolve one Product observation at its observed version.",
+        "operationId": "resolve_product_observation_api_product_observations__observation_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "observation_id",
+            "required": true,
+            "schema": {
+              "title": "Observation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveProductObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductObservationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Product Observation"
       }
     },
     "/api/proposals": {

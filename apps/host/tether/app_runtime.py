@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from tether.model_selection import AgentModelCatalog
     from tether.notifications import NotificationService
     from tether.panels import PanelService
+    from tether.product_observations import ProductObservationService
     from tether.proposal_autonomy import ProposalAutonomyService
     from tether.proposals import ProposalService
     from tether.provider_auth import ProviderAuthService
@@ -72,6 +73,7 @@ class AppRuntime:
     evidence_resolver: EvidenceResolver
     notification_service: NotificationService
     panel_service: PanelService
+    product_observation_service: ProductObservationService
     proposal_autonomy_service: ProposalAutonomyService
     proposal_service: ProposalService
     provider_auth_service: ProviderAuthService

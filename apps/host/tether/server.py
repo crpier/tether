@@ -51,6 +51,9 @@ from tether.logging_config import configure_logging
 from tether.model_selection import AgentModelConfig
 from tether.openapi_export import public_api_router
 from tether.panel_tools import internal_panel_tool_routes
+from tether.product_observation_tools import (
+    internal_product_observation_tool_routes,
+)
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.request_logging import ContextLoggerMiddleware
@@ -206,6 +209,7 @@ def create_app(
             *internal_panel_tool_routes(),
             *internal_kosync_tool_routes(),
             *internal_health_connect_tool_routes(),
+            *internal_product_observation_tool_routes(),
             *internal_proposal_tool_routes(),
             *(
                 kosync_protocol_routes()

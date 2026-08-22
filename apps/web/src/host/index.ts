@@ -10,6 +10,10 @@ import {
   type NotificationsHost,
 } from "./notifications";
 import { createPanelsHost, type PanelsHost } from "./panels";
+import {
+  createProductObservationsHost,
+  type ProductObservationsHost,
+} from "./product-observations";
 import { createProposalsHost, type ProposalsHost } from "./proposals";
 import { createProviderAuthHost, type ProviderAuthHost } from "./provider-auth";
 import { createPushHost, type PushHost } from "./push";
@@ -29,6 +33,7 @@ export * from "./evidence";
 export * from "./memories";
 export * from "./notifications";
 export * from "./panels";
+export * from "./product-observations";
 export * from "./proposals";
 export * from "./provider-auth";
 export * from "./push";
@@ -50,6 +55,7 @@ export interface WebHost {
   memories: MemoriesHost;
   notifications: NotificationsHost;
   panels: PanelsHost;
+  productObservations: ProductObservationsHost;
   proposals: ProposalsHost;
   providerAuth: ProviderAuthHost;
   push: PushHost;
@@ -74,6 +80,7 @@ export function createRestHost(
     memories: createMemoriesHost(context),
     notifications: createNotificationsHost(context),
     panels: createPanelsHost(context),
+    productObservations: createProductObservationsHost(context),
     proposals: createProposalsHost(context),
     providerAuth: createProviderAuthHost(context),
     push: createPushHost(context),

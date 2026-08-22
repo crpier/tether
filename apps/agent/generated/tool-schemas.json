@@ -1644,6 +1644,34 @@
       }
     },
     {
+      "endpoint": "/internal/tools/record_product_observation",
+      "name": "record_product_observation",
+      "params_model": "RecordProductObservationParams",
+      "schema": {
+        "description": "Interpretation of product feedback explicitly requested by the user.\n\nState the expected product behavior concisely. The host preserves the exact\nactive user Message and Conversation provenance without trusting copied text.\nNever call this tool merely because an interaction might be improved; the\nuser must explicitly ask to record product feedback.",
+        "properties": {
+          "interpretation": {
+            "title": "Interpretation",
+            "type": "string"
+          }
+        },
+        "required": ["interpretation"],
+        "title": "RecordProductObservationParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_product_observations",
+      "name": "list_product_observations",
+      "params_model": "ListProductObservationsParams",
+      "schema": {
+        "description": "No-input request for unresolved Product observations.",
+        "properties": {},
+        "title": "ListProductObservationsParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/propose",
       "name": "propose",
       "params_model": "ProposeParams",
