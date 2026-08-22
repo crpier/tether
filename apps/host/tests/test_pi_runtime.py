@@ -748,6 +748,7 @@ export default function inspectTools(pi) {
             "add_place",
             "add_purchase",
             "add_travel",
+            "analyze_health_connect",
             "answer_recall_prompt",
             "archive_gmail_message",
             "browse_youtube",

@@ -32,8 +32,39 @@ def _runtime(request: Request) -> _HealthConnectToolsRuntime:
     return cast("_HealthConnectToolsRuntime", request.app.state.runtime)
 
 
+class AnalyzeHealthConnectParams(BaseModel):
+    """Analyze compact measured Health observations without raw-record joins.
+
+    Use `sleep_episode` with `nap` for the latest nap, or `primary_sleep` for
+    last night. Use `sleep_trend` for daily composition and comparable weeks,
+    `sleeping_heart_rate` for sleep-aligned personal trends, and
+    `metric_status` with `record_type` when a measurement appears missing.
+    """
+
+    days: int = Field(default=30, ge=1, le=31)
+    episode_kind: Literal["latest", "nap", "primary_sleep"] = "latest"
+    focus: Literal[
+        "metric_status", "sleep_episode", "sleep_trend", "sleeping_heart_rate"
+    ]
+    record_type: HealthRecordType | None = None
+
+    @model_validator(mode="after")
+    def metric_status_requires_record_type(self) -> Self:
+        """Require a metric name only for availability inspection."""
+        if self.focus == "metric_status" and self.record_type is None:
+            raise HealthConnectMetricStatusRecordTypeError
+        return self
+
+
 class HealthConnectInventoryParams(BaseModel):
     """List populated Health Connect record types and their UTC time bounds."""
+
+
+class HealthConnectMetricStatusRecordTypeError(ValueError):
+    """Metric status requires a supported Health Connect record type."""
+
+    def __init__(self) -> None:
+        super().__init__("record_type is required for metric_status")
 
 
 class HealthConnectQueryRangeError(ValueError):
@@ -87,6 +118,26 @@ class QueryHealthConnectParams(BaseModel):
         return self
 
 
+async def _analyze_health_connect(
+    request: Request, params: AnalyzeHealthConnectParams
+) -> CapabilityOutcome:
+    """Return an episode-aware deterministic Health observation."""
+    telemetry = _runtime(request).health_connect_telemetry
+    if params.focus == "metric_status":
+        insight = await telemetry.insights.fetch_metric_status(
+            record_type=cast("HealthRecordType", params.record_type)
+        )
+    elif params.focus == "sleep_episode":
+        insight = await telemetry.insights.fetch_sleep_episode(
+            days=params.days, episode_kind=params.episode_kind
+        )
+    elif params.focus == "sleep_trend":
+        insight = await telemetry.insights.fetch_sleep_trend(days=params.days)
+    else:
+        insight = await telemetry.insights.fetch_sleeping_heart_rate(days=params.days)
+    return CapabilityOutcome(result=insight.model_dump(mode="json"))
+
+
 async def _health_connect_inventory(request: Request) -> CapabilityOutcome:
     """Read current projection metadata without exposing append-only history."""
     telemetry = _runtime(request).health_connect_telemetry
@@ -122,6 +173,11 @@ async def _query_health_connect(
 
 
 HEALTH_CONNECT_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        "analyze_health_connect",
+        AnalyzeHealthConnectParams,
+        _analyze_health_connect,
+    ),
     ToolSpec(
         "health_connect_inventory",
         HealthConnectInventoryParams,

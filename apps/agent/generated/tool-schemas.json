@@ -1420,6 +1420,97 @@
       }
     },
     {
+      "endpoint": "/internal/tools/analyze_health_connect",
+      "name": "analyze_health_connect",
+      "params_model": "AnalyzeHealthConnectParams",
+      "schema": {
+        "description": "Analyze compact measured Health observations without raw-record joins.\n\nUse `sleep_episode` with `nap` for the latest nap, or `primary_sleep` for\nlast night. Use `sleep_trend` for daily composition and comparable weeks,\n`sleeping_heart_rate` for sleep-aligned personal trends, and\n`metric_status` with `record_type` when a measurement appears missing.",
+        "properties": {
+          "days": {
+            "default": 30,
+            "maximum": 31,
+            "minimum": 1,
+            "title": "Days",
+            "type": "integer"
+          },
+          "episode_kind": {
+            "default": "latest",
+            "enum": ["latest", "nap", "primary_sleep"],
+            "title": "Episode Kind",
+            "type": "string"
+          },
+          "focus": {
+            "enum": [
+              "metric_status",
+              "sleep_episode",
+              "sleep_trend",
+              "sleeping_heart_rate"
+            ],
+            "title": "Focus",
+            "type": "string"
+          },
+          "record_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active_calories_burned",
+                  "basal_body_temperature",
+                  "basal_metabolic_rate",
+                  "blood_glucose",
+                  "blood_pressure",
+                  "body_fat",
+                  "body_temperature",
+                  "body_water_mass",
+                  "bone_mass",
+                  "cervical_mucus",
+                  "cycling_pedaling_cadence",
+                  "distance",
+                  "elevation_gained",
+                  "exercise",
+                  "floors_climbed",
+                  "heart_rate",
+                  "heart_rate_variability_rmssd",
+                  "height",
+                  "hydration",
+                  "intermenstrual_bleeding",
+                  "lean_body_mass",
+                  "menstruation_flow",
+                  "menstruation_period",
+                  "mindfulness_session",
+                  "nutrition",
+                  "ovulation_test",
+                  "oxygen_saturation",
+                  "planned_exercise_session",
+                  "power",
+                  "respiratory_rate",
+                  "resting_heart_rate",
+                  "sexual_activity",
+                  "skin_temperature",
+                  "sleep",
+                  "speed",
+                  "steps",
+                  "steps_cadence",
+                  "total_calories_burned",
+                  "vo2_max",
+                  "weight",
+                  "wheelchair_pushes"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Type"
+          }
+        },
+        "required": ["focus"],
+        "title": "AnalyzeHealthConnectParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/health_connect_inventory",
       "name": "health_connect_inventory",
       "params_model": "HealthConnectInventoryParams",

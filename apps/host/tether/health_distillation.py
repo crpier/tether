@@ -451,19 +451,27 @@ class HealthDistillationExecutor:
     def _render_sleep(row: HcSleepEpisodeSummary[Fetched]) -> str:
         started = _datetime_from_millis(row.start_time)
         ended = _datetime_from_millis(row.end_time)
-        stage_lines = [
-            f"{name}: {value:g} min"
-            for name, value in (
-                ("awake", row.minutes_awake),
-                ("light", row.minutes_light),
-                ("deep", row.minutes_deep),
-                ("rem", row.minutes_rem),
-                ("out_of_bed", row.minutes_out_of_bed),
-                ("awake_in_bed", row.minutes_awake_in_bed),
-                ("other", row.minutes_other),
-            )
-            if value > 0
-        ]
+        stage_values = (
+            ("awake", row.minutes_awake),
+            ("sleeping", row.minutes_sleeping),
+            ("light", row.minutes_light),
+            ("deep", row.minutes_deep),
+            ("rem", row.minutes_rem),
+            ("out_of_bed", row.minutes_out_of_bed),
+            ("awake_in_bed", row.minutes_awake_in_bed),
+            ("other", row.minutes_other),
+        )
+        time_asleep = sum(
+            value
+            for name, value in stage_values
+            if name in {"sleeping", "light", "deep", "rem"}
+        )
+        stage_total = sum(value for _, value in stage_values)
+        stage_percentages = ", ".join(
+            f"{name}={value / time_asleep * 100:.2f}%"
+            for name, value in stage_values
+            if name in {"sleeping", "light", "deep", "rem"} and value > 0
+        )
         return "\n".join(
             (
                 "type: sleep",
@@ -472,7 +480,15 @@ class HealthDistillationExecutor:
                 f"start: {started.isoformat()}",
                 f"end: {ended.isoformat()}",
                 f"duration_minutes: {row.duration_minutes:g}",
-                *stage_lines,
+                f"time_asleep_minutes: {time_asleep:g}",
+                f"sleep_efficiency_percent: {time_asleep / row.duration_minutes * 100:g}",
+                f"stage_coverage_percent: {stage_total / row.duration_minutes * 100:g}",
+                f"stage_percent_of_time_asleep: {stage_percentages}",
+                *(
+                    f"{name}: {value:g} min"
+                    for name, value in stage_values
+                    if value > 0
+                ),
             )
         )
 
@@ -489,7 +505,10 @@ Rules:
 - Summaries are computed structure derived from raw telemetry; cite them exactly as given.
 - Every Claim is one `- ` bullet with an inline `[source](<summary uri>)` citation.
 - Use only exact summary URIs below. Prefer cross-episode patterns over restating one episode.
-- Preserve uncertainty; never invent episodes, values, or correlations.
+- A pattern needs at least 3 comparable episodes. State the sample size and relevant data gaps.
+- Do not treat separate sleep episodes as fragmentation. They may be naps or split sleep; distinguish them only when the supplied times and duration support it.
+- Preserve uncertainty; never invent episodes, values, correlations, or causal explanations.
+- Keep computed observations separate from interpretation. Never make clinical conclusions.
 - Return Markdown grouped under `##` Topic headings.
 - Return `NO_CHANGES` when no durable Claim is supported.
 

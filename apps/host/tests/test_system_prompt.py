@@ -81,6 +81,14 @@ async def the_conversation_prompt_covers_the_memory_tool_belt() -> None:
 
 
 @test()
+async def health_questions_prefer_deterministic_insights_over_raw_joins() -> None:
+    """Chat uses episode-aware Health reads before raw telemetry records."""
+    assert_in("`analyze_health_connect`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("local times", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("not clinical conclusions", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
 async def the_conversation_prompt_speaks_recall_vocabulary() -> None:
     """The full prompt uses the recall-prompt vocabulary."""
     assert_in("spaced practice", CONVERSATION_SYSTEM_PROMPT)

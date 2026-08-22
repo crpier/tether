@@ -284,6 +284,18 @@ class HcHeartRateRecordCurrent[S = Pending](
     )
 
 
+class HcHeartRateSampleCurrent[S = Pending](
+    Model[S, "HcHeartRateSampleCurrent[Fetched]"]
+):
+    """A heart-rate sample whose parent version remains current."""
+
+    sample_id: HcHeartRateSampleCurrent.Col[int] = Integer(primary_key=True)
+    version_id: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
+    sample_index: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
+    time: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
+    beats_per_minute: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
+
+
 class HcSleepSessionCurrent[S = Pending](Model[S, "HcSleepSessionCurrent[Fetched]"]):
     version_id: HcSleepSessionCurrent.Col[int] = Integer(primary_key=True)
     record_uid: HcSleepSessionCurrent.Col[str] = Text(nullable=False)
@@ -305,6 +317,17 @@ class HcSleepSessionCurrent[S = Pending](Model[S, "HcSleepSessionCurrent[Fetched
     )
     title: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
     notes: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
+
+
+class HcSleepStageCurrent[S = Pending](Model[S, "HcSleepStageCurrent[Fetched]"]):
+    """A sleep stage whose parent session version remains current."""
+
+    stage_id: HcSleepStageCurrent.Col[int] = Integer(primary_key=True)
+    version_id: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
+    stage_index: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
+    start_time: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
+    end_time: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
+    stage: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
 
 
 class HcStepIntervalCurrent[S = Pending](Model[S, "HcStepIntervalCurrent[Fetched]"]):

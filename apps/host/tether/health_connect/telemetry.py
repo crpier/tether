@@ -9,6 +9,13 @@ from typing import Literal, Protocol
 from snekql.sqlite import Database
 
 from tether.health_connect.contracts import HealthRecordType
+from tether.health_connect.insight_model import (
+    HealthConnectMetricStatusRead,
+    HealthConnectSleepEpisodeInsightRead,
+    HealthConnectSleepingHeartRateInsightRead,
+    HealthConnectSleepTrendInsightRead,
+)
+from tether.health_connect.insights import HealthConnectInsightQuery
 from tether.health_connect.inventory import HealthConnectInventoryQuery
 from tether.health_connect.records import HealthConnectRecordQuery
 from tether.health_connect.summary import HealthConnectSummaryQuery
@@ -17,6 +24,37 @@ from tether.health_connect.telemetry_model import (
     HealthConnectQueryRead,
     HealthConnectSummaryRead,
 )
+
+
+class HealthConnectInsightPort(Protocol):
+    """Episode-aware deterministic query required by Health chat tools."""
+
+    async def fetch_metric_status(
+        self, *, record_type: HealthRecordType
+    ) -> HealthConnectMetricStatusRead:
+        """Read synchronization and record availability for one metric."""
+        ...
+
+    async def fetch_sleep_episode(
+        self,
+        *,
+        days: int,
+        episode_kind: Literal["latest", "nap", "primary_sleep"],
+    ) -> HealthConnectSleepEpisodeInsightRead:
+        """Read one compact sleep episode with measured details."""
+        ...
+
+    async def fetch_sleep_trend(
+        self, *, days: int
+    ) -> HealthConnectSleepTrendInsightRead:
+        """Read daily sleep observations and comparable recent windows."""
+        ...
+
+    async def fetch_sleeping_heart_rate(
+        self, *, days: int
+    ) -> HealthConnectSleepingHeartRateInsightRead:
+        """Read sleep-aligned heart rate with a personal baseline."""
+        ...
 
 
 class HealthConnectInventoryPort(Protocol):
@@ -60,6 +98,7 @@ class HealthConnectSummaryPort(Protocol):
 class HealthConnectTelemetry:
     """Canonical bundle of independent Health Connect read concerns."""
 
+    insights: HealthConnectInsightPort
     inventory: HealthConnectInventoryPort
     records: HealthConnectRecordPort
     summary: HealthConnectSummaryPort
@@ -68,6 +107,7 @@ class HealthConnectTelemetry:
     def from_database(cls, database: Database) -> HealthConnectTelemetry:
         """Compose every read concern over the canonical telemetry database."""
         return cls(
+            insights=HealthConnectInsightQuery(database),
             inventory=HealthConnectInventoryQuery(database),
             records=HealthConnectRecordQuery(database),
             summary=HealthConnectSummaryQuery(database),
