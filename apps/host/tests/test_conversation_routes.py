@@ -857,9 +857,12 @@ def prompt_time_context_makes_spoken_measurements_selective_and_rounded() -> Non
     assert_in(
         "summarize the pattern instead of reciting every available metric", spoken
     )
-    assert_in("Choose only the few numbers needed", spoken)
     assert_in("round them to listener-friendly precision", spoken)
-    assert_in("group or omit secondary figures", spoken)
+    assert_in("Group or omit secondary figures", spoken)
+    assert_in("Default to one or two key figures", spoken)
+    assert_in("Never more than three", spoken)
+    assert_in("Do not give both a duration and its start and end times", spoken)
+    assert_in("Keep secondary breakdown metrics out", spoken)
     assert_in("Give exact values when the user asks for them", spoken)
 
 
