@@ -500,6 +500,41 @@ describe("live chat turn", () => {
     });
   });
 
+  test("parallel tools restart spoken output once per tool phase", () => {
+    createRoot((dispose) => {
+      const spoken = recordSpokenTurn();
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        replyMode: () => "spoken",
+        spokenTurn: spoken.sink,
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("question");
+      turn.handleFrame(
+        chat({ event: "tool_start", tool_name: "search", tool_id: "t1" }),
+      );
+      turn.handleFrame(
+        chat({ event: "tool_start", tool_name: "fetch", tool_id: "t2" }),
+      );
+      expect(spoken.restarted).toBe(1);
+
+      turn.handleFrame(chat({ event: "text_delta", delta: "Checking again." }));
+      turn.handleFrame(
+        chat({ event: "tool_start", tool_name: "search", tool_id: "t3" }),
+      );
+      expect(spoken.restarted).toBe(2);
+      dispose();
+    });
+  });
+
   test("tool-only turns settle flagged so nonsense markers are never spoken", () => {
     createRoot((dispose) => {
       const spoken = recordSpokenTurn();

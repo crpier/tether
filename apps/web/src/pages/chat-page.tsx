@@ -979,8 +979,9 @@ export function ChatPage() {
                   onEndConversation={() => {
                     conversationMode.stop();
                   }}
-                  onRecordingStart={() => {
-                    conversationMode.onRecordingStart();
+                  onRecordingStart={() => conversationMode.onRecordingStart()}
+                  onRecordingStop={() => {
+                    conversationMode.onRecordingStop();
                   }}
                   onStartConversation={() => {
                     conversationMode.start();

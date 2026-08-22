@@ -20,6 +20,11 @@
 import { createSignal, onCleanup } from "solid-js";
 
 import type { ReplyMode } from "./chat-bus";
+import {
+  createConversationCuePlayer,
+  type ConversationCue,
+  type ConversationCuePlayer,
+} from "./conversation-cues";
 import { createSpeechPlayer } from "./speech-player";
 import type {
   SpeechPlayer,
@@ -29,7 +34,7 @@ import type {
 import { toSpeechText } from "./speech-text";
 import type { SpokenTurnSink } from "./live-chat-turn";
 
-export type ConversationModeOptions =
+type SpeechOptions =
   | {
       playerFactory?: never;
       synthesize: SynthesizeSpeech;
@@ -38,6 +43,10 @@ export type ConversationModeOptions =
       playerFactory: (onEnded: () => void) => SpeechPlayer;
       synthesize?: never;
     };
+
+export type ConversationModeOptions = SpeechOptions & {
+  cuePlayer?: ConversationCuePlayer;
+};
 
 export interface ConversationMode {
   /** Whether the hands-free spoken conversation is active. */
@@ -50,8 +59,10 @@ export interface ConversationMode {
   replyMode(): ReplyMode;
   /** Barge-in: the user sent a prompt; stop active playback. */
   onPromptSent(): void;
-  /** Barge-in: a recording is about to open the microphone. */
-  onRecordingStart(): void;
+  /** Barge-in and cue: a recording is about to open the microphone. */
+  onRecordingStart(): Promise<void>;
+  /** Cue that microphone capture has stopped. */
+  onRecordingStop(): void;
   /** Bumped when a sent prompt supersedes microphone capture. */
   recordingCancelSignal(): number;
   /** Spoken-turn sink to hand to `createLiveChatTurn`. */
@@ -73,6 +84,21 @@ export function createConversationMode(
   const [spokenTexts, setSpokenTexts] = createSignal<Set<string>>(new Set());
   const [recordingCancelSignal, setRecordingCancelSignal] = createSignal(0);
   const [voiceAutoStart, setVoiceAutoStart] = createSignal(0);
+  const cuePlayer = options.cuePlayer ?? createConversationCuePlayer();
+
+  const playCue = (
+    cue: ConversationCue,
+    requiresActiveConversation = true,
+  ): Promise<void> => {
+    if (requiresActiveConversation && !enabled()) {
+      return Promise.resolve();
+    }
+    try {
+      return cuePlayer.play(cue).catch(() => undefined);
+    } catch {
+      return Promise.resolve();
+    }
+  };
 
   // Hands-free loop state machine. `spokeAt` stamps when the current stretch
   // of speech began; any interaction after that stamp means the user took
@@ -129,6 +155,7 @@ export function createConversationMode(
   // Leaving the chat page must never leave speech running.
   onCleanup(() => {
     speechPlayer.cancel();
+    cuePlayer.dispose();
     window.removeEventListener("keydown", markInteraction, { capture: true });
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("pointerdown", markInteraction, {
@@ -155,6 +182,7 @@ export function createConversationMode(
     restart: () => {
       markedSpeechStart = false;
       speechPlayer.cancel();
+      void playCue("tool");
     },
     settle: (unspokenTail, info) => {
       if (!enabled()) {
@@ -186,6 +214,11 @@ export function createConversationMode(
     if (enabled()) {
       return;
     }
+    try {
+      cuePlayer.unlock();
+    } catch {
+      // Cues are feedback only. Audio support must not gate conversation.
+    }
     setEnabled(true);
     setVoiceAutoStart((tick) => tick + 1);
   };
@@ -208,8 +241,15 @@ export function createConversationMode(
       speechPlayer.cancel();
     },
     onRecordingStart: () => {
-      // Avoid microphone feedback from an ongoing reply.
+      // Avoid microphone feedback from an ongoing reply. Waiting for the cue
+      // keeps its sound out of the captured clip.
       speechPlayer.cancel();
+      return playCue("listening-start");
+    },
+    onRecordingStop: () => {
+      // The active flag may already be down when the recorder reports its
+      // transition to idle. That edge still needs its closing cue.
+      void playCue("listening-stop", false);
     },
     recordingCancelSignal,
     spokenTurn,

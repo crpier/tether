@@ -23,6 +23,8 @@ export interface MinimalMediaRecorder {
 }
 
 export interface VoiceRecorderDeps {
+  /** Optional local feedback to finish after permission but before capture. */
+  beforeRecordingStart?: () => Promise<void>;
   createRecorder: (stream: MediaStream) => MinimalMediaRecorder;
   getUserMedia: () => Promise<MediaStream>;
   // Injectable clock so `startedAt`/elapsed-time tests don't depend on real
@@ -79,6 +81,15 @@ export class VoiceRecorder {
         });
       }
       return;
+    }
+    if (startToken !== this.startToken) {
+      this.deps.stopStream?.(stream);
+      return;
+    }
+    try {
+      await this.deps.beforeRecordingStart?.();
+    } catch {
+      // Optional feedback must never block microphone capture.
     }
     if (startToken !== this.startToken) {
       this.deps.stopStream?.(stream);

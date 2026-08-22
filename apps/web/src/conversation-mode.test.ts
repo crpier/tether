@@ -4,6 +4,23 @@ import { describe, expect, test } from "vitest";
 import { createConversationMode } from "./conversation-mode";
 import type { SpeechPlayer, SpeechPlayerState } from "./speech-player";
 
+class FakeCuePlayer {
+  played: string[] = [];
+
+  dispose(): void {
+    // No browser resources in the fake.
+  }
+
+  play(cue: string): Promise<void> {
+    this.played.push(cue);
+    return Promise.resolve();
+  }
+
+  unlock(): void {
+    // Browser autoplay policy does not apply to the fake.
+  }
+}
+
 class FakeSpeechPlayer implements SpeechPlayer {
   cancellations = 0;
   onEnded: (() => void) | undefined;
@@ -67,6 +84,51 @@ describe("conversation mode", () => {
     });
   });
 
+  test("recording transitions play listening cues only during voice conversation", async () => {
+    const root = createRoot((dispose) => {
+      const cues = new FakeCuePlayer();
+      return {
+        cues,
+        dispose,
+        mode: createConversationMode({
+          ...withSpeech(stubSpeech()),
+          cuePlayer: cues,
+        }),
+      };
+    });
+
+    root.mode.start();
+    await root.mode.onRecordingStart();
+    root.mode.stop();
+    root.mode.onRecordingStop();
+    await root.mode.onRecordingStart();
+
+    expect(root.cues.played).toEqual(["listening-start", "listening-stop"]);
+    root.dispose();
+  });
+
+  test("cue failures do not interrupt conversation behavior", async () => {
+    const cues = {
+      dispose: () => undefined,
+      play: () => Promise.reject(new Error("speaker unavailable")),
+      unlock: () => {
+        throw new Error("audio unavailable");
+      },
+    };
+    const root = createRoot((dispose) => ({
+      dispose,
+      mode: createConversationMode({
+        ...withSpeech(stubSpeech()),
+        cuePlayer: cues,
+      }),
+    }));
+
+    expect(() => root.mode.start()).not.toThrow();
+    await expect(root.mode.onRecordingStart()).resolves.toBeUndefined();
+    expect(root.mode.enabled()).toBe(true);
+    root.dispose();
+  });
+
   test("Ctrl+Shift+V toggles from the keyboard", () => {
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(stubSpeech()));
@@ -124,6 +186,32 @@ describe("conversation mode", () => {
       expect(mode.isSpoken("[ran a tool]")).toBe(false);
       dispose();
     });
+  });
+
+  test("tool phases play a cue only during voice conversation", () => {
+    const root = createRoot((dispose) => {
+      const cues = new FakeCuePlayer();
+      return {
+        cues,
+        dispose,
+        mode: createConversationMode({
+          ...withSpeech(stubSpeech()),
+          cuePlayer: cues,
+        }),
+      };
+    });
+
+    root.mode.spokenTurn.restart();
+    expect(root.cues.played).toEqual([]);
+
+    root.mode.start();
+    root.mode.spokenTurn.restart();
+    expect(root.cues.played).toEqual(["tool"]);
+
+    root.mode.stop();
+    root.mode.spokenTurn.restart();
+    expect(root.cues.played).toEqual(["tool"]);
+    root.dispose();
   });
 
   test("restart and discard cancel active speech", () => {
@@ -201,7 +289,7 @@ describe("conversation mode", () => {
       const mode = createConversationMode(withSpeech(speech));
       mode.start();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
-      mode.onRecordingStart();
+      void mode.onRecordingStart();
       expect(mode.playbackState()).toBe("idle");
       dispose();
     });
