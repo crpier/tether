@@ -17,7 +17,6 @@ from snekql.sqlite import (
     Text,
     UtcDatetime,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.todo_model import TodoStatus
 
@@ -43,17 +42,6 @@ class Todo[S = Pending](Model[S, "Todo[Fetched]"]):
     __indexes__: ClassVar = [Index(status)]
 
 
-class TodoMemory[S = Pending](Model[S, "TodoMemory[Fetched]"]):
-    """A bespoke link between a Todo and a Memory that carries its context."""
-
-    id: TodoMemory.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    todo_id: TodoMemory.Col[str] = Text()
-    memory_id: TodoMemory.Col[str] = Text()
-    created_at: TodoMemory.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-
-    __indexes__: ClassVar = [Index(todo_id)]
-
-
 async def create_todo_schema(database: Database) -> None:
     """Create the Todo and Todo-Memory tables and their indexes.
 
@@ -65,7 +53,33 @@ async def create_todo_schema(database: Database) -> None:
     >>> await create_todo_schema(database)
     """
     migrations = {
-        f"013_{label}": sql
-        for label, sql in scaffold_sqlite_statements([Todo, TodoMemory])
+        "013_create_todo": (
+            'CREATE TABLE "todo" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "action" TEXT NOT NULL, '
+            '"status" TEXT NOT NULL, "condition" TEXT, "trigger_id" TEXT, '
+            '"version" INTEGER NOT NULL, '
+            '"created_at" TEXT NOT NULL DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"updated_at" TEXT NOT NULL DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            ") STRICT"
+        ),
+        "013_create_index_ix_todo_status": (
+            'CREATE INDEX "ix_todo_status" ON "todo" ("status")'
+        ),
+        # Frozen historical link table, immediately removed by the #507
+        # destructive cutover below on fresh and upgraded databases alike.
+        "013_create_todo_memory": (
+            'CREATE TABLE "todo_memory" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "todo_id" TEXT NOT NULL, '
+            '"memory_id" TEXT NOT NULL, '
+            '"created_at" TEXT NOT NULL DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            ") STRICT"
+        ),
+        "013_create_index_ix_todo_memory_todo_id": (
+            'CREATE INDEX "ix_todo_memory_todo_id" ON "todo_memory" ("todo_id")'
+        ),
+        "026_drop_todo_memory": 'DROP TABLE "todo_memory"',
     }
     await database.migrate(migrations)

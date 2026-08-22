@@ -11,8 +11,6 @@ import {
   FakeHost,
   bucketItem,
   duePrompt,
-  input,
-  memory,
   navigateTo,
   notification,
   renderApp,
@@ -33,29 +31,10 @@ describe("Inbox page", () => {
     ).toBeInTheDocument();
   });
 
-  test("preserves an unsent capture draft across navigation", async () => {
-    const host = new FakeHost({ authenticated: true });
-    renderApp(host);
-    await navigateTo("Inbox");
-    await screen.findByRole("heading", { name: "Inbox" });
-
-    fireEvent.input(input(screen.getByLabelText("Capture")), {
-      target: { value: "Remember the umbrella" },
-    });
-    await navigateTo("Settings");
-    await screen.findByRole("heading", { name: "Settings" });
-    await navigateTo("Inbox");
-
-    expect(input(await screen.findByLabelText("Capture"))).toHaveValue(
-      "Remember the umbrella",
-    );
-  });
-
   test("groups items by kind with a per-group count", async () => {
     const host = new FakeHost({
       authenticated: true,
       duePrompts: [duePrompt({ question: "What is TCP?" })],
-      memories: [memory({ content: "Prefers aisle seats" })],
     });
     host.notifications.storedNotifications = [
       notification({ body: "Call the dentist" }),
@@ -65,62 +44,10 @@ describe("Inbox page", () => {
     await screen.findByRole("heading", { name: "Inbox" });
 
     await waitFor(() => {
-      expect(screen.getByText("Memory review (1)")).toBeInTheDocument();
+      expect(screen.getByText("Recall due (1)")).toBeInTheDocument();
     });
-    expect(screen.getByText("Recall due (1)")).toBeInTheDocument();
+    expect(screen.queryByText(/Memory review/)).not.toBeInTheDocument();
     expect(screen.getByText("Fired reminder (1)")).toBeInTheDocument();
-  });
-
-  test("selecting a memory review item exposes contextual accessible and visible action names", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({ content: "Prefers aisle seats", id: "mem-1", version: 4 }),
-      ],
-    });
-    renderApp(host);
-    await navigateTo("Inbox");
-    await screen.findByRole("heading", { name: "Inbox" });
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Prefers aisle seats" }),
-    );
-
-    const acceptButton = await screen.findByRole("button", {
-      name: "Accept memory",
-    });
-    expect(acceptButton).toHaveTextContent("Accept memory");
-    expect(
-      screen.getAllByRole("button", { name: "Reject memory" }),
-    ).toHaveLength(1);
-  });
-
-  test("selecting a memory review item tethers it from the detail pane", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({ content: "Prefers aisle seats", id: "mem-1", version: 4 }),
-      ],
-    });
-    renderApp(host);
-    await navigateTo("Inbox");
-    await screen.findByRole("heading", { name: "Inbox" });
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Prefers aisle seats" }),
-    );
-    const detail = await screen.findByLabelText(
-      "Inbox item: Prefers aisle seats",
-    );
-    fireEvent.click(
-      within(detail).getByRole("button", { name: "Accept memory" }),
-    );
-
-    await waitFor(() => {
-      expect(host.memories.tetherMemoryCalls).toEqual([
-        { memoryId: "mem-1", version: 4 },
-      ]);
-    });
   });
 
   test("bucket triage advisories surface their reason in the detail pane", async () => {

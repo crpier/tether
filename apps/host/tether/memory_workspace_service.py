@@ -6,7 +6,6 @@ from pathlib import Path
 from re import findall
 from typing import Protocol
 
-from tether.memory_projection import memory_projection_root
 from tether.memory_workspace import (
     MemoryWorkspace,
     MemoryWorkspaceDiagnostic,
@@ -45,7 +44,7 @@ def _search_terms(text: str) -> set[str]:
 def memory_workspace_root(kb_root: str | Path) -> Path:
     """Return the canonical workspace directory under a knowledge-base root."""
 
-    return memory_projection_root(kb_root)
+    return Path(kb_root) / "memory"
 
 
 class MemoryWorkspaceService:

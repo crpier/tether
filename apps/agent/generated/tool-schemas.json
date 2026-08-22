@@ -1,82 +1,11 @@
 {
   "tools": [
     {
-      "endpoint": "/internal/tools/capture",
-      "name": "capture",
-      "params_model": "CaptureParams",
-      "schema": {
-        "$defs": {
-          "MemoryContent": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "description": "Params for capturing a loose Memory.",
-        "properties": {
-          "content": {
-            "$ref": "#/$defs/MemoryContent"
-          },
-          "facets": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Facets"
-          }
-        },
-        "required": ["content"],
-        "title": "CaptureParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/browse",
-      "name": "browse",
-      "params_model": "BrowseParams",
-      "schema": {
-        "$defs": {
-          "MemoryState": {
-            "enum": ["loose", "tethered"],
-            "type": "string"
-          }
-        },
-        "description": "Params for the review queue (`loose`) / corpus browse (`tethered`).",
-        "properties": {
-          "state": {
-            "$ref": "#/$defs/MemoryState"
-          },
-          "limit": {
-            "default": 50,
-            "exclusiveMinimum": 0,
-            "title": "Limit",
-            "type": "integer"
-          }
-        },
-        "required": ["state"],
-        "title": "BrowseParams",
-        "type": "object"
-      }
-    },
-    {
       "endpoint": "/internal/tools/search",
       "name": "search",
       "params_model": "SearchParams",
       "schema": {
-        "$defs": {
-          "SourceType": {
-            "enum": ["memory", "bucket_item"],
-            "type": "string"
-          }
-        },
-        "description": "Params for the assistant's cross-source Search (Memories + Bucket items).\n\n`facets`, when supplied, is an exact-match AND filter applied to the\nMemory arm only: a Memory must carry every given key with exactly that\nvalue to be returned. `sources`, when supplied, restricts fusion to that\nsubset of arms; omitted, every arm runs. `after`/`before`, when supplied,\nbound every arm's own capture timestamp (a Memory's `tethered_at`, a\nBucket item's `created_at`), inclusive on both ends; either or both may\nbe given, and supplying `after` later than `before` is rejected.",
+        "description": "Search Dreaming-maintained current Memory Topics.",
         "properties": {
           "q": {
             "title": "Q",
@@ -87,62 +16,6 @@
             "exclusiveMinimum": 0,
             "title": "Limit",
             "type": "integer"
-          },
-          "facets": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Facets"
-          },
-          "sources": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/SourceType"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Sources"
-          },
-          "after": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "After"
-          },
-          "before": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Before"
           }
         },
         "required": ["q"],
@@ -151,195 +24,13 @@
       }
     },
     {
-      "endpoint": "/internal/tools/review_digest",
-      "name": "review_digest",
-      "params_model": "ReviewDigestParams",
+      "endpoint": "/internal/tools/queue_memory_assimilation",
+      "name": "queue_memory_assimilation",
+      "params_model": "QueueMemoryAssimilationParams",
       "schema": {
-        "description": "Params for the AI-assisted Review digest.\n\nThe digest is computed over the whole live queue, so it takes no inputs\nbeyond the session identity the gate already requires.",
+        "description": "No-argument request for immediate post-turn Evidence assimilation.",
         "properties": {},
-        "title": "ReviewDigestParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/tether",
-      "name": "tether",
-      "params_model": "TetherParams",
-      "schema": {
-        "description": "Params for promoting a loose Memory to tethered.",
-        "properties": {
-          "memory_id": {
-            "format": "uuid7",
-            "title": "Memory Id",
-            "type": "string"
-          },
-          "version": {
-            "exclusiveMinimum": 0,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": ["memory_id", "version"],
-        "title": "TetherParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/edit",
-      "name": "edit",
-      "params_model": "EditParams",
-      "schema": {
-        "$defs": {
-          "MemoryContent": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "description": "Params for editing a loose Memory's content at an observed version.\n\nThe agent must not overwrite tethered Memory content in place. Use `append`\nfor routed human-authored additions to trusted Memories.",
-        "properties": {
-          "memory_id": {
-            "format": "uuid7",
-            "title": "Memory Id",
-            "type": "string"
-          },
-          "content": {
-            "$ref": "#/$defs/MemoryContent"
-          },
-          "version": {
-            "exclusiveMinimum": 0,
-            "title": "Version",
-            "type": "integer"
-          },
-          "facets": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Facets"
-          }
-        },
-        "required": ["memory_id", "content", "version"],
-        "title": "EditParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/append",
-      "name": "append",
-      "params_model": "AppendParams",
-      "schema": {
-        "$defs": {
-          "MemoryContent": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "description": "Params for appending agent-routed verbatim content to a Memory.",
-        "properties": {
-          "memory_id": {
-            "format": "uuid7",
-            "title": "Memory Id",
-            "type": "string"
-          },
-          "content": {
-            "$ref": "#/$defs/MemoryContent"
-          },
-          "version": {
-            "exclusiveMinimum": 0,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": ["memory_id", "content", "version"],
-        "title": "AppendParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/reject",
-      "name": "reject",
-      "params_model": "RejectParams",
-      "schema": {
-        "description": "Params for soft-deleting (rejecting) a Memory at an observed version.",
-        "properties": {
-          "memory_id": {
-            "format": "uuid7",
-            "title": "Memory Id",
-            "type": "string"
-          },
-          "version": {
-            "exclusiveMinimum": 0,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": ["memory_id", "version"],
-        "title": "RejectParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/facet_overview",
-      "name": "facet_overview",
-      "params_model": "FacetOverviewParams",
-      "schema": {
-        "description": "Params for the Commons facet overview: distinct keys/values with counts.\n\nRead-only; takes no inputs beyond the session identity the gate already\nrequires.",
-        "properties": {},
-        "title": "FacetOverviewParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/rename_facet_key",
-      "name": "rename_facet_key",
-      "params_model": "RenameFacetKeyParams",
-      "schema": {
-        "description": "Params for bulk-renaming a Commons facet key across every Memory that carries it.\n\nDestructive to the old key name across the whole corpus: the assistant\nmust obtain the user's explicit approval in chat before calling this tool.",
-        "properties": {
-          "old_key": {
-            "title": "Old Key",
-            "type": "string"
-          },
-          "new_key": {
-            "title": "New Key",
-            "type": "string"
-          }
-        },
-        "required": ["old_key", "new_key"],
-        "title": "RenameFacetKeyParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/merge_facet_value",
-      "name": "merge_facet_value",
-      "params_model": "MergeFacetValueParams",
-      "schema": {
-        "description": "Params for bulk-rewriting a Commons facet value across every Memory that carries it.\n\nDestructive to the old value across the whole corpus: the assistant must\nobtain the user's explicit approval in chat before calling this tool.",
-        "properties": {
-          "key": {
-            "title": "Key",
-            "type": "string"
-          },
-          "old_value": {
-            "title": "Old Value",
-            "type": "string"
-          },
-          "new_value": {
-            "title": "New Value",
-            "type": "string"
-          }
-        },
-        "required": ["key", "old_value", "new_value"],
-        "title": "MergeFacetValueParams",
+        "title": "QueueMemoryAssimilationParams",
         "type": "object"
       }
     },
@@ -781,29 +472,6 @@
         },
         "required": ["todo_id", "version", "trigger_id"],
         "title": "LinkTodoTriggerParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/link_todo_memory",
-      "name": "link_todo_memory",
-      "params_model": "LinkTodoMemoryParams",
-      "schema": {
-        "description": "Params for linking a Memory's context to a Todo.",
-        "properties": {
-          "todo_id": {
-            "format": "uuid7",
-            "title": "Todo Id",
-            "type": "string"
-          },
-          "memory_id": {
-            "format": "uuid7",
-            "title": "Memory Id",
-            "type": "string"
-          }
-        },
-        "required": ["todo_id", "memory_id"],
-        "title": "LinkTodoMemoryParams",
         "type": "object"
       }
     },

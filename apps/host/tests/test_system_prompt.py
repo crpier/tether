@@ -45,35 +45,25 @@ async def both_prompts_state_the_tether_identity() -> None:
 
 
 @test()
-async def both_prompts_state_the_trust_contract() -> None:
-    """Every run kind's prompt carries the loose/tethered trust vocabulary."""
+async def both_prompts_keep_recall_independent_from_memory() -> None:
+    """Every foreground prompt rejects Recall-based Memory promotion."""
     for prompt in (CONVERSATION_SYSTEM_PROMPT, TASK_SYSTEM_PROMPT):
-        assert_in("loose", prompt)
-        assert_in("tethered", prompt)
+        assert_in("Recall", prompt)
+        assert_in("never promote", prompt)
 
 
 @test()
-async def the_conversation_prompt_allows_executing_a_human_tether_decision() -> None:
-    """The trust contract names `tether`/`reject` as the execution path."""
-    assert_in("`tether`", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("`reject`", CONVERSATION_SYSTEM_PROMPT)
+async def explicit_remembering_queues_dreaming_instead_of_editing_memory() -> None:
+    """Remember requests and corrections enter through post-turn Dreaming."""
+    assert_in("`queue_memory_assimilation`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("does not mutate Memory", CONVERSATION_SYSTEM_PROMPT)
 
 
 @test()
 async def the_conversation_prompt_covers_capture_discipline() -> None:
     """The full prompt treats intent context as optional, never a blocker."""
     assert_in("Intent context", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("never withhold the add", CONVERSATION_SYSTEM_PROMPT)
-
-
-@test()
-async def the_conversation_prompt_offers_to_note_the_reason_after_adding() -> None:
-    """After a reason-less add, the prompt asks for a light one-line offer,
-    made once per add/batch and dropped if the user doesn't respond — never
-    a repeated or interrogating follow-up."""
-    assert_in("one-line offer to note why", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("`set_bucket_item_intent`", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("drop it", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("without delaying the save", CONVERSATION_SYSTEM_PROMPT)
 
 
 @test()
@@ -83,16 +73,17 @@ async def the_conversation_prompt_attributes_dedup_to_the_add_tools() -> None:
 
 
 @test()
-async def the_conversation_prompt_covers_the_tool_belt() -> None:
-    """The full prompt names the review-digest and triage tools."""
-    assert_in("review_digest", CONVERSATION_SYSTEM_PROMPT)
+async def the_conversation_prompt_covers_the_memory_tool_belt() -> None:
+    """The full prompt names read-only Search and immediate assimilation."""
+    assert_in("`search`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`queue_memory_assimilation`", CONVERSATION_SYSTEM_PROMPT)
     assert_in("triage_report", CONVERSATION_SYSTEM_PROMPT)
 
 
 @test()
 async def the_conversation_prompt_speaks_recall_vocabulary() -> None:
     """The full prompt uses the recall-prompt vocabulary."""
-    assert_in("recall prompt", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("spaced practice", CONVERSATION_SYSTEM_PROMPT)
 
 
 @test()

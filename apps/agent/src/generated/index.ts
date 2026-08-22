@@ -2,17 +2,8 @@
 // Source: apps/host/tether/tools.py Pydantic params.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerCaptureTool } from "./capture.js";
-import { registerBrowseTool } from "./browse.js";
 import { registerSearchTool } from "./search.js";
-import { registerReviewDigestTool } from "./review_digest.js";
-import { registerTetherTool } from "./tether.js";
-import { registerEditTool } from "./edit.js";
-import { registerAppendTool } from "./append.js";
-import { registerRejectTool } from "./reject.js";
-import { registerFacetOverviewTool } from "./facet_overview.js";
-import { registerRenameFacetKeyTool } from "./rename_facet_key.js";
-import { registerMergeFacetValueTool } from "./merge_facet_value.js";
+import { registerQueueMemoryAssimilationTool } from "./queue_memory_assimilation.js";
 import { registerAddMovieTool } from "./add_movie.js";
 import { registerAddPlaceTool } from "./add_place.js";
 import { registerAddBookTool } from "./add_book.js";
@@ -26,7 +17,6 @@ import { registerSetBucketItemIntentTool } from "./set_bucket_item_intent.js";
 import { registerCreateTodoTool } from "./create_todo.js";
 import { registerSetTodoStatusTool } from "./set_todo_status.js";
 import { registerLinkTodoTriggerTool } from "./link_todo_trigger.js";
-import { registerLinkTodoMemoryTool } from "./link_todo_memory.js";
 import { registerListTodosTool } from "./list_todos.js";
 import { registerTriageReportTool } from "./triage_report.js";
 import { registerBrowseYoutubeTool } from "./browse_youtube.js";
@@ -66,17 +56,8 @@ import { registerProposeTool } from "./propose.js";
 import { registerListProposalsTool } from "./list_proposals.js";
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
-  registerCaptureTool(pi);
-  registerBrowseTool(pi);
   registerSearchTool(pi);
-  registerReviewDigestTool(pi);
-  registerTetherTool(pi);
-  registerEditTool(pi);
-  registerAppendTool(pi);
-  registerRejectTool(pi);
-  registerFacetOverviewTool(pi);
-  registerRenameFacetKeyTool(pi);
-  registerMergeFacetValueTool(pi);
+  registerQueueMemoryAssimilationTool(pi);
   registerAddMovieTool(pi);
   registerAddPlaceTool(pi);
   registerAddBookTool(pi);
@@ -90,7 +71,6 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerCreateTodoTool(pi);
   registerSetTodoStatusTool(pi);
   registerLinkTodoTriggerTool(pi);
-  registerLinkTodoMemoryTool(pi);
   registerListTodosTool(pi);
   registerTriageReportTool(pi);
   registerBrowseYoutubeTool(pi);

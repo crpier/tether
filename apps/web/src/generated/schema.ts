@@ -628,114 +628,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/memories": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Browse Memories
-     * @description Filter the review queue (`loose`) or browse the corpus (`tethered`).
-     */
-    get: operations["browse_memories_api_memories_get"];
-    put?: never;
-    /**
-     * Capture Memory
-     * @description Capture a loose Memory.
-     */
-    post: operations["capture_memory_api_memories_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/memories/search": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Search Memories
-     * @description Keyword Search over tethered Memories.
-     */
-    get: operations["search_memories_api_memories_search_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/memories/workspace-diagnostics": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * List Workspace Diagnostics
-     * @description Return current workspace diagnostic findings from the latest scan.
-     */
-    get: operations["list_workspace_diagnostics_api_memories_workspace_diagnostics_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/memories/{memory_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /**
-     * Reject Memory
-     * @description Soft-delete (reject) a Memory.
-     */
-    delete: operations["reject_memory_api_memories__memory_id__delete"];
-    options?: never;
-    head?: never;
-    /**
-     * Edit Memory
-     * @description Edit a Memory's `content`; a human edit keeps trust.
-     */
-    patch: operations["edit_memory_api_memories__memory_id__patch"];
-    trace?: never;
-  };
-  "/api/memories/{memory_id}/tether": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Tether Memory
-     * @description Promote a loose Memory to tethered.
-     */
-    post: operations["tether_memory_api_memories__memory_id__tether_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/memory-topics": {
     parameters: {
       query?: never;
@@ -748,6 +640,26 @@ export interface paths {
      * @description Search valid canonical Topic files without stale index dependence.
      */
     get: operations["search_memory_topics_api_memory_topics_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/memory-topics/diagnostics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Workspace Diagnostics
+     * @description Return workspace diagnostics from current recorded Memory files.
+     */
+    get: operations["list_workspace_diagnostics_api_memory_topics_diagnostics_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1158,26 +1070,6 @@ export interface paths {
      * @description Promote an ingested educational video into a study item under Recall.
      */
     post: operations["start_recall_api_recall_study_items_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/search": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Search Fused
-     * @description Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged.
-     */
-    get: operations["search_fused_api_search_get"];
-    put?: never;
-    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1654,8 +1546,6 @@ export interface components {
       prompt: components["schemas"]["RecallPromptRead"];
       /** Quality */
       quality: number;
-      /** Tethered */
-      tethered: boolean;
     };
     /**
      * AnswerPromptRequest
@@ -1847,16 +1737,6 @@ export interface components {
        * @enum {string}
        */
       source: "live" | "cache";
-    };
-    /**
-     * CaptureRequest
-     * @description Body for capturing a loose Memory.
-     *
-     *     >>> CaptureRequest(content="I prefer aisle seats").content
-     *     'I prefer aisle seats'
-     */
-    CaptureRequest: {
-      content: components["schemas"]["MemoryContent"];
     };
     /**
      * CompleteDreamRunRequest
@@ -2222,8 +2102,8 @@ export interface components {
      * EbookDocumentRead
      * @description HTTP/tool representation of a document Tether has seen progress for.
      *
-     *     `finished` collapses the internal `finished_captured_at` stamp to the only
-     *     fact a surface needs — whether the one finished Memory has been minted.
+     *     `finished` collapses the internal `finished_at` stamp to the only
+     *     fact a surface needs — whether the one source completion has been minted.
      *
      *     >>> EbookDocumentRead(document_hash="abc", title=None, finished=False).finished
      *     False
@@ -2235,18 +2115,6 @@ export interface components {
       finished: boolean;
       /** Title */
       title: string | null;
-    };
-    /**
-     * EditRequest
-     * @description Body for editing a Memory's content at an observed `version`.
-     *
-     *     >>> EditRequest(content="I prefer window seats", version=1).version
-     *     1
-     */
-    EditRequest: {
-      content: components["schemas"]["MemoryContent"];
-      /** Version */
-      version: number;
     };
     /**
      * EssayGradeProposalRead
@@ -2329,23 +2197,6 @@ export interface components {
       segment_type: number;
       /** Start Time */
       start_time: number;
-    };
-    /**
-     * FusedSearchResultRead
-     * @description One fused, source-tagged Search result.
-     *
-     *     Exactly one of `memory` / `bucket_item` is populated, matching `source` —
-     *     a discriminated shape so a heterogeneous result list is self-describing
-     *     without a second round trip.
-     *
-     *     >>> read = FusedSearchResultRead.from_hit(hit)
-     *     >>> read.source
-     *     'bucket_item'
-     */
-    FusedSearchResultRead: {
-      bucket_item?: components["schemas"]["BucketItemRead"] | null;
-      memory?: components["schemas"]["MemoryRead"] | null;
-      source: components["schemas"]["SourceType"];
     };
     /** GenericRecord */
     GenericRecord: {
@@ -2783,54 +2634,6 @@ export interface components {
       /** Filename */
       filename: string;
     };
-    MemoryContent: string;
-    /**
-     * MemoryRead
-     * @description HTTP representation of a Memory, exposing its derived trust `state`.
-     *
-     *     >>> read = MemoryRead(
-     *     ...     content="I prefer aisle seats",
-     *     ...     created_at=datetime(2026, 1, 1),
-     *     ...     facets={},
-     *     ...     id="018f0000-0000-7000-8000-000000000000",
-     *     ...     state="loose",
-     *     ...     tethered_at=None,
-     *     ...     updated_at=datetime(2026, 1, 1),
-     *     ...     version=1,
-     *     ... )
-     *     >>> read.state
-     *     'loose'
-     */
-    MemoryRead: {
-      /** Content */
-      content: string;
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string;
-      /** Facets */
-      facets: {
-        [key: string]: string;
-      };
-      /**
-       * Id
-       * Format: uuid7
-       */
-      id: string;
-      state: components["schemas"]["MemoryState"];
-      /** Tethered At */
-      tethered_at: string | null;
-      /**
-       * Updated At
-       * Format: date-time
-       */
-      updated_at: string;
-      /** Version */
-      version: number;
-    };
-    /** @enum {string} */
-    MemoryState: "loose" | "tethered";
     /**
      * MemoryTopicRead
      * @description One current canonical Topic rendered from its workspace file.
@@ -2975,13 +2778,31 @@ export interface components {
     PanelRenderKind: "table" | "vega-lite";
     /**
      * PanelResultsRead
-     * @description One panel execution: the capped rows plus the uncapped match count.
+     * @description One panel execution: the capped Topics plus uncapped match count.
      */
     PanelResultsRead: {
-      /** Memories */
-      memories: components["schemas"]["MemoryRead"][];
+      /** Topics */
+      topics: components["schemas"]["PanelTopicRead"][];
       /** Total */
       total: number;
+    };
+    /**
+     * PanelTopicRead
+     * @description One current Topic selected by a Synthetic panel.
+     */
+    PanelTopicRead: {
+      /** Body */
+      body: string;
+      /** Evidence */
+      evidence: string[];
+      /** Metadata */
+      metadata: {
+        [key: string]: unknown;
+      };
+      /** Path */
+      path: string;
+      /** Title */
+      title: string;
     };
     /**
      * PostArtifactEventRequest
@@ -3305,8 +3126,6 @@ export interface components {
       /** Start Time */
       start_time: number;
     };
-    /** @enum {string} */
-    SourceType: "memory" | "bucket_item";
     /**
      * StaleItem
      * @description An active item old enough to reconsider, with its decayed intent context.
@@ -3414,16 +3233,13 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** Distilled Learnings */
+      distilled_learnings: string;
       /**
        * Id
        * Format: uuid7
        */
       id: string;
-      /**
-       * Memory Id
-       * Format: uuid7
-       */
-      memory_id: string;
       /** Source Title */
       source_title: string;
       /** Source Video Id */
@@ -3451,17 +3267,6 @@ export interface components {
       endpoint: string;
       /** P256Dh */
       p256dh: string;
-    };
-    /**
-     * TetherRequest
-     * @description Body for tethering a Memory at an observed `version`.
-     *
-     *     >>> TetherRequest(version=1).version
-     *     1
-     */
-    TetherRequest: {
-      /** Version */
-      version: number;
     };
     /**
      * TodoRead
@@ -4845,230 +4650,11 @@ export interface operations {
       };
     };
   };
-  browse_memories_api_memories_get: {
-    parameters: {
-      query: {
-        state: components["schemas"]["MemoryState"];
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryRead"][];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  capture_memory_api_memories_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["CaptureRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  search_memories_api_memories_search_get: {
-    parameters: {
-      query: {
-        limit?: number;
-        q: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryRead"][];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  list_workspace_diagnostics_api_memories_workspace_diagnostics_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryWorkspaceDiagnosticRead"][];
-        };
-      };
-    };
-  };
-  reject_memory_api_memories__memory_id__delete: {
-    parameters: {
-      query: {
-        version: number;
-      };
-      header?: never;
-      path: {
-        memory_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  edit_memory_api_memories__memory_id__patch: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        memory_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["EditRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  tether_memory_api_memories__memory_id__tether_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        memory_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["TetherRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MemoryRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
   search_memory_topics_api_memory_topics_get: {
     parameters: {
       query?: {
-        limit?: number;
         q?: string;
+        limit?: number;
       };
       header?: never;
       path?: never;
@@ -5092,6 +4678,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_workspace_diagnostics_api_memory_topics_diagnostics_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryWorkspaceDiagnosticRead"][];
         };
       };
     };
@@ -5785,41 +5391,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["StudyItemRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  search_fused_api_search_get: {
-    parameters: {
-      query: {
-        limit?: number;
-        q: string;
-        sources?: components["schemas"]["SourceType"][] | null;
-        after?: string | null;
-        before?: string | null;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["FusedSearchResultRead"][];
         };
       };
       /** @description Validation Error */

@@ -676,7 +676,7 @@ def request_logs_include_trace_context() -> None:
                 "/api/auth/login", json={"password": "test-app-password"}
             )
             assert_eq(login_response.status_code, 204)
-            response = client.get("/api/memories", params={"state": "loose"})
+            response = client.get("/api/memory-topics")
 
         logged = next(
             json.loads(line)
@@ -829,7 +829,7 @@ def the_host_serves_the_built_spa_without_shadowing_the_api() -> None:
             login = client.post(
                 "/api/auth/login", json={"password": "test-app-password"}
             )
-            api = client.get("/api/memories", params={"state": "loose"})
+            api = client.get("/api/memory-topics")
 
     assert_eq(root.status_code, 200)
     assert_in("Tether", root.text)
@@ -933,7 +933,7 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
                 "/api/auth/login", json={"password": "test-app-password"}
             )
             assert_eq(login_response.status_code, 204)
-            response = client.get("/api/memories", params={"state": "loose"})
+            response = client.get("/api/memory-topics")
 
         log_events = [
             json.loads(line)["event"] for line in stream.getvalue().splitlines()

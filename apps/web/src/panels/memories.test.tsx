@@ -1,469 +1,85 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import {
   cleanup,
   fireEvent,
+  render,
   screen,
   waitFor,
   within,
 } from "@solidjs/testing-library";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
-import { formatDate } from "../lib/format";
-import {
-  FakeHost,
-  input,
-  memory,
-  navigateTo,
-  renderApp,
-  textarea,
-} from "../testing/harness";
+import { MemoriesPanel } from "./memories";
+import { FakeMemoriesHost } from "../testing/fakes/memories";
 
-afterEach(() => {
-  vi.useRealTimers();
-  cleanup();
-});
+afterEach(cleanup);
 
-// The Memories panel now only ever mounts pinned to "corpus" (#250): review
-// moved to the Inbox page (see inbox-page.test.tsx), Browse only ever opens
-// on the tethered corpus + search.
-async function openCorpus(): Promise<HTMLElement> {
-  await navigateTo("Browse");
-  return screen.findByRole("region", { name: "Memories" });
+function topic(title: string, body: string, path: string) {
+  return { body, evidence: [], path, title };
 }
 
-describe("Memories panel (Browse corpus)", () => {
-  test("lists canonical Dreamed Topics", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memoryTopics: [
-        {
-          body: "- Uses a controller for almost all games.",
-          evidence: ["tether://message/019f0000-0000-7000-8000-000000000001"],
-          path: "gaming.md",
-          title: "Gaming preferences",
-        },
-      ],
-    });
-    renderApp(host);
-
-    const panel = await openCorpus();
-
-    expect(
-      await within(panel).findByRole("article", {
-        name: "Memory Topic: Gaming preferences",
-      }),
-    ).toHaveTextContent("Uses a controller for almost all games");
+function renderPanel(host: FakeMemoriesHost) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
   });
+  return render(() => (
+    <QueryClientProvider client={queryClient}>
+      <MemoriesPanel api={host} />
+    </QueryClientProvider>
+  ));
+}
 
-  test("lists tethered memories with edit and reject but no tether", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Trusted fact",
-          id: "mem-2",
-          state: "tethered",
-          tethered_at: "2026-01-06T00:00:00Z",
-        }),
-      ],
-    });
-    renderApp(host);
+describe("MemoriesPanel", () => {
+  test("renders Dreaming Topics without edit or review controls", async () => {
+    const host = new FakeMemoriesHost([
+      topic("Travel preferences", "Prefers aisle seats.", "travel.md"),
+    ]);
 
-    const panel = await openCorpus();
-    const row = await within(panel).findByLabelText("Memory: Trusted fact");
-    expect(row).toHaveTextContent(formatDate(new Date("2026-01-06T00:00:00Z")));
+    renderPanel(host);
+
+    const panel = screen.getByRole("region", { name: "Memory Topics" });
     expect(
-      within(row).getByRole("button", { name: /^Edit/ }),
-    ).toBeInTheDocument();
+      await within(panel).findByLabelText("Memory Topic: Travel preferences"),
+    ).toHaveTextContent("Prefers aisle seats.");
     expect(
-      within(row).getByRole("button", { name: /^Reject/ }),
-    ).toBeInTheDocument();
-    expect(
-      within(row).queryByRole("button", { name: /^Tether/ }),
+      screen.queryByRole("button", { name: /edit/i }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Memory review/i)).not.toBeInTheDocument();
   });
 
-  test("long corpus memory actions use full accessible target names", async () => {
-    const content =
-      "EXP-ABLEAN customer lives in green building, prefers aisle seats, and wants invoices grouped by trip";
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [memory({ content, id: "mem-1", state: "tethered" })],
-    });
-    renderApp(host);
+  test("searches current Topics through the read-only host seam", async () => {
+    const host = new FakeMemoriesHost([
+      topic("Travel", "Prefers aisle seats.", "travel.md"),
+      topic("Food", "Likes curry.", "food.md"),
+    ]);
+    renderPanel(host);
 
-    await openCorpus();
-
-    expect(
-      await screen.findByRole("button", { name: `Edit Memory: ${content}` }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: `Reject Memory: ${content}` }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /…/ })).not.toBeInTheDocument();
-  });
-
-  test("editing a memory saves the new content at the observed version", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Aisle seats",
-          id: "mem-1",
-          state: "tethered",
-          version: 2,
-        }),
-      ],
-    });
-    renderApp(host);
-    await openCorpus();
-
-    const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
-    const editor = textarea(screen.getByLabelText("Memory content"));
-    fireEvent.input(editor, { target: { value: "Window seats" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => {
-      expect(host.memories.editMemoryCalls).toEqual([
-        { content: "Window seats", memoryId: "mem-1", version: 2 },
-      ]);
-    });
-    expect(
-      await screen.findByLabelText("Memory: Window seats"),
-    ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Memory content")).not.toBeInTheDocument();
-  });
-
-  test("cancelling an edit restores the row without a request", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({ content: "Aisle seats", id: "mem-1", state: "tethered" }),
-      ],
-    });
-    renderApp(host);
-    await openCorpus();
-
-    const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
-    fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
-      target: { value: "Window seats" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    expect(
-      await screen.findByLabelText("Memory: Aisle seats"),
-    ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Memory content")).not.toBeInTheDocument();
-    expect(host.memories.editMemoryCalls).toHaveLength(0);
-  });
-
-  test("an edit 409 with an unchanged basis retries with the fresh version", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Aisle seats",
-          id: "mem-1",
-          state: "tethered",
-          version: 1,
-        }),
-      ],
-    });
-    // The version moved (e.g. a concurrent edit from another tab landed
-    // first) but the content basis this edit was formulated against is
-    // intact, so the retry is safe.
-    host.memories.serverMemoryVersions = { "mem-1": 2 };
-    renderApp(host);
-    await openCorpus();
-
-    const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
-    fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
-      target: { value: "Window seats" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => {
-      expect(host.memories.editMemoryCalls).toEqual([
-        { content: "Window seats", memoryId: "mem-1", version: 1 },
-        { content: "Window seats", memoryId: "mem-1", version: 2 },
-      ]);
-    });
-    expect(
-      await screen.findByLabelText("Memory: Window seats"),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  test("an edit 409 with concurrently changed content re-arms the editor instead of clobbering", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Aisle seats",
-          id: "mem-1",
-          state: "tethered",
-          version: 1,
-        }),
-      ],
-    });
-    host.memories.serverMemoryVersions = { "mem-1": 2 };
-    host.memories.serverMemoryEdits = {
-      "mem-1": { content: "Emergency exit seats" },
-    };
-    renderApp(host);
-    await openCorpus();
-
-    const row = await screen.findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
-    fireEvent.input(textarea(screen.getByLabelText("Memory content")), {
-      target: { value: "Window seats" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    // No blind retry: one call went out, the editor stays open with the
-    // draft, and the conflict is reported.
-    await waitFor(() => {
-      expect(host.memories.editMemoryCalls).toHaveLength(1);
-    });
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "changed while you were editing",
-    );
-    const editor = textarea(screen.getByLabelText("Memory content"));
-    expect(editor.value).toBe("Window seats");
-
-    // A deliberate second save wins against the fresh version.
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => {
-      expect(host.memories.editMemoryCalls).toEqual([
-        { content: "Window seats", memoryId: "mem-1", version: 1 },
-        { content: "Window seats", memoryId: "mem-1", version: 2 },
-      ]);
-    });
-    expect(
-      await screen.findByLabelText("Memory: Window seats"),
-    ).toBeInTheDocument();
-  });
-
-  test("rejecting a tethered memory calls the API with its version", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Aisle seats",
-          id: "mem-1",
-          state: "tethered",
-          version: 3,
-        }),
-      ],
-    });
-    renderApp(host);
-    const panel = await openCorpus();
-
-    const row = await within(panel).findByLabelText("Memory: Aisle seats");
-    fireEvent.click(within(row).getByRole("button", { name: /^Reject/ }));
-
-    await waitFor(() => {
-      expect(host.memories.rejectMemoryCalls).toEqual([
-        { memoryId: "mem-1", version: 3 },
-      ]);
-    });
-    await waitFor(() => {
-      expect(
-        screen.queryByLabelText("Memory: Aisle seats"),
-      ).not.toBeInTheDocument();
-    });
-  });
-
-  test("typing a corpus search lists matches from the search endpoint", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Prefers aisle seats",
-          id: "mem-1",
-          state: "tethered",
-          tethered_at: "2026-01-06T00:00:00Z",
-        }),
-        memory({
-          content: "Allergic to peanuts",
-          id: "mem-2",
-          state: "tethered",
-          tethered_at: "2026-01-06T00:00:00Z",
-        }),
-      ],
-    });
-    renderApp(host);
-
-    const panel = await openCorpus();
-    await screen.findByLabelText("Memory: Allergic to peanuts");
-    fireEvent.input(input(within(panel).getByLabelText("Search memories")), {
+    fireEvent.input(screen.getByLabelText("Search Memory"), {
       target: { value: "aisle" },
     });
 
     await waitFor(() => {
-      expect(host.memories.searchMemoriesCalls).toContain("aisle");
+      expect(host.listMemoryTopicsCalls).toContain("aisle");
     });
     expect(
-      await screen.findByLabelText("Memory: Prefers aisle seats"),
+      await screen.findByLabelText("Memory Topic: Travel"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByLabelText("Memory: Allergic to peanuts"),
+      screen.queryByLabelText("Memory Topic: Food"),
     ).not.toBeInTheDocument();
   });
 
-  test("labels semantic fallback results when no listed memory visibly matches", async () => {
-    const fallback = memory({
-      content: "Prefers aisle seats",
-      id: "mem-1",
-      state: "tethered",
-    });
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [fallback],
-    });
-    host.memories.searchMemories = (q: string) => {
-      host.memories.searchMemoriesCalls.push(q);
-      return Promise.resolve([fallback]);
-    };
-    renderApp(host);
-
-    const panel = await openCorpus();
-    await screen.findByLabelText("Memory: Prefers aisle seats");
-    fireEvent.input(input(within(panel).getByLabelText("Search memories")), {
-      target: { value: "NO_SUCH_TOKEN_98765" },
-    });
-
-    expect(
-      await within(panel).findByText(
-        "No exact matches — showing closest memories",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByLabelText("Memory: Prefers aisle seats"),
-    ).toBeInTheDocument();
-  });
-
-  test("corpus search keystrokes are debounced into one request per pause", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({
-          content: "Prefers aisle seats",
-          id: "mem-1",
-          state: "tethered",
-          tethered_at: "2026-01-06T00:00:00Z",
-        }),
-      ],
-    });
-    renderApp(host);
-
-    const panel = await openCorpus();
-    await screen.findByLabelText("Memory: Prefers aisle seats");
-
-    vi.useFakeTimers();
-    const field = input(within(panel).getByLabelText("Search memories"));
-    fireEvent.input(field, { target: { value: "a" } });
-    fireEvent.input(field, { target: { value: "ai" } });
-    fireEvent.input(field, { target: { value: "aisle" } });
-    expect(host.memories.searchMemoriesCalls).toEqual([]);
-    await vi.advanceTimersByTimeAsync(150);
-    vi.useRealTimers();
-
-    await waitFor(() => {
-      expect(host.memories.searchMemoriesCalls).toEqual(["aisle"]);
-    });
-  });
-
-  test("a memories invalidate frame refetches the corpus", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memories: [
-        memory({ content: "Old fact", state: "tethered", id: "mem-1" }),
-      ],
-    });
-    const bus = renderApp(host);
-
-    await openCorpus();
-    await screen.findByLabelText("Memory: Old fact");
-    const before = host.memories.listMemoriesCalls;
-    host.memories.storedMemories = [
-      ...host.memories.storedMemories,
-      memory({ content: "Captured by the agent", state: "tethered" }),
+  test("surfaces workspace diagnostics", async () => {
+    const host = new FakeMemoriesHost();
+    host.workspaceDiagnostics = [
+      { code: "frontmatter.invalid", message: "Invalid YAML", path: "bad.md" },
     ];
-    bus.emit({ keys: ["memories", "review-queue"], type: "invalidate" });
 
-    await waitFor(() => {
-      expect(host.memories.listMemoriesCalls).toBeGreaterThan(before);
-    });
-    expect(
-      await screen.findByLabelText("Memory: Captured by the agent"),
-    ).toBeInTheDocument();
-  });
-
-  test("an empty corpus names the view it belongs to", async () => {
-    const host = new FakeHost({ authenticated: true });
-    renderApp(host);
-
-    const panel = await openCorpus();
-    expect(
-      await within(panel).findByText("No tethered memories yet"),
-    ).toBeInTheDocument();
-  });
-
-  test("workspace diagnostics are shown when the server reports malformed files", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memoryWorkspaceDiagnostics: [
-        {
-          code: "frontmatter.missing_boundary",
-          message: "file must begin with YAML frontmatter",
-          path: "/kb/memory/bad.md",
-        },
-      ],
-    });
-    renderApp(host);
-
-    const panel = await openCorpus();
-    expect(
-      await within(panel).findByText("Memory workspace diagnostics"),
-    ).toBeInTheDocument();
-    expect(
-      within(panel).getByText("frontmatter.missing_boundary"),
-    ).toBeInTheDocument();
-    expect(within(panel).getByText("bad.md")).toBeInTheDocument();
-  });
-
-  test("a memories invalidate frame refetches diagnostics", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      memoryWorkspaceDiagnostics: [
-        {
-          code: "frontmatter.missing_boundary",
-          message: "file must begin with YAML frontmatter",
-          path: "/kb/memory/bad.md",
-        },
-      ],
-    });
-    const bus = renderApp(host);
-    const panel = await openCorpus();
+    renderPanel(host);
 
     expect(
-      await within(panel).findByText("Memory workspace diagnostics"),
+      await screen.findByText("Memory workspace diagnostics"),
     ).toBeInTheDocument();
-    expect(host.memories.listWorkspaceDiagnosticsCalls).toBe(1);
-
-    host.memories.storedWorkspaceDiagnostics = [];
-    bus.emit({ keys: ["memories", "review-queue"], type: "invalidate" });
-
-    await waitFor(() => {
-      expect(host.memories.listWorkspaceDiagnosticsCalls).toBeGreaterThan(1);
-    });
-    await waitFor(() => {
-      expect(
-        screen.queryByText("Memory workspace diagnostics"),
-      ).not.toBeInTheDocument();
-    });
+    expect(screen.getByText("bad.md: Invalid YAML")).toBeInTheDocument();
   });
 });

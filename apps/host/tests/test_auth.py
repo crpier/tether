@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
 
 from snektest import (
     assert_eq,
@@ -53,13 +52,6 @@ def login(client: TestClient) -> None:
     """Authenticate the test browser."""
     response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
     assert_eq(response.status_code, 204)
-
-
-def capture(client: TestClient, content: str) -> dict[str, Any]:
-    """Capture one Memory through authenticated REST."""
-    response = client.post("/api/memories", json={"content": content})
-    assert_eq(response.status_code, 201)
-    return response.json()
 
 
 @test()
@@ -171,9 +163,9 @@ def session_cookie_expires_after_thirty_days_and_slides_on_activity() -> None:
 def public_rest_requires_a_valid_session_cookie() -> None:
     """Public REST rejects anonymous clients and accepts logged-in ones."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        anonymous = client.get("/api/memories", params={"state": "loose"})
+        anonymous = client.get("/api/memory-topics")
         login(client)
-        authenticated = client.get("/api/memories", params={"state": "loose"})
+        authenticated = client.get("/api/memory-topics")
 
     assert_eq(anonymous.status_code, 401)
     assert_eq(authenticated.status_code, 200)
@@ -183,7 +175,7 @@ def public_rest_requires_a_valid_session_cookie() -> None:
 def auth_guard_exempts_internal_tools_and_docs() -> None:
     """Loopback tools and API docs stay reachable without an app cookie."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        internal = client.post("/internal/tools/capture", json={})
+        internal = client.post("/internal/tools/search", json={})
         openapi = client.get("/openapi.json")
         docs = client.get("/docs")
 
@@ -226,8 +218,7 @@ def configured_bearer_token_passes_public_rest_without_a_cookie() -> None:
         make_client(Path(directory), api_token=API_TOKEN) as client,
     ):
         response = client.get(
-            "/api/memories",
-            params={"state": "loose"},
+            "/api/memory-topics",
             headers={"Authorization": f"Bearer {API_TOKEN}"},
         )
 
@@ -242,8 +233,7 @@ def wrong_bearer_token_is_rejected_by_public_rest() -> None:
         make_client(Path(directory), api_token=API_TOKEN) as client,
     ):
         response = client.get(
-            "/api/memories",
-            params={"state": "loose"},
+            "/api/memory-topics",
             headers={"Authorization": "Bearer wrong-token"},
         )
 
@@ -255,8 +245,7 @@ def bearer_auth_stays_off_when_token_unset() -> None:
     """With no configured token, a bearer header does not open public REST."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         response = client.get(
-            "/api/memories",
-            params={"state": "loose"},
+            "/api/memory-topics",
             headers={"Authorization": f"Bearer {API_TOKEN}"},
         )
 
@@ -271,8 +260,7 @@ def bearer_request_is_not_issued_a_session_cookie() -> None:
         make_client(Path(directory), api_token=API_TOKEN) as client,
     ):
         response = client.get(
-            "/api/memories",
-            params={"state": "loose"},
+            "/api/memory-topics",
             headers={"Authorization": f"Bearer {API_TOKEN}"},
         )
 
@@ -288,7 +276,7 @@ def cookie_auth_still_works_with_a_token_configured() -> None:
         make_client(Path(directory), api_token=API_TOKEN) as client,
     ):
         login(client)
-        response = client.get("/api/memories", params={"state": "loose"})
+        response = client.get("/api/memory-topics")
 
     assert_eq(response.status_code, 200)
 
@@ -310,11 +298,11 @@ def public_rest_is_served_under_the_api_prefix() -> None:
     """The browser REST surface lives under `/api`, not the root."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         login(client)
-        memory = capture(client, "I prefer aisle seats")
-        old_path = client.get("/memories", params={"state": "loose"})
+        topics = client.get("/api/memory-topics")
+        old_path = client.get("/memories")
         document = client.get("/openapi.json").json()
 
-    assert_eq(memory["state"], "loose")
+    assert_eq(topics.status_code, 200)
     assert_eq(old_path.status_code, 404)
-    assert_in("/api/memories", document["paths"])
+    assert_in("/api/memory-topics", document["paths"])
     assert_true(all(path.startswith("/api") for path in document["paths"]))

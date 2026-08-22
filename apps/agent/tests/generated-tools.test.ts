@@ -20,17 +20,8 @@ describe("generated tool extension", () => {
     tetherToolsExtension(pi);
 
     expect(registeredTools.map((tool) => tool.name)).toEqual([
-      "capture",
-      "browse",
       "search",
-      "review_digest",
-      "tether",
-      "edit",
-      "append",
-      "reject",
-      "facet_overview",
-      "rename_facet_key",
-      "merge_facet_value",
+      "queue_memory_assimilation",
       "add_movie",
       "add_place",
       "add_book",
@@ -44,7 +35,6 @@ describe("generated tool extension", () => {
       "create_todo",
       "set_todo_status",
       "link_todo_trigger",
-      "link_todo_memory",
       "list_todos",
       "triage_report",
       "browse_youtube",

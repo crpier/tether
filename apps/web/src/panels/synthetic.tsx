@@ -2,9 +2,7 @@ import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 
-import type { Memory } from "../host/memories";
-import type { Panel, PanelsHost } from "../host/panels";
-import { formatDate as formatDateOnly } from "../lib/format";
+import type { Panel, PanelsHost, PanelTopic } from "../host/panels";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
 import { renderVegaLiteWidget } from "../components/widgets/vega-lite-widget";
@@ -16,23 +14,19 @@ import { Button } from "@/components/ui/button";
 // Widget vocabulary (ADR 0011): a Tether-styled table by default, or the
 // stored Vega-Lite spec template with the result rows injected as its data.
 
-function formatDate(value: string | null): string {
-  if (value === null) {
-    return "";
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : formatDateOnly(parsed);
-}
-
-// Project a Memory onto the flat row shape both render kinds consume: the
-// content, the tethered date, and the panel's chosen facet columns.
-function resultRow(memory: Memory, columns: string[]): Record<string, string> {
+// Project one current Topic onto the flat row shape both render kinds consume.
+function resultRow(
+  topic: PanelTopic,
+  columns: string[],
+): Record<string, string> {
   const row: Record<string, string> = {
-    content: memory.content,
-    tethered: formatDate(memory.tethered_at),
+    content: topic.body,
+    path: topic.path,
+    title: topic.title,
   };
   for (const column of columns) {
-    row[column] = memory.facets[column] ?? "";
+    const value = topic.metadata[column];
+    row[column] = typeof value === "string" ? value : "";
   }
   return row;
 }
@@ -96,7 +90,7 @@ function ResultsTable(props: {
   columns: string[];
   rows: Record<string, string>[];
 }) {
-  const headers = () => ["content", ...props.columns, "tethered"];
+  const headers = () => ["title", "content", ...props.columns, "path"];
   return (
     <div class="overflow-x-auto">
       <table class="w-full text-left text-sm">
@@ -136,8 +130,8 @@ function SyntheticPanelCard(props: { api: PanelsHost; panel: Panel }) {
   }));
 
   const rows = () =>
-    (resultsQuery.data?.memories ?? []).map((memory) =>
-      resultRow(memory, props.panel.columns),
+    (resultsQuery.data?.topics ?? []).map((topic) =>
+      resultRow(topic, props.panel.columns),
     );
 
   const remove = () => {
@@ -185,8 +179,7 @@ function SyntheticPanelCard(props: { api: PanelsHost; panel: Panel }) {
         </Match>
         <Match when={resultsQuery.data?.total === 0}>
           <p class="text-muted-foreground text-sm">
-            No memories match this panel — its facets may have drifted (check
-            the facet overview).
+            No Memory Topics match this panel.
           </p>
         </Match>
         <Match when={resultsQuery.data}>
@@ -208,9 +201,9 @@ function SyntheticPanelCard(props: { api: PanelsHost; panel: Panel }) {
                   <ResultsTable columns={props.panel.columns} rows={rows()} />
                 </Match>
               </Switch>
-              <Show when={results().total > results().memories.length}>
+              <Show when={results().total > results().topics.length}>
                 <p class="text-muted-foreground text-xs">
-                  Showing {results().memories.length} of {results().total}
+                  Showing {results().topics.length} of {results().total}
                 </p>
               </Show>
             </div>

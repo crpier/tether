@@ -6,13 +6,35 @@ the `/internal/tools/*` endpoints assert the uniform envelope. Both derive
 from `tether.panel_capabilities`.
 """
 
+import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
+from snekql.sqlite import Database, insert
 from snektest import assert_eq, test
+from starlette.applications import Starlette
 
 from tests.surfaces import call_tool, login, surface_client
+from tether.app_runtime import app_runtime
+from tether.dreaming_store import DreamingWorkspaceFile
+
+
+async def seed_topic(database: Database, path: str, content: str) -> None:
+    """Record one acknowledged Dreaming Topic for the surface fixture."""
+    async with database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamingWorkspaceFile(
+                    path=path,
+                    content_hash=hashlib.sha256(content.encode()).hexdigest(),
+                    content=content,
+                    is_tombstone=0,
+                    version=1,
+                    actor="dream",
+                )
+            )
+        )
 
 
 def finance_panel_body(**overrides: Any) -> dict[str, Any]:
@@ -84,45 +106,32 @@ def rest_conflicts_on_a_stale_version() -> None:
 
 
 @test()
-def rest_results_recompute_over_the_live_corpus() -> None:
-    """`GET /results` reflects a Memory tethered after the panel was saved."""
+def rest_results_recompute_over_current_topics() -> None:
+    """`GET /results` reflects a Topic Dreaming added after panel creation."""
     with TemporaryDirectory() as root, surface_client(Path(root)) as client:
         login(client)
         panel = client.post("/api/panels", json=finance_panel_body()).json()
 
         empty = client.get(f"/api/panels/{panel['id']}/results")
         assert_eq(empty.status_code, 200)
-        assert_eq(empty.json(), {"memories": [], "total": 0})
+        assert_eq(empty.json(), {"topics": [], "total": 0})
 
-        memory = client.post(
-            "/api/memories",
-            json={"content": "rent is 900"},
-        ).json()
-        edited = client.patch(
-            f"/api/memories/{memory['id']}",
-            json={"content": "rent is 900", "version": memory["version"]},
+        content = "---\ntitle: Finances\ndomain: finance\n---\nRent is 900.\n"
+        topic_path = Path(root) / ".tether" / "memory" / "finance.md"
+        topic_path.parent.mkdir(parents=True, exist_ok=True)
+        topic_path.write_text(content, encoding="utf-8")
+        portal = client.portal
+        assert portal is not None
+        portal.call(
+            seed_topic,
+            app_runtime(cast("Starlette", client.app)).dreaming_service.database,
+            "finance.md",
+            content,
         )
-        assert_eq(edited.status_code, 200)
-
-        # Facet + tether through the tool surface (facets ride capture/edit).
-        _ = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="rent is 900",
-            facets={"domain": "finance"},
-            version=edited.json()["version"],
-        )
-        refreshed = client.get("/api/memories", params={"state": "loose"}).json()
-        tethered = client.post(
-            f"/api/memories/{memory['id']}/tether",
-            json={"version": refreshed[0]["version"]},
-        )
-        assert_eq(tethered.status_code, 200)
 
         results = client.get(f"/api/panels/{panel['id']}/results")
         assert_eq(results.json()["total"], 1)
-        assert_eq(results.json()["memories"][0]["id"], memory["id"])
+        assert_eq(results.json()["topics"][0]["path"], "finance.md")
 
 
 @test()

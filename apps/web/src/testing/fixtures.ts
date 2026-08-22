@@ -7,7 +7,6 @@ import type {
   DreamRun,
   Grant,
   GrantSuggestion,
-  Memory,
   Message,
   ModelList,
   Notification,
@@ -129,7 +128,7 @@ export function duePrompt(overrides: {
       completed_at: null,
       created_at: "2026-01-01T00:00:00Z",
       id: "018f0000-0000-7000-8000-0000000000d1",
-      memory_id: "018f0000-0000-7000-8000-0000000000e1",
+      distilled_learnings: "Async IO multiplexes waits.",
       source_title: overrides.sourceTitle ?? "Async IO Explained",
       source_video_id: "v1",
       state: "studying",
@@ -189,20 +188,6 @@ export function todo(overrides: Partial<Todo>): Todo {
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,
     waiting: false,
-    ...overrides,
-  };
-}
-
-export function memory(overrides: Partial<Memory>): Memory {
-  return {
-    content: "I prefer aisle seats",
-    created_at: "2026-01-01T00:00:00Z",
-    facets: {},
-    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
-    state: "loose",
-    tethered_at: null,
-    updated_at: "2026-01-01T00:00:00Z",
-    version: 1,
     ...overrides,
   };
 }

@@ -43,7 +43,6 @@ export class FakeRecallHost implements RecallHost {
       correct,
       prompt: answered?.prompt ?? this.placeholderPrompt(promptId),
       quality: correct ? 5 : 1,
-      tethered: false,
     });
   }
 

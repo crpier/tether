@@ -20,9 +20,6 @@ notification history (the same precedent ADR 0017 §d cites for the Project
 vertical), so readiness introduces no new write path — a fired trigger has left a
 `Notification` row carrying its `trigger_id`.
 
-Memory links live in a bespoke `todo_memories` table (no generic edge table, per
-ADR 0016), so the context that produced a Todo travels with it.
-
 >>> service = TodoService(database=database, tracer=tracer)
 >>> todo = await service.create("call the dentist", logger=logger)
 >>> todo.status
@@ -53,7 +50,7 @@ from tether.notification_store import Notification
 from tether.structured_logging import Logger
 from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
 from tether.todo_model import READY_DIGEST_CAP, WAITING_DIGEST_CAP, TodoStatus
-from tether.todo_store import Todo, TodoMemory
+from tether.todo_store import Todo
 from tether.trigger_store import ScheduledTrigger
 
 
@@ -246,53 +243,6 @@ class TodoService:
         _info(logger, "Todo trigger linked", todo_id=str(fresh.id))
         await self.event_publisher.publish(InvalidateEvent(keys=["todos"]))
         return fresh
-
-    async def link_memory(
-        self,
-        todo_id: UUID,
-        memory_id: UUID,
-        *,
-        logger: Logger,
-    ) -> None:
-        """Link a Memory to a Todo, idempotently (a repeat link is a no-op).
-
-        Raises when the Todo does not exist so a link never dangles.
-        """
-        _debug(
-            logger,
-            "Linking Todo memory",
-            todo_id=str(todo_id),
-            memory_id=str(memory_id),
-        )
-
-        async def _link(tx: Transaction) -> None:
-            _ = await self._fetch(tx, todo_id)
-            existing = await tx.fetch_one_or_none(
-                select(TodoMemory)
-                .where(TodoMemory.todo_id.eq(str(todo_id)))
-                .where(TodoMemory.memory_id.eq(str(memory_id)))
-            )
-            if existing is not None:
-                return
-            _ = await tx.execute(
-                insert(
-                    TodoMemory(todo_id=str(todo_id), memory_id=str(memory_id))
-                ).returning()
-            )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            await _link(tx)
-        await self.event_publisher.publish(InvalidateEvent(keys=["todos"]))
-
-    async def linked_memory_ids(self, todo_id: UUID) -> list[str]:
-        """The memory ids linked to a Todo, oldest link first."""
-        async with self.database.transaction() as tx:
-            links = await tx.fetch_all(
-                select(TodoMemory)
-                .where(TodoMemory.todo_id.eq(str(todo_id)))
-                .order_by(TodoMemory.created_at.asc())
-            )
-        return [link.memory_id for link in links]
 
     async def list_by_status(
         self, status: TodoStatus, *, logger: Logger

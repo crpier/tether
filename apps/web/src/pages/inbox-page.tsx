@@ -10,27 +10,19 @@ import {
   onMount,
 } from "solid-js";
 
-import { useHost, useInboxCaptureDraft } from "../app-context";
+import { useHost } from "../app-context";
 import type { BucketTriageReport } from "../host/bucket";
-import type { Memory } from "../host/memories";
 import type { Notification } from "../host/notifications";
 import type { DuePrompt, EssayGradeProposal, RecallHost } from "../host/recall";
-import { ApiError } from "../host/error";
 import type { TranscriptDecision } from "../host/youtube";
-import { formatDate, formatDateTime, formatSyncTimestamp } from "../lib/format";
+import { formatDateTime, formatSyncTimestamp } from "../lib/format";
 import { queryKeys } from "../lib/query-keys";
 import { cx } from "../lib/cva";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  TextField,
-  TextFieldInput,
-  TextFieldLabel,
-  TextFieldTextArea,
-} from "@/components/ui/text-field";
+import { TextField, TextFieldTextArea } from "@/components/ui/text-field";
 
 type InboxItem =
-  | { id: string; kind: "memory"; memory: Memory }
   | {
       detail: string;
       group:
@@ -54,7 +46,6 @@ type InboxItem =
 
 const KIND_LABEL: Record<InboxItem["kind"], string> = {
   "bucket-triage": "Bucket triage",
-  memory: "Memory review",
   notification: "Fired reminder",
   recall: "Recall due",
   "transcript-decision": "Transcript decision",
@@ -134,8 +125,8 @@ function recallVerdict(proposal: EssayGradeProposal): string {
   return `Model suggests: ${verdict}${reasoning}`;
 }
 
-// Inbox (#250): everything awaiting the user's judgment — memory review
-// queue, bucket triage advisories, due recall prompts, and fired reminders —
+// Inbox (#250): everything awaiting the user's judgment — bucket triage
+// advisories, due Recall prompts, transcript decisions, and fired reminders —
 // grouped by kind, master-detail. Adjudicating an item here is the one
 // clearing pass; the underlying vertical (Browse's Bucket tab, etc.) still
 // owns the full CRUD surface.
@@ -165,7 +156,6 @@ function createMediaQuery(query: string, fallback: boolean) {
 
 export function InboxPage() {
   const bucket = useHost("bucket");
-  const memories = useHost("memories");
   const notifications = useHost("notifications");
   const recall = useHost("recall");
   const youtube = useHost("youtube");
@@ -174,10 +164,6 @@ export function InboxPage() {
   const [error, setError] = createSignal<string | undefined>();
   const isDesktop = createMediaQuery("(min-width: 1024px)", true);
 
-  const looseQuery = createQuery(() => ({
-    queryFn: () => memories.listMemories("loose"),
-    queryKey: queryKeys.memoriesState("loose"),
-  }));
   const triageQuery = createQuery(() => ({
     queryFn: () => bucket.getBucketTriage(),
     queryKey: queryKeys.bucketItemsView("triage"),
@@ -196,11 +182,6 @@ export function InboxPage() {
   }));
 
   const items = createMemo<InboxItem[]>(() => [
-    ...(looseQuery.data ?? []).map((memoryItem): InboxItem => ({
-      id: `memory:${memoryItem.id}`,
-      kind: "memory",
-      memory: memoryItem,
-    })),
     ...triageItems(triageQuery.data),
     ...(recallQuery.data ?? []).map((due): InboxItem => ({
       due,
@@ -232,44 +213,6 @@ export function InboxPage() {
   const selected = createMemo(() =>
     items().find((item) => item.id === selectedId()),
   );
-
-  const memoriesRefresh = () => {
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.memories,
-      refetchType: "none",
-    });
-    void queryClient.refetchQueries({
-      queryKey: queryKeys.memoriesState("loose"),
-    });
-  };
-
-  const memoryAct = (item: Memory, action: "tether" | "reject") => {
-    setError(undefined);
-    void (async () => {
-      try {
-        if (action === "tether") {
-          await memories.tetherMemory(item.id, item.version);
-        } else {
-          await memories.rejectMemory(item.id, item.version);
-        }
-        setSelectedId(undefined);
-        memoriesRefresh();
-      } catch (caught) {
-        if (caught instanceof ApiError && caught.status === 409) {
-          setError(
-            "This memory changed elsewhere — refresh and review it again.",
-          );
-          memoriesRefresh();
-          return;
-        }
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : `Could not ${action} the memory`,
-        );
-      }
-    })();
-  };
 
   const dismissNotification = (notificationId: string) => {
     void (async () => {
@@ -306,33 +249,6 @@ export function InboxPage() {
     })();
   };
 
-  const {
-    inboxCaptureDraft: captureContent,
-    setInboxCaptureDraft: setCaptureContent,
-  } = useInboxCaptureDraft();
-
-  const capture = () => {
-    setError(undefined);
-    const content = captureContent().trim();
-    if (content.length === 0) {
-      setError("Write something to capture");
-      return;
-    }
-    void (async () => {
-      try {
-        await memories.captureMemory(content);
-        setCaptureContent("");
-        memoriesRefresh();
-      } catch (caught) {
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "Could not capture the memory",
-        );
-      }
-    })();
-  };
-
   const isEmpty = createMemo(() => items().length === 0);
 
   return (
@@ -346,26 +262,6 @@ export function InboxPage() {
         </h1>
       </header>
       <div class="flex-1 overflow-y-auto p-4 sm:p-5">
-        {/* Capturing a new loose memory has no other home — Browse's Memories
-            tab is corpus-only, and the review queue that would receive it
-            lives here. */}
-        <form
-          class="mb-4 flex flex-wrap items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            capture();
-          }}
-        >
-          <TextField
-            class="min-w-[16rem] flex-1"
-            onChange={setCaptureContent}
-            value={captureContent()}
-          >
-            <TextFieldLabel>Capture</TextFieldLabel>
-            <TextFieldInput name="capture" />
-          </TextField>
-          <Button type="submit">Capture memory</Button>
-        </form>
         <Show when={error()}>
           {(message) => (
             <p class="text-destructive mb-3 text-sm" role="alert">
@@ -440,7 +336,6 @@ export function InboxPage() {
                   <InboxDetail
                     dismissNotification={dismissNotification}
                     item={item()}
-                    memoryAct={memoryAct}
                     recall={recall}
                     transcriptDecisionAct={transcriptDecisionAct}
                   />
@@ -464,7 +359,6 @@ export function InboxPage() {
                   <InboxDetail
                     dismissNotification={dismissNotification}
                     item={item()}
-                    memoryAct={memoryAct}
                     recall={recall}
                     transcriptDecisionAct={transcriptDecisionAct}
                   />
@@ -480,8 +374,6 @@ export function InboxPage() {
 
 function itemTitle(item: InboxItem): string {
   switch (item.kind) {
-    case "memory":
-      return item.memory.content;
     case "bucket-triage":
       return item.title;
     case "recall":
@@ -514,7 +406,6 @@ function shortId(id: string): string {
 function InboxDetail(props: {
   dismissNotification: (notificationId: string) => void;
   item: InboxItem;
-  memoryAct: (item: Memory, action: "tether" | "reject") => void;
   recall: RecallHost;
   transcriptDecisionAct: (
     decision: TranscriptDecision,
@@ -531,39 +422,6 @@ function InboxDetail(props: {
         <Badge variant="secondary">{KIND_LABEL[props.item.kind]}</Badge>
       </div>
       <Switch>
-        <Match when={props.item.kind === "memory" && props.item}>
-          {(entry) => (
-            <div class="space-y-3">
-              <p class="text-sm">{entry().memory.content}</p>
-              <p class="text-muted-foreground text-xs">
-                {`captured ${formatDate(new Date(entry().memory.created_at))}`}
-              </p>
-              <div class="flex gap-2">
-                <Button
-                  aria-label="Accept memory"
-                  onClick={() => {
-                    props.memoryAct(entry().memory, "tether");
-                  }}
-                  size="sm"
-                  type="button"
-                >
-                  Accept memory
-                </Button>
-                <Button
-                  aria-label="Reject memory"
-                  onClick={() => {
-                    props.memoryAct(entry().memory, "reject");
-                  }}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Reject
-                </Button>
-              </div>
-            </div>
-          )}
-        </Match>
         <Match when={props.item.kind === "bucket-triage" && props.item}>
           {(entry) => (
             <div class="space-y-2">

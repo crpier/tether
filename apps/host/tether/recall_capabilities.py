@@ -61,9 +61,9 @@ class StudyItemRead(BaseModel):
     """HTTP representation of a study item."""
 
     id: UUID7
-    memory_id: UUID7
     source_video_id: str
     source_title: str
+    distilled_learnings: str
     state: StudyItemState
     created_at: datetime
     updated_at: datetime
@@ -74,9 +74,9 @@ class StudyItemRead(BaseModel):
         """Render a stored study item as its HTTP representation."""
         return cls(
             id=item.id,
-            memory_id=item.memory_id,
             source_video_id=item.source_video_id,
             source_title=item.source_title,
+            distilled_learnings=item.distilled_learnings,
             state=item.state,
             created_at=item.created_at,
             updated_at=item.updated_at,
@@ -168,7 +168,6 @@ class AnswerOutcomeRead(BaseModel):
     correct: bool
     quality: int
     completed: bool
-    tethered: bool
     prompt: RecallPromptRead
 
     @classmethod
@@ -178,13 +177,12 @@ class AnswerOutcomeRead(BaseModel):
             correct=outcome.correct,
             quality=outcome.quality,
             completed=outcome.completed,
-            tethered=outcome.tethered,
             prompt=RecallPromptRead.from_prompt(outcome.prompt),
         )
 
 
 async def start_recall(request: Request, video_id: str) -> CapabilityOutcome:
-    """Promote an ingested educational video into a study item under Recall."""
+    """Start Recall from an ingested educational video's transcript."""
     video = await app_runtime(request.app).youtube_service.get_video(video_id)
     if video.transcript is None:
         message = f"video {video_id} has no fetched transcript to distil"
@@ -231,7 +229,7 @@ async def list_due_prompts(
 async def answer_prompt(
     request: Request, prompt_id: UUID, answer: PromptAnswer
 ) -> CapabilityOutcome:
-    """Answer a recall prompt, grading and rescheduling it (tethering on completion).
+    """Answer a recall prompt, grading and rescheduling it.
 
     The answer input matches the prompt's kind: `selected_index` for multiple
     choice, `answer_text` for short answers, and `answer_text` plus the

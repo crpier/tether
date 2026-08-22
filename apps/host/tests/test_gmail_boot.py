@@ -26,9 +26,6 @@ from tether.host_resources import HostBootstrap
 from tether.ingestion_composition import compose_gmail
 from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.local_dependencies import LocalSttTransport
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_store import create_memory_schema
 from tether.model_selection import AgentModelCatalog
 from tether.stt import SttClient
 from tether.todo_store import create_todo_schema
@@ -135,7 +132,6 @@ class BootGmailTransport:
 async def _wire(config: AppConfig) -> asyncio.Event:
     """Compose Gmail over bare dependencies for disabled-gate assertions."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_memory_schema(db)
     await create_trigger_schema(db)
     await create_todo_schema(db)
     await create_gmail_schema(db)
@@ -144,10 +140,6 @@ async def _wire(config: AppConfig) -> asyncio.Event:
     tracer = trace.NoOpTracerProvider().get_tracer("test.gmail_boot")
     try:
         async with TemporaryDirectory() as kb_root:
-            kb_service = KnowledgeBaseService(kb_root=Path(kb_root))
-            memory_service = MemoryService(
-                database=db, kb_service=kb_service, tracer=tracer
-            )
             trigger_service = TriggerService(database=db, tracer=tracer)
             todo_service = TodoService(database=db, tracer=tracer)
             await compose_gmail(
@@ -164,7 +156,6 @@ async def _wire(config: AppConfig) -> asyncio.Event:
                 ingestion_lifecycle=ingestion_lifecycle,
                 kb_root=Path(kb_root),
                 logger=logger,
-                memory_service=memory_service,
                 model_catalog=AgentModelCatalog(default_model=None, models=()),
                 trigger_service=trigger_service,
                 todo_service=todo_service,

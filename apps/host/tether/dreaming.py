@@ -1071,6 +1071,18 @@ class DreamingService:
         self.settle_window: timedelta = settle_window
         self.max_messages_per_run: PositiveInt = max_messages_per_run
         self.tracer: Tracer | None = tracer
+        self._immediate_assimilation_requests: set[UUID] = set()
+
+    def request_immediate_assimilation(self, conversation_id: UUID) -> None:
+        """Mark one active Conversation for post-turn settle-window bypass."""
+        self._immediate_assimilation_requests.add(conversation_id)
+
+    def consume_immediate_assimilation_request(self, conversation_id: UUID) -> bool:
+        """Consume one collapsed post-turn immediate-assimilation request."""
+        if conversation_id not in self._immediate_assimilation_requests:
+            return False
+        self._immediate_assimilation_requests.remove(conversation_id)
+        return True
 
     async def queue_manual_run(
         self,

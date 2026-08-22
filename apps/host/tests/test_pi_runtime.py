@@ -749,11 +749,8 @@ export default function inspectTools(pi) {
             "add_purchase",
             "add_travel",
             "answer_recall_prompt",
-            "append",
             "archive_gmail_message",
-            "browse",
             "browse_youtube",
-            "capture",
             "complete_bucket_item",
             "create_artifact",
             "create_panel",
@@ -762,13 +759,10 @@ export default function inspectTools(pi) {
             "delete_bucket_item",
             "delete_panel",
             "delete_trigger",
-            "edit",
-            "facet_overview",
             "fetch_youtube_transcript",
             "health_connect_inventory",
             "ignore_youtube_video",
             "label_ebook",
-            "link_todo_memory",
             "link_todo_trigger",
             "list_artifact_events",
             "list_due_recall_prompts",
@@ -779,17 +773,14 @@ export default function inspectTools(pi) {
             "list_triggers",
             "list_unlabeled_ebooks",
             "match_ebook_filename",
-            "merge_facet_value",
             "propose",
             "propose_essay_grade",
             "query_health_connect",
+            "queue_memory_assimilation",
             "read",
             "read_conversation_history",
             "read_gmail_message",
-            "reject",
-            "rename_facet_key",
             "retry_youtube_video",
-            "review_digest",
             "search",
             "search_bucket_items",
             "search_gmail",
@@ -799,7 +790,6 @@ export default function inspectTools(pi) {
             "set_todo_status",
             "start_recall",
             "summarize_health_connect",
-            "tether",
             "trash_gmail_message",
             "triage_report",
             "update_artifact",
@@ -810,7 +800,7 @@ export default function inspectTools(pi) {
     )
     assert_not_in("bash", active_tools)
     assert_in("read", active_tools)
-    assert_in("capture", active_tools)
+    assert_in("queue_memory_assimilation", active_tools)
 
 
 @test()
@@ -818,19 +808,21 @@ async def generated_shim_tool_call_reaches_loopback_and_returns_envelope() -> No
     """A pi command can execute a generated shim that calls the host API."""
     session_dir = await load_fixture(pi_session_dir())
     host = await load_fixture(live_host())
-    smoke_extension = session_dir / "capture-smoke.ts"
-    capture_tool_import_path = (AGENT_ROOT / "src/generated/capture.ts").as_posix()
+    smoke_extension = session_dir / "assimilation-smoke.ts"
+    tool_import_path = (
+        AGENT_ROOT / "src/generated/queue_memory_assimilation.ts"
+    ).as_posix()
     smoke_extension.write_text(
         f"""
-import {{ captureTool }} from "{capture_tool_import_path}";
+import {{ queue_memory_assimilationTool }} from "{tool_import_path}";
 
-export default function captureSmoke(pi) {{
-  pi.registerCommand("tether-capture-smoke", {{
-    description: "Execute the generated capture shim",
+export default function assimilationSmoke(pi) {{
+  pi.registerCommand("tether-assimilation-smoke", {{
+    description: "Execute the generated assimilation shim",
     handler: async (_args, ctx) => {{
-      const result = await captureTool.execute(
+      const result = await queue_memory_assimilationTool.execute(
         "smoke-call",
-        {{ content: "shim e2e memory" }},
+        {{}},
         undefined,
       );
       ctx.ui.notify(JSON.stringify(result.details), "info");
@@ -851,11 +843,10 @@ export default function captureSmoke(pi) {{
         session_registry=host.session_registry,
     )
 
-    await runtime.client.request("prompt", message="/tether-capture-smoke")
+    await runtime.client.request("prompt", message="/tether-assimilation-smoke")
     event = await runtime.next_event("extension_ui_request", wait_seconds=5)
     await runtime.shutdown()
 
     details = json.loads(event["message"])
-    assert_eq(details["result"]["content"], "shim e2e memory")
-    assert_eq(details["result"]["state"], "loose")
-    assert_eq(details["provenance"], {"kind": "manual"})
+    assert_eq(details["result"], {"queued": False})
+    assert_eq(details["provenance"], None)

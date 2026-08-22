@@ -5,19 +5,12 @@ import type {
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { executeTetherTool, type TetherToolDetails } from "../runtime.js";
 
 const searchParameters = Type.Object({
   q: Type.String(),
   limit: Type.Optional(Type.Integer({ default: 50, exclusiveMinimum: 0 })),
-  facets: Type.Optional(Type.Record(Type.String(), Type.String())),
-  sources: Type.Optional(
-    Type.Array(StringEnum(["memory", "bucket_item"] as const)),
-  ),
-  after: Type.Optional(Type.String({ format: "date-time" })),
-  before: Type.Optional(Type.String({ format: "date-time" })),
 });
 
 export type SearchParams = Static<typeof searchParameters>;
@@ -28,10 +21,8 @@ export const searchTool: ToolDefinition<
 > = {
   name: "search",
   label: "Search",
-  description:
-    "Params for the assistant's cross-source Search (Memories + Bucket items).\n\n`facets`, when supplied, is an exact-match AND filter applied to the\nMemory arm only: a Memory must carry every given key with exactly that\nvalue to be returned. `sources`, when supplied, restricts fusion to that\nsubset of arms; omitted, every arm runs. `after`/`before`, when supplied,\nbound every arm's own capture timestamp (a Memory's `tethered_at`, a\nBucket item's `created_at`), inclusive on both ends; either or both may\nbe given, and supplying `after` later than `before` is rejected.",
-  promptSnippet:
-    "Params for the assistant's cross-source Search (Memories + Bucket items).\n\n`facets`, when supplied, is an exact-match AND filter applied to the\nMemory arm only: a Memory must carry every given key with exactly that\nvalue to be returned. `sources`, when supplied, restricts fusion to that\nsubset of arms; omitted, every arm runs. `after`/`before`, when supplied,\nbound every arm's own capture timestamp (a Memory's `tethered_at`, a\nBucket item's `created_at`), inclusive on both ends; either or both may\nbe given, and supplying `after` later than `before` is rejected.",
+  description: "Search Dreaming-maintained current Memory Topics.",
+  promptSnippet: "Search Dreaming-maintained current Memory Topics.",
   parameters: searchParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

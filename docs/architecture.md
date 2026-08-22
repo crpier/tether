@@ -2,8 +2,6 @@
 
 A map of Tether's stack and the load-bearing decisions, with pointers to the ADRs that record the hard-to-reverse ones. This is a map, not a spec — it says *what* and *why*, not *how* in detail.
 
-> **Pending #507 cutover:** the Memory/Review/Markdown passages below still describe the deployed legacy implementation. ADRs 0021–0024 accept its replacement with canonical agent-curated files; see `docs/plans/507-curated-memory.md` for delivery order. Update this map when that implementation lands.
-
 ## Shape
 
 ```
@@ -16,22 +14,22 @@ SolidJS UI ──HTTP/WS──▶ Python host ──spawns──▶ pi (RPC subp
                            └─────── loopback internal tool API ◀────────┘
                                     (per-process secret + session id)
 
-  embeddings: in-host (FastEmbed/ONNX)   |   markdown KB + LanceDB search index: derived from SQLite
+  embeddings: in-host (FastEmbed/ONNX)   |   canonical Memory Markdown + SQLite mutation history
 ```
 
 One deploy container: the **host + Node/pi co-resident** (so the host can spawn pi subprocesses), with the built Solid SPA served by the Python host alongside `/api` and `/ws`. Tailscale runs on the VM and terminates private HTTPS outside Compose. Named volumes hold durable data and the embedding-model cache. Dev runs everything natively.
 
 ## Components
 
-**Python host** — the spine. Owns all state and business logic, the review/candidate gates, Search, the scheduler, and the internal tool API. Built on **FastAPI**, fully async (no blocking IO). **WebSocket** for the chat surface (bidirectional, matches pi's mid-turn `steer`/`abort`); plain **REST** for everything else (memory CRUD, review queue, triage, bucket items, KB browse). Targets Python ≥3.14 (snekql floor).
+**Python host** — the spine. Owns Evidence, Dreaming policy/history, typed vertical state, Search, scheduling, and the internal tool API. Built on **FastAPI**, fully async. **WebSocket** serves chat; plain **REST** serves current Memory Topics, Dream history, triage, and typed verticals. There is no Memory CRUD or Review queue. Targets Python ≥3.14.
 
 **pi (agent runtime)** — earendil-works/pi in RPC mode, driven as a host-spawned subprocess. "One agent" is a *definition* (one tool belt, prompt, extensions), realized as multiple processes: one long-lived for foreground chat, ephemeral ones for background work. pi runs with built-in tools disabled — a **closed tool world** whose only surface is Tether's tools. See ADR 0002, ADR 0005.
 
 **Tools** — every capability is a pi extension (`pi.registerTool`) whose `execute` is a thin TS shim that calls back into the host over the loopback internal tool API. All logic stays in Python; the shim only marshals `{params, session id, secret}`. Tool param schemas have a single source of truth — the host's Pydantic models — from which the shims are generated. See ADR 0005.
 
-**Data layer** — **SQLite is the single source of truth** (ADR 0003), accessed through **snekql** (the author's async-first typed query builder over aiosqlite: typed models, pooled transactions, hand-authored ordered migrations, startup schema verification). WAL mode. Bucket items: one table with universal indexed columns (`item_type`, `state`, dedup key, `provenance`, `intent_context`, timestamps) plus a JSON `data` column holding the item-type's Pydantic payload. Memories are a separate table (amorphous, no item type).
+**Data layer** — **SQLite owns canonical Evidence, typed vertical state, Dream runs/cursors, suppressions, and complete Memory mutation/history records**, accessed through snekql. Current Memory is the recorded, Dreaming-authored Markdown workspace; there is no `Memory` row, trust state, facet table, or Todo→Memory link. Source integrations retain their own Evidence: Messages, Gmail records, Readwise highlights, reading progress, Health summaries, and other typed records.
 
-**Search** — hybrid lexical + semantic over an **embedded LanceDB dataset** (`.tether/index/`), the two score lists fused with **RRF** (ADR 0009). Connection emerges from Search, not stored structure (CONTEXT.md). SQLite stays the single source of truth: it holds Memory rows *and* the canonical embedding vectors (BLOB); LanceDB is a **derived projection** (gitignored and rebuildable from SQLite on restore — no re-embed), strictly parallel to the markdown KB. Operational backups now include only curated markdown from `/data/kb/memory` and `/data/kb/pi-sessions`; no recovery depends on LanceDB. LanceDB runs **in-host** via its abi3 wheel behind a thin typed adapter (`SearchIndex`); the only module importing `lancedb`. We build only LanceDB's **native FTS index** (0.33 removed Tantivy) and **no vector ANN index** — at 10–50k Memories flat-scan exact cosine is single-digit ms and beats lossy IVF_PQ. Reads treat the index as a **candidate generator** — it returns ids+scores, which `MemoryService.search()` hydrates and re-filters `tethered ∧ ¬deleted` against SQLite, so index drift can never breach ADR 0001. Embeddings are **local and in-host** via FastEmbed/ONNX behind an `Embedder` seam (onnxruntime/tokenizers/fastembed all run on Python 3.14, unlike torch — so no separate worker is needed; the seam keeps the out-of-process option open for later RAM/crash isolation); inference runs on a `run_in_executor` pool to keep the loop free, on both the write path and the per-query read path (ADR 0006 forbids caching the query vector, but a warm embed is ~2ms). New and edited rows are searchable immediately on both paths (flat-scan of the unindexed tail), so an idempotent, SQLite-marker-driven reconciler (the sole LanceDB writer) converges the index with no visibility deadline; its periodic `optimize()` pass is pure hygiene (compaction, version pruning, folding the tail into the FTS index).
+**Search** — current Memory Search scans validated Topic files through the workspace service, ranks direct lexical title/body matches, and always reconciles bytes against recorded Dreaming state first. This small-corpus path guarantees that a fresh Dream mutation affects the next action without waiting for an index. Bucket-item and YouTube semantic Search retain their independent rebuildable LanceDB projections and local FastEmbed embeddings; they do not confer Memory authority.
 
 **Scheduler** — in-process, a ~30s tick polling SQLite for due work; firing a trigger spawns an ephemeral pi process. Durability/retries/backpressure live in the loop and SQLite state (no Redis). Due rows are marked `claimed` before dispatch; each job is an `asyncio` task gated behind a concurrency cap (backpressure); failures get `next_attempt_at` backoff (retries). The push half of capture → resurface.
 
@@ -39,11 +37,11 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 **Frontend** — SolidJS SPA, built into the single production image and served by the Python host. Server state lives in `@tanstack/solid-query` (cache + invalidation), fed by the generated REST client. The single WebSocket is a *tagged event bus* (`{type: chat | invalidate | notify}`), not just chat: the host pushes dumb cache-invalidation signals from its mutation choke point, so background agent mutations (new Candidates, fired triggers) surface live without polling. The **chat transcript is host-owned SQLite data**, not pi's session (ADR 0005) — the host assembles settled messages from pi's RPC delta stream and persists them; the UI rehydrates history from REST and the WS carries only live deltas, so chat survives mobile refresh and pi restarts.
 
-**Conversation import** — bootstraps memories/bucket items from external AI-chat exports (t3chat, Claude, ChatGPT — three provider parsers → one normalized conversation). Each conversation becomes one job draining through the **scheduler** (durability/retry/backpressure for free), idempotent on source-conversation id; import is async/backgrounded, Candidates trickle in. Extraction is **agentic** (ephemeral pi + capture tools) so it can dedup-check against the live corpus before proposing (ADR 0005). A long conversation is processed **stateless per chunk** (split on message boundaries, small overlap) — extraction state lives in the host, not pi's context — with write-time dedup-key enforcement backstopping the agent's best-effort dedup.
+**Conversation import** — imported user messages become canonical conversational Evidence. They feed the same bounded Dreaming assimilation path as live Messages; imports do not create provisional Memory rows or a separate Memory Candidate lifecycle.
 
 **Codegen** — Pydantic models are the single source of truth, feeding three consumers: the OpenAPI doc → TS API client (Solid), the tool JSON-Schemas → pi tool shims, and runtime validation (host). A `just` recipe orchestrates the cross-language pipeline (Python emits schemas → Node generators run). Generated code is committed; CI drift-checks that re-running codegen produces no diff.
 
-**Markdown KB** — the knowledge base of tethered memories, derived **read-only** from SQLite (ADR 0003), Obsidian-compatible. Generated **synchronously** after the DB transaction commits, funneled through a single projection step (so no write path forgets), written temp-file-then-rename (atomic). Each file is **named by the Memory's UUIDv7** (`<id>.md`), an opaque stable id — the human-readable title lives *inside* the file, never in the filename, so KB consumers must not parse meaning out of the basename (ADR 0007). External edits are overwritten on next regen by design.
+**Memory workspace** — canonical, recursively organized Markdown under `/data/kb/memory` (ADR 0021). Dreaming is its sole writer (ADR 0026). Topic files require YAML frontmatter and exact Evidence citations; meaningful paths are current identities. SQLite records complete versions/tombstones and authorized mutations. Reads and startup reconciliation restore unauthorized edits/deletions, remove unknown valid files, and preserve exact recoverable pre-acknowledgement Dream mutations. Obsidian and Neovim are read-only inspection clients; corrections enter as Messages and queue Dreaming.
 
 ## Observability
 
@@ -81,7 +79,8 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0022** — Dreaming mutates Memory through confined native-shaped pi file tools.
 - **0023** — Tether Conversations own history and receive fresh Memory projections independently of pi sessions.
 - **0024** — Delete everywhere physically prunes all retained backups.
+- **0026** — Dreaming is the sole writer of current Memory.
 
 ## Build order
 
-Spine first (capture → resurface: memories, bucket items, review, Search, scheduler, chat), verticals later. Re-grill each vertical (e.g. cooking) as it's built; cooking's glossary terms migrate from CONTEXT.md to `src/cooking/CONTEXT.md` (and a `CONTEXT-MAP.md` appears) at that point.
+Spine first (Evidence → Dreaming-maintained Memory → resurface, plus scheduler and chat), verticals later. Re-grill each vertical as it is built.

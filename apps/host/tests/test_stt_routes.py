@@ -80,8 +80,8 @@ def post_transcription(client: TestClient, audio: bytes) -> Any:
 
 
 def loose_memory_count(client: TestClient) -> int:
-    """The number of loose memories currently captured, for no-side-effect checks."""
-    response = client.get("/api/memories", params={"state": "loose"})
+    """The number of current Topics, for no-side-effect checks."""
+    response = client.get("/api/memory-topics")
     assert_eq(response.status_code, 200)
     return len(response.json())
 

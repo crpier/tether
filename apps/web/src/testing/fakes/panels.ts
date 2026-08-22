@@ -85,6 +85,6 @@ export class FakePanelsHost implements PanelsHost {
     if (panelId in this.storedPanelResults) {
       return Promise.resolve(this.storedPanelResults[panelId]);
     }
-    return Promise.resolve({ memories: [], total: 0 });
+    return Promise.resolve({ topics: [], total: 0 });
   }
 }

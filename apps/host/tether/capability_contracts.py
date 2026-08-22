@@ -8,7 +8,6 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from tether.bucket_item_store import BucketItemProvenance
-from tether.memory_store import MemoryProvenance
 
 
 class CacheMeta(BaseModel):
@@ -60,7 +59,7 @@ class CapabilityOutcome:
     """JSON-ready capability result before REST or tool presentation."""
 
     result: Any
-    provenance: MemoryProvenance | BucketItemProvenance | None = None
+    provenance: BucketItemProvenance | None = None
     quota: QuotaMeta | None = None
     cache: CacheMeta | None = None
 

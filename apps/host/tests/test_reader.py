@@ -1,12 +1,9 @@
 """Behaviour tests for the Readwise Reader v3 progress rider.
 
 These drive `ReaderClient` and `ReaderSyncService` against a real in-memory
-SQLite database and a real `MemoryService`, mocking only the HTTP boundary with a
-scripted `FakeReaderTransport` — never a live Reader call. They assert the
-per-category pagination, the append-dedupe over the shared `ebook_progress_event`
-Telemetry table, the document upsert with the API title, the finished-book
-derivation (archive or `>= 0.98`, machine-synced, faceted, once ever), and the
-full-then-incremental watermark.
+SQLite database, mocking only the HTTP boundary with a scripted transport. They
+assert pagination, append dedupe, source document identity, completion state,
+and full-then-incremental watermarks without direct Memory writes.
 """
 
 from __future__ import annotations
@@ -14,19 +11,13 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
-from pathlib import Path
 
 import structlog
-from anyio import TemporaryDirectory
-from opentelemetry import trace
-from opentelemetry.trace import Tracer
 from snekok import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,
-    assert_is_none,
     assert_is_not_none,
-    assert_true,
     fixture,
     load_fixture,
     test,
@@ -36,13 +27,6 @@ from tether.kosync_store import (
     EbookDocument,
     EbookProgressEvent,
     create_kosync_schema,
-)
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_store import (
-    Memory,
-    create_memory_schema,
-    tethered_corpus,
 )
 from tether.reader import ReaderClient, ReaderSyncService
 from tether.readwise_http import (
@@ -54,11 +38,6 @@ from tether.readwise_http import (
 )
 from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger
-
-
-def noop_tracer() -> Tracer:
-    """A tracer that emits nowhere."""
-    return trace.NoOpTracerProvider().get_tracer("test.reader")
 
 
 def test_logger() -> Logger:
@@ -163,10 +142,9 @@ def list_response(
 
 @dataclass
 class ReaderEnv:
-    """A Reader-ready database plus a live `MemoryService` over a temp KB."""
+    """A Reader-ready database and source store."""
 
     database: Database
-    memory_service: MemoryService
     logger: Logger
 
     def sync_service(self, transport: FakeReaderTransport) -> ReaderSyncService:
@@ -174,13 +152,7 @@ class ReaderEnv:
         return ReaderSyncService(
             database=self.database,
             client=ReaderClient(transport=transport, sleep=_noop_sleep),
-            memory_service=self.memory_service,
         )
-
-    async def tethered_memories(self) -> list[Memory[Fetched]]:
-        """The current tethered corpus, for finished-derivation assertions."""
-        async with self.database.transaction() as transaction:
-            return await transaction.fetch_all(tethered_corpus())
 
     async def events(self, key: str) -> list[EbookProgressEvent[Fetched]]:
         """Every stored progress event for a document key, oldest first."""
@@ -201,21 +173,11 @@ class ReaderEnv:
 
 @fixture
 async def reader_env() -> AsyncGenerator[ReaderEnv]:
-    """A fresh database with the Memory + kosync + Readwise schema and a KB dir."""
+    """A fresh database with the ebook and Readwise source schemas."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_memory_schema(database)
     await create_kosync_schema(database)
     await create_readwise_schema(database)
-    async with TemporaryDirectory() as kb_root:
-        yield ReaderEnv(
-            database=database,
-            memory_service=MemoryService(
-                database=database,
-                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
-                tracer=noop_tracer(),
-            ),
-            logger=test_logger(),
-        )
+    yield ReaderEnv(database=database, logger=test_logger())
     await database.close()
 
 
@@ -445,225 +407,55 @@ async def a_changed_location_appends_a_new_event() -> None:
 
 
 @test()
-async def an_archived_document_captures_one_finished_memory() -> None:
-    """A document in the archive location mints exactly one tethered Memory."""
+async def archived_document_records_source_completion() -> None:
+    """Archive completion stays on the source document for Dreaming."""
+    env = await load_fixture(reader_env())
+    transport = FakeReaderTransport(
+        pages={"epub": [list_response([reader_document("done", location="archive")])]}
+    )
+
+    report = await env.sync_service(transport).sync(logger=env.logger)
+    document = await env.document("reader:done")
+
+    assert isinstance(report, Ok)
+    assert_eq(report.value.finished, 1)
+    assert_is_not_none(document)
+    assert document is not None
+    assert_is_not_none(document.finished_at)
+
+
+@test()
+async def progress_threshold_records_source_completion() -> None:
     env = await load_fixture(reader_env())
     transport = FakeReaderTransport(
         pages={
-            "epub": [
-                list_response(
-                    [reader_document("d1", reading_progress=0.5, location="archive")]
-                )
-            ]
+            "epub": [list_response([reader_document("done", reading_progress=0.98)])]
         }
     )
 
-    _ = await env.sync_service(transport).sync(logger=env.logger)
+    report = await env.sync_service(transport).sync(logger=env.logger)
 
-    assert_eq(len(await env.tethered_memories()), 1)
-
-
-@test()
-async def reading_past_the_threshold_captures_a_finished_memory() -> None:
-    """Reading progress at or past 0.98 mints a finished Memory without archiving."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={
-            "epub": [
-                list_response(
-                    [reader_document("d1", reading_progress=0.98, location="later")]
-                )
-            ]
-        }
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert isinstance(report, Ok)
+    assert_eq(report.value.finished, 1)
 
 
 @test()
-async def a_document_short_of_finished_captures_nothing() -> None:
-    """An unarchived document below the threshold derives no Memory."""
+async def completion_is_recorded_once_per_document() -> None:
     env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={
-            "epub": [
-                list_response(
-                    [reader_document("d1", reading_progress=0.5, location="later")]
-                )
-            ]
-        }
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    assert_eq(await env.tethered_memories(), [])
-
-
-@test()
-async def a_finished_memory_names_the_title_and_facets_the_author() -> None:
-    """A finished capture names the book and carries source/category/title/author."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={
-            "epub": [
-                list_response(
-                    [
-                        reader_document(
-                            "d1",
-                            title="Deep Work",
-                            author="Cal Newport",
-                            location="archive",
-                        )
-                    ]
-                )
-            ]
-        }
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    memory = (await env.tethered_memories())[0]
-    assert_eq(memory.content, "Finished reading Deep Work")
-    assert_eq(
-        memory.facets,
-        {
-            "source": "readwise-reader",
-            "category": "ebook",
-            "title": "Deep Work",
-            "author": "Cal Newport",
-        },
-    )
-
-
-@test()
-async def a_finished_memory_omits_the_author_facet_when_absent() -> None:
-    """A document without an author facets only source/category/title."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={
-            "epub": [
-                list_response(
-                    [
-                        reader_document(
-                            "d1", title="Untitled", author="", location="archive"
-                        )
-                    ]
-                )
-            ]
-        }
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    memory = (await env.tethered_memories())[0]
-    assert_eq(
-        memory.facets,
-        {"source": "readwise-reader", "category": "ebook", "title": "Untitled"},
-    )
-
-
-@test()
-async def a_finished_memory_is_machine_synced_readwise() -> None:
-    """Finished captures land with readwise provenance."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={"epub": [list_response([reader_document("d1", location="archive")])]}
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    memory = (await env.tethered_memories())[0]
-    assert_eq(memory.provenance, {"kind": "readwise"})
-
-
-@test()
-async def an_untitled_finished_memory_falls_back_to_the_key() -> None:
-    """A titleless finished document names its `reader:<id>` key in the content."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={
-            "epub": [
-                list_response([reader_document("d1", title="", location="archive")])
-            ]
-        }
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    memory = (await env.tethered_memories())[0]
-    assert_eq(memory.content, "reader:d1 (unlabeled ebook)")
-
-
-@test()
-async def the_finished_memory_fires_once_per_document() -> None:
-    """A second qualifying pass never mints a second finished Memory."""
-    env = await load_fixture(reader_env())
-    _ = await env.sync_service(
-        FakeReaderTransport(
-            pages={"epub": [list_response([reader_document("d1", location="archive")])]}
-        )
-    ).sync(logger=env.logger)
-
-    _ = await env.sync_service(
+    service = env.sync_service(
         FakeReaderTransport(
             pages={
-                "epub": [
-                    list_response(
-                        [
-                            reader_document(
-                                "d1", reading_progress=1.0, location="archive"
-                            )
-                        ]
-                    )
-                ]
+                "epub": [list_response([reader_document("done", location="archive")])]
             }
         )
-    ).sync(logger=env.logger)
-
-    assert_eq(len(await env.tethered_memories()), 1)
-
-
-@test()
-async def the_first_sync_pulls_without_a_watermark() -> None:
-    """With no stored watermark the first pass is a full pull (`updatedAfter` unset)."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={"epub": [list_response([reader_document("d1")])]}
     )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    assert_is_none(transport.calls[0].updated_after)
-
-
-@test()
-async def the_watermark_is_passed_on_the_next_sync() -> None:
-    """A completed pass persists a watermark the next pass sends as `updatedAfter`."""
-    env = await load_fixture(reader_env())
-    _ = await env.sync_service(
-        FakeReaderTransport(pages={"epub": [list_response([reader_document("d1")])]})
-    ).sync(logger=env.logger)
-
-    second = FakeReaderTransport(
-        pages={"epub": [list_response([reader_document("d1")])]}
+    first = await service.sync(logger=env.logger)
+    service.client.transport = FakeReaderTransport(
+        pages={"epub": [list_response([reader_document("done", location="archive")])]}
     )
-    _ = await env.sync_service(second).sync(logger=env.logger)
+    second = await service.sync(logger=env.logger)
 
-    assert_is_not_none(second.calls[0].updated_after)
-
-
-@test()
-async def a_re_synced_document_keeps_its_finished_stamp() -> None:
-    """The once-ever finished guard is stamped after the capture."""
-    env = await load_fixture(reader_env())
-    transport = FakeReaderTransport(
-        pages={"epub": [list_response([reader_document("d1", location="archive")])]}
-    )
-
-    _ = await env.sync_service(transport).sync(logger=env.logger)
-
-    document = await env.document("reader:d1")
-    assert_is_not_none(document)
-    assert_true(document.finished_captured_at is not None)  # pyright: ignore[reportOptionalMemberAccess]
+    assert isinstance(first, Ok)
+    assert isinstance(second, Ok)
+    assert_eq(first.value.finished, 1)
+    assert_eq(second.value.finished, 0)

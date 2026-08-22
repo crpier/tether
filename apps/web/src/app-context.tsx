@@ -1,5 +1,5 @@
 import { createContext, useContext } from "solid-js";
-import type { Accessor, JSX, Setter } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 
 import type { WebHost } from "./host";
 import type { ChatBus, ChatFrame, ConnectionStatus } from "./chat-bus";
@@ -19,12 +19,7 @@ export interface AppRuntimeContext {
   chatFrame: Accessor<ChatFrame | undefined>;
 }
 
-export interface InboxDraftContext {
-  inboxCaptureDraft: Accessor<string>;
-  setInboxCaptureDraft: Setter<string>;
-}
-
-export interface AppContextValue extends AppRuntimeContext, InboxDraftContext {
+export interface AppContextValue extends AppRuntimeContext {
   host: WebHost;
 }
 
@@ -51,14 +46,6 @@ function contextValue(): AppContextValue {
 
 export function useAppContext(): AppRuntimeContext {
   return contextValue();
-}
-
-export function useInboxCaptureDraft(): InboxDraftContext {
-  const value = contextValue();
-  return {
-    inboxCaptureDraft: value.inboxCaptureDraft,
-    setInboxCaptureDraft: value.setInboxCaptureDraft,
-  };
 }
 
 export function useHost<K extends keyof WebHost>(domain: K): WebHost[K] {

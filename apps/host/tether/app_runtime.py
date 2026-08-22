@@ -23,8 +23,6 @@ if TYPE_CHECKING:
     from tether.ingestion_lifecycle import IngestionLifecycle
     from tether.kosync import KosyncService
     from tether.kosync_routes import KosyncAuth
-    from tether.memories import MemoryService
-    from tether.memory_search import MemorySearchService
     from tether.memory_workspace_service import MemoryWorkspaceService
     from tether.model_selection import AgentModelCatalog
     from tether.notifications import NotificationService
@@ -34,8 +32,6 @@ if TYPE_CHECKING:
     from tether.provider_auth import ProviderAuthService
     from tether.push import PushService
     from tether.recall import RecallService
-    from tether.review import ReviewService
-    from tether.search_fusion import SearchFusionService
     from tether.structured_logging import Logger
     from tether.stt import SttClient
     from tether.telemetry_model import Telemetry
@@ -68,8 +64,6 @@ class AppRuntime:
     gmail_auth_service: GoogleGmailAuthService | None
     kosync_service: KosyncService
     logger: Logger
-    memory_search_service: MemorySearchService
-    memory_service: MemoryService
     memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
     dreaming_service: DreamingService
@@ -82,8 +76,6 @@ class AppRuntime:
     push_service: PushService
     dreaming_enabled: bool
     recall_service: RecallService
-    review_service: ReviewService
-    search_fusion_service: SearchFusionService
     search_provider: SearchProvider | None
     secure_cookies: bool
     session_registry: SessionRegistry

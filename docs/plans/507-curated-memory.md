@@ -2,6 +2,8 @@
 
 Tracks [#507](https://github.com/crpier/tether/issues/507). It establishes the Memory substrate required by [#454](https://github.com/crpier/tether/issues/454); Health/Telemetry summary schemas and general cross-source consolidation remain in #454.
 
+Implementation status: the destructive legacy-domain cutover, Dreaming-only file authority, Conversation assimilation, Health assimilation, direct Topic retrieval/context, and read-only Topic UI are implemented. Suppression/erasure and maintenance remain later slices.
+
 ## Outcome
 
 Tether automatically turns settled host-owned evidence into a small, current, agent-organized Markdown workspace. Those files are canonical Memory, and Dreaming is their sole writer. SQLite owns evidence, suppressions, orchestration, full-file history, and recorded file state used to authorize or repair mutations; pi sessions are execution/audit records only. Foreground chat receives a fresh bounded projection of relevant topic files on every model call.

@@ -45,7 +45,6 @@ from tether.pi_turn_events import (
 from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import AppConfig, HostSettings, create_app
 from tether.telemetry import TelemetrySettings
-from tether.tool_runtime import TOOL_AUTH_HEADER
 
 APP_PASSWORD = "test-app-password"
 SESSION_SECRET = "test-session-secret"
@@ -1232,40 +1231,6 @@ def append_message_is_idempotent_for_pi_message_ids() -> None:
 
     assert_eq(first.id, second.id)
     assert_len(response.json(), 1)
-
-
-@test()
-def websocket_invalidation_frames_reach_connected_clients() -> None:
-    """Service-layer Memory writes publish invalidate frames over `/ws`."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        login(client)
-        with client.websocket_connect("/ws") as websocket:
-            response = client.post("/api/memories", json={"content": "notify me"})
-            frame = websocket.receive_json()
-
-    assert_eq(response.status_code, 201)
-    assert_eq(frame, {"type": "invalidate", "keys": ["memories", "review-queue"]})
-
-
-@test()
-def websocket_internal_tool_capture_publishes_invalidation() -> None:
-    """Agent tool calls mutate services and fan out invalidation frames."""
-    session_id = "019f0906-0000-7000-8000-000000000001"
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        login(client)
-        app_runtime(cast("Starlette", client.app)).session_registry.register(session_id)
-        tool_secret = app_runtime(cast("Starlette", client.app)).tool_secret
-        with client.websocket_connect("/ws") as websocket:
-            response = client.post(
-                "/internal/tools/capture",
-                headers={TOOL_AUTH_HEADER: tool_secret},
-                json={"session_id": session_id, "content": "tool memory"},
-            )
-            frame = websocket.receive_json()
-
-    assert_eq(response.status_code, 200)
-    assert_eq(response.json()["success"], True)
-    assert_eq(frame, {"type": "invalidate", "keys": ["memories", "review-queue"]})
 
 
 @test()

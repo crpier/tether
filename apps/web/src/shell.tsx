@@ -23,11 +23,10 @@ interface NavItem {
 // Badge counts are client-derived (#250): no count endpoints. Each list query
 // mounted here stays warm — and invalidate-driven — regardless of which page
 // is on screen, so a badge is simply the relevant list's length. Inbox sums
-// every kind awaiting adjudication: loose-memory review, bucket triage
-// findings, due recall prompts, and undismissed fired-reminder notifications.
+// every kind awaiting adjudication: bucket triage findings, due Recall prompts,
+// and undismissed fired-reminder notifications. Memory has no Inbox queue.
 function useBadgeCounts() {
   const bucket = useHost("bucket");
-  const memories = useHost("memories");
   const notifications = useHost("notifications");
   const proposals = useHost("proposals");
   const recall = useHost("recall");
@@ -35,10 +34,6 @@ function useBadgeCounts() {
   const proposalsQuery = createQuery(() => ({
     queryFn: () => proposals.listProposals("pending"),
     queryKey: queryKeys.proposalsState("pending"),
-  }));
-  const looseMemoriesQuery = createQuery(() => ({
-    queryFn: () => memories.listMemories("loose"),
-    queryKey: queryKeys.memoriesState("loose"),
   }));
   const bucketTriageQuery = createQuery(() => ({
     queryFn: () => bucket.getBucketTriage(),
@@ -65,7 +60,6 @@ function useBadgeCounts() {
         triage.purchase.stale_watches.length
       : 0;
     return (
-      (looseMemoriesQuery.data?.length ?? 0) +
       triageCount +
       (recallQuery.data?.length ?? 0) +
       (notificationsQuery.data?.length ?? 0)

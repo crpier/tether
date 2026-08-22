@@ -1,102 +1,17 @@
-"""HTTP routes for the Memory Review spine.
-
-Each FastAPI route validates its request body or query string with Pydantic,
-then binds the validated
-input (plus any path id) onto the capability execute in
-`tether.memory_capabilities`, and the outcome is served as `MemoryRead` JSON.
-Domain exceptions translate to status codes through the domain's `ErrorRule`
-table (`MEMORY_ERRORS`) — absence -> 404, conflict -> 409, blank query -> 400 —
-the same table the internal tool surface maps onto envelope codes.
-
-Mutations are optimistic-concurrency checked: the client sends the `version` it
-last observed (in the body for edit/tether, the query string for reject), and a
-version that has moved on surfaces as a 409. The capability packages the path
-id and that version into a detached `Memory` reference for the service, which
-owns the row lookup and the conflict decision.
-
-FastAPI derives OpenAPI from the same request and response models used at runtime.
-"""
+"""Read-only HTTP surfaces over Dreaming-maintained Memory Topics."""
 
 from __future__ import annotations
 
 import hmac
-from typing import Annotated, Any, Protocol
-from uuid import UUID
+from typing import Any, Protocol
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from tether import memory_capabilities
-from tether.capabilities import rest_response, translate_domain_errors
-from tether.memories import MemoryNotFoundError
-from tether.memory_capabilities import MEMORY_ERRORS, MemoryContent, MemoryRead
-from tether.memory_store import MemoryState
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER, SessionRegistry
-
-
-class CaptureRequest(BaseModel):
-    """Body for capturing a loose Memory.
-
-    >>> CaptureRequest(content="I prefer aisle seats").content
-    'I prefer aisle seats'
-    """
-
-    content: MemoryContent
-
-
-class EditRequest(BaseModel):
-    """Body for editing a Memory's content at an observed `version`.
-
-    >>> EditRequest(content="I prefer window seats", version=1).version
-    1
-    """
-
-    content: MemoryContent
-    version: PositiveInt
-
-
-class TetherRequest(BaseModel):
-    """Body for tethering a Memory at an observed `version`.
-
-    >>> TetherRequest(version=1).version
-    1
-    """
-
-    version: PositiveInt
-
-
-class RejectQuery(BaseModel):
-    """Query string carrying the `version` a reject targets.
-
-    >>> RejectQuery(version=1).version
-    1
-    """
-
-    version: PositiveInt
-
-
-class BrowseQuery(BaseModel):
-    """Query string for the human review queue / corpus browse.
-
-    >>> BrowseQuery(state="loose").state
-    'loose'
-    """
-
-    state: MemoryState
-
-
-class SearchQuery(BaseModel):
-    """Query string for the assistant's keyword Search.
-
-    >>> SearchQuery(q="aisle").limit
-    50
-    """
-
-    limit: PositiveInt = 50
-    q: str
 
 
 class MemoryWorkspaceDiagnosticRead(BaseModel):
@@ -137,7 +52,7 @@ class MemoryTopicRead(BaseModel):
 
 
 class _MemoryRuntime(Protocol):
-    """Memory workspace service + logger required for diagnostics."""
+    """Runtime dependencies required by read-only Memory surfaces."""
 
     logger: Logger
     memory_workspace_service: Any
@@ -145,48 +60,12 @@ class _MemoryRuntime(Protocol):
     tool_secret: str
 
 
-def _path_memory_id(raw_memory_id: str) -> UUID:
-    """Parse the `{memory_id}` path segment, treating a malformed id as absent."""
-    try:
-        return UUID(raw_memory_id)
-    except ValueError as error:
-        raise MemoryNotFoundError(raw_memory_id) from error
-
-
 def _runtime(request: Request) -> _MemoryRuntime:
-    """Read the host runtime fields used by this route module."""
+    """Read Memory dependencies from the canonical host runtime."""
     return request.app.state.runtime
 
 
-_translate_domain_errors = translate_domain_errors(MEMORY_ERRORS)
-
-
 router = APIRouter()
-
-
-@router.post("/api/memories", response_model=MemoryRead, status_code=201)
-async def capture_memory(request: Request, body: CaptureRequest) -> Response:
-    """Capture a loose Memory."""
-    outcome = await memory_capabilities.capture(request, body.content)
-    return rest_response(outcome, status_code=201)
-
-
-@router.get("/api/memories", response_model=list[MemoryRead])
-async def browse_memories(
-    request: Request, query: Annotated[BrowseQuery, Query()]
-) -> Response:
-    """Filter the review queue (`loose`) or browse the corpus (`tethered`)."""
-    return rest_response(await memory_capabilities.browse(request, query.state))
-
-
-@router.get("/api/memories/search", response_model=list[MemoryRead])
-@_translate_domain_errors
-async def search_memories(
-    request: Request, query: Annotated[SearchQuery, Query()]
-) -> Response:
-    """Keyword Search over tethered Memories."""
-    outcome = await memory_capabilities.search(request, query.q, limit=query.limit)
-    return rest_response(outcome)
 
 
 @router.post(
@@ -214,13 +93,13 @@ async def foreground_memory_context(
 
 @router.get("/api/memory-topics", response_model=list[MemoryTopicRead])
 async def search_memory_topics(
-    request: Request, query: Annotated[MemoryTopicQuery, Query()]
+    request: Request, q: str = "", limit: PositiveInt = 50
 ) -> list[MemoryTopicRead]:
     """Search valid canonical Topic files without stale index dependence."""
     runtime = _runtime(request)
     topics = await runtime.memory_workspace_service.search(
-        query.q,
-        limit=query.limit,
+        q,
+        limit=limit,
         logger=runtime.logger,
     )
     workspace_root = runtime.memory_workspace_service.workspace_root
@@ -236,16 +115,15 @@ async def search_memory_topics(
 
 
 @router.get(
-    "/api/memories/workspace-diagnostics",
+    "/api/memory-topics/diagnostics",
     response_model=list[MemoryWorkspaceDiagnosticRead],
 )
 async def list_workspace_diagnostics(
     request: Request,
 ) -> list[MemoryWorkspaceDiagnosticRead]:
-    """Return current workspace diagnostic findings from the latest scan."""
-    result = await _runtime(request).memory_workspace_service.scan(
-        logger=_runtime(request).logger
-    )
+    """Return workspace diagnostics from current recorded Memory files."""
+    runtime = _runtime(request)
+    result = await runtime.memory_workspace_service.scan(logger=runtime.logger)
     return [
         MemoryWorkspaceDiagnosticRead(
             code=diagnostic.code,
@@ -254,40 +132,3 @@ async def list_workspace_diagnostics(
         )
         for diagnostic in result.diagnostics
     ]
-
-
-@router.patch("/api/memories/{memory_id}", response_model=MemoryRead)
-@_translate_domain_errors
-async def edit_memory(request: Request, body: EditRequest, memory_id: str) -> Response:
-    """Edit a Memory's `content`; a human edit keeps trust."""
-    outcome = await memory_capabilities.edit(
-        request, _path_memory_id(memory_id), body.content, body.version
-    )
-    return rest_response(outcome)
-
-
-@router.post("/api/memories/{memory_id}/tether", response_model=MemoryRead)
-@_translate_domain_errors
-async def tether_memory(
-    request: Request, body: TetherRequest, memory_id: str
-) -> Response:
-    """Promote a loose Memory to tethered."""
-    outcome = await memory_capabilities.tether(
-        request, _path_memory_id(memory_id), body.version
-    )
-    return rest_response(outcome)
-
-
-@router.delete("/api/memories/{memory_id}", response_model=MemoryRead)
-@_translate_domain_errors
-async def reject_memory(
-    request: Request, query: Annotated[RejectQuery, Query()], memory_id: str
-) -> Response:
-    """Soft-delete (reject) a Memory."""
-    outcome = await memory_capabilities.reject(
-        request, _path_memory_id(memory_id), query.version
-    )
-    return rest_response(outcome)
-
-
-# `/api/memories/search` precedes `/api/memories/{memory_id}` so the literal path wins.

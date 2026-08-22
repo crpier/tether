@@ -1,22 +1,16 @@
-"""Behavior tests for the Recall service layer (study items + answering).
+"""Behavior tests for Recall Study items, prompts, and answering.
 
-These drive the `RecallService` seam directly against a real in-memory SQLite
-database, a real `MemoryService`, and a controlled fake generator — no model, no
-HTTP. They assert the load-bearing Recall behavior: a source becomes a loose
-study-item Memory with due prompts, answers grade and reschedule deterministically,
-and a study item tethers its Memory **only** on full completion. Driving
-controlled answers and timestamps keeps it all model-free.
+These drive `RecallService` against SQLite and controlled model seams. Recall
+owns distilled learnings and scheduling without writing or promoting Memory.
 """
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from uuid import uuid7
 
 import structlog
-from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from pydantic import UUID7
@@ -32,12 +26,6 @@ from snektest import (
     test,
 )
 
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_store import (
-    Memory,
-    create_memory_schema,
-)
 from tether.recall import (
     InvalidAnswerError,
     InvalidPromptError,
@@ -184,12 +172,10 @@ class RecallFixture:
         self,
         *,
         service: RecallService,
-        memory_service: MemoryService,
         generator: FakeGenerator,
         database: Database,
     ) -> None:
         self.service: RecallService = service
-        self.memory_service: MemoryService = memory_service
         self.generator: FakeGenerator = generator
         self.database: Database = database
 
@@ -205,15 +191,6 @@ class RecallFixture:
             logger=LOGGER,
         )
 
-    async def memory(self, study_item: StudyItem[Fetched]) -> Memory[Fetched]:
-        """Fetch the distilled-learnings Memory behind a study item."""
-        async with self.database.transaction() as tx:
-            memory = await tx.fetch_one_or_none(
-                select(Memory).where(Memory.id.eq(study_item.memory_id))
-            )
-        assert memory is not None
-        return memory
-
     async def study_item(self, study_item_id: UUID7) -> StudyItem[Fetched]:
         """Re-fetch a study item row for state assertions."""
         async with self.database.transaction() as tx:
@@ -228,28 +205,19 @@ class RecallFixture:
 async def recall_fixture(
     generator: FakeGenerator, grader: AnswerGrader | None = None
 ) -> AsyncGenerator[RecallFixture]:
-    """A fresh Recall service over an isolated DB, KB dir, and fake generator."""
+    """A fresh Recall service over an isolated DB and fake generator."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_memory_schema(db)
     await create_recall_schema(db)
-    async with TemporaryDirectory() as kb_dir:
-        memory_service = MemoryService(
-            database=db,
-            kb_service=KnowledgeBaseService(kb_root=Path(kb_dir)),
-            tracer=noop_tracer(),
-        )
-        service = RecallService(
-            database=db,
-            memory_service=memory_service,
-            models=RecallModelSteps(generator=generator, grader=grader),
-            tracer=noop_tracer(),
-        )
-        yield RecallFixture(
-            service=service,
-            memory_service=memory_service,
-            generator=generator,
-            database=db,
-        )
+    service = RecallService(
+        database=db,
+        models=RecallModelSteps(generator=generator, grader=grader),
+        tracer=noop_tracer(),
+    )
+    yield RecallFixture(
+        service=service,
+        generator=generator,
+        database=db,
+    )
     await db.close()
 
 
@@ -277,17 +245,17 @@ async def drive_to_learned(
 
 
 @test()
-async def start_recall_creates_a_loose_memory_with_due_prompts() -> None:
-    """Starting Recall distils a loose Memory and a prompt due immediately."""
+async def start_recall_owns_distilled_learnings_with_due_prompts() -> None:
+    """Starting Recall persists its material without creating Memory."""
     fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
 
     study_item = await fixture.start()
 
     assert_eq(study_item.state, "studying")
-    memory = await fixture.memory(study_item)
-    assert_eq(memory.content, "Async IO multiplexes one thread over many waits.")
-    assert_is_none(memory.tethered_at)
-    assert_eq(memory.provenance, {"kind": "youtube"})
+    assert_eq(
+        study_item.distilled_learnings,
+        "Async IO multiplexes one thread over many waits.",
+    )
     due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
     assert_eq(len(due), 1)
     assert_eq(due[0].prompt.question, "What does async IO multiplex?")
@@ -386,12 +354,12 @@ async def answering_rejects_an_out_of_range_choice() -> None:
         )
 
 
-# --- completion and the tether gate ---
+# --- completion ---
 
 
 @test()
-async def full_completion_tethers_the_distilled_learnings_memory() -> None:
-    """Learning every prompt completes the study item and tethers its Memory."""
+async def full_completion_only_completes_the_study_item() -> None:
+    """Learning every prompt completes Recall without a Memory promotion."""
     fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
     study_item = await fixture.start()
     due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
@@ -402,13 +370,11 @@ async def full_completion_tethers_the_distilled_learnings_memory() -> None:
     refreshed = await fixture.study_item(study_item.id)
     assert_eq(refreshed.state, "completed")
     assert_is_not_none(refreshed.completed_at)
-    memory = await fixture.memory(study_item)
-    assert_is_not_none(memory.tethered_at)
 
 
 @test()
-async def partial_progress_does_not_tether_the_memory() -> None:
-    """With one prompt still un-learned the Memory stays loose (tether is all-or-nothing)."""
+async def partial_progress_keeps_the_study_item_active() -> None:
+    """One learned prompt cannot complete a multi-prompt Study item."""
     fixture = await load_fixture(recall_fixture(FakeGenerator(two_prompts())))
     study_item = await fixture.start()
     due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
@@ -418,24 +384,6 @@ async def partial_progress_does_not_tether_the_memory() -> None:
 
     refreshed = await fixture.study_item(study_item.id)
     assert_eq(refreshed.state, "studying")
-    memory = await fixture.memory(study_item)
-    assert_is_none(memory.tethered_at)
-
-
-@test()
-async def completion_tolerates_a_memory_already_tethered_by_review() -> None:
-    """A human Review may tether first; completion still settles, without re-tethering."""
-    fixture = await load_fixture(recall_fixture(FakeGenerator(one_prompt())))
-    study_item = await fixture.start()
-    memory = await fixture.memory(study_item)
-    _ = await fixture.memory_service.tether(memory, logger=LOGGER)
-    due = await fixture.service.list_due_prompts(NOW, logger=LOGGER)
-
-    final = await drive_to_learned(fixture, due[0].prompt)
-
-    assert_eq(final.repetitions >= 3, True)
-    refreshed = await fixture.study_item(study_item.id)
-    assert_eq(refreshed.state, "completed")
 
 
 # --- short-answer grading ---
@@ -780,8 +728,8 @@ async def propose_essay_grade_rejects_an_essay_row_missing_its_rubric() -> None:
 
 
 @test()
-async def a_mixed_kind_study_item_completes_and_tethers() -> None:
-    """MC, short-answer, and essay cards all feed the same SM-2 gate to tether."""
+async def a_mixed_kind_study_item_completes() -> None:
+    """MC, short-answer, and essay cards share one completion gate."""
     mixed = GeneratedStudyItem(
         distilled_learnings="Mixed learnings.",
         prompts=[
@@ -819,8 +767,6 @@ async def a_mixed_kind_study_item_completes_and_tethers() -> None:
 
     refreshed = await fixture.study_item(study_item.id)
     assert_eq(refreshed.state, "completed")
-    memory = await fixture.memory(study_item)
-    assert_is_not_none(memory.tethered_at)
 
 
 @test()

@@ -183,6 +183,24 @@ async def auto_run_enqueues_after_settling_window() -> None:
 
 
 @test()
+async def explicit_memory_request_collapses_until_post_turn_consumption() -> None:
+    """Remember/correction intent bypasses idle only after the turn settles."""
+    _, dreaming_service, conversation_id = await _fixture()
+
+    dreaming_service.request_immediate_assimilation(conversation_id)
+    dreaming_service.request_immediate_assimilation(conversation_id)
+
+    assert_eq(
+        dreaming_service.consume_immediate_assimilation_request(conversation_id),
+        True,
+    )
+    assert_eq(
+        dreaming_service.consume_immediate_assimilation_request(conversation_id),
+        False,
+    )
+
+
+@test()
 async def manual_run_bypasses_settling_window() -> None:
     """Manual queueing ignores settle constraints and uses current window."""
     conversation_service, dreaming_service, conversation_id = await _fixture()

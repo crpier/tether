@@ -1,7 +1,7 @@
 """Behaviour tests for the Gmail read-only ingestion gate.
 
 These drive `GmailClient` and `GmailSyncService` against a real in-memory
-SQLite database and real `MemoryService`/`TriggerService`, faking only the
+SQLite database and real source/Trigger/Todo services, faking only the
 Gmail HTTP boundary (`FakeGmailTransport`) and the triage model
 (`FakeTriageRunner`) — never a live Gmail or model call. They assert the full
 "Key scenarios" list from the spec: the category pre-filter short-circuits
@@ -19,11 +19,9 @@ import json
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import cast
 
 import structlog
-from anyio import TemporaryDirectory
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from snekok import Err, Ok, Result
@@ -32,7 +30,6 @@ from snektest import (
     assert_eq,
     assert_false,
     assert_is_none,
-    assert_not_in,
     assert_raises,
     assert_true,
     fixture,
@@ -48,16 +45,9 @@ from tether.gmail.client import (
     GmailResponse,
 )
 from tether.gmail.store import GmailMessageRecord, create_gmail_schema
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_store import (
-    Memory,
-    create_memory_schema,
-    tethered_corpus,
-)
 from tether.notification_store import create_notification_schema
 from tether.structured_logging import Logger
-from tether.todo_store import Todo, TodoMemory, create_todo_schema
+from tether.todo_store import Todo, create_todo_schema
 from tether.todos import TodoService
 from tether.trigger_schedule import TriggerSpec
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
@@ -315,10 +305,9 @@ def interesting_verdict(
 
 @dataclass
 class GmailEnv:
-    """A Gmail-ready database plus live `MemoryService`/`TriggerService`."""
+    """A Gmail-ready source store plus live Trigger/Todo services."""
 
     database: Database
-    memory_service: MemoryService
     trigger_service: TriggerService
     todo_service: TodoService
     logger: Logger
@@ -341,7 +330,6 @@ class GmailEnv:
         return GmailSyncService(
             database=self.database,
             client=GmailClient(transport=transport),
-            memory_service=self.memory_service,
             trigger_service=(
                 trigger_service if trigger_service is not None else self.trigger_service
             ),
@@ -355,15 +343,14 @@ class GmailEnv:
         """The current active Todos, newest first, for gate assertions."""
         return await self.todo_service.list_by_status("active", logger=self.logger)
 
-    async def todo_memory_links(self) -> list[TodoMemory[Fetched]]:
-        """Every Todo↔Memory link row, for provenance assertions."""
-        async with self.database.transaction() as tx:
-            return await tx.fetch_all(select(TodoMemory).all())
-
-    async def tethered_memories(self) -> list[Memory[Fetched]]:
-        """The current tethered corpus, for content/facet assertions."""
+    async def ingested_records(self) -> list[GmailMessageRecord[Fetched]]:
+        """Canonical Gmail Evidence accepted by triage."""
         async with self.database.transaction() as transaction:
-            return await transaction.fetch_all(tethered_corpus())
+            return await transaction.fetch_all(
+                select(GmailMessageRecord).where(
+                    GmailMessageRecord.status.eq("ingested")
+                )
+            )
 
     async def triggers(self) -> list[ScheduledTrigger[Fetched]]:
         """The current live triggers, soonest-due first."""
@@ -383,25 +370,18 @@ class GmailEnv:
 
 @fixture
 async def gmail_env() -> AsyncGenerator[GmailEnv]:
-    """A fresh database with the Memory + Trigger + Gmail schema and a live KB dir."""
+    """A fresh database with Gmail, Trigger, and Todo schemas."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_memory_schema(db)
     await create_trigger_schema(db)
     await create_notification_schema(db)
     await create_todo_schema(db)
     await create_gmail_schema(db)
-    async with TemporaryDirectory() as kb_root:
-        yield GmailEnv(
-            database=db,
-            memory_service=MemoryService(
-                database=db,
-                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
-                tracer=noop_tracer(),
-            ),
-            trigger_service=TriggerService(database=db, tracer=noop_tracer()),
-            todo_service=TodoService(database=db, tracer=noop_tracer()),
-            logger=test_logger(),
-        )
+    yield GmailEnv(
+        database=db,
+        trigger_service=TriggerService(database=db, tracer=noop_tracer()),
+        todo_service=TodoService(database=db, tracer=noop_tracer()),
+        logger=test_logger(),
+    )
     await db.close()
 
 
@@ -424,7 +404,7 @@ async def a_promotions_labeled_message_is_prefiltered_without_triage() -> None:
 
     assert_eq(_ok(report).prefiltered, 1)
     assert_eq(triage_runner.prompts, [])
-    assert_eq(await env.tethered_memories(), [])
+    assert_eq(await env.ingested_records(), [])
 
 
 @test()
@@ -462,14 +442,14 @@ async def spam_trash_and_sent_are_excluded_entirely() -> None:
     assert_eq(triage_runner.prompts, [])
     assert_eq(_ok(report).ingested, 0)
     assert_eq(_ok(report).noise, 0)
-    assert_eq(await env.tethered_memories(), [])
+    assert_eq(await env.ingested_records(), [])
 
 
 # --- Triage application ------------------------------------------------------
 
 
 @test()
-async def an_interesting_verdict_captures_a_tethered_memory() -> None:
+async def an_interesting_verdict_persists_canonical_evidence() -> None:
     """An `interesting` verdict mints one tethered Memory with gmail provenance."""
     env = await load_fixture(gmail_env())
     transport = FakeGmailTransport(
@@ -487,16 +467,16 @@ async def an_interesting_verdict_captures_a_tethered_memory() -> None:
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
     assert_eq(_ok(report).ingested, 1)
-    memories = await env.tethered_memories()
-    assert_eq(len(memories), 1)
-    assert_eq(memories[0].provenance, {"kind": "gmail"})
-    assert_true(memories[0].content.startswith("Renewal due soon"))
-    assert_eq(memories[0].facets["sender"], "a@example.com")
-    assert_eq(memories[0].facets["subject"], "Renewal")
+    records = await env.ingested_records()
+    assert_eq(len(records), 1)
+    assert_eq(records[0].verdict_reason, "Renewal due soon")
+    assert_eq(records[0].body_text, "Body.")
+    assert_eq(records[0].from_header, "a@example.com")
+    assert_eq(records[0].subject, "Renewal")
 
 
 @test()
-async def a_noise_verdict_creates_no_memory() -> None:
+async def a_noise_verdict_creates_no_ingested_evidence() -> None:
     """A `noise` verdict is recorded without capturing a Memory."""
     env = await load_fixture(gmail_env())
     transport = FakeGmailTransport(
@@ -508,12 +488,12 @@ async def a_noise_verdict_creates_no_memory() -> None:
     report = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
     assert_eq(_ok(report).noise, 1)
-    assert_eq(await env.tethered_memories(), [])
+    assert_eq(await env.ingested_records(), [])
 
 
 @test()
-async def an_actionable_verdict_creates_a_todo_linked_to_the_memory() -> None:
-    """An actionable verdict makes a Todo linked to the Memory, no action facet."""
+async def an_actionable_verdict_creates_an_independent_todo() -> None:
+    """An actionable Gmail Evidence row may derive a Todo without a Memory link."""
     env = await load_fixture(gmail_env())
     transport = FakeGmailTransport(
         message_pages=[message_list_page(["m1"])],
@@ -525,14 +505,9 @@ async def an_actionable_verdict_creates_a_todo_linked_to_the_memory() -> None:
 
     _ = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    memory = (await env.tethered_memories())[0]
-    assert_not_in("action", memory.facets)
+    assert_eq(len(await env.ingested_records()), 1)
     todos = await env.todos()
     assert_eq(len(todos), 1)
-    links = await env.todo_memory_links()
-    assert_eq(len(links), 1)
-    assert_eq(links[0].todo_id, str(todos[0].id))
-    assert_eq(links[0].memory_id, str(memory.id))
     # An undated actionable verdict has no trigger to link.
     assert_is_none(todos[0].trigger_id)
 
@@ -593,7 +568,7 @@ async def a_malformed_entry_leaves_only_that_message_pending() -> None:
 
     assert_eq(_ok(report).ingested, 1)
     assert_eq(_ok(report).pending, 1)
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
 
 
 @test()
@@ -632,7 +607,7 @@ async def a_tether_labeled_message_cannot_be_classified_noise() -> None:
 
     assert_eq(_ok(report).ingested, 1)
     assert_eq(_ok(report).noise, 0)
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
 
 
 @test()
@@ -731,7 +706,7 @@ async def a_near_deadline_clamps_the_fire_time_to_near_now() -> None:
 
 
 @test()
-async def a_past_deadline_creates_a_memory_but_no_trigger() -> None:
+async def a_past_deadline_keeps_evidence_but_creates_no_trigger() -> None:
     """A deadline already in the past creates the Memory but skips the trigger."""
     env = await load_fixture(gmail_env())
     transport = FakeGmailTransport(
@@ -754,7 +729,7 @@ async def a_past_deadline_creates_a_memory_but_no_trigger() -> None:
 
     _ = await env.sync_service(transport, triage_runner).sync(logger=env.logger)
 
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
     assert_eq(await env.triggers(), [])
 
 
@@ -781,7 +756,7 @@ async def an_already_recorded_message_is_not_reprocessed() -> None:
     assert_eq(_ok(second).ingested, 0)
     assert_eq(_ok(second).noise, 0)
     assert_eq(_ok(second).pending, 0)
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
     # The second pass triaged nothing new, so the runner was never called again.
     assert_eq(len(triage_runner.prompts), 1)
 
@@ -923,8 +898,8 @@ async def a_pending_message_is_upgraded_via_the_retry_path_not_the_listing() -> 
 
     assert_eq(_ok(second).ingested, 1)
     assert_eq(_ok(second).pending, 0)
-    memories = await env.tethered_memories()
-    assert_true(any("Now valid" in memory.content for memory in memories))
+    records = await env.ingested_records()
+    assert_true(any(record.verdict_reason == "Now valid" for record in records))
     record = await env.message_record("m2")
     assert_true(record is not None)
     assert_eq(record.status if record is not None else None, "ingested")
@@ -963,7 +938,7 @@ async def a_pending_retry_is_not_double_processed_if_also_relisted() -> None:
 
     assert_eq(_ok(second).ingested, 1)
     assert_eq(len(second_triage_runner.prompts), 1)
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
 
 
 # --- Local-timezone deadline ----------------------------------------------------
@@ -1008,7 +983,7 @@ async def a_deadline_trigger_fires_at_nine_am_local_not_utc() -> None:
 
 
 @test()
-async def a_trigger_creation_failure_never_duplicates_the_memory() -> None:
+async def a_trigger_creation_failure_never_duplicates_evidence() -> None:
     """A failure between memory capture and trigger creation must not double-capture."""
     env = await load_fixture(gmail_env())
     failing_trigger_service = OnceRaisingTriggerService(
@@ -1038,7 +1013,7 @@ async def a_trigger_creation_failure_never_duplicates_the_memory() -> None:
     with assert_raises(RuntimeError):
         _ = await service.sync(logger=env.logger)
 
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
 
     # Re-run the pass: the message is already recorded `ingested` with its
     # Memory captured, so it is skipped entirely rather than re-triaged —
@@ -1052,7 +1027,7 @@ async def a_trigger_creation_failure_never_duplicates_the_memory() -> None:
 
     _ = await service.sync(logger=env.logger)
 
-    assert_eq(len(await env.tethered_memories()), 1)
+    assert_eq(len(await env.ingested_records()), 1)
 
 
 # --- MIME body extraction ------------------------------------------------------
