@@ -14,6 +14,7 @@ from tether.gmail.client import (
     GmailFailure,
     GmailLabel,
     GmailMessage,
+    GmailMessagePreview,
     GmailOperation,
     GmailRawMessage,
     GmailSearchPage,
@@ -128,6 +129,14 @@ class ReauthorizableGmailClient(GmailClient):
         if self._delegate is None:
             return Err(self._require_client("get-message"))
         return await self._delegate.get_message(message_id)
+
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailMessagePreview, GmailFailure]:
+        """Fetch one lightweight message preview through the current delegate."""
+        if self._delegate is None:
+            return Err(self._require_client("get-message-preview"))
+        return await self._delegate.get_message_preview(message_id)
 
     async def get_raw_message(
         self, message_id: str

@@ -93,6 +93,11 @@ class PurgeTransport:
             return Ok(GmailResponse(status_code=404, payload={}))
         return Ok(GmailResponse(status_code=200, payload=payload))
 
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        return await self.get_message(message_id)
+
     async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
         return Ok(GmailResponse(status_code=200, payload={"labels": self.labels}))
 

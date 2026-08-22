@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html import unescape
 from typing import Literal, Protocol, cast
 
 from snekok import Err, Ok, Result
 
 from tether.structured_logging import Logger
 
+_BODY_PREVIEW_CHARS = 240
 _BODY_TRUNCATE_CHARS = 4_000
 _HTTP_FORBIDDEN = 403
 _HTTP_NOT_FOUND = 404
 _HTTP_OK = 200
 _HTTP_UNAUTHORIZED = 401
 _INBOX_LABEL = "INBOX"
+_PREVIEW_CONCURRENCY = 8
 _TRASH_LABEL = "TRASH"
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -27,6 +31,7 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 type GmailOperation = Literal[
     "get-message",
+    "get-message-preview",
     "get-raw-message",
     "list-labels",
     "list-messages",
@@ -131,10 +136,31 @@ class GmailMessageIdentity:
 
 
 @dataclass(frozen=True, slots=True)
-class GmailSearchPage:
-    """One validated Gmail search page."""
+class GmailMessagePreview:
+    """Lightweight identifying metadata for one Gmail search result."""
+
+    body_preview: str
+    message_id: str
+    received_at: datetime
+    sender: str
+    subject: str
+    thread_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _GmailSearchIdentityPage:
+    """Internal page of identities returned by Gmail's list operation."""
 
     messages: tuple[GmailMessageIdentity, ...]
+    next_page_token: str | None
+    result_size_estimate: int
+
+
+@dataclass(frozen=True, slots=True)
+class GmailSearchPage:
+    """One validated and hydrated Gmail search page."""
+
+    messages: tuple[GmailMessagePreview, ...]
     next_page_token: str | None
     result_size_estimate: int
 
@@ -155,6 +181,12 @@ class GmailTransport(Protocol):
         self, message_id: str
     ) -> Result[GmailResponse, GmailTransportFailure]:
         """Fetch one message's full payload."""
+        ...
+
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailTransportFailure]:
+        """Fetch one message's lightweight metadata and provider snippet."""
         ...
 
     async def list_labels(
@@ -323,9 +355,55 @@ def _parse_message(
     )
 
 
+def _parse_message_preview(
+    payload: Mapping[str, object], *, operation: GmailOperation
+) -> Result[GmailMessagePreview, GmailProtocolFailure]:
+    """Validate lightweight metadata without fetching the full MIME body."""
+    message_id = payload.get("id")
+    thread_id = payload.get("threadId")
+    internal_date = payload.get("internalDate")
+    snippet = payload.get("snippet", "")
+    mime_payload = payload.get("payload")
+    if (
+        not isinstance(message_id, str)
+        or not message_id
+        or not isinstance(thread_id, str)
+        or not thread_id
+        or not isinstance(internal_date, str)
+        or not internal_date.isdigit()
+        or not isinstance(snippet, str)
+        or not isinstance(mime_payload, Mapping)
+    ):
+        return Err(
+            GmailProtocolFailure(
+                message="message preview payload has invalid required fields",
+                operation=operation,
+            )
+        )
+    headers = cast("Mapping[str, object]", mime_payload).get("headers")
+    if not isinstance(headers, list):
+        return Err(
+            GmailProtocolFailure(
+                message="message preview payload has invalid headers",
+                operation=operation,
+            )
+        )
+    normalized_preview = _WHITESPACE_RE.sub(" ", unescape(snippet)).strip()
+    return Ok(
+        GmailMessagePreview(
+            body_preview=normalized_preview[:_BODY_PREVIEW_CHARS],
+            message_id=message_id,
+            received_at=datetime.fromtimestamp(int(internal_date) / 1000, tz=UTC),
+            sender=_header(cast("list[object]", headers), "From"),
+            subject=_header(cast("list[object]", headers), "Subject"),
+            thread_id=thread_id,
+        )
+    )
+
+
 def _parse_search_page(  # noqa: PLR0911 - each branch maps one protocol failure
     payload: Mapping[str, object], *, operation: GmailOperation
-) -> Result[GmailSearchPage, GmailProtocolFailure]:
+) -> Result[_GmailSearchIdentityPage, GmailProtocolFailure]:
     """Validate one search response before exposing identities and metadata."""
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list):
@@ -381,7 +459,7 @@ def _parse_search_page(  # noqa: PLR0911 - each branch maps one protocol failure
             )
         )
     return Ok(
-        GmailSearchPage(
+        _GmailSearchIdentityPage(
             messages=tuple(identities),
             next_page_token=next_page_token or None,
             result_size_estimate=raw_estimate,
@@ -529,7 +607,43 @@ class GmailClient:
         response = transported.value
         if failure := _response_failure(response, operation="list-messages"):
             return Err(failure)
-        return _parse_search_page(response.payload, operation="list-messages")
+        parsed = _parse_search_page(response.payload, operation="list-messages")
+        if isinstance(parsed, Err):
+            return Err(parsed.error)
+
+        semaphore = asyncio.Semaphore(_PREVIEW_CONCURRENCY)
+
+        async def fetch_preview(
+            identity: GmailMessageIdentity,
+        ) -> Result[GmailMessagePreview, GmailFailure]:
+            async with semaphore:
+                return await self.get_message_preview(identity.message_id)
+
+        fetched = await asyncio.gather(
+            *(fetch_preview(identity) for identity in parsed.value.messages)
+        )
+        previews: list[GmailMessagePreview] = []
+        for identity, result in zip(parsed.value.messages, fetched, strict=True):
+            if isinstance(result, Err):
+                return Err(result.error)
+            if (
+                result.value.message_id != identity.message_id
+                or result.value.thread_id != identity.thread_id
+            ):
+                return Err(
+                    GmailProtocolFailure(
+                        message="message preview identity does not match search result",
+                        operation="get-message-preview",
+                    )
+                )
+            previews.append(result.value)
+        return Ok(
+            GmailSearchPage(
+                messages=tuple(previews),
+                next_page_token=parsed.value.next_page_token,
+                result_size_estimate=parsed.value.result_size_estimate,
+            )
+        )
 
     async def get_message(self, message_id: str) -> Result[GmailMessage, GmailFailure]:
         """Fetch and validate one message."""
@@ -540,6 +654,18 @@ class GmailClient:
         if failure := _response_failure(response, operation="get-message"):
             return Err(failure)
         return _parse_message(response.payload, operation="get-message")
+
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailMessagePreview, GmailFailure]:
+        """Fetch identifying metadata without reading a full MIME body."""
+        transported = await self.transport.get_message_preview(message_id)
+        if isinstance(transported, Err):
+            return Err(transported.error)
+        response = transported.value
+        if failure := _response_failure(response, operation="get-message-preview"):
+            return Err(failure)
+        return _parse_message_preview(response.payload, operation="get-message-preview")
 
     async def get_raw_message(
         self, message_id: str
@@ -720,6 +846,7 @@ __all__ = [
     "GmailLabel",
     "GmailMessage",
     "GmailMessageIdentity",
+    "GmailMessagePreview",
     "GmailNetworkFailure",
     "GmailOperation",
     "GmailProtocolFailure",

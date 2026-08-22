@@ -617,6 +617,8 @@ def app_lifespan_closes_gmail_transport_after_its_worker_stops() -> None:
             _ = message_id
             return Ok(GmailResponse(payload={}, status_code=404))
 
+        get_message_preview = get_message
+
         async def list_labels(
             self,
         ) -> Result[GmailResponse, GmailNetworkFailure]:

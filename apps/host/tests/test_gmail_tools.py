@@ -34,6 +34,10 @@ class ScriptedGmailTransport:
     message_response: Result[GmailResponse, GmailNetworkFailure] = field(
         default_factory=lambda: Ok(GmailResponse(status_code=404, payload={}))
     )
+    preview_responses: dict[str, Result[GmailResponse, GmailNetworkFailure]] = field(
+        default_factory=dict[str, Result[GmailResponse, GmailNetworkFailure]]
+    )
+    preview_calls: list[str] = field(default_factory=list[str])
     modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...], tuple[str, ...]]]
     )
@@ -57,6 +61,12 @@ class ScriptedGmailTransport:
     ) -> Result[GmailResponse, GmailNetworkFailure]:
         return self.message_response
 
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        self.preview_calls.append(message_id)
+        return self.preview_responses[message_id]
+
     async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
         self.labels_calls += 1
         return self.labels_response
@@ -78,6 +88,32 @@ class ScriptedGmailTransport:
     ) -> Result[GmailResponse, GmailNetworkFailure]:
         self.trash_calls.append(message_id)
         return Ok(GmailResponse(status_code=200, payload={}))
+
+
+def gmail_preview_response(
+    message_id: str,
+    thread_id: str,
+    *,
+    sender: str,
+    subject: str,
+    snippet: str,
+) -> GmailResponse:
+    """Build one valid Gmail metadata response."""
+    return GmailResponse(
+        status_code=200,
+        payload={
+            "id": message_id,
+            "threadId": thread_id,
+            "internalDate": "1767225600000",
+            "snippet": snippet,
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": sender},
+                    {"name": "Subject", "value": subject},
+                ]
+            },
+        },
+    )
 
 
 def gmail_message_response(*, labels: list[str]) -> GmailResponse:
@@ -268,7 +304,27 @@ def search_gmail_returns_paginated_message_rows() -> None:
                     },
                 )
             )
-        ]
+        ],
+        preview_responses={
+            "m1": Ok(
+                gmail_preview_response(
+                    "m1",
+                    "t1",
+                    sender="Alice <alice@example.com>",
+                    subject="Project kickoff",
+                    snippet="Agenda and notes for tomorrow.",
+                )
+            ),
+            "m2": Ok(
+                gmail_preview_response(
+                    "m2",
+                    "t2",
+                    sender="Bob <bob@example.com>",
+                    subject="Re: Project kickoff",
+                    snippet="I added the budget details.",
+                )
+            ),
+        },
     )
 
     with (
@@ -288,14 +344,29 @@ def search_gmail_returns_paginated_message_rows() -> None:
         envelope["result"],
         {
             "messages": [
-                {"message_id": "m1", "thread_id": "t1"},
-                {"message_id": "m2", "thread_id": "t2"},
+                {
+                    "body_preview": "Agenda and notes for tomorrow.",
+                    "message_id": "m1",
+                    "received_at": "2026-01-01T00:00:00+00:00",
+                    "sender": "Alice <alice@example.com>",
+                    "subject": "Project kickoff",
+                    "thread_id": "t1",
+                },
+                {
+                    "body_preview": "I added the budget details.",
+                    "message_id": "m2",
+                    "received_at": "2026-01-01T00:00:00+00:00",
+                    "sender": "Bob <bob@example.com>",
+                    "subject": "Re: Project kickoff",
+                    "thread_id": "t2",
+                },
             ],
             "next_page_token": "next",
             "result_size_estimate": 2,
         },
     )
     assert_eq(transport.list_calls, [("in:inbox", "page", 2)])
+    assert_eq(transport.preview_calls, ["m1", "m2"])
 
 
 @test()
