@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import structlog
 from snekok import Err, Ok, Result
@@ -32,6 +34,9 @@ class ScriptedGmailTransport:
     list_responses: list[Result[GmailResponse, GmailNetworkFailure]] = field(
         default_factory=list[Result[GmailResponse, GmailNetworkFailure]]
     )
+    preview_responses: list[Result[GmailResponse, GmailNetworkFailure]] = field(
+        default_factory=list[Result[GmailResponse, GmailNetworkFailure]]
+    )
 
     async def get_raw_message(
         self, message_id: str
@@ -47,6 +52,11 @@ class ScriptedGmailTransport:
         self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
         return Ok(GmailResponse(status_code=404, payload={}))
+
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        return self.preview_responses.pop(0)
 
     async def list_labels(self) -> Result[GmailResponse, GmailNetworkFailure]:
         return Ok(GmailResponse(status_code=200, payload={"labels": []}))
@@ -64,6 +74,39 @@ class ScriptedGmailTransport:
         self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
         return Ok(GmailResponse(status_code=200, payload={}))
+
+
+@dataclass
+class ConcurrentPreviewTransport(ScriptedGmailTransport):
+    """Track concurrent metadata reads while returning previews by id."""
+
+    active_previews: int = 0
+    max_active_previews: int = 0
+
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        self.active_previews += 1
+        self.max_active_previews = max(
+            self.max_active_previews,
+            self.active_previews,
+        )
+        try:
+            await asyncio.sleep(0.01)
+            return Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={
+                        "id": message_id,
+                        "threadId": f"thread-{message_id}",
+                        "internalDate": "1767268800000",
+                        "snippet": f"Preview {message_id}",
+                        "payload": {"headers": []},
+                    },
+                )
+            )
+        finally:
+            self.active_previews -= 1
 
 
 @test()
@@ -102,8 +145,47 @@ async def malformed_success_is_a_typed_protocol_failure() -> None:
 
 
 @test()
-async def search_messages_returns_validated_page() -> None:
-    """Search returns the same identity contract as the tool-facing schema."""
+async def get_message_preview_normalizes_metadata_and_provider_snippet() -> None:
+    """A lightweight metadata response becomes an agent-useful preview."""
+    transport = ScriptedGmailTransport(
+        preview_responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={
+                        "id": "msg-1",
+                        "threadId": "thread-1",
+                        "internalDate": "1767268800000",
+                        "snippet": "  Your order &amp; delivery\nare confirmed.  ",
+                        "payload": {
+                            "headers": [
+                                {"name": "From", "value": "Alice <alice@example.com>"},
+                                {"name": "Subject", "value": "Order update"},
+                            ]
+                        },
+                    },
+                )
+            )
+        ]
+    )
+
+    preview = await GmailClient(transport).get_message_preview("msg-1")
+
+    assert isinstance(preview, Ok)
+    assert_eq(preview.value.message_id, "msg-1")
+    assert_eq(preview.value.thread_id, "thread-1")
+    assert_eq(preview.value.sender, "Alice <alice@example.com>")
+    assert_eq(preview.value.subject, "Order update")
+    assert_eq(preview.value.body_preview, "Your order & delivery are confirmed.")
+    assert_eq(
+        preview.value.received_at,
+        datetime.fromtimestamp(1767268800, tz=UTC),
+    )
+
+
+@test()
+async def search_messages_returns_hydrated_page() -> None:
+    """Search preserves page metadata while hydrating message previews."""
     transport = ScriptedGmailTransport(
         list_responses=[
             Ok(
@@ -118,7 +200,26 @@ async def search_messages_returns_validated_page() -> None:
                     },
                 )
             )
-        ]
+        ],
+        preview_responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={
+                        "id": "msg-1",
+                        "threadId": "thread-1",
+                        "internalDate": "1767268800000",
+                        "snippet": "Project summary",
+                        "payload": {
+                            "headers": [
+                                {"name": "From", "value": "foo@example.com"},
+                                {"name": "Subject", "value": "Status"},
+                            ]
+                        },
+                    },
+                )
+            )
+        ],
     )
 
     search = await GmailClient(transport).search_messages(
@@ -127,9 +228,48 @@ async def search_messages_returns_validated_page() -> None:
 
     assert isinstance(search, Ok)
     assert_eq(search.value.messages[0].message_id, "msg-1")
-    assert_eq(search.value.messages[0].thread_id, "thread-1")
+    assert_eq(search.value.messages[0].sender, "foo@example.com")
+    assert_eq(search.value.messages[0].subject, "Status")
+    assert_eq(search.value.messages[0].body_preview, "Project summary")
     assert_eq(search.value.next_page_token, "next")
     assert_eq(search.value.result_size_estimate, 15)
+
+
+@test()
+async def search_messages_bounds_concurrent_preview_hydration() -> None:
+    """One large page cannot fan out unbounded Gmail metadata requests."""
+    message_ids = [f"msg-{index}" for index in range(10)]
+    transport = ConcurrentPreviewTransport(
+        list_responses=[
+            Ok(
+                GmailResponse(
+                    status_code=200,
+                    payload={
+                        "messages": [
+                            {
+                                "id": message_id,
+                                "threadId": f"thread-{message_id}",
+                            }
+                            for message_id in message_ids
+                        ],
+                        "resultSizeEstimate": len(message_ids),
+                    },
+                )
+            )
+        ]
+    )
+
+    search = await GmailClient(transport).search_messages(
+        query="in:inbox",
+        logger=test_logger(),
+    )
+
+    assert isinstance(search, Ok)
+    assert_eq(
+        [message.message_id for message in search.value.messages],
+        message_ids,
+    )
+    assert_eq(transport.max_active_previews, 8)
 
 
 @test()

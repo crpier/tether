@@ -28,9 +28,9 @@ export const search_gmailTool: ToolDefinition<
   name: "search_gmail",
   label: "SearchGmail",
   description:
-    "Search Gmail message metadata by query, labels, and date bounds.",
+    "Search by query, labels, and dates; return sender, subject, time, and preview.",
   promptSnippet:
-    "Search Gmail message metadata by query, labels, and date bounds.",
+    "Search by query, labels, and dates; return sender, subject, time, and preview.",
   parameters: search_gmailParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

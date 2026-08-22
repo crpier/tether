@@ -87,6 +87,34 @@ async def list_messages_omits_max_results_when_unset() -> None:
 
 
 @test()
+async def get_message_preview_requests_metadata_instead_of_the_full_body() -> None:
+    """Search hydration asks Gmail for metadata and its provider snippet only."""
+    captured: dict[str, object] = {}
+
+    def capture(request: httpx2.Request) -> httpx2.Response:
+        captured["path"] = str(request.url.path)
+        captured["params"] = dict(request.url.params)
+        return httpx2.Response(200, json={})
+
+    transport = HttpGmailTransport(
+        OAuthConfig(
+            client_secret_path=Path("unused-client.json"),
+            token_path=Path("unused-token.json"),
+            scopes=(),
+        ),
+        http_transport=httpx2.MockTransport(capture),
+        token_loader=lambda _config: "test-token",
+    )
+
+    response = await transport.get_message_preview("message-1")
+    await transport.aclose()
+
+    assert isinstance(response, Ok)
+    assert_eq(captured["path"], "/gmail/v1/users/me/messages/message-1")
+    assert_eq(captured["params"], {"format": "metadata"})
+
+
+@test()
 async def request_errors_are_typed_network_failures() -> None:
     """A connection failure does not escape the transport boundary."""
 

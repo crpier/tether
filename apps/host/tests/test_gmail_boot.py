@@ -51,6 +51,12 @@ class FakeGmailTransport:
         message = "the disabled gate must never call the Gmail transport"
         raise AssertionError(message)
 
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        _ = message_id
+        raise AssertionError("the disabled gate must never call the Gmail transport")
+
     async def get_raw_message(
         self, message_id: str
     ) -> Result[GmailResponse, GmailNetworkFailure]:
@@ -98,6 +104,11 @@ class BootGmailTransport:
     ) -> Result[GmailResponse, GmailNetworkFailure]:
         _ = message_id
         return Ok(GmailResponse(payload={}, status_code=self.status_code))
+
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailNetworkFailure]:
+        return await self.get_message(message_id)
 
     async def get_raw_message(
         self, message_id: str

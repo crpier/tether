@@ -71,7 +71,7 @@ class ArchiveGmailMessageParams(BaseModel):
 
 
 class GmailSearchParams(BaseModel):
-    """Search Gmail message metadata by query, labels, and date bounds."""
+    """Search by query, labels, and dates; return sender, subject, time, and preview."""
 
     query: str = Field(
         default="",
@@ -195,7 +195,7 @@ async def _archive_gmail_message(
 
 
 async def _search_gmail(request: Request, params: BaseModel) -> CapabilityOutcome:
-    """Search Gmail and return message ids plus pagination metadata."""
+    """Search Gmail and return useful message previews plus pagination."""
     search_params = cast("GmailSearchParams", params)
     client = _require_client(request)
     terms = [*(term for term in (search_params.query.strip(),) if term)]
@@ -218,10 +218,14 @@ async def _search_gmail(request: Request, params: BaseModel) -> CapabilityOutcom
         result={
             "messages": [
                 {
-                    "message_id": identity.message_id,
-                    "thread_id": identity.thread_id,
+                    "body_preview": message.body_preview,
+                    "message_id": message.message_id,
+                    "received_at": message.received_at.isoformat(),
+                    "sender": message.sender,
+                    "subject": message.subject,
+                    "thread_id": message.thread_id,
                 }
-                for identity in value.messages
+                for message in value.messages
             ],
             "next_page_token": value.next_page_token,
             "result_size_estimate": value.result_size_estimate,

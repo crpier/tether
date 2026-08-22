@@ -678,7 +678,7 @@
       "name": "search_gmail",
       "params_model": "GmailSearchParams",
       "schema": {
-        "description": "Search Gmail message metadata by query, labels, and date bounds.",
+        "description": "Search by query, labels, and dates; return sender, subject, time, and preview.",
         "properties": {
           "query": {
             "default": "",

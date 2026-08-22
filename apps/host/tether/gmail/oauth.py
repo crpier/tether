@@ -131,6 +131,15 @@ class HttpGmailTransport:
             params={"format": "full"},
         )
 
+    async def get_message_preview(
+        self, message_id: str
+    ) -> Result[GmailResponse, GmailTransportFailure]:
+        return await self._get(
+            f"/gmail/v1/users/{_USER_ID}/messages/{message_id}",
+            operation="get-message-preview",
+            params={"format": "metadata"},
+        )
+
     async def get_raw_message(
         self, message_id: str
     ) -> Result[GmailResponse, GmailTransportFailure]:
