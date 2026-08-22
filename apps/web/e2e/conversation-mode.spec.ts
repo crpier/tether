@@ -1,24 +1,23 @@
 import { expect, test } from "./fixtures";
 
 /**
- * Conversation mode (#542): the composer exposes an accessible toggle that
- * defaults to off (ordinary text chat) and flips its pressed state on click.
- * Provider requests and playback stay deterministic in host and web unit tests;
- * the smoke host deliberately has no live TTS credential.
+ * Voice conversation (#576): one composer control owns start and end. Provider
+ * requests and playback stay deterministic in host and web unit tests.
  */
-test("conversation mode toggle defaults to text and toggles cleanly", async ({
+test("one voice control starts and ends conversation", async ({
   page,
   login,
 }) => {
   await login();
 
-  const toggle = page.getByRole("button", { name: "Conversation mode" });
-  await expect(toggle).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  const start = page.getByRole("button", { name: "Start voice conversation" });
+  await expect(start).toBeVisible();
+  await expect(start).toHaveAttribute("aria-pressed", "false");
 
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await start.click();
+  const end = page.getByRole("button", { name: "End voice conversation" });
+  await expect(end).toHaveAttribute("aria-pressed", "true");
 
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await end.click();
+  await expect(start).toHaveAttribute("aria-pressed", "false");
 });

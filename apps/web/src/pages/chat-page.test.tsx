@@ -167,11 +167,8 @@ class FakeSpeechPlayback {
   }
 }
 
-let activeFakeSpeech: FakeSpeechPlayback | null = null;
-
 function stubSpeech(): FakeSpeechPlayback {
   const fake = new FakeSpeechPlayback();
-  activeFakeSpeech = fake;
   vi.spyOn(URL, "createObjectURL").mockImplementation((blob) =>
     fake.createObjectURL(blob instanceof Blob ? blob : new Blob()),
   );
@@ -181,15 +178,6 @@ function stubSpeech(): FakeSpeechPlayback {
   }
   vi.stubGlobal("Audio", AudioStub);
   return fake;
-}
-
-async function speechFinishLast(): Promise<void> {
-  if (activeFakeSpeech === null) {
-    throw new Error("expected speech to have been stubbed");
-  }
-  const speech = activeFakeSpeech;
-  await waitFor(() => expect(speech.spoken.length).toBeGreaterThan(0));
-  speech.finishSpeaking();
 }
 
 describe("Chat view", () => {
@@ -923,7 +911,9 @@ describe("Chat view", () => {
       within(composer).getByRole("textbox", { name: "Message" }),
     ).toBeInTheDocument();
     expect(
-      within(composer).getByRole("button", { name: "Record and review" }),
+      within(composer).getByRole("button", {
+        name: "Start voice conversation",
+      }),
     ).toBeInTheDocument();
     expect(
       within(composer).getByRole("button", { name: "Send" }),
@@ -1174,211 +1164,305 @@ describe("Chat view", () => {
     ).toBeInTheDocument();
   });
 
-  describe("voice input (issue #19)", () => {
+  describe("voice conversation (#576)", () => {
     afterEach(() => {
       vi.unstubAllGlobals();
     });
 
-    test("review mode fills the composer instead of sending", async () => {
+    test("one button starts a hands-free voice conversation immediately", async () => {
       stubVoiceRecording();
       const host = new FakeHost({ authenticated: true });
-      host.chat.nextTranscript = "buy oat milk";
-      const bus = renderApp(host);
+      renderApp(host);
 
       await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: /Record and review/ }),
-      );
-      await screen.findByText("Recording…");
-
-      latestFakeRecorder().stop();
-
-      const messageBox = textarea(
-        await screen.findByLabelText("Message", undefined, { timeout: 2000 }),
-      );
-      await waitFor(() => {
-        expect(messageBox.value).toBe("buy oat milk");
+      const start = screen.getByRole("button", {
+        name: "Start voice conversation",
       });
-      // The transcript only fills the draft — it is not sent on its own.
-      expect(bus.sent).toEqual([]);
-    });
-
-    test("auto-send mode sends the transcript through the normal send path", async () => {
-      stubVoiceRecording();
-      const host = new FakeHost({ authenticated: true });
-      host.chat.nextTranscript = "call the dentist";
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
-      await screen.findByText("Recording…");
-
-      latestFakeRecorder().stop();
-
-      await waitFor(() => {
-        expect(bus.sent).toEqual([
-          {
-            content: "call the dentist",
-            conversationId: conversation.id,
-            replyMode: "text",
-            type: "prompt",
-          },
-        ]);
-      });
-      expect(await screen.findByText("call the dentist")).toBeInTheDocument();
-    });
-
-    test("auto-send queues a transcript while a turn is generating", async () => {
-      stubVoiceRecording();
-      const host = new FakeHost({ authenticated: true });
-      host.chat.nextTranscript = "voice follow up";
-      const bus = renderApp(host);
-      const messageBox = textarea(await screen.findByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "First" } });
-      fireEvent.keyDown(messageBox, { key: "Enter" });
-
-      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
-      await screen.findByText("Recording…");
-      latestFakeRecorder().stop();
-
-      const queue = await screen.findByRole("region", {
-        name: "Queued messages",
-      });
-      expect(within(queue).getByText("voice follow up")).toBeInTheDocument();
-      expect(bus.sent).toEqual([
-        {
-          content: "First",
-          conversationId: conversation.id,
-          replyMode: "text",
-          type: "prompt",
-        },
-      ]);
-    });
-
-    test("a failed transcription keeps the clip with retry/discard, entering nothing into chat", async () => {
-      stubVoiceRecording();
-      const host = new FakeHost({ authenticated: true });
-      host.chat.transcribeAudioRejections = [new ApiError(502)];
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
-      await screen.findByText("Recording…");
-
-      latestFakeRecorder().stop();
-
       expect(
-        await screen.findByText(
-          "The service is temporarily unavailable. Please try again.",
-        ),
-      ).toBeInTheDocument();
-      expect(bus.sent).toEqual([]);
-      expect(host.chat.transcribeAudioCalls).toHaveLength(1);
-
-      // Discard drops the clip and returns to the idle two-button state.
-      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+        screen.queryByRole("button", { name: "Conversation mode" }),
+      ).not.toBeInTheDocument();
       expect(
-        await screen.findByRole("button", { name: /Record and review/ }),
-      ).toBeInTheDocument();
+        screen.queryByRole("button", { name: "Hands-free" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Record and review/ }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Record and send/ }),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(start);
+
+      await screen.findByText("Listening…");
+      expect(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      ).toHaveAttribute("aria-pressed", "true");
     });
 
-    test("retry re-uploads the retained clip and can then succeed", async () => {
+    test("ending voice conversation cancels its recording without transcription", async () => {
       stubVoiceRecording();
       const host = new FakeHost({ authenticated: true });
-      host.chat.transcribeAudioRejections = [new ApiError(502)];
-      host.chat.nextTranscript = "buy oat milk";
       renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(
-        screen.getByRole("button", { name: /Record and review/ }),
+        screen.getByRole("button", { name: "Start voice conversation" }),
       );
-      await screen.findByText("Recording…");
+      await screen.findByText("Listening…");
 
+      fireEvent.click(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      );
+
+      expect(
+        await screen.findByRole("button", {
+          name: "Start voice conversation",
+        }),
+      ).toHaveAttribute("aria-pressed", "false");
+      expect(screen.queryByText("Listening…")).not.toBeInTheDocument();
+      expect(host.chat.transcribeAudioCalls).toEqual([]);
+    });
+
+    test("Escape ends a listening voice conversation", async () => {
+      stubVoiceRecording();
+      const host = new FakeHost({ authenticated: true });
+      renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      await screen.findByText("Listening…");
+
+      fireEvent.keyDown(window, { key: "Escape" });
+
+      expect(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      ).toHaveAttribute("aria-pressed", "false");
+      expect(screen.queryByText("Listening…")).not.toBeInTheDocument();
+      expect(host.chat.transcribeAudioCalls).toEqual([]);
+    });
+
+    test("ending while microphone access is pending never starts recording", async () => {
+      FakeMediaRecorder.instances = [];
+      vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+      const fakeStream = {
+        getTracks: () => [],
+      } as unknown as MediaStream;
+      let resolveMicrophone: ((stream: MediaStream) => void) | undefined;
+      const microphone = new Promise<MediaStream>((resolve) => {
+        resolveMicrophone = resolve;
+      });
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia: () => microphone },
+      });
+      const host = new FakeHost({ authenticated: true });
+      renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      );
+      resolveMicrophone?.(fakeStream);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(FakeMediaRecorder.instances).toHaveLength(0);
+      expect(host.chat.transcribeAudioCalls).toEqual([]);
+    });
+
+    test("ending during transcription never submits its eventual result", async () => {
+      stubVoiceRecording();
+      let resolveTranscript: ((transcript: string) => void) | undefined;
+      const pendingTranscript = new Promise<string>((resolve) => {
+        resolveTranscript = resolve;
+      });
+      const host = new FakeHost({ authenticated: true });
+      vi.spyOn(host.chat, "transcribeAudio").mockReturnValue(pendingTranscript);
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      await screen.findByText("Listening…");
+      latestFakeRecorder().stop();
+      await screen.findByText("Transcribing…");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      );
+      resolveTranscript?.("do not submit me");
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(bus.sent).toEqual([]);
+    });
+
+    test("discarding a failed clip ends voice conversation", async () => {
+      stubVoiceRecording();
+      const host = new FakeHost({ authenticated: true });
+      host.chat.transcribeAudioRejections = [new ApiError(502)];
+      renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      await screen.findByText("Listening…");
       latestFakeRecorder().stop();
       await screen.findByText(
         "The service is temporarily unavailable. Please try again.",
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-      const messageBox = textarea(await screen.findByLabelText("Message"));
-      await waitFor(() => {
-        expect(messageBox.value).toBe("buy oat milk");
-      });
-      expect(host.chat.transcribeAudioCalls).toHaveLength(2);
-    });
-
-    test("cancel mid-recording never uploads anything", async () => {
-      stubVoiceRecording();
-      const host = new FakeHost({ authenticated: true });
-      renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: /Record and review/ }),
-      );
-      await screen.findByText("Recording…");
-
-      fireEvent.click(screen.getByRole("button", { name: "Cancel recording" }));
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
 
       expect(
-        await screen.findByRole("button", { name: /Record and review/ }),
-      ).toBeInTheDocument();
-      expect(host.chat.transcribeAudioCalls).toEqual([]);
-    });
-  });
-
-  describe("conversation mode (#542)", () => {
-    test("the toggle defaults to text and captures spoken mode per prompt", async () => {
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      const toggle = screen.getByRole("button", { name: "Conversation mode" });
-      expect(toggle.getAttribute("aria-pressed")).toBe("false");
-
-      fireEvent.click(toggle);
-      expect(toggle.getAttribute("aria-pressed")).toBe("true");
-
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Hello" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-      expect(bus.sent[0]).toMatchObject({ replyMode: "spoken" });
-
-      const toggleAfterSend = screen.getByRole("button", {
-        name: "Conversation mode",
-      });
-      fireEvent.click(toggleAfterSend);
-      expect(toggleAfterSend.getAttribute("aria-pressed")).toBe("false");
-      fireEvent.input(messageBox, { target: { value: "Again" } });
-      fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
-
-      // The queued prompt dispatches only once the running turn settles; its
-      // captured mode must be text despite the earlier spoken dispatch.
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        type: "chat",
-      });
-      await screen.findByText("Again");
-
-      expect(bus.sent.at(-1)).toMatchObject({ replyMode: "text" });
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      ).toHaveAttribute("aria-pressed", "false");
     });
 
-    test("a settled spoken reply plays normalized text once and can be stopped", async () => {
+    test("typed messages retain spoken replies while voice conversation is active", async () => {
+      stubVoiceRecording();
       const speech = stubSpeech();
       const host = new FakeHost({ authenticated: true });
       const bus = renderApp(host);
 
+      const messageBox = textarea(await screen.findByLabelText("Message"));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      await screen.findByText("Listening…");
+      fireEvent.input(messageBox, { target: { value: "Hello" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(screen.queryByText("Listening…")).not.toBeInTheDocument();
+      expect(host.chat.transcribeAudioCalls).toEqual([]);
+      expect(bus.sent[0]).toMatchObject({
+        content: "Hello",
+        replyMode: "spoken",
+      });
+
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "Typed prompts still get spoken replies.",
+        type: "chat",
+      });
+      await screen.findByText("Speaking reply…");
+      await waitFor(() => expect(speech.spoken).toHaveLength(1));
+      speech.finishSpeaking();
+      await screen.findByText("Listening…");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      );
+      fireEvent.input(messageBox, { target: { value: "Again" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(bus.sent.at(-1)).toMatchObject({
+        content: "Again",
+        replyMode: "text",
+      });
+    });
+
+    test("speech followed by silence submits once and re-arms after the reply", async () => {
+      stubVoiceRecording();
+      const speechEnd = stubSpeechEndDetection();
+      const speech = stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "hands free follow up";
+      const bus = renderApp(host);
+
       await screen.findByLabelText("Message");
       fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
+        screen.getByRole("button", { name: "Start voice conversation" }),
       );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Explain it" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("Listening…");
+
+      speechEnd.sample(0, 5_000);
+      expect(bus.sent).toEqual([]);
+      speechEnd.sample(0.05, 5_100);
+      speechEnd.sample(0, 5_200);
+      speechEnd.sample(0, 6_400);
+
+      await waitFor(() => {
+        expect(bus.sent).toEqual([
+          {
+            content: "hands free follow up",
+            conversationId: conversation.id,
+            replyMode: "spoken",
+            type: "prompt",
+          },
+        ]);
+      });
+      speechEnd.sample(0, 8_000);
+      expect(bus.sent).toHaveLength(1);
+      expect(await screen.findByText("Thinking…")).toBeVisible();
+
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "spoken answer",
+        type: "chat",
+      });
+      await screen.findByText("Speaking reply…");
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(speech.spoken).toHaveLength(1);
+      speech.finishSpeaking();
+      await screen.findByText("Listening…");
+    });
+
+    test("ending while thinking keeps the eventual reply silent", async () => {
+      stubVoiceRecording();
+      const speech = stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "Answer later";
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      await screen.findByText("Listening…");
+      latestFakeRecorder().stop();
+      await screen.findByText("Thinking…");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      );
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "Do not speak this reply.",
+        type: "chat",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(speech.spoken).toEqual([]);
+      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
+    });
+
+    test("a spoken reply is normalized and the conversation button stops playback", async () => {
+      stubVoiceRecording();
+      const speech = stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "Explain it";
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      );
+      await screen.findByText("Listening…");
+      latestFakeRecorder().stop();
+      await waitFor(() => expect(bus.sent).toHaveLength(1));
 
       bus.emit({
         conversation_id: conversation.id,
@@ -1390,25 +1474,31 @@ describe("Chat view", () => {
       await screen.findByText("Speaking reply…");
       await waitFor(() => expect(speech.spoken).toHaveLength(1));
       expect(speech.spoken[0].text).toBe("Hi there\n\nDone.");
+      expect(
+        screen.queryByRole("button", { name: "Stop playback" }),
+      ).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Stop playback" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "End voice conversation" }),
+      );
       expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
       expect(speech.cancellations).toBeGreaterThanOrEqual(1);
     });
 
     test("speech provider failure preserves the visible answer", async () => {
+      stubVoiceRecording();
       const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "Speak to me";
       host.chat.synthesizeSpeechRejections.push(new ApiError(502));
       const bus = renderApp(host);
 
       await screen.findByLabelText("Message");
       fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
+        screen.getByRole("button", { name: "Start voice conversation" }),
       );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
+      await screen.findByText("Listening…");
+      latestFakeRecorder().stop();
+      await waitFor(() => expect(bus.sent).toHaveLength(1));
       bus.emit({
         conversation_id: conversation.id,
         event: "message_start",
@@ -1432,377 +1522,10 @@ describe("Chat view", () => {
 
       expect(await screen.findByText("Speech playback failed.")).toBeVisible();
       expect(screen.getByText("The visible answer survives.")).toBeVisible();
-
-      fireEvent.click(screen.getByRole("button", { name: "Stop playback" }));
-      expect(
-        screen.queryByText("Speech playback failed."),
-      ).not.toBeInTheDocument();
     });
 
-    test("text replies never play even with the toggle enabled", async () => {
-      const speech = stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      // The running turn was dispatched as text before the toggle flipped.
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "text answer",
-        type: "chat",
-      });
-      await screen.findByLabelText("Message");
-
-      expect(speech.spoken).toHaveLength(0);
-      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-    });
-
-    test("starting a voice recording cancels active playback", async () => {
+    test("Ctrl+Shift+V starts and ends voice conversation", async () => {
       stubVoiceRecording();
-      const speech = stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-      await waitFor(() => expect(speech.spoken).toHaveLength(1));
-
-      fireEvent.click(screen.getByRole("button", { name: /Record and send/ }));
-
-      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-      expect(speech.cancellations).toBeGreaterThanOrEqual(1);
-    });
-
-    test("disabling the toggle does not cancel current playback", async () => {
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      expect(screen.getByText("Speaking reply…")).toBeInTheDocument();
-    });
-  });
-
-  describe("hands-free loop (#544)", () => {
-    test("an opt-in toggle appears with conversation mode and defaults off", async () => {
-      const host = new FakeHost({ authenticated: true });
-      renderApp(host);
-
-      await screen.findByLabelText("Message");
-      expect(
-        screen.queryByRole("button", { name: "Hands-free" }),
-      ).not.toBeInTheDocument();
-
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const handsFree = screen.getByRole("button", { name: "Hands-free" });
-      expect(handsFree.getAttribute("aria-pressed")).toBe("false");
-    });
-
-    test("a naturally finished spoken reply re-arms recording", async () => {
-      stubVoiceRecording();
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      await speechFinishLast();
-      await screen.findByText("Recording…");
-    });
-
-    test("speech followed by silence submits a hands-free recording exactly once", async () => {
-      stubVoiceRecording();
-      const speechEnd = stubSpeechEndDetection();
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      host.chat.nextTranscript = "hands free follow up";
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Start the loop" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await speechFinishLast();
-      await screen.findByText("Recording…");
-
-      // Silence before speech must not submit an empty recording.
-      speechEnd.sample(0, 5_000);
-      expect(bus.sent).toHaveLength(1);
-
-      speechEnd.sample(0.05, 5_100);
-      speechEnd.sample(0, 5_200);
-      // A short pause does not end the turn if speech resumes.
-      speechEnd.sample(0.05, 6_300);
-      expect(bus.sent).toHaveLength(1);
-      speechEnd.sample(0, 6_400);
-      speechEnd.sample(0, 7_600);
-
-      await waitFor(() => {
-        expect(bus.sent).toEqual([
-          {
-            content: "Start the loop",
-            conversationId: conversation.id,
-            replyMode: "spoken",
-            type: "prompt",
-          },
-          {
-            content: "hands free follow up",
-            conversationId: conversation.id,
-            replyMode: "spoken",
-            type: "prompt",
-          },
-        ]);
-      });
-      speechEnd.sample(0, 8_000);
-      expect(bus.sent).toHaveLength(2);
-    });
-
-    test("a stuck hands-free recording stops at the safety deadline", async () => {
-      stubVoiceRecording();
-      const speechEnd = stubSpeechEndDetection();
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      host.chat.nextTranscript = "deadline follow up";
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Start the loop" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await speechFinishLast();
-      await screen.findByText("Recording…");
-
-      speechEnd.sample(0, 30_000);
-
-      await waitFor(() => {
-        expect(bus.sent.at(-1)).toMatchObject({
-          content: "deadline follow up",
-          replyMode: "spoken",
-        });
-      });
-    });
-
-    test("hands-free off never re-arms recording", async () => {
-      stubVoiceRecording();
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      await speechFinishLast();
-      await waitFor(() => {
-        expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-      });
-      expect(
-        screen.getByRole("button", { name: /Record and send/ }),
-      ).toBeInTheDocument();
-    });
-
-    test("stopping playback before it finishes does not re-arm recording", async () => {
-      stubVoiceRecording();
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      fireEvent.click(screen.getByRole("button", { name: "Stop playback" }));
-
-      await waitFor(() => {
-        expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-      });
-      expect(
-        screen.getByRole("button", { name: /Record and send/ }),
-      ).toBeInTheDocument();
-    });
-
-    test("interacting during playback breaks the loop for that cycle", async () => {
-      stubVoiceRecording();
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      // Any user activity while the reply plays (typing here) means the user
-      // took over; the loop must not grab the microphone out from under them.
-      fireEvent.keyDown(window, { key: "a" });
-      await speechFinishLast();
-
-      await waitFor(() => {
-        expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-      });
-      expect(
-        screen.getByRole("button", { name: /Record and send/ }),
-      ).toBeInTheDocument();
-    });
-  });
-
-  describe("conversation quick wins (#546)", () => {
-    test("sending a prompt barge-ins over active playback", async () => {
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "a fairly long spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      // User takes over mid-playback: the follow-up send stops speech.
-      fireEvent.input(messageBox, { target: { value: "Stop it" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-    });
-
-    test("Escape stops playback", async () => {
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "spoken answer",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      fireEvent.keyDown(window, { key: "Escape" });
-
-      expect(screen.queryByText("Speaking reply…")).not.toBeInTheDocument();
-    });
-
-    test("Ctrl+Shift+V toggles conversation mode from the keyboard", async () => {
       const host = new FakeHost({ authenticated: true });
       renderApp(host);
 
@@ -1812,11 +1535,10 @@ describe("Chat view", () => {
         key: "V",
         shiftKey: true,
       });
+      await screen.findByText("Listening…");
       expect(
-        screen
-          .getByRole("button", { name: "Conversation mode" })
-          .getAttribute("aria-pressed"),
-      ).toBe("true");
+        screen.getByRole("button", { name: "End voice conversation" }),
+      ).toHaveAttribute("aria-pressed", "true");
 
       fireEvent.keyDown(window, {
         ctrlKey: true,
@@ -1824,13 +1546,12 @@ describe("Chat view", () => {
         shiftKey: true,
       });
       expect(
-        screen
-          .getByRole("button", { name: "Conversation mode" })
-          .getAttribute("aria-pressed"),
-      ).toBe("false");
+        screen.getByRole("button", { name: "Start voice conversation" }),
+      ).toHaveAttribute("aria-pressed", "false");
     });
 
-    test("the composer placeholder reflects the current mode", async () => {
+    test("the composer placeholder reflects voice conversation state", async () => {
+      stubVoiceRecording();
       const host = new FakeHost({ authenticated: true });
       renderApp(host);
 
@@ -1838,52 +1559,9 @@ describe("Chat view", () => {
       expect(messageBox.getAttribute("placeholder")).toContain("Tether");
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
+        screen.getByRole("button", { name: "Start voice conversation" }),
       );
       expect(messageBox.getAttribute("placeholder")).toBe("Reply spoken…");
-    });
-
-    test("settled spoken replies get a spoken chip on their transcript row", async () => {
-      stubSpeech();
-      const host = new FakeHost({ authenticated: true });
-      const bus = renderApp(host);
-
-      await screen.findByLabelText("Message");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Conversation mode" }),
-      );
-      const messageBox = textarea(screen.getByLabelText("Message"));
-      fireEvent.input(messageBox, { target: { value: "Speak to me" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      host.chat.storedMessages = [
-        {
-          content: "Hello there. Done.",
-          conversation_id: conversation.id,
-          created_at: new Date().toISOString(),
-          id: "01930000-0000-7000-8000-000000000010",
-          pi_message_id: null,
-          role: "assistant",
-          seq: 2,
-          tool_args: null,
-          tool_name: null,
-          tool_result: null,
-        },
-      ];
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "text_delta",
-        delta: "Hello there. Done.",
-        type: "chat",
-      });
-      bus.emit({
-        conversation_id: conversation.id,
-        event: "agent_end",
-        final_text: "Hello there. Done.",
-        type: "chat",
-      });
-      await screen.findByText("Speaking reply…");
-
-      expect(screen.getAllByLabelText("Spoken reply")).toHaveLength(1);
     });
   });
 });

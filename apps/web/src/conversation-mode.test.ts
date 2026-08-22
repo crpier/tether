@@ -50,14 +50,18 @@ function withSpeech(speech: FakeSpeechPlayer) {
 }
 
 describe("conversation mode", () => {
-  test("defaults off and toggles", () => {
+  test("start activates spoken replies and arms the first recording", () => {
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(stubSpeech()));
       expect(mode.enabled()).toBe(false);
-      mode.toggle();
+      expect(mode.voiceAutoStart()).toBe(0);
+
+      mode.start();
+
       expect(mode.enabled()).toBe(true);
       expect(mode.replyMode()).toBe("spoken");
-      mode.toggle();
+      expect(mode.voiceAutoStart()).toBe(1);
+      mode.stop();
       expect(mode.replyMode()).toBe("text");
       dispose();
     });
@@ -74,21 +78,11 @@ describe("conversation mode", () => {
     });
   });
 
-  test("hands-free toggles independently and defaults off", () => {
-    createRoot((dispose) => {
-      const mode = createConversationMode(withSpeech(stubSpeech()));
-      expect(mode.handsFree()).toBe(false);
-      mode.toggleHandsFree();
-      expect(mode.handsFree()).toBe(true);
-      dispose();
-    });
-  });
-
   test("sentences stream out normalized and queued for speech", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.sentence("**Hello** there. ");
       expect(speech.spoken.map((utterance) => utterance.text)).toEqual([
         "Hello there.",
@@ -101,7 +95,7 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.sentence("First part.");
       speech.spoken.length = 0;
       mode.spokenTurn.settle(" Second part.", {
@@ -121,7 +115,7 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.settle("", {
         fullText: "[ran a tool]",
         toolOnly: true,
@@ -136,7 +130,7 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.sentence("Stale lead-in.");
       expect(mode.playbackState()).toBe("playing");
       mode.spokenTurn.restart();
@@ -149,34 +143,28 @@ describe("conversation mode", () => {
     });
   });
 
-  test("a naturally finished spoken reply bumps the hands-free re-arm tick", () => {
+  test("a naturally finished spoken reply re-arms recording", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
-      mode.toggleHandsFree();
-      expect(mode.voiceAutoStart()).toBe(0);
+      mode.start();
+      expect(mode.voiceAutoStart()).toBe(1);
       mode.spokenTurn.sentence("All done.");
       speech.finishSpeaking();
-      expect(mode.voiceAutoStart()).toBe(1);
+      expect(mode.voiceAutoStart()).toBe(2);
       dispose();
     });
   });
 
-  test("re-arm requires conversation mode and hands-free", () => {
+  test("ending conversation prevents a spoken reply from re-arming", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggleHandsFree();
-      mode.spokenTurn.sentence("Spoken while mode is off.");
+      mode.start();
+      mode.spokenTurn.sentence("Conversation is ending.");
+      mode.stop();
       speech.finishSpeaking();
-      expect(mode.voiceAutoStart()).toBe(0);
-
-      mode.toggle();
-      mode.toggleHandsFree();
-      mode.spokenTurn.sentence("Mode on, hands-free off.");
-      speech.finishSpeaking();
-      expect(mode.voiceAutoStart()).toBe(0);
+      expect(mode.voiceAutoStart()).toBe(1);
       dispose();
     });
   });
@@ -185,25 +173,11 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
-      mode.toggleHandsFree();
+      mode.start();
       mode.spokenTurn.sentence("Long reply. Still going.");
       fireEventKeyDown({ key: "a" });
       speech.finishSpeaking();
-      expect(mode.voiceAutoStart()).toBe(0);
-      dispose();
-    });
-  });
-
-  test("stopping playback early never re-arms recording", () => {
-    const speech = stubSpeech();
-    createRoot((dispose) => {
-      const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
-      mode.toggleHandsFree();
-      mode.spokenTurn.sentence("Long reply.");
-      mode.stopPlayback();
-      expect(mode.voiceAutoStart()).toBe(0);
+      expect(mode.voiceAutoStart()).toBe(1);
       dispose();
     });
   });
@@ -212,7 +186,7 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
       mode.onPromptSent();
       expect(mode.playbackState()).toBe("idle");
@@ -225,7 +199,7 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
       mode.onRecordingStart();
       expect(mode.playbackState()).toBe("idle");
@@ -237,7 +211,7 @@ describe("conversation mode", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
       const mode = createConversationMode(withSpeech(speech));
-      mode.toggle();
+      mode.start();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
       fireEventKeyDown({ key: "Escape" });
       expect(mode.playbackState()).toBe("idle");

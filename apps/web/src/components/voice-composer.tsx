@@ -1,13 +1,7 @@
-// Chat composer voice controls (issue #19): two always-visible icon buttons
-// ("record and review" fills the composer, "record and send" sends
-// immediately) driving the `VoiceRecorder` toggle state machine. Whichever
-// button starts a recording morphs in place into a "Stop" button — the other
-// one hides — so recording is stopped from the same spot it was started, no
-// separate stop control appears elsewhere. This component owns only the
-// browser wiring (getUserMedia/MediaRecorder) and the
-// recording/uploading/failed UI — the state machine itself lives in
-// `voice-recorder.ts`, and what a successful transcript *does* (fill the
-// draft vs. send) is entirely the caller's call via `onTranscript`.
+// The chat composer's single voice-conversation control. It owns browser
+// microphone wiring and recording/transcription status while the page owns
+// the wider spoken loop. Starting it arms a hands-free recording immediately;
+// ending it abandons the current clip and returns the composer to text.
 import {
   Show,
   createEffect,
@@ -19,7 +13,6 @@ import {
 
 import type {
   MinimalMediaRecorder,
-  VoiceMode,
   VoiceRecorderState,
 } from "@/voice-recorder";
 import { VoiceRecorder } from "@/voice-recorder";
@@ -58,14 +51,14 @@ function adaptMediaRecorder(
 }
 
 export function VoiceComposerControls(props: {
-  /**
-   * Increment to programmatically start an auto-send recording — the
-   * hands-free loop (#544) re-arms the microphone after a spoken reply
-   * finishes. Ignored when a recording is already active.
-   */
-  autoStartSignal?: Accessor<number>;
+  active: Accessor<boolean>;
+  /** Incremented for the first recording and each hands-free re-arm. */
+  autoStartSignal: Accessor<number>;
+  onEndConversation: () => void;
   onRecordingStart?: () => void;
-  onTranscript: (transcript: string, mode: VoiceMode) => void;
+  onStartConversation: () => void;
+  recordingCancelSignal: Accessor<number>;
+  onTranscript: (transcript: string) => void;
   transcribe: (blob: Blob) => Promise<string>;
 }) {
   const [state, setState] = createSignal<VoiceRecorderState>({ kind: "idle" });
@@ -104,12 +97,11 @@ export function VoiceComposerControls(props: {
     });
   });
 
-  // Escape cancels an in-progress recording, mirroring the explicit "x"
-  // control — a keyboard-only path to abandon a clip without uploading it.
+  // Escape is the keyboard path for leaving a listening conversation.
   onMount(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && state().kind === "recording") {
-        recorder.cancel();
+      if (event.key === "Escape" && props.active()) {
+        props.onEndConversation();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -118,91 +110,66 @@ export function VoiceComposerControls(props: {
     });
   });
 
-  const start = (mode: VoiceMode) => {
+  const start = () => {
     props.onRecordingStart?.();
-    void recorder.start(mode);
+    void recorder.start();
   };
 
-  // Hands-free loop (#544): the page bumps `autoStartSignal` when a spoken
-  // reply finished playing; each increment past the last handled value arms
-  // one auto-send recording. Already-recording increments are dropped —
-  // never restart or stack a recording the user is in control of.
+  // Each increment arms one recording. Increments while recording are ignored;
+  // the spoken loop can only ever own one microphone session.
   let handledAutoStart = 0;
   createEffect(() => {
-    const tick = props.autoStartSignal?.() ?? 0;
+    const tick = props.autoStartSignal();
     if (tick <= handledAutoStart || state().kind !== "idle") {
       return;
     }
     handledAutoStart = tick;
-    start("hands-free");
+    start();
   });
 
-  // Which mode (if any) is currently recording — drives which of the two
-  // buttons morphs into "Stop" in place, rather than popping up a separate
-  // stop control elsewhere.
-  const recordingMode = () => {
-    const current = state();
-    return current.kind === "recording" ? current.mode : null;
-  };
-  const isSendingRecording = () =>
-    recordingMode() === "auto-send" || recordingMode() === "hands-free";
+  // A typed prompt takes over the turn without ending voice conversation.
+  let handledRecordingCancel = 0;
+  createEffect(() => {
+    const tick = props.recordingCancelSignal();
+    if (tick <= handledRecordingCancel) {
+      return;
+    }
+    handledRecordingCancel = tick;
+    recorder.cancel();
+  });
+
+  // Ending the wider conversation abandons any clip still being captured.
+  createEffect(() => {
+    if (!props.active()) {
+      recorder.cancel();
+      recorder.discard();
+    }
+  });
 
   return (
     <div aria-label="Voice input" class="relative flex shrink-0" role="group">
-      <Show when={state().kind === "idle" || state().kind === "recording"}>
-        <div class="flex gap-1">
-          <Show when={recordingMode() === null || recordingMode() === "review"}>
-            <Button
-              aria-label={
-                recordingMode() === "review"
-                  ? "Stop recording"
-                  : "Record and review"
-              }
-              onClick={() => {
-                if (recordingMode() === "review") {
-                  recorder.stop();
-                } else {
-                  start("review");
-                }
-              }}
-              class="rounded-full"
-              size="icon-sm"
-              title={
-                recordingMode() === "review"
-                  ? "Stop recording"
-                  : "Record and review"
-              }
-              type="button"
-              variant="outline"
-            >
-              {recordingMode() === "review" ? "⏹" : "🎙 ✎"}
-            </Button>
-          </Show>
-          <Show when={recordingMode() === null || isSendingRecording()}>
-            <Button
-              aria-label={
-                isSendingRecording() ? "Stop recording" : "Record and send"
-              }
-              onClick={() => {
-                if (isSendingRecording()) {
-                  recorder.stop();
-                } else {
-                  start("auto-send");
-                }
-              }}
-              class="rounded-full"
-              size="icon-sm"
-              title={
-                isSendingRecording() ? "Stop recording" : "Record and send"
-              }
-              type="button"
-              variant="outline"
-            >
-              {isSendingRecording() ? "⏹" : "🎙 ➤"}
-            </Button>
-          </Show>
-        </div>
-      </Show>
+      <Button
+        aria-label={
+          props.active() ? "End voice conversation" : "Start voice conversation"
+        }
+        aria-pressed={props.active()}
+        class="rounded-full"
+        onClick={() => {
+          if (props.active()) {
+            props.onEndConversation();
+          } else {
+            props.onStartConversation();
+          }
+        }}
+        size="icon-sm"
+        title={
+          props.active() ? "End voice conversation" : "Start voice conversation"
+        }
+        type="button"
+        variant={props.active() ? "default" : "outline"}
+      >
+        <span aria-hidden="true">{props.active() ? "■" : "🎙"}</span>
+      </Button>
       <Show when={state()} keyed>
         {(current) => (
           <Show when={current.kind === "recording" && current}>
@@ -215,20 +182,10 @@ export function VoiceComposerControls(props: {
                   aria-hidden="true"
                   class="inline-block size-2 animate-pulse rounded-full bg-red-500"
                 />
-                <span>Recording…</span>
+                <span>Listening…</span>
                 <span class="tabular-nums opacity-70">
                   {elapsedLabel(recording().startedAt, nowMs())}
                 </span>
-                <button
-                  aria-label="Cancel recording"
-                  class="text-muted-foreground ml-auto opacity-70 hover:opacity-100"
-                  onClick={() => {
-                    recorder.cancel();
-                  }}
-                  type="button"
-                >
-                  ✕
-                </button>
               </div>
             )}
           </Show>
@@ -264,6 +221,7 @@ export function VoiceComposerControls(props: {
                 <Button
                   onClick={() => {
                     recorder.discard();
+                    props.onEndConversation();
                   }}
                   size="sm"
                   type="button"

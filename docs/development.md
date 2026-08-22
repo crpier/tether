@@ -145,8 +145,8 @@ Speech playback uses the required host TTS dependency. The browser sends each
 normalized fragment to authenticated `POST /api/tts/speech`; the host calls its
 configured OpenAI-compatible provider and returns ephemeral audio. Generated
 audio is played sequentially and discarded after playback. Provider requests,
-audio playback, and the remaining queue are cancelled together on barge-in or
-Stop. Configure the provider with `TETHER_TTS_API_KEY`,
+audio playback, and the remaining queue are cancelled together on barge-in,
+Escape, or ending voice conversation. Configure the provider with `TETHER_TTS_API_KEY`,
 `TETHER_TTS_BASE_URL`, `TETHER_TTS_MODEL`, and `TETHER_TTS_VOICE`.
 
 Only successfully settled spoken turns auto-play (never reasoning, tools,
@@ -166,19 +166,23 @@ invalidated the streamed prefix). Tool-only turns set `tool_only` on
 guidance also asks the model for a concise spoken summary; the transcript
 keeps the full answer.
 
-### Hands-free loop (#544)
+### One-button hands-free loop (#544, #576)
 
-An opt-in 🔁 toggle (visible while Conversation mode is on) re-arms an
-auto-send voice recording when a spoken reply **finishes playing naturally**.
+The composer has one voice control. `Start voice conversation` enables spoken
+replies and hands-free behavior, then opens the microphone immediately. The
+same control becomes `End voice conversation`, which abandons pending audio,
+ignores an in-flight transcription result, cancels playback, and returns to
+text chat. Listening, transcribing, thinking, and speaking states remain
+visible beside the composer.
+
 Once speech begins, 1.2 seconds of trailing silence stops the recording; the
 existing STT path then transcribes and submits it. Silence before speech does
-nothing, and a 30-second deadline stops an abandoned recording. Manually
-started review and record-and-send clips keep their explicit Stop behavior.
-The speech player reports natural completion via `onEnded` — never on cancel,
-supersession by a later speak, or error — so Stop/Escape/barge-in always
-breaks the loop. Any key or pointer interaction during playback also stands
-the loop down for that cycle: the user took over, and the microphone must not
-be grabbed out from under them.
+nothing, and a 30-second deadline stops an abandoned recording. The speech
+player reports natural completion via `onEnded` — never on cancel,
+supersession, or error — so ending the conversation, Escape, and barge-in break
+the loop. Any key or pointer interaction during playback also stands the loop
+down for that cycle: the user took over, and the microphone must not be grabbed
+out from under them.
 
 ## Codegen
 

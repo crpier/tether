@@ -25,7 +25,6 @@ import { ArtifactOverlay } from "../components/artifact-viewer";
 import { MessageContent } from "../components/message-content";
 import { VoiceComposerControls } from "../components/voice-composer";
 import type { ArtifactPointer } from "../components/widgets/artifact-widget";
-import type { VoiceMode } from "../voice-recorder";
 import { queryKeys } from "../lib/query-keys";
 import { formatToolResult } from "../lib/tool-result";
 import { Button } from "@/components/ui/button";
@@ -605,20 +604,6 @@ export function ChatPage() {
   const conversationMode = createConversationMode({
     synthesize: (text, signal) => api.synthesizeSpeech(text, signal),
   });
-  const [stopPlaybackRef, setStopPlaybackRef] =
-    createSignal<HTMLButtonElement | null>(null);
-
-  // When playback starts, put keyboard focus on Stop so Escape/Enter work
-  // immediately — but never steal focus from something in active use.
-  createEffect(() => {
-    if (
-      conversationMode.playbackState() === "playing" &&
-      document.activeElement === document.body
-    ) {
-      stopPlaybackRef()?.focus();
-    }
-  });
-
   const liveTurn = createLiveChatTurn({
     conversationId,
     // Read once per queued prompt, so toggling never mutates queued or
@@ -708,11 +693,7 @@ export function ChatPage() {
     }
   };
 
-  const handleVoiceTranscript = (transcript: string, mode: VoiceMode) => {
-    if (mode === "review") {
-      setDraft(transcript);
-      return;
-    }
+  const handleVoiceTranscript = (transcript: string) => {
     sendPrompt(transcript);
   };
 
@@ -829,29 +810,31 @@ export function ChatPage() {
             </div>
           </div>
           <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
-            <Show when={conversationMode.playbackState() !== "idle"}>
-              <div
+            <Show
+              when={
+                conversationMode.enabled() &&
+                generating() &&
+                conversationMode.playbackState() === "idle"
+              }
+            >
+              <p
                 aria-live="polite"
-                class="bg-muted/40 flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                class="bg-muted/40 rounded-md border px-3 py-1.5 text-sm"
                 role="status"
               >
-                <span class="flex-1">
-                  {conversationMode.playbackState() === "error"
-                    ? "Speech playback failed."
-                    : "Speaking reply…"}
-                </span>
-                <Button
-                  onClick={() => {
-                    conversationMode.stopPlayback();
-                  }}
-                  ref={setStopPlaybackRef}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Stop playback
-                </Button>
-              </div>
+                Thinking…
+              </p>
+            </Show>
+            <Show when={conversationMode.playbackState() !== "idle"}>
+              <p
+                aria-live="polite"
+                class="bg-muted/40 rounded-md border px-3 py-1.5 text-sm"
+                role="status"
+              >
+                {conversationMode.playbackState() === "error"
+                  ? "Speech playback failed."
+                  : "Speaking reply…"}
+              </p>
             </Show>
             <Show when={queuedPrompts().length > 0}>
               <section
@@ -990,52 +973,22 @@ export function ChatPage() {
                 />
               </TextField>
               <div class="flex shrink-0 items-center gap-1">
-                <Button
-                  aria-label="Conversation mode"
-                  aria-pressed={conversationMode.enabled()}
-                  class="rounded-full"
-                  onClick={() => {
-                    conversationMode.toggle();
-                  }}
-                  size="sm"
-                  title={
-                    conversationMode.enabled()
-                      ? "Conversation mode is on: replies are spoken"
-                      : "Conversation mode is off"
-                  }
-                  type="button"
-                  variant={conversationMode.enabled() ? "default" : "outline"}
-                >
-                  <span aria-hidden="true">🔊</span>
-                </Button>
-                <Show when={conversationMode.enabled()}>
-                  <Button
-                    aria-label="Hands-free"
-                    aria-pressed={conversationMode.handsFree()}
-                    class="rounded-full"
-                    onClick={() => {
-                      conversationMode.toggleHandsFree();
-                    }}
-                    size="sm"
-                    title={
-                      conversationMode.handsFree()
-                        ? "Hands-free is on: recording re-arms after each spoken reply"
-                        : "Hands-free is off"
-                    }
-                    type="button"
-                    variant={
-                      conversationMode.handsFree() ? "default" : "outline"
-                    }
-                  >
-                    <span aria-hidden="true">🔁</span>
-                  </Button>
-                </Show>
                 <VoiceComposerControls
+                  active={() => conversationMode.enabled()}
                   autoStartSignal={() => conversationMode.voiceAutoStart()}
+                  onEndConversation={() => {
+                    conversationMode.stop();
+                  }}
                   onRecordingStart={() => {
                     conversationMode.onRecordingStart();
                   }}
+                  onStartConversation={() => {
+                    conversationMode.start();
+                  }}
                   onTranscript={handleVoiceTranscript}
+                  recordingCancelSignal={() =>
+                    conversationMode.recordingCancelSignal()
+                  }
                   transcribe={(blob) => api.transcribeAudio(blob)}
                 />
                 <Button
