@@ -19,7 +19,10 @@ export interface SpeakableUtterance {
 }
 
 export interface SpeechSynthesisLike {
+  addEventListener?(type: "voiceschanged", listener: () => void): void;
   cancel(): void;
+  getVoices?(): readonly unknown[];
+  removeEventListener?(type: "voiceschanged", listener: () => void): void;
   speak(utterance: SpeakableUtterance): void;
 }
 
@@ -27,7 +30,7 @@ export interface SpeechPlayer {
   cancel(): void;
   /** Appends speech without cancelling what is already playing/queued. */
   enqueue(text: string): void;
-  /** Whether any speech adapter exists at all (#546 UX hint). */
+  /** Whether this browser currently has a usable speech voice (#546 UX hint). */
   supported(): boolean;
   speak(text: string): void;
   state(): SpeechPlayerState;
@@ -61,6 +64,14 @@ export function createSpeechPlayer(
     options.utteranceFactory ??
     ((text: string): SpeakableUtterance => new SpeechSynthesisUtterance(text));
 
+  const hasUsableVoice = () =>
+    synthesis !== null &&
+    (synthesis.getVoices === undefined || synthesis.getVoices().length > 0);
+  const [supported, setSupported] = createSignal(
+    synthesis !== null && hasUsableVoice(),
+  );
+  const waiting: { text: string; token: number }[] = [];
+
   // Bumped whenever speech is cancelled or replaced. Real browsers fire the
   // cancelled utterance's `onend` asynchronously after cancel(); the token
   // lets stale handlers recognize they no longer represent live playback.
@@ -68,6 +79,7 @@ export function createSpeechPlayer(
 
   const cancel = () => {
     playbackToken += 1;
+    waiting.length = 0;
     if (synthesis !== null) {
       synthesis.cancel();
     }
@@ -94,15 +106,48 @@ export function createSpeechPlayer(
     };
   };
 
+  const speakNow = (text: string, token: number) => {
+    if (synthesis === null) {
+      return;
+    }
+    const utterance = utteranceFactory(text);
+    attach(utterance, token);
+    setState("playing");
+    try {
+      synthesis.speak(utterance);
+    } catch {
+      if (token === playbackToken) {
+        setState("error");
+      }
+    }
+  };
+
+  const flushWaiting = () => {
+    if (!hasUsableVoice()) {
+      setSupported(false);
+      return;
+    }
+    setSupported(synthesis !== null);
+    const queued = waiting.splice(0);
+    for (const item of queued) {
+      speakNow(item.text, item.token);
+    }
+  };
+
+  synthesis?.addEventListener?.("voiceschanged", flushWaiting);
+
   const enqueue = (text: string) => {
     if (synthesis === null || text.trim().length === 0) {
       return;
     }
     const token = ++playbackToken;
-    const utterance = utteranceFactory(text);
-    attach(utterance, token);
-    setState("playing");
-    synthesis.speak(utterance);
+    if (!hasUsableVoice()) {
+      setSupported(false);
+      waiting.push({ text, token });
+      return;
+    }
+    setSupported(true);
+    speakNow(text, token);
   };
 
   const speak = (text: string) => {
@@ -119,6 +164,6 @@ export function createSpeechPlayer(
     enqueue,
     speak,
     state,
-    supported: () => synthesis !== null,
+    supported,
   };
 }

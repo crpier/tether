@@ -831,8 +831,8 @@ export function ChatPage() {
               when={conversationMode.enabled() && !conversationMode.supported()}
             >
               <p class="text-muted-foreground text-xs" role="note">
-                Speech output isn't available in this browser; spoken replies
-                will only appear as text.
+                Speech output isn't available in this browser or desktop voice
+                setup; spoken replies will only appear as text.
               </p>
             </Show>
             <Show when={conversationMode.playbackState() !== "idle"}>
