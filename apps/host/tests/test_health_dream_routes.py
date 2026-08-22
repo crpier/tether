@@ -1,17 +1,19 @@
 """REST behavior tests for the manual Health Connect dream-now route."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
 from snekok import Err
-from snekql.sqlite import Database
+from snekql.sqlite import Config, Database
 from snektest import assert_eq, test
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tether.app_runtime import AppRuntime, app_runtime
+from tether.health_connect import HealthConnectIngestion, create_health_connect_schema
 from tether.health_connect.contracts import (
     ExerciseRecord,
     HealthConnectBatchRequest,
@@ -28,7 +30,12 @@ _BASE_MILLIS = 1_700_000_000_000
 _HOUR_MILLIS = 3_600_000
 
 
-def _make_app(root: Path, *, dreaming_enabled: bool = False) -> Starlette:
+def _make_app(
+    root: Path,
+    *,
+    dreaming_enabled: bool = False,
+    health_episode_sweep_seconds: float = 60.0,
+) -> Starlette:
     """Create a test app with an isolated database and workspace."""
     return create_app(
         config=AppConfig(
@@ -37,6 +44,7 @@ def _make_app(root: Path, *, dreaming_enabled: bool = False) -> Starlette:
             kb_root=root / ".tether",
             session_secret=SESSION_SECRET,
             dreaming_enabled=dreaming_enabled,
+            health_episode_sweep_seconds=health_episode_sweep_seconds,
         ),
         telemetry_settings=TelemetrySettings(install_global_provider=False),
     )
@@ -84,10 +92,15 @@ def _exercise_record(record_id: str, *, start: int, end: int) -> ExerciseRecord:
     )
 
 
-async def _seed_summary(runtime: AppRuntime, record_id: str, *, start: int) -> None:
-    """Ingest one settled session and materialize its episode summary."""
-    telemetry = _telemetry_database(runtime)
-    ingestion = runtime.health_connect_ingestion
+async def _seed_raw_exercise(
+    telemetry: Database,
+    record_id: str,
+    *,
+    start: int,
+    ingestion: HealthConnectIngestion | None = None,
+) -> None:
+    """Ingest one settled exercise session without materializing a summary."""
+    ingestion = ingestion or HealthConnectIngestion(telemetry)
     record_types = ("exercise",)
     await ingestion.start_baseline(
         installation_id="pixel-installation",
@@ -114,10 +127,52 @@ async def _seed_summary(runtime: AppRuntime, record_id: str, *, start: int) -> N
         )
     )
     assert not isinstance(outcome, Err), outcome
+
+
+async def _seed_summary(runtime: AppRuntime, record_id: str, *, start: int) -> None:
+    """Ingest one settled session and materialize its episode summary."""
+    telemetry = _telemetry_database(runtime)
+    await _seed_raw_exercise(
+        telemetry,
+        record_id,
+        start=start,
+        ingestion=runtime.health_connect_ingestion,
+    )
     result = await HealthEpisodeSummarizer(telemetry).materialize(
         now=datetime.fromtimestamp((start + _HOUR_MILLIS + 31 * 60_000) / 1_000, UTC)
     )
     assert_eq(result.exercise_upserts, 1)
+
+
+@test()
+async def host_boot_materializes_raw_sessions_for_health_dreaming() -> None:
+    """Composed startup turns settled raw sessions into queueable evidence."""
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        telemetry = await Database.initialize(
+            backend=Config(database=root / "telemetry.sqlite3")
+        )
+        await create_health_connect_schema(telemetry)
+        await _seed_raw_exercise(telemetry, "ex-1", start=_BASE_MILLIS)
+        await telemetry.close()
+
+        app = _make_app(
+            root,
+            dreaming_enabled=True,
+            health_episode_sweep_seconds=0.02,
+        )
+        with TestClient(app) as client:
+            _login(client)
+            queued = client.post("/api/telemetry/health-connect/dream-now", json={})
+            for _ in range(50):
+                if queued.status_code == 200:
+                    break
+                assert_eq(queued.status_code, 204)
+                await asyncio.sleep(0.02)
+                queued = client.post("/api/telemetry/health-connect/dream-now", json={})
+
+            assert_eq(queued.status_code, 200)
+            assert_eq(queued.json()[0]["exercise_through_version_id"], 1)
 
 
 @test()

@@ -11,8 +11,8 @@ separate, later consolidation step.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Literal
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Literal
 
 from snekql.sqlite import (
     Database,
@@ -24,6 +24,10 @@ from snekql.sqlite import (
     update,
 )
 
+from tether.search_projection.loop import run_reconcile_loop
+
+if TYPE_CHECKING:
+    from tether.structured_logging import Logger
 from tether.health_connect.persistence import (
     HcEpisodeCursor,
     HcExerciseEpisodeSummary,
@@ -149,6 +153,27 @@ class HealthEpisodeSummarizer:
             exercise_upserts=exercise_upserts,
             sleep_upserts=sleep_upserts,
             invalidations=exercise_invalidations + sleep_invalidations,
+        )
+
+    async def sweep_forever(
+        self, *, interval_seconds: float = 60.0, logger: Logger
+    ) -> None:
+        """Summarize settled sessions after each interval.
+
+        `materialize` is cursor-based and idempotent. Each pass picks up
+        sessions that settled since the prior pass. A failed pass is logged;
+        the next tick retries.
+        """
+
+        async def _pass() -> EpisodeMaterializeResult:
+            return await self.materialize(now=datetime.now(UTC))
+
+        await run_reconcile_loop(
+            _pass,
+            interval_seconds=interval_seconds,
+            initial_delay_seconds=interval_seconds,
+            logger=logger,
+            failure_message="Health episode summarization failed",
         )
 
     async def _materialize_exercise(

@@ -5,6 +5,7 @@ in ``tether.health_connect`` is an internal seam owned by this Integration and
 its tests.
 """
 
+from tether.health_connect.episodes import HealthEpisodeSummarizer
 from tether.health_connect.ingestion import HealthConnectIngestion
 from tether.health_connect.persistence import (
     HcExerciseEpisodeSummary,
@@ -24,6 +25,7 @@ __all__ = [
     "HcSleepEpisodeSummary",
     "HealthConnectIngestion",
     "HealthConnectTelemetry",
+    "HealthEpisodeSummarizer",
     "create_health_connect_schema",
     "internal_health_connect_tool_routes",
     "router",

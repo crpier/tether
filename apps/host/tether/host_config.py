@@ -97,6 +97,7 @@ class AppConfig:
     gmail_purge_enabled: bool = False
     gmail_purge_interval_seconds: float = 60 * 60
     gmail_purge_chunk_size: int = 10
+    health_episode_sweep_seconds: float = 60.0
     dreaming_enabled: bool = False
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None

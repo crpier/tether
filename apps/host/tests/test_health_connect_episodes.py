@@ -1,7 +1,10 @@
 """Deterministic Health Connect episode summaries with raw-record provenance."""
 
+import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from snekok import Err
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import assert_eq, assert_true, test
@@ -437,4 +440,41 @@ async def sleep_summary_records_stage_totals() -> None:
     assert_eq(row.minutes_light, 150.0)
     assert_eq(row.minutes_deep, 180.0)
     assert_eq(row.minutes_rem, 120.0)
+    await database.close()
+
+
+@test()
+async def sweep_forever_materializes_settled_sessions_periodically() -> None:
+    """The sweep loop summarizes settled sessions and remains cancellable."""
+    database = await Database.initialize(backend=Config(database=":memory:"))
+    await create_health_connect_schema(database)
+    ingestion = await _seed_ingestion(database)
+    session_start = _BASE_MILLIS
+    session_end = session_start + _HOUR_MILLIS
+    await _ingest_baseline(
+        ingestion,
+        exercise=[_exercise_record("ex-1", end=session_end, start=session_start)],
+        sleep=[],
+    )
+
+    summarizer = HealthEpisodeSummarizer(database)
+    task = asyncio.create_task(
+        summarizer.sweep_forever(
+            interval_seconds=0.02,
+            logger=structlog.stdlib.get_logger("test.episode_sweep"),
+        )
+    )
+    summaries: list[HcExerciseEpisodeSummary[Fetched]] = []
+    try:
+        for _ in range(50):
+            summaries = await _fetch_exercise_summaries(database)
+            if len(summaries) == 1:
+                break
+            await asyncio.sleep(0.02)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert_eq(len(summaries), 1)
+    assert_eq(summaries[0].record_uid, "ex-1")
     await database.close()
