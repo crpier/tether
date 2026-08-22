@@ -81,6 +81,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "label_ebook",
             "match_ebook_filename",
             "list_unlabeled_ebooks",
+            "analyze_health_connect",
             "health_connect_inventory",
             "query_health_connect",
             "summarize_health_connect",
@@ -122,6 +123,21 @@ def health_connect_query_schema_is_typed_and_bounded() -> None:
     """The generated query tool offers every record type and a large fixed limit."""
     document = build_tool_schema_document()
     tools = {tool["name"]: tool for tool in document["tools"]}
+    analysis_schema = cast("dict[str, Any]", tools["analyze_health_connect"]["schema"])
+    assert_eq(
+        analysis_schema["properties"]["focus"]["enum"],
+        [
+            "metric_status",
+            "sleep_episode",
+            "sleep_trend",
+            "sleeping_heart_rate",
+        ],
+    )
+    assert_eq(analysis_schema["properties"]["days"]["maximum"], 31)
+    analysis_description = cast("str", analysis_schema["description"]).lower()
+    assert_in("measured", analysis_description)
+    assert_in("latest nap", analysis_description)
+    assert_in("last night", analysis_description)
     query_schema = cast("dict[str, Any]", tools["query_health_connect"]["schema"])
     record_type_schema = query_schema["properties"]["record_type"]
 

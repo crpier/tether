@@ -10,6 +10,9 @@ _EXERCISE_TYPE_LABELS = {
 }
 """Health Connect exercise labels needed by agent summaries."""
 
+_COMPLETE_STAGE_COVERAGE_MIN_PERCENT = 95
+_COMPLETE_STAGE_COVERAGE_MAX_PERCENT = 105
+
 _SLEEP_STAGE_LABELS = {
     1: "awake",
     2: "sleeping",
@@ -20,6 +23,15 @@ _SLEEP_STAGE_LABELS = {
     7: "awake_in_bed",
 }
 """Health Connect sleep-stage labels needed by agent summaries."""
+
+
+def stage_coverage_is_complete(coverage_percent: float) -> bool:
+    """Accept small stage-boundary rounding drift around full episode coverage."""
+    return (
+        _COMPLETE_STAGE_COVERAGE_MIN_PERCENT
+        <= coverage_percent
+        <= _COMPLETE_STAGE_COVERAGE_MAX_PERCENT
+    )
 
 
 def render_exercise_type(exercise_type: int | None) -> str | None:

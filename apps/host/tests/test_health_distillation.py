@@ -28,6 +28,7 @@ from tether.health_connect.contracts import (
     HealthRecordType,
     RecordMetadata,
     SleepRecord,
+    SleepStage,
 )
 from tether.health_connect.episodes import HealthEpisodeSummarizer
 from tether.health_connect.ingestion import HealthConnectIngestion
@@ -103,13 +104,19 @@ def _exercise_record(record_id: str, *, start: int, end: int) -> ExerciseRecord:
     )
 
 
-def _sleep_record(record_id: str, *, start: int, end: int) -> SleepRecord:
+def _sleep_record(
+    record_id: str,
+    *,
+    start: int,
+    end: int,
+    stages: list[SleepStage] | None = None,
+) -> SleepRecord:
     return SleepRecord(
         end_time=end,
         end_zone_offset_seconds=0,
         metadata=_metadata(record_id, end),
         notes=None,
-        stages=[],
+        stages=stages or [],
         start_time=start,
         start_zone_offset_seconds=0,
         title=None,
@@ -122,7 +129,7 @@ async def _seed_summary(
     record_id: str,
     start: int,
     end: int,
-    kind: str = "exercise",
+    sleep_stages: list[SleepStage] | None = None,
 ) -> None:
     """Ingest one settled session and materialize its episode summary."""
     ingestion = HealthConnectIngestion(telemetry)
@@ -144,12 +151,19 @@ async def _seed_summary(
             records=HealthConnectRecords(
                 exercise=(
                     [_exercise_record(record_id, start=start, end=end)]
-                    if kind == "exercise"
+                    if sleep_stages is None
                     else []
                 ),
                 sleep=(
-                    [_sleep_record(record_id, start=start, end=end)]
-                    if kind == "sleep"
+                    [
+                        _sleep_record(
+                            record_id,
+                            start=start,
+                            end=end,
+                            stages=sleep_stages,
+                        )
+                    ]
+                    if sleep_stages is not None
                     else []
                 ),
             ),
@@ -289,6 +303,61 @@ async def no_changes_response_is_a_no_op_without_writes() -> None:
     assert completed is not None
     assert_eq(completed.status, "no_op")
     assert_true(not (workspace_root / "health").exists())
+
+
+@test()
+async def sleep_distillation_receives_comparable_metrics_and_pattern_guardrails() -> (
+    None
+):
+    """Dreaming gets compact quality metrics and cannot promote tiny samples."""
+    tether, telemetry, workspace_root, service = await load_fixture(health_fixture())
+    start = _BASE_MILLIS
+    await _seed_summary(
+        telemetry,
+        record_id="sleep-1",
+        start=start,
+        end=start + 120 * 60_000,
+        sleep_stages=[
+            SleepStage(start_time=start, end_time=start + 12 * 60_000, stage=1),
+            SleepStage(
+                start_time=start + 12 * 60_000,
+                end_time=start + 72 * 60_000,
+                stage=4,
+            ),
+            SleepStage(
+                start_time=start + 72 * 60_000,
+                end_time=start + 102 * 60_000,
+                stage=5,
+            ),
+            SleepStage(
+                start_time=start + 102 * 60_000,
+                end_time=start + 120 * 60_000,
+                stage=6,
+            ),
+        ],
+    )
+    run = await service.queue_run()
+    assert run is not None
+    runner = _CurationRunner("NO_CHANGES")
+    executor = HealthDistillationExecutor(
+        telemetry,
+        workspace_root,
+        mutation_coordinator=DreamingMutationCoordinator(tether, workspace_root),
+        curation_runner=runner,
+    )
+
+    _ = await HealthDreamingWorker(service, executor, test_logger()).run_once()
+
+    prompt = runner.prompts[0]
+    assert_true("time_asleep_minutes: 108" in prompt)
+    assert_true("sleep_efficiency_percent: 90" in prompt)
+    assert_true(
+        "stage_percent_of_time_asleep: light=55.56%, deep=27.78%, rem=16.67%" in prompt
+    )
+    assert_true("at least 3 comparable episodes" in prompt)
+    assert_true("State the sample size" in prompt)
+    assert_true("Do not treat separate sleep episodes as fragmentation" in prompt)
+    assert_true("Never make clinical conclusions" in prompt)
 
 
 @test()

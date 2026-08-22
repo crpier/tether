@@ -67,6 +67,7 @@ describe("generated tool extension", () => {
       "label_ebook",
       "match_ebook_filename",
       "list_unlabeled_ebooks",
+      "analyze_health_connect",
       "health_connect_inventory",
       "query_health_connect",
       "summarize_health_connect",

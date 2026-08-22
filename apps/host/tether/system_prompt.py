@@ -55,6 +55,12 @@ state.
 store, and decision factors. `set_purchase_decision` records the user's \
 explicit buy, wait, or need-more-info choice; never choose for them.
 - `create_trigger` for reminders and scheduled agent prompts.
+- For sleep episodes, sleep trends, sleeping heart rate, and missing Health Connect \
+metrics, call `analyze_health_connect` before raw telemetry tools. Report its local \
+times, comparable sample sizes, completeness warnings, and exact Evidence links. \
+Keep measured observations separate from interpretation; they are not clinical \
+conclusions. Use `query_health_connect` only when the compact insight does \
+not answer the question.
 
 Your session may start mid-conversation: the visible chat can run longer than \
 your own context, because it periodically rotates onto a fresh session behind \

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from json import dumps
 from typing import Any, cast
 
-from snekql.sqlite import Database, select
+from snekql.sqlite import Database, Fetched, select
 
 from tether.health_connect.contracts import HealthRecordType
 from tether.health_connect.persistence import (
@@ -31,16 +31,21 @@ from tether.health_connect.telemetry_model import (
 )
 from tether.health_connect.telemetry_values import (
     datetime_from_millis,
+    duration_minutes,
     millis_from_datetime,
     render_exercise_type,
     render_sleep_stage,
+    stage_coverage_is_complete,
 )
 
 _TOOL_NESTED_LIMIT = 50
 """Maximum nested samples/details returned by one agent tool call."""
 
 _HEALTH_RECORD_DATA_LIMIT_BYTES = 4 * 1_024
-"""Maximum raw data retained for one queried Health Connect record."""
+"""Maximum reflected data retained for one queried Health Connect record."""
+
+_TYPED_NESTED_DATA_LIMIT_BYTES = 32 * 1_024
+"""Larger cap for schema-controlled exercise and heart-rate detail."""
 
 
 def _bounded_record_result(record: HealthConnectRecordRead) -> dict[str, Any]:
@@ -50,12 +55,99 @@ def _bounded_record_result(record: HealthConnectRecordRead) -> dict[str, Any]:
     data_size_bytes = len(
         dumps(record_data, ensure_ascii=False, separators=(",", ":")).encode()
     )
-    if data_size_bytes > _HEALTH_RECORD_DATA_LIMIT_BYTES:
-        record_result["data"] = {
-            "original_size_bytes": data_size_bytes,
-            "truncated": True,
-        }
+    data_limit_bytes = (
+        _TYPED_NESTED_DATA_LIMIT_BYTES
+        if record.record_type in {"exercise", "heart_rate"}
+        else _HEALTH_RECORD_DATA_LIMIT_BYTES
+    )
+    if data_size_bytes > data_limit_bytes:
+        if "summary" in record_data:
+            record_result["data"] = {
+                "evidence_uri": record_data.get("evidence_uri"),
+                "original_size_bytes": data_size_bytes,
+                "source_version": record_data.get("source_version"),
+                "summary": record_data["summary"],
+                "timeline_omitted": True,
+                "truncated": True,
+            }
+        else:
+            record_result["data"] = {
+                "original_size_bytes": data_size_bytes,
+                "truncated": True,
+            }
     return record_result
+
+
+def _local_datetime_from_millis(
+    epoch_millis: int | None, zone_offset_seconds: int | None
+) -> datetime | None:
+    """Render a record instant with its captured fixed offset."""
+    instant = datetime_from_millis(epoch_millis)
+    if instant is None:
+        return None
+    return instant.astimezone(timezone(timedelta(seconds=zone_offset_seconds or 0)))
+
+
+def _sleep_record_data(
+    row: HcSleepSessionCurrent[Fetched],
+    stages: list[HcSleepStage[Fetched]],
+) -> dict[str, object]:
+    """Keep compact episode metrics independent from the bounded stage timeline."""
+    stage_minutes: dict[str, float] = {}
+    time_asleep_minutes = 0.0
+    for stage in stages:
+        minutes = duration_minutes(stage.start_time, stage.end_time)
+        label = render_sleep_stage(stage.stage)
+        stage_minutes[label] = stage_minutes.get(label, 0.0) + minutes
+        if stage.stage in {2, 4, 5, 6}:
+            time_asleep_minutes += minutes
+    time_in_bed_minutes = duration_minutes(row.start_time, row.end_time)
+    stage_coverage_percent = (
+        round(sum(stage_minutes.values()) / time_in_bed_minutes * 100, 2)
+        if time_in_bed_minutes > 0
+        else 0.0
+    )
+    return {
+        "evidence_uri": (
+            f"tether://health-connect/sleep/{row.record_uid}@v{row.version_id}"
+        ),
+        "notes": row.notes,
+        "source_version": row.version_id,
+        "stages": [
+            {
+                "end_time": datetime_from_millis(stage.end_time),
+                "stage": stage.stage,
+                "stage_label": render_sleep_stage(stage.stage),
+                "start_time": datetime_from_millis(stage.start_time),
+            }
+            for stage in stages[:_TOOL_NESTED_LIMIT]
+        ],
+        "stages_truncated": len(stages) > _TOOL_NESTED_LIMIT,
+        "summary": {
+            "local_end": _local_datetime_from_millis(
+                row.end_time,
+                row.end_zone_offset_seconds or row.start_zone_offset_seconds,
+            ),
+            "local_start": _local_datetime_from_millis(
+                row.start_time, row.start_zone_offset_seconds
+            ),
+            "sleep_efficiency_percent": (
+                round(time_asleep_minutes / time_in_bed_minutes * 100, 2)
+                if time_in_bed_minutes > 0
+                else None
+            ),
+            "stage_coverage_percent": stage_coverage_percent,
+            "stage_interval_count": len(stages),
+            "stage_minutes": {
+                label: round(minutes, 2)
+                for label, minutes in sorted(stage_minutes.items())
+            },
+            "stages_complete": stage_coverage_is_complete(stage_coverage_percent),
+            "time_asleep_minutes": round(time_asleep_minutes, 2),
+            "time_in_bed_minutes": round(time_in_bed_minutes, 2),
+        },
+        "title": row.title,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,7 +435,6 @@ class HealthConnectRecordQuery:
                         HcHeartRateSample.version_id.desc(),
                         HcHeartRateSample.sample_index.asc(),
                     )
-                    .limit(_TOOL_NESTED_LIMIT + 1)
                 )
                 if version_ids
                 else []
@@ -357,6 +448,9 @@ class HealthConnectRecordQuery:
                 else []
             )
         origins_by_id = {origin.origin_id: origin for origin in origins}
+        samples_by_version: dict[int, list[HcHeartRateSample[Fetched]]] = {}
+        for sample in samples:
+            samples_by_version.setdefault(sample.version_id, []).append(sample)
         return [
             HealthConnectRecordRead(
                 data={
@@ -365,10 +459,12 @@ class HealthConnectRecordQuery:
                             "beats_per_minute": sample.beats_per_minute,
                             "time": datetime_from_millis(sample.time),
                         }
-                        for sample in samples[:_TOOL_NESTED_LIMIT]
-                        if sample.version_id == row.version_id
+                        for sample in samples_by_version.get(row.version_id, [])[
+                            :_TOOL_NESTED_LIMIT
+                        ]
                     ],
-                    "samples_truncated": len(samples) > _TOOL_NESTED_LIMIT,
+                    "samples_truncated": len(samples_by_version.get(row.version_id, []))
+                    > _TOOL_NESTED_LIMIT,
                 },
                 end_time=datetime_from_millis(row.end_time),
                 end_zone_offset_seconds=row.end_zone_offset_seconds,
@@ -436,7 +532,6 @@ class HealthConnectRecordQuery:
                         HcSleepStage.version_id.desc(),
                         HcSleepStage.stage_index.asc(),
                     )
-                    .limit(_TOOL_NESTED_LIMIT + 1)
                 )
                 if version_ids
                 else []
@@ -450,23 +545,12 @@ class HealthConnectRecordQuery:
                 else []
             )
         origins_by_id = {origin.origin_id: origin for origin in origins}
+        stages_by_version: dict[int, list[HcSleepStage[Fetched]]] = {}
+        for stage in stages:
+            stages_by_version.setdefault(stage.version_id, []).append(stage)
         return [
             HealthConnectRecordRead(
-                data={
-                    "notes": row.notes,
-                    "stages": [
-                        {
-                            "end_time": datetime_from_millis(stage.end_time),
-                            "stage": stage.stage,
-                            "stage_label": render_sleep_stage(stage.stage),
-                            "start_time": datetime_from_millis(stage.start_time),
-                        }
-                        for stage in stages[:_TOOL_NESTED_LIMIT]
-                        if stage.version_id == row.version_id
-                    ],
-                    "stages_truncated": len(stages) > _TOOL_NESTED_LIMIT,
-                    "title": row.title,
-                },
+                data=_sleep_record_data(row, stages_by_version.get(row.version_id, [])),
                 end_time=datetime_from_millis(row.end_time),
                 end_zone_offset_seconds=row.end_zone_offset_seconds,
                 modified_at=datetime_from_millis(row.modified_at),
@@ -533,7 +617,6 @@ class HealthConnectRecordQuery:
                         HcExerciseSegment.version_id.desc(),
                         HcExerciseSegment.segment_index.asc(),
                     )
-                    .limit(_TOOL_NESTED_LIMIT + 1)
                 )
                 if version_ids
                 else []
@@ -546,7 +629,6 @@ class HealthConnectRecordQuery:
                         HcExerciseLap.version_id.desc(),
                         HcExerciseLap.lap_index.asc(),
                     )
-                    .limit(_TOOL_NESTED_LIMIT + 1)
                 )
                 if version_ids
                 else []
@@ -559,7 +641,6 @@ class HealthConnectRecordQuery:
                         HcExerciseRoutePoint.version_id.desc(),
                         HcExerciseRoutePoint.point_index.asc(),
                     )
-                    .limit(_TOOL_NESTED_LIMIT + 1)
                 )
                 if version_ids
                 else []
@@ -573,6 +654,15 @@ class HealthConnectRecordQuery:
                 else []
             )
         origins_by_id = {origin.origin_id: origin for origin in origins}
+        laps_by_version: dict[int, list[HcExerciseLap[Fetched]]] = {}
+        for lap in laps:
+            laps_by_version.setdefault(lap.version_id, []).append(lap)
+        route_by_version: dict[int, list[HcExerciseRoutePoint[Fetched]]] = {}
+        for point in route:
+            route_by_version.setdefault(point.version_id, []).append(point)
+        segments_by_version: dict[int, list[HcExerciseSegment[Fetched]]] = {}
+        for segment in segments:
+            segments_by_version.setdefault(segment.version_id, []).append(segment)
         return [
             HealthConnectRecordRead(
                 data={
@@ -584,13 +674,17 @@ class HealthConnectRecordQuery:
                             "length_meters": lap.length_meters,
                             "start_time": datetime_from_millis(lap.start_time),
                         }
-                        for lap in laps[:_TOOL_NESTED_LIMIT]
-                        if lap.version_id == row.version_id
+                        for lap in laps_by_version.get(row.version_id, [])[
+                            :_TOOL_NESTED_LIMIT
+                        ]
                     ],
                     "nested_truncated": {
-                        "laps": len(laps) > _TOOL_NESTED_LIMIT,
-                        "route": len(route) > _TOOL_NESTED_LIMIT,
-                        "segments": len(segments) > _TOOL_NESTED_LIMIT,
+                        "laps": len(laps_by_version.get(row.version_id, []))
+                        > _TOOL_NESTED_LIMIT,
+                        "route": len(route_by_version.get(row.version_id, []))
+                        > _TOOL_NESTED_LIMIT,
+                        "segments": len(segments_by_version.get(row.version_id, []))
+                        > _TOOL_NESTED_LIMIT,
                     },
                     "notes": row.notes,
                     "planned_exercise_session_id": row.planned_exercise_session_id,
@@ -607,8 +701,9 @@ class HealthConnectRecordQuery:
                                 point.vertical_accuracy_meters
                             ),
                         }
-                        for point in route[:_TOOL_NESTED_LIMIT]
-                        if point.version_id == row.version_id
+                        for point in route_by_version.get(row.version_id, [])[
+                            :_TOOL_NESTED_LIMIT
+                        ]
                     ],
                     "segments": [
                         {
@@ -617,8 +712,9 @@ class HealthConnectRecordQuery:
                             "segment_type": segment.segment_type,
                             "start_time": datetime_from_millis(segment.start_time),
                         }
-                        for segment in segments[:_TOOL_NESTED_LIMIT]
-                        if segment.version_id == row.version_id
+                        for segment in segments_by_version.get(row.version_id, [])[
+                            :_TOOL_NESTED_LIMIT
+                        ]
                     ],
                     "title": row.title,
                 },
