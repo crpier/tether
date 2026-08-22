@@ -1,11 +1,16 @@
 import { createQuery } from "@tanstack/solid-query";
 import { For, Show, createSignal } from "solid-js";
 
+import { EvidenceLink } from "../components/evidence-link";
+import { MessageContent } from "../components/message-content";
 import type { MemoriesHost } from "../host/memories";
 import { queryKeys } from "../lib/query-keys";
 import { TextField, TextFieldInput } from "@/components/ui/text-field";
 
-export function MemoriesPanel(props: { api: MemoriesHost }) {
+export function MemoriesPanel(props: {
+  api: MemoriesHost;
+  onOpenEvidence: (uri: string) => void;
+}) {
   const [search, setSearch] = createSignal("");
   const topics = createQuery(() => ({
     queryFn: () => props.api.listMemoryTopics(search()),
@@ -65,17 +70,33 @@ export function MemoriesPanel(props: { api: MemoriesHost }) {
                     {topic.path}
                   </code>
                 </div>
-                <p class="mt-2 whitespace-pre-wrap text-sm">{topic.body}</p>
+                <div class="mt-2">
+                  <MessageContent
+                    onOpenEvidence={props.onOpenEvidence}
+                    text={topic.body}
+                  />
+                </div>
                 <Show when={topic.evidence.length > 0}>
-                  <ul class="mt-3 space-y-1">
-                    <For each={topic.evidence}>
-                      {(evidence) => (
-                        <li class="text-muted-foreground font-mono text-xs">
-                          {evidence}
-                        </li>
-                      )}
-                    </For>
-                  </ul>
+                  <details class="mt-3 text-xs">
+                    <summary class="text-muted-foreground cursor-pointer select-none font-medium">
+                      {topic.evidence.length} Evidence{" "}
+                      {topic.evidence.length === 1 ? "source" : "sources"}
+                    </summary>
+                    <ul class="mt-2 max-h-52 space-y-1 overflow-y-auto pl-2">
+                      <For each={topic.evidence}>
+                        {(evidence) => (
+                          <li class="text-muted-foreground break-all font-mono">
+                            <EvidenceLink
+                              onOpen={props.onOpenEvidence}
+                              uri={evidence}
+                            >
+                              {evidence}
+                            </EvidenceLink>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </details>
                 </Show>
               </li>
             )}

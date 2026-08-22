@@ -19,7 +19,7 @@ A granular assertion in Memory supported by exact Evidence. Claims normally hudd
 _Avoid_: memory row, fact record
 
 **Evidence**:
-Canonical durable source material that may support a Claim, such as a user Message or a scoped verified external record. Assistant output may explain Evidence in context but cannot independently support a Claim about the user.
+Canonical durable source material that may support a Claim, such as a user Message or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Assistant output may explain Evidence in context but cannot independently support a Claim about the user.
 _Avoid_: Memory, summary, inference
 
 **Dreaming**:

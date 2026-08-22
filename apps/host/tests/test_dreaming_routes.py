@@ -236,11 +236,13 @@ title: Travel
                 payload["mutations"][0]["fact_changes"],
                 [
                     {
+                        "evidence": [f"tether://message/{message.id}"],
                         "kind": "removed",
                         "text": "Prefers window seats.",
                         "topic": "Travel",
                     },
                     {
+                        "evidence": [f"tether://message/{message.id}"],
                         "kind": "added",
                         "text": "Prefers aisle seats.",
                         "topic": "Travel",
@@ -315,6 +317,7 @@ title: Gaming
                 detail.json()["mutations"][0]["fact_changes"],
                 [
                     {
+                        "evidence": [f"tether://message/{message.id}"],
                         "kind": "added",
                         "text": "Likes cooperative games.",
                         "topic": "Gaming",

@@ -122,6 +122,7 @@ class DreamRunRead(BaseModel):
 class DreamingFactChangeRead(BaseModel):
     """One human-readable Claim addition or removal from a Dream mutation."""
 
+    evidence: list[str]
     kind: Literal["added", "removed"]
     text: str
     topic: str | None
@@ -165,24 +166,31 @@ class DreamingMutationRead(BaseModel):
         )
 
 
-_SOURCE_CITATION = re.compile(r"\s*\[source\]\(tether://message/[0-9A-Za-z-]+\)")
+_SOURCE_CITATION = re.compile(r"\s*\[source\]\((?P<uri>tether://[^)\s]+)\)")
 
 
-def _memory_claims(content: str | None) -> list[tuple[str | None, str]]:
+type _MemoryClaim = tuple[str | None, str, tuple[str, ...]]
+
+
+def _memory_claims(content: str | None) -> list[_MemoryClaim]:
     """Extract ordered, cited Claims from one canonical Memory document."""
     if content is None:
         return []
     topic: str | None = None
-    claims: list[tuple[str | None, str]] = []
+    claims: list[_MemoryClaim] = []
     for line in content.splitlines():
         if line.startswith("## "):
             topic = line.removeprefix("## ").strip() or None
             continue
         if not line.startswith("- ") or _SOURCE_CITATION.search(line) is None:
             continue
-        text = _SOURCE_CITATION.sub("", line.removeprefix("- ")).strip()
+        raw_claim = line.removeprefix("- ")
+        evidence = tuple(
+            match.group("uri") for match in _SOURCE_CITATION.finditer(raw_claim)
+        )
+        text = _SOURCE_CITATION.sub("", raw_claim).strip()
         if text:
-            claims.append((topic, text))
+            claims.append((topic, text, evidence))
     return claims
 
 
@@ -197,14 +205,18 @@ def _fact_changes(
     after_set = set(after_claims)
     return [
         *(
-            DreamingFactChangeRead(kind="removed", topic=topic, text=text)
-            for topic, text in before_claims
-            if (topic, text) not in after_set
+            DreamingFactChangeRead(
+                evidence=list(evidence), kind="removed", topic=topic, text=text
+            )
+            for topic, text, evidence in before_claims
+            if (topic, text, evidence) not in after_set
         ),
         *(
-            DreamingFactChangeRead(kind="added", topic=topic, text=text)
-            for topic, text in after_claims
-            if (topic, text) not in before_set
+            DreamingFactChangeRead(
+                evidence=list(evidence), kind="added", topic=topic, text=text
+            )
+            for topic, text, evidence in after_claims
+            if (topic, text, evidence) not in before_set
         ),
     ]
 

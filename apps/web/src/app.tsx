@@ -21,6 +21,7 @@ import {
   queryKeys,
   invalidateNamedKey,
 } from "./lib/query-keys";
+import { EvidenceInspector } from "./components/evidence-inspector";
 import { LoginScreen } from "./login";
 import type { BucketView } from "./panels/bucket";
 import { BrowsePage, type BrowseView } from "./pages/browse-page";
@@ -104,6 +105,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
     createSignal<ConnectionStatus>("connecting");
   const [chatFrame, setChatFrame] = createSignal<ChatFrame | undefined>();
   const [bus, setBus] = createSignal<ChatBus | undefined>();
+  const [evidenceUri, setEvidenceUri] = createSignal<string | null>(null);
 
   onMount(() => {
     const created = props.createChatBus({
@@ -150,6 +152,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
     host: props.host,
     chatFrame,
     connection,
+    openEvidence: setEvidenceUri,
   };
 
   return (
@@ -179,6 +182,13 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={SettingsPage} path="/settings" />
         <Route component={NotFoundPage} path="*404" />
       </Router>
+      <EvidenceInspector
+        api={props.host.evidence}
+        onClose={() => {
+          setEvidenceUri(null);
+        }}
+        uri={evidenceUri()}
+      />
     </AppContextProvider>
   );
 }

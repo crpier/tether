@@ -55,6 +55,7 @@ describe("Browse page", () => {
               error: null,
               fact_changes: [
                 {
+                  evidence: [],
                   kind: "added",
                   text: "Prefers aisle seats.",
                   topic: "Travel",

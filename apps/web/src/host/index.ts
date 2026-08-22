@@ -3,6 +3,7 @@ import { createAuthHost, type AuthHost } from "./auth";
 import { createBucketHost, type BucketHost } from "./bucket";
 import { createChatHost, type ChatHost } from "./chat";
 import { createDreamingHost, type DreamingHost } from "./dreaming";
+import { createEvidenceHost, type EvidenceHost } from "./evidence";
 import { createMemoriesHost, type MemoriesHost } from "./memories";
 import {
   createNotificationsHost,
@@ -24,6 +25,7 @@ export * from "./auth";
 export * from "./bucket";
 export * from "./chat";
 export * from "./dreaming";
+export * from "./evidence";
 export * from "./memories";
 export * from "./notifications";
 export * from "./panels";
@@ -44,6 +46,7 @@ export interface WebHost {
   bucket: BucketHost;
   chat: ChatHost;
   dreaming: DreamingHost;
+  evidence: EvidenceHost;
   memories: MemoriesHost;
   notifications: NotificationsHost;
   panels: PanelsHost;
@@ -67,6 +70,7 @@ export function createRestHost(
     bucket: createBucketHost(context),
     chat: createChatHost(context),
     dreaming: createDreamingHost(context),
+    evidence: createEvidenceHost(context),
     memories: createMemoriesHost(context),
     notifications: createNotificationsHost(context),
     panels: createPanelsHost(context),

@@ -21,7 +21,7 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 ## Components
 
-**Python host** — the spine. Owns Evidence, Dreaming policy/history, typed vertical state, Search, scheduling, and the internal tool API. Built on **FastAPI**, fully async. **WebSocket** serves chat; plain **REST** serves current Memory Topics, Dream history, triage, and typed verticals. There is no Memory CRUD or Review queue. Targets Python ≥3.14.
+**Python host** — the spine. Owns Evidence, Dreaming policy/history, typed vertical state, Search, scheduling, and the internal tool API. Built on **FastAPI**, fully async. **WebSocket** serves chat; plain **REST** serves current Memory Topics, exact `tether://` Evidence resolution, Dream history, triage, and typed verticals. There is no Memory CRUD or Review queue. Targets Python ≥3.14.
 
 **pi (agent runtime)** — earendil-works/pi in RPC mode, driven as a host-spawned subprocess. "One agent" is a *definition* (one tool belt, prompt, extensions), realized as multiple processes: one long-lived for foreground chat, ephemeral ones for background work. pi runs with built-in tools disabled — a **closed tool world** whose only surface is Tether's tools. See ADR 0002, ADR 0005.
 
@@ -41,7 +41,7 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 **Codegen** — Pydantic models are the single source of truth, feeding three consumers: the OpenAPI doc → TS API client (Solid), the tool JSON-Schemas → pi tool shims, and runtime validation (host). A `just` recipe orchestrates the cross-language pipeline (Python emits schemas → Node generators run). Generated code is committed; CI drift-checks that re-running codegen produces no diff.
 
-**Memory workspace** — canonical, recursively organized Markdown under `/data/kb/memory` (ADR 0021). Dreaming is its sole writer (ADR 0026). Topic files require YAML frontmatter and exact Evidence citations; meaningful paths are current identities. SQLite records complete versions/tombstones and authorized mutations. Reads and startup reconciliation restore unauthorized edits/deletions, remove unknown valid files, and preserve exact recoverable pre-acknowledgement Dream mutations. Obsidian and Neovim are read-only inspection clients; corrections enter as Messages and queue Dreaming.
+**Memory workspace** — canonical, recursively organized Markdown under `/data/kb/memory` (ADR 0021). Dreaming is its sole writer (ADR 0026). Topic files require YAML frontmatter and exact Evidence citations; meaningful paths are current identities. The web app resolves cited Messages and exact historical Health Connect episode versions through one Evidence inspector. It collapses each Topic's complete provenance set until requested. SQLite records complete versions/tombstones and authorized mutations. Reads and startup reconciliation restore unauthorized edits/deletions, remove unknown valid files, and preserve exact recoverable pre-acknowledgement Dream mutations. Obsidian and Neovim are read-only inspection clients; corrections enter as Messages and queue Dreaming.
 
 ## Observability
 

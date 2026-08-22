@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { MessageContent } from "./message-content";
@@ -42,6 +48,40 @@ describe("MessageContent", () => {
     expect(link).not.toBeNull();
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  test("Evidence citations open the in-app inspector", () => {
+    const onOpenEvidence = vi.fn();
+    const uri =
+      "tether://health-connect/sleep/6867bb61-b4cd-3590-a8b1-c4678bd3bf27@v214";
+    render(() => (
+      <MessageContent
+        onOpenEvidence={onOpenEvidence}
+        text={`Sleep varied. [source](${uri})`}
+      />
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "source" }));
+
+    expect(onOpenEvidence).toHaveBeenCalledWith(uri);
+  });
+
+  test("raw Health Evidence references are inspectable", () => {
+    const onOpenEvidence = vi.fn();
+    const uri = "tether://health-connect/exercise/exercise-1@v42";
+    render(() => (
+      <MessageContent
+        onOpenEvidence={onOpenEvidence}
+        text={`Raw ${uri}\n\nCode \`${uri}\``}
+      />
+    ));
+
+    const references = screen.getAllByRole("button", { name: uri });
+    expect(references).toHaveLength(2);
+    fireEvent.click(references[0]);
+    fireEvent.click(references[1]);
+    expect(onOpenEvidence).toHaveBeenNthCalledWith(1, uri);
+    expect(onOpenEvidence).toHaveBeenNthCalledWith(2, uri);
   });
 
   test("autolinks also get the new-tab attributes", () => {

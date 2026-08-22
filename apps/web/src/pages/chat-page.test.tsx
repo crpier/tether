@@ -322,6 +322,43 @@ describe("Chat view", () => {
     expect(strong.tagName).toBe("STRONG");
   });
 
+  test("opens cited Evidence from a settled health answer", async () => {
+    const uri = "tether://health-connect/sleep/sleep-record@v7";
+    const host = new FakeHost({
+      authenticated: true,
+      evidence: [
+        {
+          duration_minutes: 480,
+          end_time: "2026-08-22T06:00:00Z",
+          kind: "health_connect_sleep",
+          record_uid: "sleep-record",
+          stage_minutes: { deep: 120, rem: 90 },
+          start_time: "2026-08-21T22:00:00Z",
+          title: "Night sleep",
+          uri,
+          version_id: 7,
+        },
+      ],
+      messages: [
+        message({
+          content: `Eight hours recorded. [source](${uri})`,
+          role: "assistant",
+          seq: 1,
+        }),
+      ],
+    });
+    renderApp(host);
+
+    fireEvent.click(await screen.findByRole("button", { name: "source" }));
+
+    const inspector = await screen.findByRole("dialog", {
+      name: "Evidence inspector",
+    });
+    expect(inspector).toHaveTextContent("Night sleep");
+    expect(inspector).toHaveTextContent("8 hr");
+    expect(inspector).toHaveTextContent("Deep2 hr");
+  });
+
   test("shows inline tool activity transitioning to done", async () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);

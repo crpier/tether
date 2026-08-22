@@ -42,7 +42,8 @@ describe("Dreaming panel", () => {
     );
   });
 
-  test("shows fact-level additions and removals for a changed run", async () => {
+  test("shows fact-level changes with inspectable Evidence", async () => {
+    const sourceUri = "tether://message/019f0000-0000-7000-8000-000000000043";
     const run = dreamRun({
       conversation_title: "Travel preferences",
       id: "019f0000-0000-7000-8000-000000000041",
@@ -51,6 +52,18 @@ describe("Dreaming panel", () => {
     });
     const host = new FakeHost({
       authenticated: true,
+      evidence: [
+        {
+          content: "I prefer aisle seats.",
+          conversation_id: run.conversation_id,
+          kind: "message",
+          message_id: "019f0000-0000-7000-8000-000000000043",
+          occurred_at: "2026-08-21T08:00:00Z",
+          role: "user",
+          seq: 12,
+          uri: sourceUri,
+        },
+      ],
       dreamRunDetails: {
         [run.id]: {
           mutations: [
@@ -61,11 +74,13 @@ describe("Dreaming panel", () => {
               error: null,
               fact_changes: [
                 {
+                  evidence: [sourceUri],
                   kind: "removed",
                   text: "Prefers window seats.",
                   topic: "Travel",
                 },
                 {
+                  evidence: [sourceUri],
                   kind: "added",
                   text: "Prefers aisle seats.",
                   topic: "Travel",
@@ -102,6 +117,12 @@ describe("Dreaming panel", () => {
       within(changes).getByText("Prefers aisle seats."),
     ).toBeInTheDocument();
     expect(screen.getByText("conversation-id/run-id.md")).toBeInTheDocument();
+    fireEvent.click(
+      within(changes).getAllByRole("button", { name: "source" })[1],
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Evidence inspector" }),
+    ).toHaveTextContent("I prefer aisle seats.");
   });
 
   test("summarizes active work, the last change, and failures", async () => {
