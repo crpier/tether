@@ -2,9 +2,9 @@
 // chat composer's two voice buttons. Click starts recording, click again
 // stops it and uploads the clip for transcription; an explicit cancel
 // discards it mid-recording with no upload. Which button started the
-// recording (`review` vs `auto-send`) is threaded through untouched so the
-// caller can decide what a successful transcript does — fill the composer for
-// editing, or send it immediately through the normal chat-send path — this
+// recording mode is threaded through untouched so the caller can decide what
+// a successful transcript does: fill the composer for review, or send manual
+// and hands-free recordings through the normal chat-send path. This
 // module only owns the record/upload state machine, never the chat send.
 //
 // Depends on abstractions rather than `navigator.mediaDevices`/`MediaRecorder`
@@ -12,7 +12,7 @@
 // microphone (see `voice-recorder.test.ts`); `chat-page.tsx` wires the real
 // browser APIs as `VoiceRecorderDeps`.
 
-export type VoiceMode = "auto-send" | "review";
+export type VoiceMode = "auto-send" | "hands-free" | "review";
 
 export type VoiceRecorderState =
   | { kind: "failed"; message: string; mode: VoiceMode }
@@ -39,6 +39,11 @@ export interface VoiceRecorderDeps {
   // track); optional so fakes without a real `MediaStream` can omit it.
   stopStream?: (stream: MediaStream) => void;
   transcribe: (blob: Blob) => Promise<string>;
+  /** Watch one stream until speech ends; returns a watcher cleanup. */
+  watchForSpeechEnd: (
+    stream: MediaStream,
+    onSpeechEnd: () => void,
+  ) => () => void;
 }
 
 export class VoiceRecorder {
@@ -48,6 +53,7 @@ export class VoiceRecorder {
   private recorder: MinimalMediaRecorder | null = null;
   private state: VoiceRecorderState = { kind: "idle" };
   private stream: MediaStream | null = null;
+  private stopWatchingSpeech: (() => void) | null = null;
 
   constructor(
     private readonly deps: VoiceRecorderDeps,
@@ -94,6 +100,11 @@ export class VoiceRecorder {
     };
     recorder.start();
     this.setState({ kind: "recording", mode, startedAt: this.now() });
+    if (mode === "hands-free") {
+      this.stopWatchingSpeech = this.deps.watchForSpeechEnd(stream, () => {
+        this.stop();
+      });
+    }
   }
 
   /** Stop recording and upload the clip for transcription. */
@@ -101,6 +112,7 @@ export class VoiceRecorder {
     if (this.state.kind !== "recording") {
       return;
     }
+    this.stopSpeechWatcher();
     this.recorder?.stop();
   }
 
@@ -172,7 +184,13 @@ export class VoiceRecorder {
     }
   }
 
+  private stopSpeechWatcher(): void {
+    this.stopWatchingSpeech?.();
+    this.stopWatchingSpeech = null;
+  }
+
   private releaseStream(): void {
+    this.stopSpeechWatcher();
     if (this.stream) {
       this.deps.stopStream?.(this.stream);
       this.stream = null;

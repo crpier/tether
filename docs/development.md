@@ -170,6 +170,10 @@ keeps the full answer.
 
 An opt-in 🔁 toggle (visible while Conversation mode is on) re-arms an
 auto-send voice recording when a spoken reply **finishes playing naturally**.
+Once speech begins, 1.2 seconds of trailing silence stops the recording; the
+existing STT path then transcribes and submits it. Silence before speech does
+nothing, and a 30-second deadline stops an abandoned recording. Manually
+started review and record-and-send clips keep their explicit Stop behavior.
 The speech player reports natural completion via `onEnded` — never on cancel,
 supersession by a later speak, or error — so Stop/Escape/barge-in always
 breaks the loop. Any key or pointer interaction during playback also stands

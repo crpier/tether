@@ -23,6 +23,7 @@ import type {
   VoiceRecorderState,
 } from "@/voice-recorder";
 import { VoiceRecorder } from "@/voice-recorder";
+import { watchForSpeechEnd } from "@/speech-end-watcher";
 import { Button } from "@/components/ui/button";
 
 function elapsedLabel(startedAt: number, nowMs: number): string {
@@ -80,10 +81,14 @@ export function VoiceComposerControls(props: {
         }
       },
       transcribe: props.transcribe,
+      watchForSpeechEnd,
     },
     setState,
     props.onTranscript,
   );
+  onCleanup(() => {
+    recorder.cancel();
+  });
 
   // Ticks the elapsed-time label forward while recording; torn down the
   // instant recording stops so no interval leaks across state changes.
@@ -129,7 +134,7 @@ export function VoiceComposerControls(props: {
       return;
     }
     handledAutoStart = tick;
-    start("auto-send");
+    start("hands-free");
   });
 
   // Which mode (if any) is currently recording — drives which of the two
@@ -139,6 +144,8 @@ export function VoiceComposerControls(props: {
     const current = state();
     return current.kind === "recording" ? current.mode : null;
   };
+  const isSendingRecording = () =>
+    recordingMode() === "auto-send" || recordingMode() === "hands-free";
 
   return (
     <div aria-label="Voice input" class="relative flex shrink-0" role="group">
@@ -171,17 +178,13 @@ export function VoiceComposerControls(props: {
               {recordingMode() === "review" ? "⏹" : "🎙 ✎"}
             </Button>
           </Show>
-          <Show
-            when={recordingMode() === null || recordingMode() === "auto-send"}
-          >
+          <Show when={recordingMode() === null || isSendingRecording()}>
             <Button
               aria-label={
-                recordingMode() === "auto-send"
-                  ? "Stop recording"
-                  : "Record and send"
+                isSendingRecording() ? "Stop recording" : "Record and send"
               }
               onClick={() => {
-                if (recordingMode() === "auto-send") {
+                if (isSendingRecording()) {
                   recorder.stop();
                 } else {
                   start("auto-send");
@@ -190,14 +193,12 @@ export function VoiceComposerControls(props: {
               class="rounded-full"
               size="icon-sm"
               title={
-                recordingMode() === "auto-send"
-                  ? "Stop recording"
-                  : "Record and send"
+                isSendingRecording() ? "Stop recording" : "Record and send"
               }
               type="button"
               variant="outline"
             >
-              {recordingMode() === "auto-send" ? "⏹" : "🎙 ➤"}
+              {isSendingRecording() ? "⏹" : "🎙 ➤"}
             </Button>
           </Show>
         </div>
