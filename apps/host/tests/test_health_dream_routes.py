@@ -133,8 +133,9 @@ async def manual_health_dream_now_queues_a_bounded_run() -> None:
             queued = client.post("/api/telemetry/health-connect/dream-now", json={})
             assert_eq(queued.status_code, 200)
             body = queued.json()
-            assert_eq(body["status"], "queued")
-            assert_eq(body["exercise_through_version_id"], 1)
+            assert_eq(len(body), 1)
+            assert_eq(body[0]["status"], "queued")
+            assert_eq(body[0]["exercise_through_version_id"], 1)
 
             # A repeat of the same bounds queues nothing.
             repeat = client.post("/api/telemetry/health-connect/dream-now", json={})
@@ -163,8 +164,9 @@ async def manual_health_dream_now_period_bounds_the_window() -> None:
             )
             assert_eq(queued.status_code, 200)
             body = queued.json()
-            assert_eq(body["exercise_since_version_id"], 0)
-            assert_eq(body["exercise_through_version_id"], 1)
+            assert_eq(len(body), 1)
+            assert_eq(body[0]["exercise_since_version_id"], 0)
+            assert_eq(body[0]["exercise_through_version_id"], 1)
 
 
 @test()

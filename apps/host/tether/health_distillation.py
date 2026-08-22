@@ -64,12 +64,36 @@ def _summary_uri(
     return f"tether://health-connect/{kind}/{record_uid}@v{version_id}"
 
 
+DEFAULT_MAX_SUMMARIES_PER_RUN = 60
+"""Episode summaries one distillation run may consume in its prompt."""
+
+_BACKLOG_CHUNKS_PER_SCAN_TICK = 25
+"""Upper bound on queue_run advances per scan tick when draining a backlog."""
+
+
 @dataclass(frozen=True, slots=True)
 class HealthDistillationService:
     """Queue and settle Health consolidation runs over summary windows."""
 
     database: Database
     telemetry_database: Database
+    max_summaries_per_run: int = DEFAULT_MAX_SUMMARIES_PER_RUN
+
+    async def drain_backlog(self) -> list[HealthDreamRun[Fetched]]:
+        """Queue successive capped runs until the backlog is windowed.
+
+        Each queued run renders at most `max_summaries_per_run` episode
+        summaries per session type into its prompt, so a large uncaptured
+        backlog becomes many bounded runs instead of one unbounded pass.
+        Returns the runs queued this call.
+        """
+        drained: list[HealthDreamRun[Fetched]] = []
+        while len(drained) < _BACKLOG_CHUNKS_PER_SCAN_TICK:
+            run = await self.queue_run()
+            if run is None:
+                break
+            drained.append(run)
+        return drained
 
     async def queue_run(self) -> HealthDreamRun[Fetched] | None:
         """Queue one run when new summaries exist; coalesce otherwise.
@@ -90,26 +114,30 @@ class HealthDistillationService:
         if exercise_through is None and sleep_through is None:
             return None
         async with self.database.transaction(mode="immediate") as transaction:
+            # Order by captured bounds, not created_at: chunks queued
+            # back-to-back share a timestamp at millisecond precision.
             previous = await transaction.fetch_one_or_none(
                 select(HealthDreamRun)
                 .all()
-                .order_by(HealthDreamRun.created_at.desc())
+                .order_by(HealthDreamRun.exercise_through_version_id.desc())
+                .order_by(HealthDreamRun.sleep_through_version_id.desc())
                 .limit(1)
             )
             if previous is not None and self._covers(
                 previous, exercise_through, sleep_through
             ):
                 return None
+            exercise_since = previous.exercise_through_version_id if previous else 0
+            sleep_since = previous.sleep_through_version_id if previous else 0
+            cap = self.max_summaries_per_run
             run = HealthDreamRun(
                 status="queued",
-                exercise_since_version_id=(
-                    previous.exercise_through_version_id if previous else 0
+                exercise_since_version_id=exercise_since,
+                exercise_through_version_id=min(
+                    exercise_through or 0, exercise_since + cap
                 ),
-                exercise_through_version_id=exercise_through or 0,
-                sleep_since_version_id=previous.sleep_through_version_id
-                if previous
-                else 0,
-                sleep_through_version_id=sleep_through or 0,
+                sleep_since_version_id=sleep_since,
+                sleep_through_version_id=min(sleep_through or 0, sleep_since + cap),
             )
             return await transaction.execute(insert(run).returning())
 
@@ -121,8 +149,12 @@ class HealthDistillationService:
         Correctness backstop for post-sync triggers: a failed pass is logged
         and swallowed; the next tick retries.
         """
+
+        async def _scan_once() -> list[HealthDreamRun[Fetched]]:
+            return await self.drain_backlog()
+
         await run_reconcile_loop(
-            self.queue_run,
+            _scan_once,
             interval_seconds=interval_seconds,
             initial_delay_seconds=interval_seconds,
             logger=logger,
