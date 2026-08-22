@@ -55,7 +55,8 @@ export function VoiceComposerControls(props: {
   /** Incremented for the first recording and each hands-free re-arm. */
   autoStartSignal: Accessor<number>;
   onEndConversation: () => void;
-  onRecordingStart?: () => void;
+  onRecordingStart: () => Promise<void>;
+  onRecordingStop: () => void;
   onStartConversation: () => void;
   recordingCancelSignal: Accessor<number>;
   onTranscript: (transcript: string) => void;
@@ -66,6 +67,7 @@ export function VoiceComposerControls(props: {
 
   const recorder = new VoiceRecorder(
     {
+      beforeRecordingStart: props.onRecordingStart,
       createRecorder: (stream) => adaptMediaRecorder(new MediaRecorder(stream)),
       getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: true }),
       stopStream: (stream) => {
@@ -81,6 +83,17 @@ export function VoiceComposerControls(props: {
   );
   onCleanup(() => {
     recorder.cancel();
+  });
+
+  // Emit the stop transition after MediaRecorder has stopped, so its cue can
+  // never leak into the clip being transcribed.
+  let previousStateKind: VoiceRecorderState["kind"] = "idle";
+  createEffect(() => {
+    const currentStateKind = state().kind;
+    if (previousStateKind === "recording" && currentStateKind !== "recording") {
+      props.onRecordingStop();
+    }
+    previousStateKind = currentStateKind;
   });
 
   // Ticks the elapsed-time label forward while recording; torn down the
@@ -111,7 +124,6 @@ export function VoiceComposerControls(props: {
   });
 
   const start = () => {
-    props.onRecordingStart?.();
     void recorder.start();
   };
 

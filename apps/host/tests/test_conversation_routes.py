@@ -845,6 +845,25 @@ def prompt_time_context_scopes_spoken_guidance_to_the_final_answer() -> None:
 
 
 @test()
+def prompt_time_context_makes_spoken_measurements_selective_and_rounded() -> None:
+    """Spoken guidance turns metric-heavy source material into a listenable summary."""
+    spoken = prompt_with_time_context(
+        "How was my nap?",
+        now=datetime(2026, 7, 1, 18, 23, 5, tzinfo=UTC),
+        timezone_name="UTC",
+        reply_mode="spoken",
+    )
+
+    assert_in(
+        "summarize the pattern instead of reciting every available metric", spoken
+    )
+    assert_in("Choose only the few numbers needed", spoken)
+    assert_in("round them to listener-friendly precision", spoken)
+    assert_in("group or omit secondary figures", spoken)
+    assert_in("Give exact values when the user asks for them", spoken)
+
+
+@test()
 def prompt_time_context_omits_spoken_guidance_for_text_mode() -> None:
     """Text-mode prompts carry only the wall-clock note."""
     now = datetime(2026, 7, 1, 18, 23, 5, tzinfo=UTC)

@@ -97,6 +97,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   // Per-running-turn speech stream (#545): null unless this prompt was
   // captured as spoken and a sink was provided.
   let spokenStream: ReturnType<typeof createSpokenStream> | null = null;
+  // Parallel or back-to-back tool calls form one audible working phase. New
+  // assistant prose ends that phase and allows a later tool phase to cue.
+  let toolPhaseActive = false;
 
   const busy = createMemo(() => turn().generating || awaitingAgentEnd());
   const generating = createMemo(() => turn().generating);
@@ -219,6 +222,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     setOutboundPrompt(prompt);
     setTurn(startTurn(prompt.content, now()));
     runningReplyMode = prompt.replyMode;
+    toolPhaseActive = false;
     spokenStream =
       runningReplyMode === "spoken" && dependencies.spokenTurn !== undefined
         ? createSpokenStream(
@@ -361,15 +365,20 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     // the settled answer plays whole once the context switches back.
     if (spokenStream !== null) {
       if (frame.event === "text_delta") {
+        toolPhaseActive = false;
         spokenStream.push(deltaText(frame.delta));
       } else if (frame.event === "tool_start") {
-        spokenStream.restart();
+        if (!toolPhaseActive) {
+          spokenStream.restart();
+          toolPhaseActive = true;
+        }
       }
     }
     if (frame.event === "agent_end") {
       const settledReplyMode = runningReplyMode;
       const stream = spokenStream;
       spokenStream = null;
+      toolPhaseActive = false;
       setOutboundPrompt(null);
       setAwaitingAgentEnd(false);
       refreshSettledHistory();
