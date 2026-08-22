@@ -2720,6 +2720,37 @@
         "title": "HealthConnectSyncStateRead",
         "type": "object"
       },
+      "HealthDreamNowRequest": {
+        "description": "Optional episode period bounding a manual consolidation run.",
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          }
+        },
+        "title": "HealthDreamNowRequest",
+        "type": "object"
+      },
       "HeartRateRecord": {
         "additionalProperties": false,
         "properties": {
@@ -7946,6 +7977,50 @@
           }
         },
         "summary": "Ingest Health Connect Batch"
+      }
+    },
+    "/api/telemetry/health-connect/dream-now": {
+      "post": {
+        "description": "Queue a manual consolidation run over Health Connect summaries.\n\nWithout a period, bounds cover every summary not yet captured by a prior\nrun; with `{start, end}`, only episodes ending inside the period are\nreconsidered.",
+        "operationId": "health_dream_now_api_telemetry_health_connect_dream_now_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/HealthDreamNowRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health Dream Now"
       }
     },
     "/api/telemetry/health-connect/sync-state": {

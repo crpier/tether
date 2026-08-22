@@ -120,6 +120,7 @@ async def _compose_app_runtime(
             health_connect_telemetry=HealthConnectTelemetry.from_database(
                 host.telemetry_database
             ),
+            health_distillation_service=core.health_distillation_service,
             ingestion_lifecycle=host.ingestion_lifecycle,
             kosync_auth=core.kosync_auth,
             kosync_service=core.kosync_service,

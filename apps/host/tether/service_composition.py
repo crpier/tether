@@ -592,6 +592,7 @@ class CoreServices:
     triage_service: TriageService
     trigger_service: TriggerService
     dreaming_service: DreamingService
+    health_distillation_service: HealthDistillationService
     youtube_search: YouTubeSearchService | None
 
 
@@ -734,6 +735,9 @@ async def compose_core_services(
         tracer=host.telemetry.tracer,
     )
     dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
+    health_distillation_service = HealthDistillationService(
+        host.database, host.telemetry_database
+    )
     dreaming_mutation_coordinator = DreamingMutationCoordinator(
         host.database,
         memory_workspace_service.workspace_root,
@@ -808,9 +812,6 @@ async def compose_core_services(
         )
         # Health consolidation (ADR-0016 bespoke sibling): bounded Distillations
         # over Health Connect episode summaries into the same Memory workspace.
-        health_distillation_service = HealthDistillationService(
-            host.database, host.telemetry_database
-        )
         health_dreaming_worker = HealthDreamingWorker(
             health_distillation_service,
             HealthDistillationExecutor(
@@ -878,5 +879,6 @@ async def compose_core_services(
         triage_service=triage_service,
         trigger_service=trigger_service,
         dreaming_service=dreaming_service,
+        health_distillation_service=health_distillation_service,
         youtube_search=youtube_searcher,
     )

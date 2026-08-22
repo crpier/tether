@@ -129,6 +129,63 @@ class HealthDistillationService:
             failure_message="Health distillation scan failed",
         )
 
+    async def queue_explicit_run(
+        self, *, start: datetime, end: datetime
+    ) -> HealthDreamRun[Fetched] | None:
+        """Queue one manual run bounded to episodes ending inside a period.
+
+        Bounds derive from summary rows whose episode `end_time` falls in
+        `[start, end]`; the lower bound excludes everything settled before
+        the period. Empty periods and exact repeats of prior bounds queue
+        nothing.
+        """
+        start_ms = int(start.timestamp() * 1_000)
+        end_ms = int(end.timestamp() * 1_000)
+        async with self.telemetry_database.transaction() as transaction:
+            bounds: dict[str, tuple[int | None, int | None]] = {}
+            for model, key in (
+                (HcExerciseEpisodeSummary, "exercise"),
+                (HcSleepEpisodeSummary, "sleep"),
+            ):
+                through_row = await transaction.fetch_one(
+                    select(model.version_id.max()).where(model.end_time.lte(end_ms))
+                )
+                since_row = await transaction.fetch_one(
+                    select(model.version_id.max()).where(model.end_time.lt(start_ms))
+                )
+                bounds[key] = (
+                    int(through_row) if isinstance(through_row, int) else None,
+                    int(since_row) if isinstance(since_row, int) else None,
+                )
+        (ex_through, ex_since), (sl_through, sl_since) = (
+            bounds["exercise"],
+            bounds["sleep"],
+        )
+        if ex_through is None and sl_through is None:
+            return None
+        resolved_ex = (ex_since or 0, ex_through or 0)
+        resolved_sl = (sl_since or 0, sl_through or 0)
+        if resolved_ex[0] == resolved_ex[1] and resolved_sl[0] == resolved_sl[1]:
+            return None
+        async with self.database.transaction(mode="immediate") as transaction:
+            duplicate = await transaction.fetch_one_or_none(
+                select(HealthDreamRun)
+                .where(HealthDreamRun.exercise_since_version_id.eq(resolved_ex[0]))
+                .where(HealthDreamRun.exercise_through_version_id.eq(resolved_ex[1]))
+                .where(HealthDreamRun.sleep_since_version_id.eq(resolved_sl[0]))
+                .where(HealthDreamRun.sleep_through_version_id.eq(resolved_sl[1]))
+            )
+            if duplicate is not None:
+                return None
+            run = HealthDreamRun(
+                status="queued",
+                exercise_since_version_id=resolved_ex[0],
+                exercise_through_version_id=resolved_ex[1],
+                sleep_since_version_id=resolved_sl[0],
+                sleep_through_version_id=resolved_sl[1],
+            )
+            return await transaction.execute(insert(run).returning())
+
     @staticmethod
     def _covers(
         run: HealthDreamRun[Fetched],
