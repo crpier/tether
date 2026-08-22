@@ -57,6 +57,66 @@ function stubVoiceRecording(): void {
   });
 }
 
+function stubSpeechEndDetection(): {
+  sample: (level: number, nowMs: number) => void;
+} {
+  let level = 0;
+  let nowMs = 0;
+  let nextTimer = 0;
+  const timers = new Map<number, () => void>();
+
+  vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+  vi.spyOn(window, "setInterval").mockImplementation(((
+    handler: TimerHandler,
+  ) => {
+    const timer = ++nextTimer;
+    timers.set(timer, handler as () => void);
+    return timer;
+  }) as unknown as typeof window.setInterval);
+  vi.spyOn(window, "clearInterval").mockImplementation(((timer?: number) => {
+    if (timer !== undefined) {
+      timers.delete(timer);
+    }
+  }) as unknown as typeof window.clearInterval);
+
+  class FakeAudioContext {
+    createAnalyser() {
+      return {
+        fftSize: 0,
+        getFloatTimeDomainData: (samples: Float32Array) => {
+          samples.fill(level);
+        },
+      };
+    }
+
+    createMediaStreamSource() {
+      return {
+        connect: () => undefined,
+        disconnect: () => undefined,
+      };
+    }
+
+    close(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    resume(): Promise<void> {
+      return Promise.resolve();
+    }
+  }
+
+  vi.stubGlobal("AudioContext", FakeAudioContext);
+  return {
+    sample: (nextLevel, nextNowMs) => {
+      level = nextLevel;
+      nowMs = nextNowMs;
+      for (const handler of [...timers.values()]) {
+        handler();
+      }
+    },
+  };
+}
+
 function latestFakeRecorder(): FakeMediaRecorder {
   const recorder = FakeMediaRecorder.instances.at(-1);
   if (recorder === undefined) {
@@ -1497,6 +1557,98 @@ describe("Chat view", () => {
 
       await speechFinishLast();
       await screen.findByText("Recording…");
+    });
+
+    test("speech followed by silence submits a hands-free recording exactly once", async () => {
+      stubVoiceRecording();
+      const speechEnd = stubSpeechEndDetection();
+      stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "hands free follow up";
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
+      const messageBox = textarea(screen.getByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "Start the loop" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "spoken answer",
+        type: "chat",
+      });
+      await speechFinishLast();
+      await screen.findByText("Recording…");
+
+      // Silence before speech must not submit an empty recording.
+      speechEnd.sample(0, 5_000);
+      expect(bus.sent).toHaveLength(1);
+
+      speechEnd.sample(0.05, 5_100);
+      speechEnd.sample(0, 5_200);
+      // A short pause does not end the turn if speech resumes.
+      speechEnd.sample(0.05, 6_300);
+      expect(bus.sent).toHaveLength(1);
+      speechEnd.sample(0, 6_400);
+      speechEnd.sample(0, 7_600);
+
+      await waitFor(() => {
+        expect(bus.sent).toEqual([
+          {
+            content: "Start the loop",
+            conversationId: conversation.id,
+            replyMode: "spoken",
+            type: "prompt",
+          },
+          {
+            content: "hands free follow up",
+            conversationId: conversation.id,
+            replyMode: "spoken",
+            type: "prompt",
+          },
+        ]);
+      });
+      speechEnd.sample(0, 8_000);
+      expect(bus.sent).toHaveLength(2);
+    });
+
+    test("a stuck hands-free recording stops at the safety deadline", async () => {
+      stubVoiceRecording();
+      const speechEnd = stubSpeechEndDetection();
+      stubSpeech();
+      const host = new FakeHost({ authenticated: true });
+      host.chat.nextTranscript = "deadline follow up";
+      const bus = renderApp(host);
+
+      await screen.findByLabelText("Message");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Conversation mode" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Hands-free" }));
+      const messageBox = textarea(screen.getByLabelText("Message"));
+      fireEvent.input(messageBox, { target: { value: "Start the loop" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "agent_end",
+        final_text: "spoken answer",
+        type: "chat",
+      });
+      await speechFinishLast();
+      await screen.findByText("Recording…");
+
+      speechEnd.sample(0, 30_000);
+
+      await waitFor(() => {
+        expect(bus.sent.at(-1)).toMatchObject({
+          content: "deadline follow up",
+          replyMode: "spoken",
+        });
+      });
     });
 
     test("hands-free off never re-arms recording", async () => {

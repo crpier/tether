@@ -30,6 +30,10 @@ function harness(options: {
   getUserMedia?: () => Promise<MediaStream>;
   now?: () => number;
   transcribe?: (blob: Blob) => Promise<string>;
+  watchForSpeechEnd?: (
+    stream: MediaStream,
+    onSpeechEnd: () => void,
+  ) => () => void;
 }) {
   const states: VoiceRecorderState[] = [];
   const transcripts: { mode: string; transcript: string }[] = [];
@@ -49,6 +53,7 @@ function harness(options: {
         stopStreamCalls.push(stream);
       },
       transcribe: options.transcribe ?? (() => Promise.resolve("hello")),
+      watchForSpeechEnd: options.watchForSpeechEnd ?? (() => () => undefined),
     },
     (state) => {
       states.push(state);
@@ -86,6 +91,38 @@ describe("VoiceRecorder toggle state machine", () => {
       "uploading",
       "idle",
     ]);
+  });
+
+  test("speech ending stops and submits a hands-free recording", async () => {
+    let signalSpeechEnd: () => void = () => undefined;
+    const { recorder, recorders, transcripts } = harness({
+      transcribe: () => Promise.resolve("call the dentist"),
+      watchForSpeechEnd: (_stream, onSpeechEnd) => {
+        signalSpeechEnd = onSpeechEnd;
+        return () => undefined;
+      },
+    });
+
+    await recorder.start("hands-free");
+    signalSpeechEnd();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(recorders[0]?.stopped).toBe(true);
+    expect(transcripts).toEqual([
+      { mode: "hands-free", transcript: "call the dentist" },
+    ]);
+  });
+
+  test("manual recording modes do not watch for speech end", async () => {
+    const watchForSpeechEnd = vi.fn(() => () => undefined);
+    const { recorder } = harness({ watchForSpeechEnd });
+
+    await recorder.start("auto-send");
+    recorder.cancel();
+    await recorder.start("review");
+
+    expect(watchForSpeechEnd).not.toHaveBeenCalled();
   });
 
   test("which button started the recording decides the mode reported on success", async () => {
