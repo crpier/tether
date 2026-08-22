@@ -1,24 +1,17 @@
-// Voice input recording controller (issue #19): a toggle recorder driving the
-// chat composer's two voice buttons. Click starts recording, click again
-// stops it and uploads the clip for transcription; an explicit cancel
-// discards it mid-recording with no upload. Which button started the
-// recording mode is threaded through untouched so the caller can decide what
-// a successful transcript does: fill the composer for review, or send manual
-// and hands-free recordings through the normal chat-send path. This
-// module only owns the record/upload state machine, never the chat send.
+// Voice input recording controller: starts, stops, or abandons hands-free
+// microphone capture and uploads completed clips for transcription. This
+// module owns recording/upload state, never chat sending.
 //
 // Depends on abstractions rather than `navigator.mediaDevices`/`MediaRecorder`
 // directly so the state machine is unit-testable without a real browser
 // microphone (see `voice-recorder.test.ts`); `chat-page.tsx` wires the real
 // browser APIs as `VoiceRecorderDeps`.
 
-export type VoiceMode = "auto-send" | "hands-free" | "review";
-
 export type VoiceRecorderState =
-  | { kind: "failed"; message: string; mode: VoiceMode }
+  | { kind: "failed"; message: string }
   | { kind: "idle" }
-  | { kind: "recording"; mode: VoiceMode; startedAt: number }
-  | { kind: "uploading"; mode: VoiceMode };
+  | { kind: "recording"; startedAt: number }
+  | { kind: "uploading" };
 
 // The slice of `MediaRecorder` this module actually drives — small enough to
 // fake in tests without a real browser recorder.
@@ -52,16 +45,15 @@ export class VoiceRecorder {
   private readonly now: () => number;
   private recorder: MinimalMediaRecorder | null = null;
   private state: VoiceRecorderState = { kind: "idle" };
+  private startToken = 0;
   private stream: MediaStream | null = null;
   private stopWatchingSpeech: (() => void) | null = null;
+  private uploadToken = 0;
 
   constructor(
     private readonly deps: VoiceRecorderDeps,
     private readonly onChange: (state: VoiceRecorderState) => void,
-    private readonly onTranscript: (
-      transcript: string,
-      mode: VoiceMode,
-    ) => void,
+    private readonly onTranscript: (transcript: string) => void,
   ) {
     this.now = deps.now ?? (() => Date.now());
   }
@@ -70,20 +62,26 @@ export class VoiceRecorder {
     return this.state;
   }
 
-  /** Start recording in the given mode (a no-op unless currently idle). */
-  async start(mode: VoiceMode): Promise<void> {
+  /** Start hands-free recording (a no-op unless currently idle). */
+  async start(): Promise<void> {
     if (this.state.kind !== "idle") {
       return;
     }
+    const startToken = ++this.startToken;
     let stream: MediaStream;
     try {
       stream = await this.deps.getUserMedia();
     } catch {
-      this.setState({
-        kind: "failed",
-        message: "Microphone access was denied.",
-        mode,
-      });
+      if (startToken === this.startToken) {
+        this.setState({
+          kind: "failed",
+          message: "Microphone access was denied.",
+        });
+      }
+      return;
+    }
+    if (startToken !== this.startToken) {
+      this.deps.stopStream?.(stream);
       return;
     }
     this.stream = stream;
@@ -96,15 +94,13 @@ export class VoiceRecorder {
       }
     };
     recorder.onstop = () => {
-      this.finishRecording(mode);
+      this.finishRecording();
     };
     recorder.start();
-    this.setState({ kind: "recording", mode, startedAt: this.now() });
-    if (mode === "hands-free") {
-      this.stopWatchingSpeech = this.deps.watchForSpeechEnd(stream, () => {
-        this.stop();
-      });
-    }
+    this.setState({ kind: "recording", startedAt: this.now() });
+    this.stopWatchingSpeech = this.deps.watchForSpeechEnd(stream, () => {
+      this.stop();
+    });
   }
 
   /** Stop recording and upload the clip for transcription. */
@@ -118,7 +114,15 @@ export class VoiceRecorder {
 
   /** Abandon an in-progress recording; nothing is uploaded or kept. */
   cancel(): void {
+    // Also invalidates a pending getUserMedia request. If it resolves after
+    // cancellation, start() releases that stream without opening a recorder.
+    this.startToken += 1;
+    this.uploadToken += 1;
     if (this.state.kind !== "recording") {
+      if (this.state.kind !== "idle") {
+        this.blob = null;
+        this.setState({ kind: "idle" });
+      }
       return;
     }
     if (this.recorder) {
@@ -134,10 +138,15 @@ export class VoiceRecorder {
 
   /** Re-upload the retained clip from a failed transcription. */
   retry(): void {
-    if (this.state.kind !== "failed" || this.blob === null) {
+    if (this.state.kind !== "failed") {
       return;
     }
-    void this.upload(this.state.mode, this.blob);
+    if (this.blob === null) {
+      this.setState({ kind: "idle" });
+      void this.start();
+      return;
+    }
+    void this.upload(this.blob);
   }
 
   /** Discard the retained clip from a failed transcription. */
@@ -149,37 +158,42 @@ export class VoiceRecorder {
     this.setState({ kind: "idle" });
   }
 
-  private finishRecording(mode: VoiceMode): void {
+  private finishRecording(): void {
     this.releaseStream();
     const blob = new Blob(this.chunks, { type: "audio/webm" });
     this.chunks = [];
-    void this.upload(mode, blob);
+    void this.upload(blob);
   }
 
-  private async upload(mode: VoiceMode, blob: Blob): Promise<void> {
+  private async upload(blob: Blob): Promise<void> {
+    const uploadToken = ++this.uploadToken;
     this.blob = blob;
-    this.setState({ kind: "uploading", mode });
+    this.setState({ kind: "uploading" });
     try {
       const transcript = await this.deps.transcribe(blob);
+      if (uploadToken !== this.uploadToken) {
+        return;
+      }
       if (transcript.trim().length === 0) {
         this.setState({
           kind: "failed",
           message: "No speech was detected. Try again.",
-          mode,
         });
         return;
       }
       this.blob = null;
       this.setState({ kind: "idle" });
-      this.onTranscript(transcript, mode);
+      this.onTranscript(transcript);
     } catch (error) {
+      if (uploadToken !== this.uploadToken) {
+        return;
+      }
       this.setState({
         kind: "failed",
         message:
           error instanceof Error && error.message.length > 0
             ? error.message
             : "Transcription failed.",
-        mode,
       });
     }
   }

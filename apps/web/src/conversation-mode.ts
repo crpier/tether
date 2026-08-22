@@ -10,8 +10,8 @@
  * Loop rules (issues #542/#544/#545/#546):
  * - Sentences stream to the speaker as they complete; tool activity
  *   invalidates the provisional prefix so the settled answer plays whole.
- * - After a spoken reply finishes naturally, an opt-in hands-free loop re-arms
- *   recording so the user can just talk.
+ * - Starting voice conversation arms recording immediately; each naturally
+ *   finished spoken reply re-arms it so the user can keep talking.
  * - Any user interaction during playback (typing, clicking) means the user
  *   took over: the loop stands down for that cycle, and barge-in (sending a
  *   prompt, starting a recording, Escape) stops playback outright.
@@ -40,37 +40,38 @@ export type ConversationModeOptions =
     };
 
 export interface ConversationMode {
-  /** Whether replies are captured as spoken. */
+  /** Whether the hands-free spoken conversation is active. */
   enabled(): boolean;
-  toggle(): void;
-  /** Reply mode for prompts enqueued while the toggle is in this state. */
+  /** Start the spoken loop and immediately arm its first recording. */
+  start(): void;
+  /** End the spoken loop and cancel active playback. */
+  stop(): void;
+  /** Reply mode for prompts enqueued while the conversation is in this state. */
   replyMode(): ReplyMode;
-  /** Whether the hands-free re-arm loop is opted in. */
-  handsFree(): boolean;
-  toggleHandsFree(): void;
   /** Barge-in: the user sent a prompt; stop active playback. */
   onPromptSent(): void;
   /** Barge-in: a recording is about to open the microphone. */
   onRecordingStart(): void;
+  /** Bumped when a sent prompt supersedes microphone capture. */
+  recordingCancelSignal(): number;
   /** Spoken-turn sink to hand to `createLiveChatTurn`. */
   spokenTurn: SpokenTurnSink;
   /** Whether a settled assistant text was spoken this session (🔊 chip). */
   isSpoken(text: string): boolean;
-  /** Bumped when the hands-free loop re-arms recording. */
+  /** Bumped for the initial recording and each hands-free re-arm. */
   voiceAutoStart(): number;
   playbackState(): SpeechPlayerState;
-  stopPlayback(): void;
 }
 
 export function createConversationMode(
   options: ConversationModeOptions,
 ): ConversationMode {
   const [enabled, setEnabled] = createSignal(false);
-  const [handsFree, setHandsFree] = createSignal(false);
   // Transcript texts whose settled form was spoken this session (#546): the
   // 🔊 chip. Session-scoped by design — durable per-message mode flags need a
   // host schema change and are deliberately out of scope here.
   const [spokenTexts, setSpokenTexts] = createSignal<Set<string>>(new Set());
+  const [recordingCancelSignal, setRecordingCancelSignal] = createSignal(0);
   const [voiceAutoStart, setVoiceAutoStart] = createSignal(0);
 
   // Hands-free loop state machine. `spokeAt` stamps when the current stretch
@@ -89,12 +90,7 @@ export function createConversationMode(
   };
 
   const onPlaybackEnded = () => {
-    if (
-      enabled() &&
-      handsFree() &&
-      lastInteractionAt < spokeAt &&
-      spokeAt > 0
-    ) {
+    if (enabled() && lastInteractionAt < spokeAt && spokeAt > 0) {
       setVoiceAutoStart((tick) => tick + 1);
     }
   };
@@ -120,7 +116,11 @@ export function createConversationMode(
     // Ctrl+Shift+V flips conversation mode without leaving the keyboard.
     if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "v") {
       event.preventDefault();
-      setEnabled((value) => !value);
+      if (enabled()) {
+        stop();
+      } else {
+        start();
+      }
     }
   };
   window.addEventListener("keydown", markInteraction, { capture: true });
@@ -140,6 +140,9 @@ export function createConversationMode(
     // Sentences stream in as they complete (#545): normalized and queued for
     // speech immediately, before the turn settles.
     sentence: (text) => {
+      if (!enabled()) {
+        return;
+      }
       const spoken = toSpeechText(text);
       if (spoken.length > 0) {
         markSpeechStart();
@@ -154,6 +157,9 @@ export function createConversationMode(
       speechPlayer.cancel();
     },
     settle: (unspokenTail, info) => {
+      if (!enabled()) {
+        return;
+      }
       if (info.toolOnly) {
         // The settled text is a host-side tool-only marker, not real
         // prose — silence beats speaking internal scaffolding.
@@ -176,29 +182,39 @@ export function createConversationMode(
     },
   };
 
+  const start = () => {
+    if (enabled()) {
+      return;
+    }
+    setEnabled(true);
+    setVoiceAutoStart((tick) => tick + 1);
+  };
+  const stop = () => {
+    if (!enabled()) {
+      return;
+    }
+    setEnabled(false);
+    markedSpeechStart = false;
+    speechPlayer.cancel();
+  };
+
   return {
     enabled,
-    toggle: () => {
-      setEnabled((value) => !value);
-    },
+    start,
+    stop,
     replyMode: () => (enabled() ? "spoken" : "text"),
-    handsFree,
-    toggleHandsFree: () => {
-      setHandsFree((value) => !value);
-    },
     onPromptSent: () => {
+      setRecordingCancelSignal((tick) => tick + 1);
       speechPlayer.cancel();
     },
     onRecordingStart: () => {
       // Avoid microphone feedback from an ongoing reply.
       speechPlayer.cancel();
     },
+    recordingCancelSignal,
     spokenTurn,
     isSpoken: (text) => spokenTexts().has(text),
     voiceAutoStart,
     playbackState: () => speechPlayer.state(),
-    stopPlayback: () => {
-      speechPlayer.cancel();
-    },
   };
 }

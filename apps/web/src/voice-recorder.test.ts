@@ -36,7 +36,7 @@ function harness(options: {
   ) => () => void;
 }) {
   const states: VoiceRecorderState[] = [];
-  const transcripts: { mode: string; transcript: string }[] = [];
+  const transcripts: string[] = [];
   const stopStreamCalls: MediaStream[] = [];
   const recorders: FakeRecorder[] = [];
   const fakeStream = {} as MediaStream;
@@ -58,8 +58,8 @@ function harness(options: {
     (state) => {
       states.push(state);
     },
-    (transcript, mode) => {
-      transcripts.push({ mode, transcript });
+    (transcript) => {
+      transcripts.push(transcript);
     },
   );
   return { recorder, recorders, states, stopStreamCalls, transcripts };
@@ -73,7 +73,7 @@ describe("VoiceRecorder toggle state machine", () => {
 
     expect(recorder.getState()).toEqual({ kind: "idle" });
 
-    await recorder.start("review");
+    await recorder.start();
     expect(recorder.getState().kind).toBe("recording");
 
     recorder.stop();
@@ -83,9 +83,7 @@ describe("VoiceRecorder toggle state machine", () => {
     await Promise.resolve();
 
     expect(recorder.getState()).toEqual({ kind: "idle" });
-    expect(transcripts).toEqual([
-      { mode: "review", transcript: "buy oat milk" },
-    ]);
+    expect(transcripts).toEqual(["buy oat milk"]);
     expect(states.map((state) => state.kind)).toEqual([
       "recording",
       "uploading",
@@ -103,47 +101,19 @@ describe("VoiceRecorder toggle state machine", () => {
       },
     });
 
-    await recorder.start("hands-free");
+    await recorder.start();
     signalSpeechEnd();
     await Promise.resolve();
     await Promise.resolve();
 
     expect(recorders[0]?.stopped).toBe(true);
-    expect(transcripts).toEqual([
-      { mode: "hands-free", transcript: "call the dentist" },
-    ]);
-  });
-
-  test("manual recording modes do not watch for speech end", async () => {
-    const watchForSpeechEnd = vi.fn(() => () => undefined);
-    const { recorder } = harness({ watchForSpeechEnd });
-
-    await recorder.start("auto-send");
-    recorder.cancel();
-    await recorder.start("review");
-
-    expect(watchForSpeechEnd).not.toHaveBeenCalled();
-  });
-
-  test("which button started the recording decides the mode reported on success", async () => {
-    const { recorder, transcripts } = harness({
-      transcribe: () => Promise.resolve("call the dentist"),
-    });
-
-    await recorder.start("auto-send");
-    recorder.stop();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(transcripts).toEqual([
-      { mode: "auto-send", transcript: "call the dentist" },
-    ]);
+    expect(transcripts).toEqual(["call the dentist"]);
   });
 
   test("elapsed time is derived from the injected clock at recording start", async () => {
     const { recorder } = harness({ now: () => 1_000 });
 
-    await recorder.start("review");
+    await recorder.start();
 
     const state = recorder.getState();
     expect(state.kind).toBe("recording");
@@ -157,7 +127,7 @@ describe("VoiceRecorder toggle state machine", () => {
       transcribe: () => Promise.reject(new Error("should not be called")),
     });
 
-    await recorder.start("review");
+    await recorder.start();
     recorder.cancel();
 
     expect(recorder.getState()).toEqual({ kind: "idle" });
@@ -171,13 +141,29 @@ describe("VoiceRecorder toggle state machine", () => {
       getUserMedia: () => Promise.reject(new Error("denied")),
     });
 
-    await recorder.start("review");
+    await recorder.start();
 
     expect(recorder.getState()).toEqual({
       kind: "failed",
       message: "Microphone access was denied.",
-      mode: "review",
     });
+  });
+
+  test("retry asks for microphone access again after denial", async () => {
+    const fakeStream = {} as MediaStream;
+    const getUserMedia = vi
+      .fn<() => Promise<MediaStream>>()
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockResolvedValueOnce(fakeStream);
+    const { recorder } = harness({ getUserMedia });
+
+    await recorder.start();
+    recorder.retry();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(recorder.getState().kind).toBe("recording");
   });
 
   test("an empty transcript fails without entering chat, keeping the clip", async () => {
@@ -185,7 +171,7 @@ describe("VoiceRecorder toggle state machine", () => {
       transcribe: () => Promise.resolve("   "),
     });
 
-    await recorder.start("auto-send");
+    await recorder.start();
     recorder.stop();
     await Promise.resolve();
     await Promise.resolve();
@@ -193,7 +179,6 @@ describe("VoiceRecorder toggle state machine", () => {
     expect(recorder.getState()).toEqual({
       kind: "failed",
       message: "No speech was detected. Try again.",
-      mode: "auto-send",
     });
     expect(transcripts).toEqual([]);
   });
@@ -203,7 +188,7 @@ describe("VoiceRecorder toggle state machine", () => {
       transcribe: () => Promise.reject(new Error("Transcription failed.")),
     });
 
-    await recorder.start("review");
+    await recorder.start();
     recorder.stop();
     await Promise.resolve();
     await Promise.resolve();
@@ -211,7 +196,6 @@ describe("VoiceRecorder toggle state machine", () => {
     expect(recorder.getState()).toEqual({
       kind: "failed",
       message: "Transcription failed.",
-      mode: "review",
     });
   });
 
@@ -222,7 +206,7 @@ describe("VoiceRecorder toggle state machine", () => {
       .mockResolvedValueOnce("buy oat milk");
     const { recorder, transcripts } = harness({ transcribe });
 
-    await recorder.start("review");
+    await recorder.start();
     recorder.stop();
     await Promise.resolve();
     await Promise.resolve();
@@ -233,9 +217,7 @@ describe("VoiceRecorder toggle state machine", () => {
     await Promise.resolve();
 
     expect(recorder.getState()).toEqual({ kind: "idle" });
-    expect(transcripts).toEqual([
-      { mode: "review", transcript: "buy oat milk" },
-    ]);
+    expect(transcripts).toEqual(["buy oat milk"]);
     expect(transcribe).toHaveBeenCalledTimes(2);
     // Both calls re-upload the exact same blob instance retained client-side.
     const [firstBlob] = transcribe.mock.calls[0] ?? [];
@@ -248,7 +230,7 @@ describe("VoiceRecorder toggle state machine", () => {
       transcribe: () => Promise.reject(new Error("Transcription failed.")),
     });
 
-    await recorder.start("review");
+    await recorder.start();
     recorder.stop();
     await Promise.resolve();
     await Promise.resolve();
@@ -265,7 +247,7 @@ describe("VoiceRecorder toggle state machine", () => {
   test("the microphone stream is released once recording stops", async () => {
     const { recorder, stopStreamCalls } = harness({});
 
-    await recorder.start("review");
+    await recorder.start();
     recorder.stop();
     await Promise.resolve();
     await Promise.resolve();
@@ -280,13 +262,9 @@ describe("VoiceRecorder toggle state machine", () => {
       transcribe: () => new Promise<string>(() => undefined),
     });
 
-    await recorder.start("review");
-    await recorder.start("auto-send");
+    await recorder.start();
+    await recorder.start();
     expect(recorders).toHaveLength(1);
-    const state = recorder.getState();
-    expect(state.kind).toBe("recording");
-    if (state.kind === "recording") {
-      expect(state.mode).toBe("review");
-    }
+    expect(recorder.getState().kind).toBe("recording");
   });
 });

@@ -243,7 +243,7 @@ for (const viewport of [PHONE, DESKTOP]) {
 
     const controls = [
       page.getByRole("textbox", { name: "Message" }),
-      page.getByRole("button", { name: "Record and review" }),
+      page.getByRole("button", { name: "Start voice conversation" }),
       page.getByRole("button", { exact: true, name: "Send" }),
     ];
     const composerCenter = composerBox.y + composerBox.height / 2;
