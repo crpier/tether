@@ -261,6 +261,7 @@ function MessageRow(props: {
   row: TimelineRow;
   transcriptItemNumber: number;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
+  onOpenEvidence: (uri: string) => void;
 }) {
   return (
     <Switch>
@@ -388,6 +389,7 @@ function MessageRow(props: {
             >
               <MessageContent
                 onOpenArtifact={props.onOpenArtifact}
+                onOpenEvidence={props.onOpenEvidence}
                 streaming={message().streaming}
                 text={message().text}
               />
@@ -416,6 +418,7 @@ function MessageRows(props: {
   // about to prepend.
   onNearTop: () => boolean;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
+  onOpenEvidence: (uri: string) => void;
 }) {
   let viewport: HTMLElement | undefined;
   const [pinned, setPinned] = createSignal(true);
@@ -487,6 +490,7 @@ function MessageRows(props: {
             <MessageRow
               isSpoken={props.isSpoken}
               onOpenArtifact={props.onOpenArtifact}
+              onOpenEvidence={props.onOpenEvidence}
               row={row}
               transcriptItemNumber={index() + 1}
             />
@@ -528,7 +532,7 @@ function MessageRows(props: {
 }
 
 export function ChatPage() {
-  const { bus, chatFrame, connection } = useAppContext();
+  const { bus, chatFrame, connection, openEvidence } = useAppContext();
   const api = useHost("chat");
   const artifacts = useHost("artifacts");
   const queryClient = useQueryClient();
@@ -786,6 +790,7 @@ export function ChatPage() {
             isSpoken={(text) => conversationMode.isSpoken(text)}
             onNearTop={loadOlderMessages}
             onOpenArtifact={setOpenArtifact}
+            onOpenEvidence={openEvidence}
             rows={rows()}
             startedAt={startedAt()}
             stopped={stopped()}

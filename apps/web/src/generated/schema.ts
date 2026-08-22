@@ -540,6 +540,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/evidence": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Resolve Evidence
+     * @description Resolve one stable Evidence reference for in-app inspection.
+     */
+    get: operations["resolve_evidence_api_evidence_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/gmail-auth": {
     parameters: {
       query?: never;
@@ -2026,6 +2046,8 @@ export interface components {
      * @description One human-readable Claim addition or removal from a Dream mutation.
      */
     DreamingFactChangeRead: {
+      /** Evidence */
+      evidence: string[];
       /**
        * Kind
        * @enum {string}
@@ -2136,6 +2158,46 @@ export interface components {
       reasoning: string | null;
       /** Rubric */
       rubric: string;
+    };
+    /**
+     * ExerciseEvidenceRead
+     * @description Browser-safe representation of one historical exercise episode.
+     */
+    ExerciseEvidenceRead: {
+      /** Duration Minutes */
+      duration_minutes: number;
+      /**
+       * End Time
+       * Format: date-time
+       */
+      end_time: string;
+      /** Exercise Type */
+      exercise_type: string | null;
+      /**
+       * Kind
+       * @default health_connect_exercise
+       * @constant
+       */
+      kind: "health_connect_exercise";
+      /** Lap Count */
+      lap_count: number;
+      /** Record Uid */
+      record_uid: string;
+      /** Segment Count */
+      segment_count: number;
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+      /** Title */
+      title: string | null;
+      /** Total Lap Meters */
+      total_lap_meters: number | null;
+      /** Uri */
+      uri: string;
+      /** Version Id */
+      version_id: number;
     };
     /** ExerciseLap */
     ExerciseLap: {
@@ -2661,6 +2723,40 @@ export interface components {
       path: string;
     };
     /**
+     * MessageEvidenceRead
+     * @description Browser-safe representation of one cited conversation message.
+     */
+    MessageEvidenceRead: {
+      /** Content */
+      content: string;
+      /**
+       * Conversation Id
+       * Format: uuid7
+       */
+      conversation_id: string;
+      /**
+       * Kind
+       * @default message
+       * @constant
+       */
+      kind: "message";
+      /**
+       * Message Id
+       * Format: uuid7
+       */
+      message_id: string;
+      /**
+       * Occurred At
+       * Format: date-time
+       */
+      occurred_at: string;
+      role: components["schemas"]["MessageRole"];
+      /** Seq */
+      seq: number;
+      /** Uri */
+      uri: string;
+    };
+    /**
      * MessageRead
      * @description HTTP representation of a settled transcript row.
      */
@@ -3098,6 +3194,42 @@ export interface components {
       status: components["schemas"]["TodoStatus"];
       /** Version */
       version: number;
+    };
+    /**
+     * SleepEvidenceRead
+     * @description Browser-safe representation of one historical sleep episode.
+     */
+    SleepEvidenceRead: {
+      /** Duration Minutes */
+      duration_minutes: number;
+      /**
+       * End Time
+       * Format: date-time
+       */
+      end_time: string;
+      /**
+       * Kind
+       * @default health_connect_sleep
+       * @constant
+       */
+      kind: "health_connect_sleep";
+      /** Record Uid */
+      record_uid: string;
+      /** Stage Minutes */
+      stage_minutes: {
+        [key: string]: number;
+      };
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+      /** Title */
+      title: string | null;
+      /** Uri */
+      uri: string;
+      /** Version Id */
+      version_id: number;
     };
     /** SleepRecord */
     SleepRecord: {
@@ -4504,6 +4636,40 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["EbookDocumentRead"][];
+        };
+      };
+    };
+  };
+  resolve_evidence_api_evidence_get: {
+    parameters: {
+      query: {
+        uri: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json":
+            | components["schemas"]["ExerciseEvidenceRead"]
+            | components["schemas"]["MessageEvidenceRead"]
+            | components["schemas"]["SleepEvidenceRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

@@ -17,6 +17,7 @@ export interface AppRuntimeContext {
   // every dispatch (even if two frames happen to carry equal fields), so a
   // consuming effect fires for each one in turn.
   chatFrame: Accessor<ChatFrame | undefined>;
+  openEvidence: (uri: string) => void;
 }
 
 export interface AppContextValue extends AppRuntimeContext {

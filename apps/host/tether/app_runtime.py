@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
     from tether.events import EventHub
+    from tether.evidence import EvidenceResolver
     from tether.gmail import GmailClient, GoogleGmailAuthService
     from tether.health_connect import HealthConnectIngestion, HealthConnectTelemetry
     from tether.health_distillation import HealthDistillationService
@@ -67,6 +68,7 @@ class AppRuntime:
     memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
     dreaming_service: DreamingService
+    evidence_resolver: EvidenceResolver
     notification_service: NotificationService
     panel_service: PanelService
     proposal_autonomy_service: ProposalAutonomyService

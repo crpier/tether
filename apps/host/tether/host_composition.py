@@ -10,12 +10,14 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from tether.app_runtime import AppRuntime, install_app_runtime
+from tether.evidence import EvidenceResolver
 from tether.gmail import (
     GoogleGmailAuthService,
     HttpGmailTransport,
     ReauthorizableGmailClient,
 )
 from tether.health_connect import (
+    HealthConnectEvidenceResolver,
     HealthConnectIngestion,
     HealthConnectTelemetry,
     create_health_connect_schema,
@@ -115,6 +117,10 @@ async def _compose_app_runtime(
             conversation_service=core.conversation_service,
             conversation_turn_queue=core.conversation_turn_queue,
             event_hub=core.event_hub,
+            evidence_resolver=EvidenceResolver(
+                host.database,
+                HealthConnectEvidenceResolver(host.telemetry_database),
+            ),
             health_connect_ingestion=HealthConnectIngestion(host.telemetry_database),
             health_connect_telemetry=HealthConnectTelemetry.from_database(
                 host.telemetry_database

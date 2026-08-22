@@ -3,6 +3,7 @@ import type {
   DuePrompt,
   DreamRun,
   DreamRunDetail,
+  Evidence,
   Grant,
   GrantSuggestion,
   MemoryTopic,
@@ -21,6 +22,7 @@ import { FakeAuthHost } from "./fakes/auth";
 import { FakeBucketHost } from "./fakes/bucket";
 import { FakeChatHost } from "./fakes/chat";
 import { FakeDreamingHost } from "./fakes/dreaming";
+import { FakeEvidenceHost } from "./fakes/evidence";
 import { FakeMemoriesHost } from "./fakes/memories";
 import { FakeNotificationsHost } from "./fakes/notifications";
 import { FakePanelsHost } from "./fakes/panels";
@@ -39,6 +41,7 @@ export class FakeHost implements WebHost {
   readonly bucket: FakeBucketHost;
   readonly chat: FakeChatHost;
   readonly dreaming: FakeDreamingHost;
+  readonly evidence: FakeEvidenceHost;
   readonly memories: FakeMemoriesHost;
   readonly notifications = new FakeNotificationsHost();
   readonly panels: FakePanelsHost;
@@ -58,6 +61,7 @@ export class FakeHost implements WebHost {
     dreamRunDetails?: Record<string, DreamRunDetail>;
     dreamNowRuns?: DreamRun[];
     dreamRuns?: DreamRun[];
+    evidence?: Evidence[];
     grants?: Grant[];
     grantSuggestions?: GrantSuggestion[];
     memoryTopics?: MemoryTopic[];
@@ -78,6 +82,7 @@ export class FakeHost implements WebHost {
       options.dreamRunDetails,
       options.dreamNowRuns,
     );
+    this.evidence = new FakeEvidenceHost(options.evidence);
     this.memories = new FakeMemoriesHost(options.memoryTopics);
     this.memories.workspaceDiagnostics =
       options.memoryWorkspaceDiagnostics ?? [];

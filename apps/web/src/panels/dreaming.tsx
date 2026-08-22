@@ -6,6 +6,7 @@ import {
 import { For, Show, createMemo, createSignal } from "solid-js";
 
 import { Button } from "@/components/ui/button";
+import { EvidenceLink } from "../components/evidence-link";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -123,7 +124,10 @@ function matchesFilter(run: DreamRun, filter: DreamRunFilter): boolean {
   }
 }
 
-function mutationRow(mutation: DreamingMutation) {
+function mutationRow(
+  mutation: DreamingMutation,
+  onOpenEvidence: (uri: string) => void,
+) {
   return (
     <li class="bg-muted rounded-md border px-3 py-2 text-sm">
       <div class="flex flex-wrap items-center gap-2">
@@ -162,6 +166,20 @@ function mutationRow(mutation: DreamingMutation) {
                       )}
                     </Show>
                     {change.text}
+                    <Show when={change.evidence.length > 0}>
+                      <span class="mt-1 flex flex-wrap gap-2 font-sans">
+                        <For each={change.evidence}>
+                          {(evidence) => (
+                            <EvidenceLink
+                              onOpen={onOpenEvidence}
+                              uri={evidence}
+                            >
+                              source
+                            </EvidenceLink>
+                          )}
+                        </For>
+                      </span>
+                    </Show>
                   </span>
                 </li>
               );
@@ -188,7 +206,10 @@ function mutationRow(mutation: DreamingMutation) {
   );
 }
 
-export function DreamingPanel(props: { api: DreamingHost }) {
+export function DreamingPanel(props: {
+  api: DreamingHost;
+  onOpenEvidence: (uri: string) => void;
+}) {
   const [filter, setFilter] = createSignal<DreamRunFilter>("all");
   const [selectedRunId, setSelectedRunId] = createSignal<string>();
   const queryClient = useQueryClient();
@@ -483,7 +504,9 @@ export function DreamingPanel(props: { api: DreamingHost }) {
                       >
                         <ul class="mt-2 space-y-2">
                           <For each={detailQuery.data?.mutations ?? []}>
-                            {mutationRow}
+                            {(mutation) =>
+                              mutationRow(mutation, props.onOpenEvidence)
+                            }
                           </For>
                         </ul>
                       </Show>

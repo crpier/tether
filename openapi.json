@@ -1113,6 +1113,13 @@
       "DreamingFactChangeRead": {
         "description": "One human-readable Claim addition or removal from a Dream mutation.",
         "properties": {
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
           "kind": {
             "enum": [
               "added",
@@ -1138,6 +1145,7 @@
           }
         },
         "required": [
+          "evidence",
           "kind",
           "text",
           "topic"
@@ -1346,6 +1354,100 @@
           "reasoning"
         ],
         "title": "EssayGradeProposalRead",
+        "type": "object"
+      },
+      "ExerciseEvidenceRead": {
+        "description": "Browser-safe representation of one historical exercise episode.",
+        "properties": {
+          "duration_minutes": {
+            "title": "Duration Minutes",
+            "type": "number"
+          },
+          "end_time": {
+            "format": "date-time",
+            "title": "End Time",
+            "type": "string"
+          },
+          "exercise_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Type"
+          },
+          "kind": {
+            "const": "health_connect_exercise",
+            "default": "health_connect_exercise",
+            "title": "Kind",
+            "type": "string"
+          },
+          "lap_count": {
+            "title": "Lap Count",
+            "type": "integer"
+          },
+          "record_uid": {
+            "title": "Record Uid",
+            "type": "string"
+          },
+          "segment_count": {
+            "title": "Segment Count",
+            "type": "integer"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "total_lap_meters": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Lap Meters"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          },
+          "version_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "uri",
+          "record_uid",
+          "version_id",
+          "title",
+          "start_time",
+          "end_time",
+          "duration_minutes",
+          "exercise_type",
+          "segment_count",
+          "lap_count",
+          "total_lap_meters"
+        ],
+        "title": "ExerciseEvidenceRead",
         "type": "object"
       },
       "ExerciseLap": {
@@ -2884,6 +2986,59 @@
         "title": "MemoryWorkspaceDiagnosticRead",
         "type": "object"
       },
+      "MessageEvidenceRead": {
+        "description": "Browser-safe representation of one cited conversation message.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid7",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "message",
+            "default": "message",
+            "title": "Kind",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid7",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MessageRole"
+          },
+          "seq": {
+            "exclusiveMinimum": 0.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "conversation_id",
+          "message_id",
+          "seq",
+          "role",
+          "content",
+          "occurred_at"
+        ],
+        "title": "MessageEvidenceRead",
+        "type": "object"
+      },
       "MessageRead": {
         "description": "HTTP representation of a settled transcript row.",
         "properties": {
@@ -3927,6 +4082,74 @@
           "version"
         ],
         "title": "SetTodoStatusRequest",
+        "type": "object"
+      },
+      "SleepEvidenceRead": {
+        "description": "Browser-safe representation of one historical sleep episode.",
+        "properties": {
+          "duration_minutes": {
+            "title": "Duration Minutes",
+            "type": "number"
+          },
+          "end_time": {
+            "format": "date-time",
+            "title": "End Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "health_connect_sleep",
+            "default": "health_connect_sleep",
+            "title": "Kind",
+            "type": "string"
+          },
+          "record_uid": {
+            "title": "Record Uid",
+            "type": "string"
+          },
+          "stage_minutes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Stage Minutes",
+            "type": "object"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          },
+          "version_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "uri",
+          "record_uid",
+          "version_id",
+          "title",
+          "start_time",
+          "end_time",
+          "duration_minutes",
+          "stage_minutes"
+        ],
+        "title": "SleepEvidenceRead",
         "type": "object"
       },
       "SleepRecord": {
@@ -6315,6 +6538,57 @@
           }
         },
         "summary": "List Unlabeled Ebooks"
+      }
+    },
+    "/api/evidence": {
+      "get": {
+        "description": "Resolve one stable Evidence reference for in-app inspection.",
+        "operationId": "resolve_evidence_api_evidence_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "uri",
+            "required": true,
+            "schema": {
+              "title": "Uri",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ExerciseEvidenceRead"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MessageEvidenceRead"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SleepEvidenceRead"
+                    }
+                  ],
+                  "title": "Response Resolve Evidence Api Evidence Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Evidence"
       }
     },
     "/api/gmail-auth": {

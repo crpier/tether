@@ -14,6 +14,7 @@ from tether.auth_routes import router as auth_router
 from tether.bucket_routes import router as bucket_router
 from tether.capture_routes import router as capture_router
 from tether.conversation_routes import router as conversation_router
+from tether.evidence_routes import router as evidence_router
 from tether.gmail import auth_routes_router as gmail_auth_router
 from tether.health_connect import router as health_connect_router
 from tether.kosync_routes import router as ebook_router
@@ -35,6 +36,7 @@ _EXPECTED_ARGUMENT_COUNT = 2
 _PUBLIC_ROUTERS = (
     auth_router,
     memory_router,
+    evidence_router,
     capture_router,
     health_connect_router,
     bucket_router,

@@ -3,10 +3,12 @@ import { Marked, type MarkedToken, type Token, type Tokens } from "marked";
 import {
   For,
   Show,
+  createContext,
   createEffect,
   createMemo,
   createSignal,
   onCleanup,
+  useContext,
 } from "solid-js";
 
 import type {
@@ -17,6 +19,11 @@ import { renderArtifactWidget } from "./widgets/artifact-widget";
 import { renderMermaidWidget } from "./widgets/mermaid-widget";
 import { renderVegaLiteWidget } from "./widgets/vega-lite-widget";
 import { highlightCode, resolveHighlightLanguage } from "./code-highlighter";
+import {
+  EvidenceLink,
+  evidenceTextParts,
+  isEvidenceUri,
+} from "./evidence-link";
 
 // One Marked instance: GitHub-flavoured markdown with single newlines treated as
 // line breaks (chat text rarely uses the double-newline paragraph convention).
@@ -41,6 +48,8 @@ const tableClass = "my-2 w-full border-collapse";
 const tableCellClass = "border border-current/20 px-2 py-1";
 const tableHeaderClass = `${tableCellClass} text-left`;
 const headingClass = "mt-2 mb-1 font-semibold";
+
+const OpenEvidenceContext = createContext<(uri: string) => void>();
 
 // Force every rendered raw-HTML link to open in a new tab with tab-nabbing
 // protection. Component-built links set these attributes directly; this hook is
@@ -157,14 +166,46 @@ function InlineTokens(props: { tokens: MarkedToken[] }) {
   );
 }
 
+function EvidenceText(props: { text: string }) {
+  const openEvidence = useContext(OpenEvidenceContext);
+  if (openEvidence === undefined) {
+    return props.text;
+  }
+  return (
+    <For each={evidenceTextParts(props.text)}>
+      {(part) =>
+        part.evidence ? (
+          <EvidenceLink onOpen={openEvidence} uri={part.text}>
+            {part.text}
+          </EvidenceLink>
+        ) : (
+          part.text
+        )
+      }
+    </For>
+  );
+}
+
 function InlineToken(props: { token: MarkedToken }) {
   const token = props.token;
 
   switch (token.type) {
     case "br":
       return <br />;
-    case "codespan":
-      return <code class={inlineCodeClass}>{token.text}</code>;
+    case "codespan": {
+      const openEvidence = useContext(OpenEvidenceContext);
+      return isEvidenceUri(token.text) && openEvidence !== undefined ? (
+        <EvidenceLink
+          class={`${inlineCodeClass} font-mono`}
+          onOpen={openEvidence}
+          uri={token.text}
+        >
+          {token.text}
+        </EvidenceLink>
+      ) : (
+        <code class={inlineCodeClass}>{token.text}</code>
+      );
+    }
     case "del":
       return (
         <del>
@@ -191,6 +232,14 @@ function InlineToken(props: { token: MarkedToken }) {
       );
     }
     case "link": {
+      const openEvidence = useContext(OpenEvidenceContext);
+      if (isEvidenceUri(token.href) && openEvidence !== undefined) {
+        return (
+          <EvidenceLink onOpen={openEvidence} uri={token.href}>
+            <InlineTokens tokens={markdownTokens(token.tokens)} />
+          </EvidenceLink>
+        );
+      }
       const href = sanitizeElementAttribute("a", "href", token.href);
       return (
         <a
@@ -212,7 +261,7 @@ function InlineToken(props: { token: MarkedToken }) {
       );
     case "text":
       return token.tokens === undefined ? (
-        token.text
+        <EvidenceText text={token.text} />
       ) : (
         <InlineTokens tokens={markdownTokens(token.tokens)} />
       );
@@ -561,6 +610,7 @@ export function MessageContent(props: {
   text: string;
   streaming?: boolean;
   onOpenArtifact?: (artifact: ArtifactPointer) => void;
+  onOpenEvidence?: (uri: string) => void;
 }) {
   const tokens = createMemo(() => lexMarkdown(props.text));
   const context = createMemo<ArtifactWidgetContext>(() => ({
@@ -570,12 +620,14 @@ export function MessageContent(props: {
   }));
 
   return (
-    <div class={proseClass}>
-      <BlockTokens
-        context={context()}
-        streaming={props.streaming ?? false}
-        tokens={tokens()}
-      />
-    </div>
+    <OpenEvidenceContext.Provider value={props.onOpenEvidence}>
+      <div class={proseClass}>
+        <BlockTokens
+          context={context()}
+          streaming={props.streaming ?? false}
+          tokens={tokens()}
+        />
+      </div>
+    </OpenEvidenceContext.Provider>
   );
 }

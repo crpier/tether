@@ -1,6 +1,6 @@
 import { Match, Switch, createSignal, onCleanup, onMount } from "solid-js";
 
-import { useHost } from "../app-context";
+import { useAppContext, useHost } from "../app-context";
 import {
   SegmentedControl,
   segmentedPanelId,
@@ -51,6 +51,7 @@ function browseViewFromLocation(): BrowseView | undefined {
 export function BrowsePage(
   props: { initialBucketView?: BucketView; initialView?: BrowseView } = {},
 ) {
+  const { openEvidence } = useAppContext();
   const bucket = useHost("bucket");
   const dreaming = useHost("dreaming");
   const memories = useHost("memories");
@@ -113,7 +114,7 @@ export function BrowsePage(
               id={segmentedPanelId("browse-view", "memories")}
               role="tabpanel"
             >
-              <MemoriesPanel api={memories} />
+              <MemoriesPanel api={memories} onOpenEvidence={openEvidence} />
             </div>
           </Match>
           <Match when={view() === "dreaming"}>
@@ -122,7 +123,7 @@ export function BrowsePage(
               id={segmentedPanelId("browse-view", "dreaming")}
               role="tabpanel"
             >
-              <DreamingPanel api={dreaming} />
+              <DreamingPanel api={dreaming} onOpenEvidence={openEvidence} />
             </div>
           </Match>
           <Match when={view() === "bucket"}>
