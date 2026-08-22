@@ -55,6 +55,7 @@ function parseBrowseTab(value: SearchValue): BrowseView | undefined {
     raw === "bucket" ||
     raw === "todos" ||
     raw === "reminders" ||
+    raw === "feedback" ||
     raw === "panels"
     ? raw
     : undefined;
@@ -85,6 +86,7 @@ const BrowseBucketPage = directBrowsePage("bucket");
 const BrowseBucketHistoryPage = directBrowsePage("bucket", "history");
 const BrowseTodosPage = directBrowsePage("todos");
 const BrowseRemindersPage = directBrowsePage("reminders");
+const BrowseFeedbackPage = directBrowsePage("feedback");
 const BrowsePanelsPage = directBrowsePage("panels");
 
 function DirectDecidedProposalsPage() {
@@ -178,6 +180,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
         />
         <Route component={BrowseTodosPage} path="/browse/todos" />
         <Route component={BrowseRemindersPage} path="/browse/reminders" />
+        <Route component={BrowseFeedbackPage} path="/browse/feedback" />
         <Route component={BrowsePanelsPage} path="/browse/panels" />
         <Route component={SettingsPage} path="/settings" />
         <Route component={NotFoundPage} path="*404" />

@@ -11,6 +11,14 @@ test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
   );
 });
 
+test("Browse deep-links to the Feedback inbox", async ({ page, login }) => {
+  await login();
+  await page.goto("/browse/feedback", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Feedback" })).toBeVisible();
+  await expect(page.getByText("No open product observations")).toBeVisible();
+});
+
 test("Browse deep-links to inspectable Dream history", async ({
   page,
   login,

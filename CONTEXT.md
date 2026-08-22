@@ -154,6 +154,10 @@ _Avoid_: review, grooming, cleanup, backlog review
 An agent-proposed typed thing awaiting human acceptance, such as a Bucket item inferred during conversation import. Memory has no Candidate state: Dreaming curates it automatically. Kin to Proposal: a Candidate awaits acceptance of a thing, while a Proposal awaits approval of a doing.
 _Avoid_: suggestion, proposal, draft
 
+**Product observation**:
+An explicit account of friction, an unmet expectation, or an improvement idea encountered while using Tether. It preserves the user's wording and conversational origin without prematurely diagnosing a bug or feature. It remains open until the user considers it addressed; it is not itself a GitHub issue or implementation plan.
+_Avoid_: issue, bug report, feature request, proposal
+
 **Proposal**:
 A concrete, inspectable set of actions the agent wants to take, awaiting human approval before it executes. The doing-side counterpart to Candidate.
 _Avoid_: suggestion, plan, action item

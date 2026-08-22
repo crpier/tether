@@ -71,6 +71,8 @@ describe("generated tool extension", () => {
       "health_connect_inventory",
       "query_health_connect",
       "summarize_health_connect",
+      "record_product_observation",
+      "list_product_observations",
       "propose",
       "list_proposals",
     ]);

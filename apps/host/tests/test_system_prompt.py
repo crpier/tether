@@ -60,6 +60,15 @@ async def explicit_remembering_queues_dreaming_instead_of_editing_memory() -> No
 
 
 @test()
+async def the_conversation_prompt_records_only_explicit_product_feedback() -> None:
+    """Product observations require an explicit request, never inference."""
+    assert_in("record_product_observation", CONVERSATION_SYSTEM_PROMPT)
+    assert_in(
+        "Never infer or automatically record feedback", CONVERSATION_SYSTEM_PROMPT
+    )
+
+
+@test()
 async def the_conversation_prompt_covers_capture_discipline() -> None:
     """The full prompt treats intent context as optional, never a blocker."""
     assert_in("Intent context", CONVERSATION_SYSTEM_PROMPT)

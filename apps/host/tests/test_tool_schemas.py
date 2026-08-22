@@ -13,6 +13,9 @@ from tether.gmail.tools import internal_gmail_tool_routes
 from tether.health_connect.tools import internal_health_connect_tool_routes
 from tether.kosync_tools import internal_kosync_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
+from tether.product_observation_tools import (
+    internal_product_observation_tool_routes,
+)
 from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.search_tools import internal_search_tool_routes
@@ -85,6 +88,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "health_connect_inventory",
             "query_health_connect",
             "summarize_health_connect",
+            "record_product_observation",
+            "list_product_observations",
             "propose",
             "list_proposals",
         },
@@ -176,6 +181,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_panel_tool_routes(),
             internal_kosync_tool_routes(),
             internal_health_connect_tool_routes(),
+            internal_product_observation_tool_routes(),
             internal_proposal_tool_routes(),
         )
         for route in routes

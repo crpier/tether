@@ -17,6 +17,7 @@ from tether.gmail import GMAIL_TOOL_SPECS
 from tether.health_connect import HEALTH_CONNECT_TOOL_SPECS
 from tether.kosync_tools import KOSYNC_TOOL_SPECS
 from tether.panel_tools import PANEL_TOOL_SPECS
+from tether.product_observation_tools import PRODUCT_OBSERVATION_TOOL_SPECS
 from tether.proposal_tools import PROPOSAL_TOOL_SPECS
 from tether.recall_tools import RECALL_TOOL_SPECS
 from tether.search_tools import SEARCH_TOOL_SPECS
@@ -49,5 +50,6 @@ def all_tool_specs() -> tuple[ToolSpec, ...]:
         *PANEL_TOOL_SPECS,
         *KOSYNC_TOOL_SPECS,
         *HEALTH_CONNECT_TOOL_SPECS,
+        *PRODUCT_OBSERVATION_TOOL_SPECS,
         *PROPOSAL_TOOL_SPECS,
     )

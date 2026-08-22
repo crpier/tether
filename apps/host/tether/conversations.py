@@ -195,6 +195,19 @@ class ConversationService:
             )
             return list(reversed(page))
 
+    async def fetch_latest_user_message(
+        self, conversation_id: UUID
+    ) -> Message[Fetched] | None:
+        """Return the newest user Message in a Conversation, if one exists."""
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one_or_none(
+                select(Message)
+                .where(Message.conversation_id.eq(conversation_id))
+                .where(Message.role.eq("user"))
+                .order_by(Message.seq.desc())
+                .limit(1)
+            )
+
     async def current_session_start_seq(
         self,
         conversation_id: UUID,

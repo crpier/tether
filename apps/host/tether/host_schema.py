@@ -12,6 +12,7 @@ from tether.kosync_store import create_kosync_schema
 from tether.memory_store import create_memory_schema
 from tether.notification_store import create_notification_schema
 from tether.panel_store import create_panel_schema
+from tether.product_observation_store import create_product_observation_schema
 from tether.proposal_store import create_proposal_schema
 from tether.push_store import create_push_schema
 from tether.readwise_store import create_readwise_schema
@@ -35,6 +36,7 @@ async def create_host_schema(database: Database) -> None:
     await create_search_meta_schema(database)
     await create_notification_schema(database)
     await create_proposal_schema(database)
+    await create_product_observation_schema(database)
     await create_artifact_schema(database)
     await create_panel_schema(database)
     await create_todo_schema(database)

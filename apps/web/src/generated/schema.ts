@@ -820,6 +820,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/product-observations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Product Observations
+     * @description List unresolved Product observations newest first.
+     */
+    get: operations["list_product_observations_api_product_observations_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/product-observations/{observation_id}/resolve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resolve Product Observation
+     * @description Resolve one Product observation at its observed version.
+     */
+    post: operations["resolve_product_observation_api_product_observations__observation_id__resolve_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/proposals": {
     parameters: {
       query?: never;
@@ -2938,6 +2978,48 @@ export interface components {
       };
     };
     /**
+     * ProductObservationRead
+     * @description Browser and tool representation of one Product observation.
+     */
+    ProductObservationRead: {
+      /**
+       * Conversation Id
+       * Format: uuid7
+       */
+      conversation_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Interpretation */
+      interpretation: string;
+      /**
+       * Message Id
+       * Format: uuid7
+       */
+      message_id: string;
+      /** Resolved At */
+      resolved_at: string | null;
+      status: components["schemas"]["ProductObservationStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Version */
+      version: number;
+      /** Wording */
+      wording: string;
+    };
+    /** @enum {string} */
+    ProductObservationStatus: "open" | "resolved";
+    /**
      * ProposalActionRead
      * @description HTTP representation of one action within a proposal.
      */
@@ -3186,6 +3268,14 @@ export interface components {
       proposal: components["schemas"]["ProposalRead"];
       /** Revocable Grant Ids */
       revocable_grant_ids: string[];
+    };
+    /**
+     * ResolveProductObservationRequest
+     * @description Observed version required to resolve Product feedback.
+     */
+    ResolveProductObservationRequest: {
+      /** Version */
+      version: number;
     };
     /**
      * SessionResponse
@@ -5124,6 +5214,61 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PanelResultsRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_product_observations_api_product_observations_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProductObservationRead"][];
+        };
+      };
+    };
+  };
+  resolve_product_observation_api_product_observations__observation_id__resolve_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        observation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolveProductObservationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProductObservationRead"];
         };
       };
       /** @description Validation Error */

@@ -11,6 +11,7 @@ import type {
   ModelList,
   Notification,
   Panel,
+  ProductObservation,
   Proposal,
   ProposalAction,
   Todo,
@@ -188,6 +189,24 @@ export function todo(overrides: Partial<Todo>): Todo {
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,
     waiting: false,
+    ...overrides,
+  };
+}
+
+export function productObservation(
+  overrides: Partial<ProductObservation>,
+): ProductObservation {
+  return {
+    conversation_id: conversation.id,
+    created_at: "2026-01-01T00:00:00Z",
+    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
+    interpretation: "Tether should capture explicit product feedback.",
+    message_id: "018f0000-0000-7000-8000-000000000003",
+    resolved_at: null,
+    status: "open",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    wording: "Log that as feedback.",
     ...overrides,
   };
 }
