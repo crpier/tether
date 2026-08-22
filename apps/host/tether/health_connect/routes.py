@@ -72,6 +72,8 @@ class _HealthDistillationPort(Protocol):
 
     def queue_run(self) -> Awaitable[HealthDreamRun[Fetched] | None]: ...
 
+    def drain_backlog(self) -> Awaitable[list[HealthDreamRun[Fetched]]]: ...
+
     def queue_explicit_run(
         self, *, start: datetime, end: datetime
     ) -> Awaitable[HealthDreamRun[Fetched] | None]: ...
@@ -213,11 +215,12 @@ async def health_dream_now(
     request: Request,
     body: HealthDreamNowRequest | None = None,
 ) -> Response:
-    """Queue a manual consolidation run over Health Connect summaries.
+    """Queue manual consolidation runs over Health Connect summaries.
 
-    Without a period, bounds cover every summary not yet captured by a prior
-    run; with `{start, end}`, only episodes ending inside the period are
-    reconsidered.
+    Without a period, every summary not yet captured by a prior run is
+    windowed into successive capped runs (bounded prompts) and all of them
+    are queued. With `{start, end}`, only episodes ending inside the period
+    are reconsidered, as one run.
     """
     runtime = _runtime(request)
     service = runtime.health_distillation_service
@@ -225,11 +228,12 @@ async def health_dream_now(
         return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)
     if body is not None and body.start is not None and body.end is not None:
         run = await service.queue_explicit_run(start=body.start, end=body.end)
+        runs = [] if run is None else [run]
     else:
-        run = await service.queue_run()
-    if run is None:
+        runs = await service.drain_backlog()
+    if not runs:
         return Response(status_code=204)
-    return JSONResponse(_health_dream_run_payload(run))
+    return JSONResponse([_health_dream_run_payload(run) for run in runs])
 
 
 def _health_dream_run_payload(run: HealthDreamRun[Fetched]) -> dict[str, object]:

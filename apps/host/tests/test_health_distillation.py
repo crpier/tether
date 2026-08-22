@@ -516,3 +516,63 @@ async def explicit_window_refuses_empty_and_repeated_periods() -> None:
     assert first is not None
     repeat = await service.queue_explicit_run(start=period_start, end=period_end)
     assert_is_none(repeat)
+
+
+@test()
+async def queue_run_chunks_large_backlogs_into_bounded_windows() -> None:
+    """A big uncaptured backlog queues successive capped runs, not one mega-run."""
+    tether, telemetry, _, _ = await load_fixture(health_fixture())
+    capped = HealthDistillationService(
+        tether,
+        telemetry,
+        max_summaries_per_run=2,
+    )
+    starts = [_BASE_MILLIS + offset * 24 * _HOUR_MILLIS for offset in range(5)]
+    for index, session_start in enumerate(starts):
+        await _seed_summary(
+            telemetry,
+            record_id=f"ex-{index + 1}",
+            start=session_start,
+            end=session_start + _HOUR_MILLIS,
+        )
+
+    first = await capped.queue_run()
+    assert first is not None
+    assert_eq(first.exercise_since_version_id, 0)
+    assert_eq(first.exercise_through_version_id, 2)
+
+    second = await capped.queue_run()
+    assert second is not None
+    assert_eq(second.exercise_since_version_id, 2)
+    assert_eq(second.exercise_through_version_id, 4)
+
+    third = await capped.queue_run()
+    assert third is not None
+    assert_eq(third.exercise_since_version_id, 4)
+    assert_eq(third.exercise_through_version_id, 5)
+
+    assert_is_none(await capped.queue_run())
+
+
+@test()
+async def scan_drains_a_backlog_multiple_chunks_per_tick() -> None:
+    """One scan tick advances several chunks so backlogs catch up quickly."""
+    tether, telemetry, _, _ = await load_fixture(health_fixture())
+    capped = HealthDistillationService(
+        tether,
+        telemetry,
+        max_summaries_per_run=1,
+    )
+    starts = [_BASE_MILLIS + offset * 24 * _HOUR_MILLIS for offset in range(4)]
+    for index, session_start in enumerate(starts):
+        await _seed_summary(
+            telemetry,
+            record_id=f"ex-{index + 1}",
+            start=session_start,
+            end=session_start + _HOUR_MILLIS,
+        )
+
+    drained = await capped.drain_backlog()
+    assert_eq(len(drained), 4)
+    assert_eq(drained[0].exercise_through_version_id, 1)
+    assert_eq(drained[-1].exercise_through_version_id, 4)
