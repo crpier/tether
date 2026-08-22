@@ -1529,7 +1529,7 @@ def websocket_flags_tool_only_agent_end_frames() -> None:
                     "content": "look at all the walks these past week",
                 }
             )
-            frame = {}
+            frame: dict[str, object] = {}
             while frame.get("event") != "agent_end":
                 frame = websocket.receive_json()
 

@@ -567,6 +567,7 @@ class HealthDreamingWorker:
 
     async def run_forever(self) -> None:
         """Continuously claim and complete health runs until cancellation."""
+        await asyncio.sleep(self.poll_interval_seconds)
         while True:
             made_progress = False
             while True:
