@@ -3,9 +3,8 @@ import { expect, test } from "./fixtures";
 /**
  * Conversation mode (#542): the composer exposes an accessible toggle that
  * defaults to off (ordinary text chat) and flips its pressed state on click.
- * Playback itself needs real audio output, so the automated suite pins only
- * the control contract here; capture/playback behavior is covered by the
- * jsdom unit tests around `live-chat-turn` and `speech-player`.
+ * Provider requests and playback stay deterministic in host and web unit tests;
+ * the smoke host deliberately has no live TTS credential.
  */
 test("conversation mode toggle defaults to text and toggles cleanly", async ({
   page,

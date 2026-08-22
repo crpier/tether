@@ -25,6 +25,7 @@ from tether.telemetry_model import TelemetryExporter, TelemetrySettings
 from tether.transcripts.acquisition import TranscriptAcquisitionConfig
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.worker import TranscriptSyncConfig
+from tether.tts import TtsClient
 from tether.web_search import SearchProvider
 from tether.youtube import YouTubeApi, YouTubeAuthBackend
 
@@ -123,6 +124,13 @@ class AppConfig:
     stt_model: str = "whisper-1"
     stt_language: str = "en"
     stt_vocabulary_prompt: str = ""
+    tts_client: TtsClient | None = None
+    tts_api_key: str = "unconfigured-test-tts-key"
+    """Placeholder for tests that construct `AppConfig` without speech playback.
+    Production wiring always uses validated `HostSettings`."""
+    tts_base_url: str = "https://api.openai.com/v1"
+    tts_model: str = "gpt-4o-mini-tts"
+    tts_voice: str = "alloy"
     study_item_generator: StudyItemGenerator | None = None
     answer_grader: AnswerGrader | None = None
     tool_base_url: str = "http://127.0.0.1:8000"
@@ -314,6 +322,14 @@ class HostSettings(BaseSettings):
     #242). Empty by default: a nonsense or mismatched prompt conditions the
     decoder badly and is a known language-drift trigger, so no placeholder is
     ever sent until a real glossary is configured."""
+    tts_api_key: str = Field(default="", min_length=1)
+    """API key for required OpenAI-compatible speech generation."""
+    tts_base_url: str = "https://api.openai.com/v1"
+    """Root of the OpenAI-compatible text-to-speech API."""
+    tts_model: str = "gpt-4o-mini-tts"
+    """Speech model requested for each spoken fragment."""
+    tts_voice: str = "alloy"
+    """Provider voice requested for every generated reply."""
     readwise_reader_sync_enabled: bool = False
     """Whether the background Readwise Reader v3 progress rider runs. Off by
     default and a no-op unless `readwise_api_key` is also set, so polling reading

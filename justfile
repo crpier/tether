@@ -95,6 +95,7 @@ dev-local host_port="8000" web_port="3000" local_data_root=".tether/local":
         TETHER_APP_PASSWORD=dev \
         TETHER_SESSION_SECRET=dev-local-session-secret \
         TETHER_STT_API_KEY=local \
+        TETHER_TTS_API_KEY=local \
         TETHER_LOGGING_LEVEL=DEBUG \
         PI_CODING_AGENT_DIR="$root/pi-agent" \
         uv run python -m tether &
@@ -280,7 +281,7 @@ validate-env env_file=".env":
     values = dotenv_values(env_file)
     errors = []
 
-    for key in ["TETHER_APP_PASSWORD", "TETHER_SESSION_SECRET", "TETHER_STT_API_KEY", "TETHER_DEFAULT_MODEL", "TETHER_MODEL_ALLOWLIST"]:
+    for key in ["TETHER_APP_PASSWORD", "TETHER_SESSION_SECRET", "TETHER_STT_API_KEY", "TETHER_TTS_API_KEY", "TETHER_DEFAULT_MODEL", "TETHER_MODEL_ALLOWLIST"]:
         value = values.get(key)
         if value is None or value == "" or value == "change-me":
             errors.append(f"{key} must be set in {env_file}")

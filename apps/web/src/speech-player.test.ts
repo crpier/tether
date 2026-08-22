@@ -1,310 +1,212 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
-import { createSpeechPlayer } from "./speech-player";
+import {
+  createSpeechPlayer,
+  type PlayableAudio,
+  type SpeechPlayerOptions,
+} from "./speech-player";
 
-class FakeUtterance {
-  onend?: () => void;
-  onerror?: () => void;
-  constructor(public text: string) {}
-}
+class FakeAudio implements PlayableAudio {
+  currentTime = 0;
+  onended: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  pauses = 0;
+  plays = 0;
 
-class FakeSynthesis {
-  cancellations = 0;
-  spoken: FakeUtterance[] = [];
-
-  speak(utterance: FakeUtterance): void {
-    this.spoken.push(utterance);
+  pause(): void {
+    this.pauses += 1;
   }
 
-  cancel(): void {
-    this.cancellations += 1;
-    this.spoken = [];
-  }
-}
-
-class VoiceLoadingSynthesis extends FakeSynthesis {
-  private listeners: (() => void)[] = [];
-  private voiceCount = 0;
-
-  addEventListener(_type: "voiceschanged", listener: () => void): void {
-    this.listeners.push(listener);
+  play(): Promise<void> {
+    this.plays += 1;
+    return Promise.resolve();
   }
 
-  getVoices(): unknown[] {
-    return Array.from({ length: this.voiceCount }, () => ({}));
+  finish(): void {
+    this.onended?.();
   }
 
-  loadVoices(count = 1): void {
-    this.voiceCount = count;
-    for (const listener of this.listeners) {
-      listener();
-    }
+  fail(): void {
+    this.onerror?.();
   }
 }
 
-function makePlayer(onEnded?: () => void) {
-  const synthesis = new FakeSynthesis();
+interface SpeechHarness {
+  abortSignals: AbortSignal[];
+  audios: FakeAudio[];
+  player: ReturnType<typeof createSpeechPlayer>;
+  revoked: string[];
+  spoken: string[];
+}
+
+function harness(
+  options: Pick<SpeechPlayerOptions, "onEnded"> = {},
+): SpeechHarness {
+  const abortSignals: AbortSignal[] = [];
+  const audios: FakeAudio[] = [];
+  const revoked: string[] = [];
+  const spoken: string[] = [];
+  let objectUrl = 0;
   const player = createSpeechPlayer({
-    synthesis,
-    utteranceFactory: (text) => new FakeUtterance(text),
-    onEnded,
+    createAudio: () => {
+      const audio = new FakeAudio();
+      audios.push(audio);
+      return audio;
+    },
+    createObjectURL: () => `blob:speech-${String(++objectUrl)}`,
+    onEnded: options.onEnded,
+    revokeObjectURL: (url) => {
+      revoked.push(url);
+    },
+    synthesize: (text, signal) => {
+      spoken.push(text);
+      abortSignals.push(signal);
+      return Promise.resolve(new Blob([text], { type: "audio/mpeg" }));
+    },
   });
-  return { player, synthesis };
+  return { abortSignals, audios, player, revoked, spoken };
 }
 
-describe("speech player", () => {
-  test("speak queues the text and reports playing", () => {
-    const { player, synthesis } = makePlayer();
+async function started(harness: SpeechHarness): Promise<FakeAudio> {
+  await vi.waitFor(() => {
+    expect(harness.audios).toHaveLength(1);
+    expect(harness.audios[0].plays).toBe(1);
+  });
+  return harness.audios[0];
+}
 
-    player.speak("hello there");
+describe("provider speech player", () => {
+  test("enqueue generates and plays provider audio", async () => {
+    const speech = harness();
 
-    expect(player.state()).toBe("playing");
-    expect(synthesis.spoken).toHaveLength(1);
-    expect(synthesis.spoken[0].text).toBe("hello there");
+    speech.player.enqueue("hello there");
+    const audio = await started(speech);
+
+    expect(speech.spoken).toEqual(["hello there"]);
+    expect(audio.plays).toBe(1);
+    expect(speech.player.state()).toBe("playing");
   });
 
-  test("utterance end returns to idle", () => {
-    const { player, synthesis } = makePlayer();
-    player.speak("hello");
+  test("queued fragments pre-generate but play sequentially", async () => {
+    const speech = harness();
+    speech.player.enqueue("first");
+    speech.player.enqueue("second");
+    const first = await started(speech);
 
-    synthesis.spoken[0].onend?.();
+    expect(speech.spoken).toEqual(["first", "second"]);
+    expect(speech.audios).toHaveLength(1);
+    first.finish();
+    await vi.waitFor(() => expect(speech.audios).toHaveLength(2));
 
-    expect(player.state()).toBe("idle");
+    expect(speech.audios[1].plays).toBe(1);
   });
 
-  test("utterance error reports an error state", () => {
-    const { player, synthesis } = makePlayer();
-    player.speak("hello");
+  test("the final natural completion returns idle and calls onEnded", async () => {
+    const onEnded = vi.fn();
+    const speech = harness({ onEnded });
+    speech.player.enqueue("first");
+    speech.player.enqueue("second");
+    const first = await started(speech);
 
-    synthesis.spoken[0].onerror?.();
+    first.finish();
+    await vi.waitFor(() => expect(speech.audios).toHaveLength(2));
+    speech.audios[1].finish();
+    await vi.waitFor(() => expect(speech.player.state()).toBe("idle"));
 
-    expect(player.state()).toBe("error");
+    expect(onEnded).toHaveBeenCalledTimes(1);
   });
 
-  test("a later speak cancels the earlier one instead of overlapping", () => {
-    const { player, synthesis } = makePlayer();
-    player.speak("first");
-    player.speak("second");
+  test("cancel aborts generation, pauses playback, and drops the queue", async () => {
+    const onEnded = vi.fn();
+    const speech = harness({ onEnded });
+    speech.player.enqueue("first");
+    speech.player.enqueue("never generate");
+    const first = await started(speech);
 
-    expect(synthesis.cancellations).toBeGreaterThanOrEqual(1);
-    expect(synthesis.spoken).toHaveLength(1);
-    expect(synthesis.spoken[0].text).toBe("second");
-    expect(player.state()).toBe("playing");
+    speech.player.cancel();
+    first.finish();
+    await Promise.resolve();
+
+    expect(first.pauses).toBe(1);
+    expect(speech.abortSignals.every((signal) => signal.aborted)).toBe(true);
+    expect(speech.spoken).toEqual(["first", "never generate"]);
+    expect(speech.player.state()).toBe("idle");
+    expect(onEnded).not.toHaveBeenCalled();
   });
 
-  test("cancel stops speech and resets to idle", () => {
-    const { player, synthesis } = makePlayer();
-    player.speak("hello");
+  test("speak replaces earlier playback", async () => {
+    const speech = harness();
+    speech.player.speak("first");
+    const first = await started(speech);
 
-    player.cancel();
+    speech.player.speak("second");
+    await vi.waitFor(() => expect(speech.audios).toHaveLength(2));
 
-    expect(synthesis.cancellations).toBeGreaterThanOrEqual(1);
-    expect(player.state()).toBe("idle");
+    expect(first.pauses).toBe(1);
+    expect(speech.spoken).toEqual(["first", "second"]);
   });
 
-  test("blank text is a no-op", () => {
-    const { player, synthesis } = makePlayer();
-
-    player.speak("   ");
-
-    expect(synthesis.spoken).toHaveLength(0);
-    expect(player.state()).toBe("idle");
-  });
-
-  test("an unsupported environment degrades to a safe no-op", () => {
-    const player = createSpeechPlayer({ synthesis: null });
-
-    player.speak("hello");
-
-    expect(player.state()).toBe("idle");
-  });
-
-  describe("onEnded (hands-free loop, #544)", () => {
-    test("fires exactly once when playback completes naturally", () => {
-      let ended = 0;
-      const { player, synthesis } = makePlayer(() => {
-        ended += 1;
-      });
-      player.speak("hello");
-
-      synthesis.spoken[0].onend?.();
-      synthesis.spoken[0].onend?.();
-
-      expect(ended).toBe(1);
-      expect(player.state()).toBe("idle");
-    });
-
-    test("does not fire when cancel stops playback first", () => {
-      // Real browsers fire the cancelled utterance's onend after cancel();
-      // that must not count as a natural completion.
-      let ended = 0;
-      const { player, synthesis } = makePlayer(() => {
-        ended += 1;
-      });
-      player.speak("hello");
-      const spoken = synthesis.spoken[0];
-
-      player.cancel();
-      // Browsers deliver the cancelled utterance's onend after cancel().
-      spoken.onend?.();
-
-      expect(ended).toBe(0);
-    });
-
-    test("does not fire when a later speak supersedes the utterance", () => {
-      let ended = 0;
-      const { player, synthesis } = makePlayer(() => {
-        ended += 1;
-      });
-      player.speak("first");
-      player.speak("second");
-
-      synthesis.spoken[0]?.onend?.();
-      synthesis.spoken[0].onend?.();
-
-      expect(ended).toBe(1);
-    });
-
-    test("does not fire on error", () => {
-      let ended = 0;
-      const { player, synthesis } = makePlayer(() => {
-        ended += 1;
-      });
-      player.speak("hello");
-
-      synthesis.spoken[0].onerror?.();
-
-      expect(ended).toBe(0);
-    });
-  });
-});
-
-describe("speech queueing (#545)", () => {
-  test("enqueue appends without cancelling what is playing", () => {
-    const { player, synthesis } = makePlayer();
-    player.speak("first");
-    const cancellationsAfterSpeak = synthesis.cancellations;
-
-    player.enqueue("second");
-
-    expect(synthesis.cancellations).toBe(cancellationsAfterSpeak);
-    expect(synthesis.spoken.map((utterance) => utterance.text)).toEqual([
-      "first",
-      "second",
-    ]);
-    expect(player.state()).toBe("playing");
-  });
-
-  test("enqueue on an idle player starts playback", () => {
-    const { player, synthesis } = makePlayer();
-
-    player.enqueue("only");
-
-    expect(synthesis.spoken.map((utterance) => utterance.text)).toEqual([
-      "only",
-    ]);
-    expect(player.state()).toBe("playing");
-  });
-
-  test("onEnded fires only after the last queued utterance ends", () => {
-    let ended = 0;
-    const { player, synthesis } = makePlayer(() => {
-      ended += 1;
-    });
-    player.speak("first");
-    player.enqueue("second");
-    player.enqueue("third");
-
-    synthesis.spoken[0].onend?.();
-    synthesis.spoken[1].onend?.();
-    expect(ended).toBe(0);
-
-    synthesis.spoken[2].onend?.();
-    expect(ended).toBe(1);
-    expect(player.state()).toBe("idle");
-  });
-
-  test("cancel drops the whole queue and suppresses pending end callbacks", () => {
-    let ended = 0;
-    const { player, synthesis } = makePlayer(() => {
-      ended += 1;
-    });
-    player.speak("first");
-    player.enqueue("second");
-    const queued = [...synthesis.spoken];
-
-    player.cancel();
-    for (const utterance of queued) {
-      utterance.onend?.();
-    }
-
-    expect(ended).toBe(0);
-    expect(player.state()).toBe("idle");
-  });
-
-  test("blank enqueue is a no-op", () => {
-    const { player, synthesis } = makePlayer();
-
-    player.enqueue("   ");
-
-    expect(synthesis.spoken).toHaveLength(0);
-    expect(player.state()).toBe("idle");
-  });
-});
-
-describe("speech support probe (#546)", () => {
-  test("supported reflects the presence of a synthesis adapter", () => {
-    const withSynthesis = makePlayer();
-    expect(withSynthesis.player.supported()).toBe(true);
-
-    const without = createSpeechPlayer({ synthesis: null });
-    expect(without.supported()).toBe(false);
-  });
-
-  test("desktop synthesis with no installed voices is unsupported", () => {
-    const synthesis = new VoiceLoadingSynthesis();
+  test("provider failure reports error without calling onEnded", async () => {
+    const onEnded = vi.fn();
     const player = createSpeechPlayer({
-      synthesis,
-      utteranceFactory: (text) => new FakeUtterance(text),
+      createAudio: () => new FakeAudio(),
+      createObjectURL: () => "blob:speech",
+      onEnded,
+      revokeObjectURL: () => undefined,
+      synthesize: () => Promise.reject(new Error("provider failed")),
     });
 
     player.enqueue("hello");
+    await vi.waitFor(() => expect(player.state()).toBe("error"));
 
-    expect(player.supported()).toBe(false);
-    expect(player.state()).toBe("idle");
-    expect(synthesis.spoken).toHaveLength(0);
+    expect(onEnded).not.toHaveBeenCalled();
   });
 
-  test("queued speech waits for desktop voices to load", () => {
-    const synthesis = new VoiceLoadingSynthesis();
+  test("provider failure aborts later prefetched fragments", async () => {
+    const signals: AbortSignal[] = [];
     const player = createSpeechPlayer({
-      synthesis,
-      utteranceFactory: (text) => new FakeUtterance(text),
+      createAudio: () => new FakeAudio(),
+      createObjectURL: () => "blob:speech",
+      revokeObjectURL: () => undefined,
+      synthesize: (text, signal) => {
+        signals.push(signal);
+        return text === "broken"
+          ? Promise.reject(new Error("provider failed"))
+          : new Promise<Blob>(() => undefined);
+      },
     });
 
-    player.enqueue("hello after voices");
-    expect(synthesis.spoken).toHaveLength(0);
+    player.enqueue("broken");
+    player.enqueue("prefetched");
+    await vi.waitFor(() => expect(player.state()).toBe("error"));
 
-    synthesis.loadVoices();
-
-    expect(player.supported()).toBe(true);
-    expect(player.state()).toBe("playing");
-    expect(synthesis.spoken).toHaveLength(1);
-    expect(synthesis.spoken[0].text).toBe("hello after voices");
+    expect(signals[1].aborted).toBe(true);
   });
 
-  test("cancel drops speech waiting for desktop voices", () => {
-    const synthesis = new VoiceLoadingSynthesis();
-    const player = createSpeechPlayer({
-      synthesis,
-      utteranceFactory: (text) => new FakeUtterance(text),
-    });
+  test("audio failure reports error", async () => {
+    const speech = harness();
+    speech.player.enqueue("hello");
+    const audio = await started(speech);
 
-    player.enqueue("never say this");
-    player.cancel();
-    synthesis.loadVoices();
+    audio.fail();
+    await vi.waitFor(() => expect(speech.player.state()).toBe("error"));
+  });
 
-    expect(synthesis.spoken).toHaveLength(0);
-    expect(player.state()).toBe("idle");
+  test("blank text is ignored", () => {
+    const speech = harness();
+
+    speech.player.enqueue("   ");
+
+    expect(speech.spoken).toEqual([]);
+    expect(speech.player.state()).toBe("idle");
+  });
+
+  test("object URLs are revoked after playback", async () => {
+    const speech = harness();
+    speech.player.enqueue("hello");
+    const audio = await started(speech);
+
+    audio.finish();
+    await vi.waitFor(() => expect(speech.revoked).toEqual(["blob:speech-1"]));
   });
 });

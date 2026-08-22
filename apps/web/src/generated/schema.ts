@@ -1300,6 +1300,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/tts/speech": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Synthesize Speech
+     * @description Generate audio for one normalized spoken reply fragment.
+     */
+    post: operations["synthesize_speech_api_tts_speech_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/youtube": {
     parameters: {
       query?: never;
@@ -3257,6 +3277,14 @@ export interface components {
       stage: number;
       /** Start Time */
       start_time: number;
+    };
+    /**
+     * SpeechRequest
+     * @description Text to render as ephemeral speech audio.
+     */
+    SpeechRequest: {
+      /** Text */
+      text: string;
     };
     /**
      * StaleItem
@@ -5919,6 +5947,37 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["TriggerRead"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  synthesize_speech_api_tts_speech_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SpeechRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {

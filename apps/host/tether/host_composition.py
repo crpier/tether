@@ -151,6 +151,7 @@ async def _compose_app_runtime(
             stt_client=dependencies.bootstrap.stt_client,
             telemetry=host.telemetry,
             todo_service=core.todo_service,
+            tts_client=dependencies.bootstrap.tts_client,
             tool_secret=dependencies.bootstrap.tool_secret,
             trace_recorder=dependencies.bootstrap.trace_recorder,
             triage_service=core.triage_service,

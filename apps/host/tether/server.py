@@ -44,6 +44,7 @@ from tether.kosync_tools import internal_kosync_tool_routes
 from tether.local_dependencies import (
     LocalProviderAuthBackend,
     LocalSttTransport,
+    LocalTtsTransport,
     LocalYouTubeAuthBackend,
 )
 from tether.logging_config import configure_logging
@@ -76,6 +77,8 @@ from tether.transcripts.source_composition import (
 from tether.transcripts.worker import TranscriptSyncConfig
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
+from tether.tts import TtsClient
+from tether.tts_transport import HttpTtsTransport
 from tether.web_search import SearchProvider
 from tether.youtube import (
     YOUTUBE_READONLY_SCOPE,
@@ -85,6 +88,17 @@ from tether.youtube import (
     YouTubeAuthBackend,
     internal_youtube_tool_routes,
 )
+
+
+def _resolve_tts_client(config: AppConfig) -> TtsClient:
+    """Build the required provider-generated speech client from config."""
+    if config.tts_client is not None:
+        return config.tts_client
+    return TtsClient(
+        transport=HttpTtsTransport(config.tts_api_key, base_url=config.tts_base_url),
+        model=config.tts_model,
+        voice=config.tts_voice,
+    )
 
 
 def _resolve_stt_client(config: AppConfig) -> SttClient:
@@ -154,6 +168,7 @@ def create_app(
         if tool_secret is not None
         else secrets.token_urlsafe(32),
         trace_recorder=AgentTraceRecorder(),
+        tts_client=_resolve_tts_client(config),
     )
     app = FastAPI(
         title="Tether",
@@ -312,6 +327,7 @@ def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
         session_secret=settings.session_secret,
         stt_client=SttClient(LocalSttTransport(), model="local"),
         telemetry_database_path=local_root / "telemetry.sqlite3",
+        tts_client=TtsClient(LocalTtsTransport(), model="local", voice="local"),
         tool_base_url=f"http://{settings.host}:{settings.port}",
         transcript_provider=None,
         transcript_sync_enabled=False,
@@ -412,6 +428,10 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         stt_api_key=settings.stt_api_key,
         stt_base_url=settings.stt_base_url,
         stt_model=settings.stt_model,
+        tts_api_key=settings.tts_api_key,
+        tts_base_url=settings.tts_base_url,
+        tts_model=settings.tts_model,
+        tts_voice=settings.tts_voice,
         web_dist=settings.web_dist,
         youtube_api=youtube_api,
         youtube_auth_backend=youtube_auth_backend,

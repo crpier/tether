@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from base64 import b64decode
 from collections.abc import Callable
 
 from snekok import Ok, Result
@@ -11,6 +12,8 @@ from tether.provider_auth_errors import ProviderAuthFailure
 from tether.provider_auth_model import DeviceCode
 from tether.stt_errors import SttFailure
 from tether.stt_model import AudioUpload, TranscriptionResponse
+from tether.tts_errors import TtsFailure
+from tether.tts_model import SpeechResponse
 from tether.youtube import YouTubeAuthBackend, YouTubeAuthFailure, YouTubeAuthorization
 
 
@@ -59,6 +62,32 @@ class LocalYouTubeAuthBackend(YouTubeAuthBackend):
         _ = (authorization_response, expected_state)
         self._connected = True
         return Ok(None)
+
+
+_LOCAL_SILENCE_WAV_BASE64 = (
+    "UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+)
+"""A valid ten-millisecond WAV used by the deterministic local provider."""
+
+
+class LocalTtsTransport:
+    """Return stable audio without calling a speech provider."""
+
+    async def synthesize(
+        self, *, text: str, model: str, voice: str, response_format: str
+    ) -> Result[SpeechResponse, TtsFailure]:
+        """Render every local fragment as a tiny deterministic MP3 fixture."""
+        _ = (text, model, voice, response_format)
+        return Ok(
+            SpeechResponse(
+                audio=b64decode(_LOCAL_SILENCE_WAV_BASE64),
+                content_type="audio/wav",
+                status_code=200,
+            )
+        )
 
 
 class LocalSttTransport:

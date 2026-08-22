@@ -14,6 +14,8 @@ export class FakeChatHost implements ChatHost {
   storedConversation: Conversation = { ...conversation };
   storedMessages: Message[];
   listMessagesCalls: (ListMessagesOptions | undefined)[] = [];
+  synthesizeSpeechCalls: string[] = [];
+  synthesizeSpeechRejections: ApiError[] = [];
   transcribeAudioCalls: Blob[] = [];
   transcribeAudioRejections: ApiError[] = [];
   nextTranscript = "";
@@ -65,6 +67,20 @@ export class FakeChatHost implements ChatHost {
       selected_model: selectedModel,
     };
     return Promise.resolve(this.storedConversation);
+  }
+
+  synthesizeSpeech(text: string, signal: AbortSignal): Promise<Blob> {
+    void signal;
+    this.synthesizeSpeechCalls.push(text);
+    const forced = this.synthesizeSpeechRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    return Promise.resolve(
+      Object.assign(new Blob([text], { type: "audio/mpeg" }), {
+        speechText: text,
+      }),
+    );
   }
 
   transcribeAudio(blob: Blob): Promise<string> {

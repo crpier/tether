@@ -913,6 +913,7 @@ def local_dependency_profile_returns_deterministic_chat_without_credentials() ->
                 local_data_root=local_root,
                 session_secret=SESSION_SECRET,
                 stt_api_key="production-key-is-ignored",
+                tts_api_key="production-key-is-ignored",
             )
         )
         with TestClient(

@@ -4256,6 +4256,22 @@
         "title": "SleepStage",
         "type": "object"
       },
+      "SpeechRequest": {
+        "description": "Text to render as ephemeral speech audio.",
+        "properties": {
+          "text": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "SpeechRequest",
+        "type": "object"
+      },
       "StaleItem": {
         "description": "An active item old enough to reconsider, with its decayed intent context.",
         "properties": {
@@ -8127,6 +8143,38 @@
           }
         },
         "summary": "Update Trigger"
+      }
+    },
+    "/api/tts/speech": {
+      "post": {
+        "description": "Generate audio for one normalized spoken reply fragment.",
+        "operationId": "synthesize_speech_api_tts_speech_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeechRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Synthesize Speech"
       }
     },
     "/api/youtube": {

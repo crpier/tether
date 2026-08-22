@@ -23,6 +23,7 @@ from tether.stt import SttClient
 from tether.telemetry_config import configure_telemetry
 from tether.telemetry_model import Telemetry, TelemetrySettings
 from tether.tool_runtime import SessionRegistry
+from tether.tts import TtsClient
 
 HOST_QUIET_LOGGERS = (*QUIET_LOGGERS, "aiosqlite", "snekql", "httpcore2")
 """Dependency loggers whose debug chatter obscures host application events."""
@@ -38,6 +39,7 @@ class HostBootstrap:
     session_registry: SessionRegistry
     stt_client: SttClient
     tool_secret: str
+    tts_client: TtsClient
     trace_recorder: AgentTraceRecorder
 
 

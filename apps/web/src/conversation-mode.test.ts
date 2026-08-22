@@ -1,52 +1,58 @@
 import { createRoot } from "solid-js";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { createConversationMode } from "./conversation-mode";
-import type { SpeechSynthesisLike } from "./speech-player";
+import type { SpeechPlayer, SpeechPlayerState } from "./speech-player";
 
-// Scripted stand-in for the Web Speech API: `speak` holds utterances until the
-// test resolves them; `cancel` drops everything queued.
-class FakeSpeechSynthesis implements SpeechSynthesisLike {
+class FakeSpeechPlayer implements SpeechPlayer {
   cancellations = 0;
-  spoken: { text: string; onend?: () => void; onerror?: () => void }[] = [];
-
-  speak(utterance: {
-    text: string;
-    onend?: () => void;
-    onerror?: () => void;
-  }): void {
-    this.spoken.push(utterance);
-  }
+  onEnded: (() => void) | undefined;
+  spoken: { text: string }[] = [];
+  private playbackState: SpeechPlayerState = "idle";
 
   cancel(): void {
     this.cancellations += 1;
     this.spoken = [];
+    this.playbackState = "idle";
+  }
+
+  enqueue(text: string): void {
+    this.spoken.push({ text });
+    this.playbackState = "playing";
   }
 
   finishSpeaking(): void {
-    this.spoken.at(-1)?.onend?.();
+    this.playbackState = "idle";
+    this.onEnded?.();
+  }
+
+  speak(text: string): void {
+    this.cancel();
+    this.enqueue(text);
+  }
+
+  state(): SpeechPlayerState {
+    return this.playbackState;
   }
 }
 
-function stubSpeech(): FakeSpeechSynthesis {
-  const fake = new FakeSpeechSynthesis();
-  vi.stubGlobal(
-    "SpeechSynthesisUtterance",
-    class {
-      constructor(public text: string) {}
-    },
-  );
-  return fake;
+function stubSpeech(): FakeSpeechPlayer {
+  return new FakeSpeechPlayer();
 }
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+function withSpeech(speech: FakeSpeechPlayer) {
+  return {
+    playerFactory: (onEnded: () => void): SpeechPlayer => {
+      speech.onEnded = onEnded;
+      return speech;
+    },
+  };
+}
 
 describe("conversation mode", () => {
   test("defaults off and toggles", () => {
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: stubSpeech() });
+      const mode = createConversationMode(withSpeech(stubSpeech()));
       expect(mode.enabled()).toBe(false);
       mode.toggle();
       expect(mode.enabled()).toBe(true);
@@ -59,7 +65,7 @@ describe("conversation mode", () => {
 
   test("Ctrl+Shift+V toggles from the keyboard", () => {
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: stubSpeech() });
+      const mode = createConversationMode(withSpeech(stubSpeech()));
       fireEventKeyDown({ ctrlKey: true, key: "V", shiftKey: true });
       expect(mode.enabled()).toBe(true);
       fireEventKeyDown({ ctrlKey: true, key: "V", shiftKey: true });
@@ -70,7 +76,7 @@ describe("conversation mode", () => {
 
   test("hands-free toggles independently and defaults off", () => {
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: stubSpeech() });
+      const mode = createConversationMode(withSpeech(stubSpeech()));
       expect(mode.handsFree()).toBe(false);
       mode.toggleHandsFree();
       expect(mode.handsFree()).toBe(true);
@@ -81,7 +87,7 @@ describe("conversation mode", () => {
   test("sentences stream out normalized and queued for speech", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.sentence("**Hello** there. ");
       expect(speech.spoken.map((utterance) => utterance.text)).toEqual([
@@ -94,7 +100,7 @@ describe("conversation mode", () => {
   test("settle speaks the unspoken tail and marks the reply as spoken", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.sentence("First part.");
       speech.spoken.length = 0;
@@ -114,7 +120,7 @@ describe("conversation mode", () => {
   test("tool-only settles stay silent and unmarked", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.settle("", {
         fullText: "[ran a tool]",
@@ -129,7 +135,7 @@ describe("conversation mode", () => {
   test("restart and discard cancel active speech", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.sentence("Stale lead-in.");
       expect(mode.playbackState()).toBe("playing");
@@ -146,7 +152,7 @@ describe("conversation mode", () => {
   test("a naturally finished spoken reply bumps the hands-free re-arm tick", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.toggleHandsFree();
       expect(mode.voiceAutoStart()).toBe(0);
@@ -160,7 +166,7 @@ describe("conversation mode", () => {
   test("re-arm requires conversation mode and hands-free", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggleHandsFree();
       mode.spokenTurn.sentence("Spoken while mode is off.");
       speech.finishSpeaking();
@@ -178,7 +184,7 @@ describe("conversation mode", () => {
   test("interacting during playback breaks the loop for that cycle", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.toggleHandsFree();
       mode.spokenTurn.sentence("Long reply. Still going.");
@@ -192,7 +198,7 @@ describe("conversation mode", () => {
   test("stopping playback early never re-arms recording", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.toggleHandsFree();
       mode.spokenTurn.sentence("Long reply.");
@@ -205,7 +211,7 @@ describe("conversation mode", () => {
   test("sending a prompt barge-ins over active playback", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
       mode.onPromptSent();
@@ -218,7 +224,7 @@ describe("conversation mode", () => {
   test("starting a recording cancels active playback", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
       mode.onRecordingStart();
@@ -230,25 +236,11 @@ describe("conversation mode", () => {
   test("Escape stops playback", () => {
     const speech = stubSpeech();
     createRoot((dispose) => {
-      const mode = createConversationMode({ synthesis: speech });
+      const mode = createConversationMode(withSpeech(speech));
       mode.toggle();
       mode.spokenTurn.sentence("A fairly long spoken answer.");
       fireEventKeyDown({ key: "Escape" });
       expect(mode.playbackState()).toBe("idle");
-      dispose();
-    });
-  });
-
-  test("supported() reports whether any speech adapter exists", () => {
-    createRoot((dispose) => {
-      expect(createConversationMode({ synthesis: null }).supported()).toBe(
-        false,
-      );
-      expect(
-        createConversationMode({
-          synthesis: new FakeSpeechSynthesis(),
-        }).supported(),
-      ).toBe(true);
       dispose();
     });
   });

@@ -602,7 +602,9 @@ export function ChatPage() {
   // The whole spoken loop — speech player, hands-free re-arm, barge-in,
   // interaction tracking — lives behind this one interface; the page only
   // renders its state and forwards user intent into it.
-  const conversationMode = createConversationMode();
+  const conversationMode = createConversationMode({
+    synthesize: (text, signal) => api.synthesizeSpeech(text, signal),
+  });
   const [stopPlaybackRef, setStopPlaybackRef] =
     createSignal<HTMLButtonElement | null>(null);
 
@@ -827,14 +829,6 @@ export function ChatPage() {
             </div>
           </div>
           <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
-            <Show
-              when={conversationMode.enabled() && !conversationMode.supported()}
-            >
-              <p class="text-muted-foreground text-xs" role="note">
-                Speech output isn't available in this browser or desktop voice
-                setup; spoken replies will only appear as text.
-              </p>
-            </Show>
             <Show when={conversationMode.playbackState() !== "idle"}>
               <div
                 aria-live="polite"

@@ -24,6 +24,7 @@ export interface ChatHost {
     conversationId: string,
     selectedModel: string,
   ): Promise<Conversation>;
+  synthesizeSpeech(text: string, signal: AbortSignal): Promise<Blob>;
   transcribeAudio(blob: Blob): Promise<string>;
 }
 
@@ -68,6 +69,22 @@ export function createChatHost(context: RestContext): ChatHost {
         },
       );
       return requireData(data, response);
+    },
+    async synthesizeSpeech(text, signal) {
+      const response = await context.fetch("/api/tts/speech", {
+        body: JSON.stringify({ text }),
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        signal,
+      });
+      if (!response.ok) {
+        throw new ApiError(response.status, {
+          502: "Speech generation failed. Please try again.",
+          503: "Speech generation is temporarily unavailable.",
+        });
+      }
+      return response.blob();
     },
     async transcribeAudio(blob) {
       const body = new FormData();

@@ -144,6 +144,7 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_SECURE_COOKIES="true",
             TETHER_SESSION_SECRET="configured-session-secret",
             TETHER_STT_API_KEY="configured-stt-key",
+            TETHER_TTS_API_KEY="configured-tts-key",
             TETHER_TELEMETRY_DATABASE_PATH=f"{directory}/health.sqlite3",
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
@@ -176,6 +177,7 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.scheduler_tick_seconds, 0.1)
     assert_eq(settings.session_secret, "configured-session-secret")
     assert_eq(settings.stt_api_key, "configured-stt-key")
+    assert_eq(settings.tts_api_key, "configured-tts-key")
     assert_eq(settings.telemetry_database_path, Path(directory) / "health.sqlite3")
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
@@ -186,6 +188,38 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.vapid_subject, "mailto:test@example.com")
     assert_false(settings.youtube_sync_enabled)
     assert_false(settings.transcript_sync_enabled)
+
+
+@test()
+def host_settings_require_tts_credentials() -> None:
+    """Production settings reject a host with no speech provider credential."""
+    with assert_raises(ValueError):
+        _ = HostSettings(
+            app_password="test-app-password",
+            session_secret="test-session-secret",
+            stt_api_key="test-stt-key",
+        )
+
+
+@test()
+def app_config_carries_tts_provider_settings() -> None:
+    """Validated environment speech settings reach production composition."""
+    settings = HostSettings(
+        app_password="test-app-password",
+        session_secret="test-session-secret",
+        stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
+        tts_base_url="https://speech.example/v1",
+        tts_model="speech-model",
+        tts_voice="cedar",
+    )
+
+    config = server._app_config_from_settings(settings)
+
+    assert_eq(config.tts_api_key, "test-tts-key")
+    assert_eq(config.tts_base_url, "https://speech.example/v1")
+    assert_eq(config.tts_model, "speech-model")
+    assert_eq(config.tts_voice, "cedar")
 
 
 @test()
@@ -200,6 +234,7 @@ def production_profile_wires_reauthorizable_youtube_without_a_token() -> None:
             public_origin="https://tether.example.test",
             session_secret="test-session-secret",
             stt_api_key="test-stt-key",
+            tts_api_key="test-tts-key",
             youtube_client_secret_path=root / "youtube-client-secret.json",
             youtube_token_path=root / "missing-token.json",
         )
@@ -249,6 +284,7 @@ def local_dependency_profile_isolates_state_and_external_boundaries() -> None:
             session_secret="test-session-secret",
             stt_api_key="production-stt-key",
             supadata_api_key="production-supadata-key",
+            tts_api_key="production-tts-key",
             supadata_enabled=True,
             transcript_sync_enabled=True,
             vapid_private_key="production-private-key",
@@ -358,6 +394,7 @@ def telemetry_database_defaults_beside_main_database() -> None:
         database_path=Path("/data/custom-main.sqlite3"),
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
     )
 
     assert_eq(
@@ -372,6 +409,7 @@ def web_search_defaults_enabled() -> None:
         app_password="test-app-password",
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
     )
 
     assert_true(settings.search_enabled)
@@ -384,6 +422,7 @@ def sync_enabled_defaults_to_true() -> None:
         app_password="test-app-password",
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
     )
     assert_true(settings.youtube_sync_enabled)
     assert_true(settings.transcript_sync_enabled)
@@ -411,6 +450,7 @@ def environment_app_factory_propagates_sync_flags() -> None:
             TETHER_SESSION_SECRET="test-session-secret",
             TETHER_STT_API_KEY="test-stt-key",
             TETHER_TRANSCRIPT_SYNC_ENABLED="false",
+            TETHER_TTS_API_KEY="test-tts-key",
             TETHER_YOUTUBE_SYNC_ENABLED="false",
         ):
             _ = create_app_from_environment()
@@ -719,6 +759,7 @@ with TestClient(create_app_from_environment()):
                 "TETHER_KB_ROOT": f"{directory}/kb",
                 "TETHER_SESSION_SECRET": "test-session-secret",
                 "TETHER_STT_API_KEY": "test-stt-key",
+                "TETHER_TTS_API_KEY": "test-tts-key",
                 "TETHER_YOUTUBE_CLIENT_SECRET_PATH": (
                     f"{directory}/youtube-client-secret.json"
                 ),
@@ -749,6 +790,7 @@ def serve_quiets_host_dependency_loggers() -> None:
                     app_password="test-app-password",
                     session_secret="test-session-secret",
                     stt_api_key="test-stt-key",
+                    tts_api_key="test-tts-key",
                 )
             )
             configured_levels = {
@@ -783,6 +825,7 @@ def serve_runs_uvicorn_against_the_environment_app_factory() -> None:
                     logging_level="DEBUG",
                     session_secret="test-session-secret",
                     stt_api_key="test-stt-key",
+                    tts_api_key="test-tts-key",
                 )
             )
     finally:
@@ -926,6 +969,7 @@ def environment_app_factory_wires_settings_and_request_logging() -> None:
             TETHER_LOGGING_LEVEL="DEBUG",
             TETHER_SESSION_SECRET="test-session-secret",
             TETHER_STT_API_KEY="test-stt-key",
+            TETHER_TTS_API_KEY="test-tts-key",
         ),
     ):
         with TestClient(create_app_from_environment()) as client:
@@ -952,6 +996,7 @@ def transcript_rate_limit_defaults_are_strict() -> None:
         app_password="test-app-password",
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
     )
     assert_eq(settings.transcript_library_max_requests_per_pass, 5)
     assert_eq(settings.transcript_library_min_request_interval_seconds, 5.0)
@@ -966,6 +1011,7 @@ def app_config_from_settings_threads_the_block_pause_bounds() -> None:
         app_password="test-app-password",
         session_secret="test-session-secret",
         stt_api_key="test-stt-key",
+        tts_api_key="test-tts-key",
         transcript_block_pause_base_seconds=111,
         transcript_block_pause_cap_seconds=222,
     )
