@@ -22,6 +22,26 @@ class FakeSynthesis {
   }
 }
 
+class VoiceLoadingSynthesis extends FakeSynthesis {
+  private listeners: (() => void)[] = [];
+  private voiceCount = 0;
+
+  addEventListener(_type: "voiceschanged", listener: () => void): void {
+    this.listeners.push(listener);
+  }
+
+  getVoices(): unknown[] {
+    return Array.from({ length: this.voiceCount }, () => ({}));
+  }
+
+  loadVoices(count = 1): void {
+    this.voiceCount = count;
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+}
+
 function makePlayer(onEnded?: () => void) {
   const synthesis = new FakeSynthesis();
   const player = createSpeechPlayer({
@@ -239,5 +259,52 @@ describe("speech support probe (#546)", () => {
 
     const without = createSpeechPlayer({ synthesis: null });
     expect(without.supported()).toBe(false);
+  });
+
+  test("desktop synthesis with no installed voices is unsupported", () => {
+    const synthesis = new VoiceLoadingSynthesis();
+    const player = createSpeechPlayer({
+      synthesis,
+      utteranceFactory: (text) => new FakeUtterance(text),
+    });
+
+    player.enqueue("hello");
+
+    expect(player.supported()).toBe(false);
+    expect(player.state()).toBe("idle");
+    expect(synthesis.spoken).toHaveLength(0);
+  });
+
+  test("queued speech waits for desktop voices to load", () => {
+    const synthesis = new VoiceLoadingSynthesis();
+    const player = createSpeechPlayer({
+      synthesis,
+      utteranceFactory: (text) => new FakeUtterance(text),
+    });
+
+    player.enqueue("hello after voices");
+    expect(synthesis.spoken).toHaveLength(0);
+
+    synthesis.loadVoices();
+
+    expect(player.supported()).toBe(true);
+    expect(player.state()).toBe("playing");
+    expect(synthesis.spoken).toHaveLength(1);
+    expect(synthesis.spoken[0].text).toBe("hello after voices");
+  });
+
+  test("cancel drops speech waiting for desktop voices", () => {
+    const synthesis = new VoiceLoadingSynthesis();
+    const player = createSpeechPlayer({
+      synthesis,
+      utteranceFactory: (text) => new FakeUtterance(text),
+    });
+
+    player.enqueue("never say this");
+    player.cancel();
+    synthesis.loadVoices();
+
+    expect(synthesis.spoken).toHaveLength(0);
+    expect(player.state()).toBe("idle");
   });
 });
