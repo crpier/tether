@@ -1,8 +1,7 @@
 """User-facing service for studying and completing Recall items.
 
-The service coordinates generated prompts, pure scheduling, persisted cards, and
-the shared Memory tethering gate. Model generation and grading, scheduling, and
-storage live behind focused domain modules.
+Recall owns distilled study material, prompts, scheduling, and answer history.
+Learning progress does not write, promote, or otherwise gate Memory.
 """
 
 from __future__ import annotations
@@ -24,11 +23,6 @@ from snekql.sqlite import (
 )
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
-from tether.memories import MemoryService
-from tether.memory_store import (
-    Memory,
-    MemoryProvenance,
-)
 from tether.recall_generation import StudyItemGenerator, validate_generated_study_item
 from tether.recall_grading import AnswerGrader, EssayGradeProposal, matches_reference
 from tether.recall_schedule import (
@@ -107,18 +101,12 @@ class RecallModelSteps:
 
 @dataclass(frozen=True, slots=True)
 class AnswerOutcome:
-    """The result of answering a prompt: its new card state and any completion.
-
-    `completed` is true on the answer that learns the study item's last prompt;
-    `tethered` is true when that completion tethered the distilled-learnings
-    Memory (it is false only if a prior human Review had already tethered it).
-    """
+    """The result of answering a prompt and any Study-item completion."""
 
     prompt: RecallPrompt[Fetched]
     correct: bool
     quality: int
     completed: bool
-    tethered: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,28 +118,21 @@ class DuePrompt:
 
 
 class RecallService:
-    """Capability surface for the Recall tethering path, over a snekql database.
+    """Capability surface for spaced learning over source-owned material.
 
-    Starting Recall distils a transcript (a model-backed step, injected) into a
-    loose Memory plus its prompts; answering reduces every kind to a
-    `(correct, response_ms)` pair — deterministically for multiple choice, via
-    the injected grader (with a strict-match fallback) for short answers, and
-    from the human-confirmed grade for essays — then reschedules with pure SM-2
-    math; learning the last prompt completes the study item and tethers its
-    Memory through the shared `MemoryService` — so the second gate reuses the
-    one Memory lifecycle rather than a parallel one.
+    Starting Recall distils a transcript into a Study item and prompts. Answers
+    reduce to `(correct, response_ms)`, reschedule through SM-2, and eventually
+    complete that Study item. None of these transitions mutate Memory.
     """
 
     def __init__(
         self,
         database: Database,
-        memory_service: MemoryService,
         models: RecallModelSteps,
         tracer: Tracer,
         event_publisher: EventPublisher | None = None,
     ) -> None:
         self.database: Database = database
-        self.memory_service: MemoryService = memory_service
         self.generator: StudyItemGenerator = models.generator
         self.grader: AnswerGrader | None = models.grader
         self.tracer: Tracer = tracer
@@ -168,10 +149,9 @@ class RecallService:
     ) -> StudyItem[Fetched]:
         """Turn an educational source into a study item drilling its prompts.
 
-        The transcript is distilled (model) into learnings — captured as a loose
-        Memory with YouTube provenance — and recall prompts, each an SM-2 card
-        due immediately so the first round is available at once. A source already
-        under study conflicts rather than forking a second schedule.
+        The transcript is distilled into learnings owned by the Study item and
+        Recall prompts, each an SM-2 card due immediately. A source already under
+        study conflicts rather than forking a second schedule.
         """
         with self.tracer.start_as_current_span(
             "RecallService.start_recall",
@@ -190,19 +170,14 @@ class RecallService:
             validation = validate_generated_study_item(generated)
             if isinstance(validation, Err):
                 raise InvalidPromptError(validation.error.message)
-            memory = await self.memory_service.capture(
-                generated.distilled_learnings,
-                provenance=MemoryProvenance(kind="youtube"),
-                logger=logger,
-            )
 
             async def _start_recall(tx: Transaction) -> StudyItem[Fetched]:
                 study_item = await tx.execute(
                     insert(
                         StudyItem(
-                            memory_id=memory.id,
                             source_video_id=source_video_id,
                             source_title=source_title,
+                            distilled_learnings=generated.distilled_learnings,
                             state="studying",
                         )
                     ).returning()
@@ -234,7 +209,6 @@ class RecallService:
             logger,
             "Recall started",
             study_item_id=str(study_item.id),
-            memory_id=str(memory.id),
             prompt_count=len(generated.prompts),
         )
         await self.event_publisher.publish(InvalidateEvent(keys=["recall"]))
@@ -302,9 +276,8 @@ class RecallService:
         strict match when the model is unavailable), or an essay by the
         human-confirmed grade — reduced to an SM-2 quality with the response
         time, and applied to the card. The answer is recorded for audit. When
-        this learns the study item's final prompt the item completes and its
-        Memory tethers (the Recall gate); a miss simply reschedules, extending
-        the overall effort. Tethering happens **only** on full completion.
+        this learns the Study item's final prompt the item completes; a miss
+        simply reschedules, extending the overall effort.
         """
         correct = await self._grade(prompt, answer, logger=logger)
         quality = grade_answer(
@@ -366,15 +339,11 @@ class RecallService:
 
             async with self.database.transaction(mode="immediate") as tx:
                 fresh_prompt, study_item, newly_complete = await _answer(tx)
-        tethered = False
         if newly_complete:
-            tethered = await self._tether_memory(study_item.memory_id, logger=logger)
             _info(
                 logger,
                 "Recall completed",
                 study_item_id=str(study_item.id),
-                memory_id=str(study_item.memory_id),
-                tethered=tethered,
             )
         _info(
             logger,
@@ -390,7 +359,6 @@ class RecallService:
             correct=correct,
             quality=quality,
             completed=newly_complete,
-            tethered=tethered,
         )
 
     async def propose_essay_grade(
@@ -511,28 +479,6 @@ class RecallService:
                         prompt_id=str(prompt.id),
                     )
         return matches_reference(reference_answer, answer_text)
-
-    async def _tether_memory(self, memory_id: UUID7, *, logger: Logger) -> bool:
-        """Tether the distilled-learnings Memory on full Recall completion.
-
-        Returns whether this call performed the tether. A human Review may have
-        already tethered the same loose Memory; that is convergent, not an error,
-        so an already-tethered Memory leaves completion intact and reports False.
-        """
-        async with self.database.transaction() as tx:
-            memory = await tx.fetch_one_or_none(
-                select(Memory).where(Memory.id.eq(memory_id))
-            )
-        if memory is None:
-            logger.warning(
-                "Recall completion found no Memory to tether",
-                memory_id=str(memory_id),
-            )
-            return False
-        if memory.tethered_at is not None:
-            return False
-        _ = await self.memory_service.tether(memory, logger=logger)
-        return True
 
     async def _require_absent(self, source_video_id: str) -> None:
         """Raise if a study item already exists for the source video."""

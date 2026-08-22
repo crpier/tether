@@ -8,7 +8,7 @@ import {
 } from "../components/segmented-control";
 import { BucketPanel, type BucketView } from "../panels/bucket";
 import { DreamingPanel } from "../panels/dreaming";
-import { MemoriesPanel, type MemoryEditing } from "../panels/memories";
+import { MemoriesPanel } from "../panels/memories";
 import { SyntheticPanels } from "../panels/synthetic";
 import { TodosPanel } from "../panels/todos";
 import { TriggersPanel } from "../panels/triggers";
@@ -60,10 +60,6 @@ export function BrowsePage(
   const [view, setView] = createSignal<BrowseView>(
     props.initialView ?? browseViewFromLocation() ?? "memories",
   );
-  const [memoryEditing, setMemoryEditing] = createSignal<
-    MemoryEditing | undefined
-  >();
-  const [memoryDraft, setMemoryDraft] = createSignal("");
   const selectView = (nextView: BrowseView) => {
     setView(nextView);
     const nextPath = browsePaths[nextView];
@@ -117,17 +113,7 @@ export function BrowsePage(
               id={segmentedPanelId("browse-view", "memories")}
               role="tabpanel"
             >
-              {/* Review lives on the Inbox page; Browse only opens on Corpus.
-                  Keep the edit draft in Browse so inactive controls can unmount
-                  without losing in-progress edits. */}
-              <MemoriesPanel
-                api={memories}
-                draft={memoryDraft}
-                editing={memoryEditing}
-                initialView="corpus"
-                setDraft={setMemoryDraft}
-                setEditing={setMemoryEditing}
-              />
+              <MemoriesPanel api={memories} />
             </div>
           </Match>
           <Match when={view() === "dreaming"}>

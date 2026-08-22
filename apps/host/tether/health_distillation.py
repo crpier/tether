@@ -349,27 +349,31 @@ class HealthDistillationExecutor:
         if validation_error := self._validate_claims(normalized_body, set(uris)):
             return DreamRunExecutionResult(status="failed", error=validation_error)
 
-        written = await self._write_document(run=run, body=normalized_body, uris=uris)
-        if written is None:
-            logger.info(
-                "Health dream document already contains this run payload",
-                run_id=str(run.id),
+        async with self.mutation_coordinator.mutation_scope():
+            written = await self._write_document(
+                run=run,
+                body=normalized_body,
+                uris=uris,
             )
-        payload = normalized_body
-        _ = await self.mutation_coordinator.record_mutation(
-            run_id=run.id,
-            tool_call_id=tool_call_id,
-            actor="dream",
-            operation="write",
-            workspace_path=self._document_path(run),
-            payload=payload,
-        )
-        settlement = await self.mutation_coordinator.settle(
-            run.id,
-            tool_call_id,
-            acknowledger=self.mutation_acknowledger
-            or self.mutation_coordinator.acknowledge_mutation,
-        )
+            if written is None:
+                logger.info(
+                    "Health dream document already contains this run payload",
+                    run_id=str(run.id),
+                )
+            _ = await self.mutation_coordinator.record_mutation(
+                run_id=run.id,
+                tool_call_id=tool_call_id,
+                actor="dream",
+                operation="write",
+                workspace_path=self._document_path(run),
+                payload=normalized_body,
+            )
+            settlement = await self.mutation_coordinator.settle(
+                run.id,
+                tool_call_id,
+                acknowledger=self.mutation_acknowledger
+                or self.mutation_coordinator.acknowledge_mutation,
+            )
         return DreamRunExecutionResult(
             status="success" if settlement.acknowledged else "failed",
             error=settlement.error,

@@ -9,7 +9,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   FakeHost,
-  memory,
+  duePrompt,
   navigateTo,
   proposal,
   renderApp,
@@ -194,7 +194,7 @@ describe("Shell nav badges", () => {
   test("badges reflect pending proposals and inbox items", async () => {
     const host = new FakeHost({
       authenticated: true,
-      memories: [memory({ content: "Prefers aisle seats" })],
+      duePrompts: [duePrompt({ question: "What is TCP?" })],
       proposals: [proposal({ id: "prop-1" })],
     });
     renderApp(host);
@@ -216,7 +216,7 @@ describe("Shell nav badges", () => {
     installMatchMedia(false);
     const host = new FakeHost({
       authenticated: true,
-      memories: [memory({ content: "Prefers aisle seats" })],
+      duePrompts: [duePrompt({ question: "What is TCP?" })],
     });
     renderApp(host);
     const nav = await screen.findByRole("navigation", {

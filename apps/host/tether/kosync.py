@@ -1,10 +1,9 @@
-"""KOReader progress synchronization and finished-book orchestration."""
+"""KOReader progress synchronization over canonical reading Evidence."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Protocol
 
 from snekql.sqlite import Fetched
 
@@ -15,66 +14,24 @@ from tether.kosync_model import (
     ebook_hash_for_filename,
 )
 from tether.kosync_store import EbookDocument, KosyncStore
-from tether.memory_store import MemoryProvenance
 from tether.structured_logging import Logger
 
 
-class FinishedMemoryPort(Protocol):
-    """Capture the trusted Memory derived when an ebook is first finished."""
-
-    async def capture_tethered(
-        self,
-        content: str,
-        *,
-        provenance: MemoryProvenance,
-        facets: dict[str, str] | None = None,
-        logger: Logger,
-    ) -> object:
-        """Capture machine-synced content directly into the tethered corpus."""
-        ...
-
-
 class KosyncService:
-    """Coordinate KOReader progress persistence and finished-book derivation.
+    """Persist KOReader progress without deriving Memory directly."""
 
-    Progress writes remain separate from finished-Memory capture. If that
-    downstream capture defects, the raw event stays authoritative and the
-    unstamped document remains resumable on the next push.
-
-    >>> service = KosyncService(store=store, memory_service=memories)
-    >>> timestamp = await service.record_progress(
-    ...     ProgressUpdate(
-    ...         document="abc",
-    ...         percentage=0.5,
-    ...         progress="/body/DocFragment[3]",
-    ...         device="Phone",
-    ...         device_id="",
-    ...     ),
-    ...     logger=logger,
-    ...     now=now,
-    ... )
-    """
-
-    def __init__(
-        self,
-        store: KosyncStore,
-        memory_service: FinishedMemoryPort,
-    ) -> None:
+    def __init__(self, store: KosyncStore) -> None:
         self.store: KosyncStore = store
-        self.memory_service: FinishedMemoryPort = memory_service
 
     async def record_progress(
         self, update: ProgressUpdate, *, logger: Logger, now: datetime
     ) -> int:
-        """Persist one push and derive a finished Memory when first crossed."""
+        """Append one canonical progress event and mark first completion."""
+        _ = logger
         server_timestamp = int(now.timestamp())
         document = await self.store.touch_document(update.document)
         await self.store.append_event(update, server_timestamp)
-        if (
-            update.percentage >= FINISHED_THRESHOLD
-            and document.finished_captured_at is None
-        ):
-            await self._capture_finished(document, logger=logger)
+        if update.percentage >= FINISHED_THRESHOLD and document.finished_at is None:
             await self.store.stamp_finished(update.document)
         return server_timestamp
 
@@ -107,23 +64,3 @@ class KosyncService:
     async def list_unlabeled(self) -> list[EbookDocument[Fetched]]:
         """Return every document still missing a title, oldest first."""
         return await self.store.list_unlabeled()
-
-    async def _capture_finished(
-        self, document: EbookDocument[Fetched], *, logger: Logger
-    ) -> None:
-        """Mint the once-per-document machine-synced finished Memory."""
-        title = document.title
-        content = (
-            f"Finished reading {title}"
-            if title
-            else f"{document.document_hash} (unlabeled ebook)"
-        )
-        facets = {"source": "koreader", "category": "ebook"}
-        if title:
-            facets["title"] = title
-        _ = await self.memory_service.capture_tethered(
-            content,
-            provenance=MemoryProvenance(kind="koreader"),
-            facets=facets,
-            logger=logger,
-        )

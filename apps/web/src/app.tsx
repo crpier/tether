@@ -104,7 +104,6 @@ function ConnectedApp(props: Required<AppDependencies>) {
     createSignal<ConnectionStatus>("connecting");
   const [chatFrame, setChatFrame] = createSignal<ChatFrame | undefined>();
   const [bus, setBus] = createSignal<ChatBus | undefined>();
-  const [inboxCaptureDraft, setInboxCaptureDraft] = createSignal("");
 
   onMount(() => {
     const created = props.createChatBus({
@@ -151,8 +150,6 @@ function ConnectedApp(props: Required<AppDependencies>) {
     host: props.host,
     chatFrame,
     connection,
-    inboxCaptureDraft,
-    setInboxCaptureDraft,
   };
 
   return (

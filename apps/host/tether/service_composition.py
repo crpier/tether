@@ -50,12 +50,10 @@ from tether.host_resources import (
 from tether.kosync import KosyncService
 from tether.kosync_routes import KosyncAuth
 from tether.kosync_store import KosyncStore
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_search import MemorySearchService
-from tether.memory_search_index import SearchIndex
-from tether.memory_search_reconciler import SearchReconciler
-from tether.memory_workspace_service import MemoryWorkspaceService
+from tether.memory_workspace_service import (
+    MemoryWorkspaceService,
+    memory_workspace_root,
+)
 from tether.model_selection import AgentModelCatalog
 from tether.notification_delivery import (
     EventNotifier,
@@ -82,7 +80,6 @@ from tether.push_store import PushStore
 from tether.recall import RecallModelSteps, RecallService
 from tether.recall_generation import PiStudyItemGenerator, StudyItemGenerator
 from tether.recall_grading import AnswerGrader, PiAnswerGrader
-from tether.review import ReviewService
 from tether.scheduler import (
     EphemeralPiPromptRunner,
     ScheduledChatPromptRunner,
@@ -90,14 +87,12 @@ from tether.scheduler import (
     SchedulerConfig,
     SystemClock,
 )
-from tether.search_fusion import SearchFusionService
 from tether.search_projection.embeddings import Embedder
 from tether.search_projection.metadata import SearchMetaService
 from tether.search_spend import PersistentSearchSpendGuard
 from tether.structured_logging import Logger
 from tether.tavily_search import TavilySearchProvider
 from tether.todo_digest import render_todo_digest
-from tether.todo_migration import migrate_pending_action_facets
 from tether.todos import TodoService
 from tether.triage import TriageService
 from tether.triggers import TriggerService
@@ -261,7 +256,6 @@ class _RecallDependencies:
     database: Database
     event_hub: EventHub
     kb_root: Path
-    memory_service: MemoryService
     model_catalog: AgentModelCatalog
     tracer: Tracer
 
@@ -291,42 +285,10 @@ def _build_recall_service(dependencies: _RecallDependencies) -> RecallService:
         grader = grader or PiAnswerGrader(runner)
     return RecallService(
         database=dependencies.database,
-        memory_service=dependencies.memory_service,
         models=RecallModelSteps(generator=generator, grader=grader),
         event_publisher=dependencies.event_hub,
         tracer=dependencies.tracer,
     )
-
-
-async def _build_search(
-    *,
-    database: Database,
-    embedder: Embedder | None,
-    index_dir: Path,
-    logger: Logger,
-    workspace_service: MemoryWorkspaceService | None = None,
-) -> SearchReconciler | None:
-    """Wire the search subsystem when an embedder is supplied, else disable it.
-
-    Opens the index, converges it with SQLite once on boot (embedding any owed
-    tethered Memory and dropping orphans — a no-op, and no model load, on an
-    empty corpus), and returns the reconciler: the single search seam that both
-    reads for `MemoryService` and is driven by the lifespan's periodic pass. With
-    no embedder returns `None`: the index is never opened and no model loads."""
-    if embedder is None:
-        return None
-    search_index = await SearchIndex.open(
-        index_dir=index_dir, vector_dim=embedder.vector_dim
-    )
-    reconciler = SearchReconciler(
-        database=database,
-        index=search_index,
-        embedder=embedder,
-        meta=SearchMetaService(database=database),
-        workspace_service=workspace_service,
-    )
-    _ = await reconciler.reconcile(logger=logger)
-    return reconciler
 
 
 async def _build_bucket_item_search(
@@ -360,19 +322,14 @@ async def _build_bucket_item_search(
     return reconciler
 
 
-def _build_bucket_item_and_fusion_services(
+def _build_bucket_item_services(
     *,
     database: Database,
     event_hub: EventHub,
-    memory_search: MemorySearchService,
     searcher: BucketItemReconciler | None,
     tracer: Tracer,
-) -> tuple[BucketItemSearchService, BucketItemService, SearchFusionService]:
-    """Wire the Bucket-item service and the cross-source fusion service above it.
-
-    Fusion depends on both the Bucket-item and Memory services existing, so
-    building them together keeps that dependency explicit at the one call site
-    instead of splitting it across composition statements."""
+) -> tuple[BucketItemSearchService, BucketItemService]:
+    """Wire Bucket-item mutation and Search services."""
     bucket_item_service = BucketItemService(
         database=database,
         event_publisher=event_hub,
@@ -384,31 +341,19 @@ def _build_bucket_item_and_fusion_services(
         searcher=searcher,
         tracer=tracer,
     )
-    search_fusion_service = SearchFusionService(
-        bucket_item_search=bucket_item_search,
-        memory_search=memory_search,
-    )
-    return bucket_item_search, bucket_item_service, search_fusion_service
+    return bucket_item_search, bucket_item_service
 
 
 async def _build_todo_service(
     *,
     database: Database,
     event_hub: EventHub,
-    memory_service: MemoryService,
     tracer: Tracer,
     logger: Logger,
 ) -> tuple[TodoService, Callable[[], Awaitable[str]]]:
-    """Wire the Todo service, run its one-time backfill, and build its digest.
-
-    Returns the service and async provider of the standing Todo digest block
-    appended to conversation runs. The `action:
-    pending` facet backfill is idempotent, so running it every boot is safe."""
+    """Wire the Todo service and its standing foreground digest."""
     todo_service = TodoService(
         database=database, event_publisher=event_hub, tracer=tracer
-    )
-    _ = await migrate_pending_action_facets(
-        database, todo_service, memory_service, logger=logger
     )
 
     async def _todo_digest() -> str:
@@ -428,13 +373,12 @@ class _PresentationComponent:
     panel_service: PanelService
 
 
-def _build_presentation_services(  # noqa: PLR0913 - each service is explicit
+def _build_presentation_services(
     *,
     config: AppConfig,
     database: Database,
     event_hub: EventHub,
-    memory_search: MemorySearchService,
-    memory_service: MemoryService,
+    memory_workspace_service: MemoryWorkspaceService,
     tracer: Tracer,
 ) -> _PresentationComponent:
     """Build presentation services and the optional KOReader protocol gate.
@@ -453,15 +397,12 @@ def _build_presentation_services(  # noqa: PLR0913 - each service is explicit
             username=config.kosync_username,
             userkey=config.kosync_userkey,
         ),
-        kosync_service=KosyncService(
-            store=KosyncStore(database),
-            memory_service=memory_service,
-        ),
+        kosync_service=KosyncService(store=KosyncStore(database)),
         panel_service=PanelService(
             database=database,
             executor=PanelExecutor(
                 database=database,
-                memory_search=memory_search,
+                workspace_service=memory_workspace_service,
                 tracer=tracer,
             ),
             event_publisher=event_hub,
@@ -498,7 +439,6 @@ async def _build_youtube_search(
 
 def _reconcile_loop_tasks(
     *,
-    search_reconciler: SearchReconciler | None,
     bucket_item_reconciler: BucketItemReconciler | None,
     youtube_search_reconciler: YouTubeSearchReconciler | None,
     interval_seconds: float,
@@ -508,19 +448,11 @@ def _reconcile_loop_tasks(
 
     Each loop is the correctness backstop for its index by sweeping orphans.
     Optional Lance compaction stays outside the live host because it can hold a
-    table indefinitely and block searches. The Memory and Bucket-item loops
-    complement their own boot reconcile; the YouTube Search loop has no boot
+    table indefinitely and block searches. The Bucket-item loop complements
+    its boot reconcile; the YouTube Search loop has no boot
     pass, so it fills that index shortly after startup. Any loop is absent when
     its index was not wired (no embedder)."""
     tasks: list[asyncio.Task[None]] = []
-    if search_reconciler is not None:
-        tasks.append(
-            asyncio.create_task(
-                search_reconciler.reconcile_forever(
-                    interval_seconds=interval_seconds, logger=logger
-                )
-            )
-        )
     if bucket_item_reconciler is not None:
         tasks.append(
             asyncio.create_task(
@@ -575,8 +507,6 @@ class CoreServices:
     event_hub: EventHub
     kosync_auth: KosyncAuth
     kosync_service: KosyncService
-    memory_search_service: MemorySearchService
-    memory_service: MemoryService
     memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
@@ -586,8 +516,6 @@ class CoreServices:
     provider_auth_service: ProviderAuthService
     push_service: PushService
     recall_service: RecallService
-    review_service: ReviewService
-    search_fusion_service: SearchFusionService
     search_provider: SearchProvider | None
     todo_service: TodoService
     triage_service: TriageService
@@ -618,23 +546,17 @@ async def compose_core_services(
             default_model_provider=config.default_model_provider,
         )
     )
-    kb_service = KnowledgeBaseService(kb_root=host.kb_root)
     event_hub = EventHub()
-    # Search is wired only when an embedder is supplied. Production
-    # (`create_app_from_environment`) passes a `FastEmbedder`; tests that
-    # exercise search pass a `FakeEmbedder`; everything else runs with
-    # search disabled and never opens the index or loads a model.
-    memory_workspace_service = MemoryWorkspaceService(kb_root=host.kb_root)
-    if embedder is None:
-        _ = await memory_workspace_service.scan(logger=host.logger)
-
-    search_reconciler = await _build_search(
-        database=host.database,
-        embedder=embedder,
-        index_dir=host.kb_root / "index",
-        logger=host.logger,
-        workspace_service=memory_workspace_service,
+    dreaming_mutation_coordinator = DreamingMutationCoordinator(
+        host.database,
+        memory_workspace_root(host.kb_root),
     )
+    memory_workspace_service = MemoryWorkspaceService(
+        kb_root=host.kb_root,
+        reconciler=dreaming_mutation_coordinator,
+    )
+    _ = await memory_workspace_service.scan(logger=host.logger)
+
     (
         youtube_searcher,
         youtube_search_reconciler,
@@ -643,22 +565,6 @@ async def compose_core_services(
         embedder=embedder,
         index_dir=host.kb_root / "transcript-index",
     )
-    memory_service = MemoryService(
-        database=host.database,
-        event_publisher=event_hub,
-        indexer=search_reconciler,
-        kb_service=kb_service,
-        tracer=host.telemetry.tracer,
-    )
-    memory_search = MemorySearchService(
-        database=host.database,
-        searcher=search_reconciler,
-        tracer=host.telemetry.tracer,
-    )
-    await memory_service.regenerate_knowledge_base(logger=host.logger)
-    # The digest reuses the same embedder as search: semantic dedup and
-    # contradiction recall when it is wired, keyword fallback when not.
-    review_service = ReviewService(database=host.database, embedder=embedder)
     triage_service = TriageService(database=host.database)
     bucket_item_reconciler = await _build_bucket_item_search(
         database=host.database,
@@ -666,14 +572,9 @@ async def compose_core_services(
         index_dir=host.kb_root / "bucket-item-index",
         logger=host.logger,
     )
-    (
-        bucket_item_search,
-        bucket_item_service,
-        search_fusion_service,
-    ) = _build_bucket_item_and_fusion_services(
+    bucket_item_search, bucket_item_service = _build_bucket_item_services(
         database=host.database,
         event_hub=event_hub,
-        memory_search=memory_search,
         searcher=bucket_item_reconciler,
         tracer=host.telemetry.tracer,
     )
@@ -681,8 +582,7 @@ async def compose_core_services(
         config=config,
         database=host.database,
         event_hub=event_hub,
-        memory_search=memory_search,
-        memory_service=memory_service,
+        memory_workspace_service=memory_workspace_service,
         tracer=host.telemetry.tracer,
     )
     recall_service = _build_recall_service(
@@ -692,7 +592,6 @@ async def compose_core_services(
             database=host.database,
             event_hub=event_hub,
             kb_root=host.kb_root,
-            memory_service=memory_service,
             model_catalog=model_catalog,
             tracer=host.telemetry.tracer,
         )
@@ -704,7 +603,6 @@ async def compose_core_services(
     todo_service, todo_digest_provider = await _build_todo_service(
         database=host.database,
         event_hub=event_hub,
-        memory_service=memory_service,
         tracer=host.telemetry.tracer,
         logger=host.logger,
     )
@@ -738,10 +636,6 @@ async def compose_core_services(
     dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
     health_distillation_service = HealthDistillationService(
         host.database, host.telemetry_database
-    )
-    dreaming_mutation_coordinator = DreamingMutationCoordinator(
-        host.database,
-        memory_workspace_service.workspace_root,
     )
     _ = await dreaming_mutation_coordinator.reconcile_workspace(logger=host.logger)
     push_service = PushService(
@@ -850,7 +744,6 @@ async def compose_core_services(
     # embedder was supplied).
     background_tasks.extend(
         _reconcile_loop_tasks(
-            search_reconciler=search_reconciler,
             bucket_item_reconciler=bucket_item_reconciler,
             youtube_search_reconciler=youtube_search_reconciler,
             interval_seconds=config.search_reconcile_seconds,
@@ -872,8 +765,6 @@ async def compose_core_services(
         event_hub=event_hub,
         kosync_auth=presentation.kosync_auth,
         kosync_service=presentation.kosync_service,
-        memory_search_service=memory_search,
-        memory_service=memory_service,
         memory_workspace_service=memory_workspace_service,
         model_catalog=model_catalog,
         notification_service=scheduler_component.notification_service,
@@ -883,8 +774,6 @@ async def compose_core_services(
         provider_auth_service=provider_auth_service,
         push_service=push_service,
         recall_service=recall_service,
-        review_service=review_service,
-        search_fusion_service=search_fusion_service,
         search_provider=search_provider,
         todo_service=todo_service,
         triage_service=triage_service,

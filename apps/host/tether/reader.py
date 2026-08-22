@@ -1,4 +1,4 @@
-"""Readwise Reader progress ingestion into ebook telemetry and Memories."""
+"""Readwise Reader progress ingestion into canonical ebook Evidence."""
 
 from __future__ import annotations
 
@@ -20,8 +20,6 @@ from snekql.sqlite import (
 )
 
 from tether.kosync_store import EbookDocument, EbookProgressEvent
-from tether.memories import MemoryService
-from tether.memory_store import MemoryProvenance
 from tether.readwise_http import (
     ReaderTransport,
     ReadwiseAuthenticationFailure,
@@ -215,17 +213,11 @@ class ReaderClient:
 
 
 class ReaderSyncService:
-    """Append Reader progress and derive one finished Memory per document."""
+    """Append Reader progress and derive one source completion per document."""
 
-    def __init__(
-        self,
-        database: Database,
-        client: ReaderClient,
-        memory_service: MemoryService,
-    ) -> None:
+    def __init__(self, database: Database, client: ReaderClient) -> None:
         self.database: Database = database
         self.client: ReaderClient = client
-        self.memory_service: MemoryService = memory_service
 
     async def sync(
         self, *, logger: Logger
@@ -246,7 +238,7 @@ class ReaderSyncService:
             return Err(documents.error)
         appended = skipped = finished = 0
         for document in documents.value:
-            outcome = await self._apply_document(document, logger=logger)
+            outcome = await self._apply_document(document)
             if outcome == "appended":
                 appended += 1
             elif outcome == "finished":
@@ -277,12 +269,11 @@ class ReaderSyncService:
                     operation=report.error.operation,
                 )
 
-    async def _apply_document(self, document: ReaderDocument, *, logger: Logger) -> str:
+    async def _apply_document(self, document: ReaderDocument) -> str:
         key = f"reader:{document.document_id}"
         stored = await self._upsert_document(key, document.title)
         appended = await self._append_if_changed(key, document)
-        if self._is_finished(document) and stored.finished_captured_at is None:
-            await self._capture_finished(key, document, logger=logger)
+        if self._is_finished(document) and stored.finished_at is None:
             await self._stamp_finished(key)
             return "finished"
         return "appended" if appended else "skipped"
@@ -354,31 +345,11 @@ class ReaderSyncService:
                 )
             )
 
-    async def _capture_finished(
-        self, key: str, document: ReaderDocument, *, logger: Logger
-    ) -> None:
-        content = (
-            f"Finished reading {document.title}"
-            if document.title
-            else f"{key} (unlabeled ebook)"
-        )
-        facets = {"source": _READER_DEVICE, "category": "ebook"}
-        if document.title:
-            facets["title"] = document.title
-        if document.author:
-            facets["author"] = document.author
-        _ = await self.memory_service.capture_tethered(
-            content,
-            provenance=MemoryProvenance(kind="readwise"),
-            facets=facets,
-            logger=logger,
-        )
-
     async def _stamp_finished(self, key: str) -> None:
         async with self.database.transaction(mode="immediate") as transaction:
             _ = await transaction.execute(
                 update(EbookDocument)
-                .set(EbookDocument.finished_captured_at.to(CurrentTimestamp))
+                .set(EbookDocument.finished_at.to(CurrentTimestamp))
                 .where(EbookDocument.document_hash.eq(key))
             )
 

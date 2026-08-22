@@ -3,6 +3,7 @@ import { requireData, type RestContext } from "./transport";
 
 export type Panel = components["schemas"]["PanelRead"];
 export type PanelResults = components["schemas"]["PanelResultsRead"];
+export type PanelTopic = components["schemas"]["PanelTopicRead"];
 export type CreatePanel = components["schemas"]["CreatePanelRequest"];
 export type UpdatePanel = components["schemas"]["UpdatePanelRequest"];
 

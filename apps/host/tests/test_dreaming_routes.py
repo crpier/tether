@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from snekql.sqlite import select, update
 from snektest import assert_eq, assert_len, assert_true, test
@@ -181,7 +181,21 @@ title: Travel
 """,
                 encoding="utf-8",
             )
-            _ = await coordinator.reconcile_workspace(logger=runtime.logger)
+            previous_run_id = uuid7()
+            _ = await coordinator.record_mutation(
+                run_id=previous_run_id,
+                tool_call_id="write-initial-preferences",
+                actor="dream",
+                operation="write",
+                workspace_path=workspace / "preferences.md",
+                payload="initial preferences",
+            )
+            acknowledged, error = await coordinator.acknowledge_mutation(
+                previous_run_id,
+                "write-initial-preferences",
+            )
+            assert_eq(acknowledged, True)
+            assert_eq(error, None)
             (workspace / "preferences.md").write_text(
                 f"""---
 title: Travel

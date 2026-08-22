@@ -7,15 +7,35 @@ so the service behaviour itself (capture → tether → search invariants) is
 exercised once through whichever shell states it most directly.
 """
 
+import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
+from uuid import UUID, uuid7
 
-from snektest import assert_eq, assert_in, assert_is_none, assert_not_in, test
+from snekql.sqlite import Database, insert
+from snektest import assert_eq, assert_in, assert_not_in, test
+from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tests.surfaces import SESSION, call_tool, login, surface_client
+from tether.app_runtime import app_runtime
+from tether.dreaming import DreamingMutationCoordinator
+from tether.dreaming_store import DreamingWorkspaceFile
+from tether.openapi_export import build_openapi_document
 from tether.search_projection.embeddings import FakeEmbedder
+
+
+@test()
+def public_api_exposes_topics_without_legacy_memory_crud() -> None:
+    """The browser reads Dreaming Topics and cannot mutate legacy Memory rows."""
+    paths = build_openapi_document()["paths"]
+
+    assert_in("/api/memory-topics", paths)
+    assert_not_in("/api/memories", paths)
+    assert_not_in("/api/memories/search", paths)
+    assert_not_in("/api/memories/{memory_id}", paths)
+    assert_not_in("/api/memories/{memory_id}/tether", paths)
 
 
 def make_client(root: Path) -> Any:
@@ -23,53 +43,292 @@ def make_client(root: Path) -> Any:
     return surface_client(root, embedder=FakeEmbedder())
 
 
-def rest_capture(client: TestClient, content: str) -> dict[str, Any]:
-    """Capture one Memory through REST and return its JSON representation."""
-    login(client)
-    response = client.post("/api/memories", json={"content": content})
-    assert_eq(response.status_code, 201)
-    return response.json()
+async def _seed_dream_topic(
+    database: Database,
+    path: str,
+    content: str,
+) -> None:
+    """Seed the last acknowledged Dreaming-authored topic for app restart setup."""
+    async with database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamingWorkspaceFile(
+                    path=path,
+                    content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    content=content,
+                    is_tombstone=0,
+                    version=1,
+                    actor="dream",
+                )
+            )
+        )
 
 
-def tool_capture(client: TestClient, content: str) -> dict[str, Any]:
-    """Capture one Memory through the tool seam and return its result payload."""
-    envelope = call_tool(client, "capture", content=content)
-    assert_eq(envelope["success"], True)
-    return envelope["result"]
+def _record_dreamed_topic(
+    client: TestClient,
+    relative_path: str,
+    content: str,
+) -> None:
+    """Record an existing fixture file as acknowledged Dreaming output."""
+    portal = client.portal
+    assert portal is not None
+    portal.call(
+        _seed_dream_topic,
+        app_runtime(cast("Starlette", client.app)).dreaming_service.database,
+        relative_path,
+        content,
+    )
+
+
+async def _seed_dream_tombstone(database: Database, path: str) -> None:
+    """Seed the last acknowledged Dreaming-authored deletion for restart setup."""
+    async with database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamingWorkspaceFile(
+                    path=path,
+                    content_hash="",
+                    content=None,
+                    is_tombstone=1,
+                    version=2,
+                    actor="dream",
+                )
+            )
+        )
+
+
+async def _record_unacknowledged_dream_topic(
+    database: Database,
+    workspace_root: Path,
+    topic_path: Path,
+) -> None:
+    """Record a completed Dreaming write without delivering its acknowledgement."""
+    _ = await DreamingMutationCoordinator(database, workspace_root).record_mutation(
+        run_id=uuid7(),
+        tool_call_id="write-topic",
+        actor="dream",
+        operation="write",
+        workspace_path=topic_path,
+        payload="dream payload",
+    )
+
+
+async def _record_unacknowledged_dream_deletion(
+    database: Database,
+    workspace_root: Path,
+    topic_path: Path,
+) -> None:
+    """Record a completed Dreaming deletion without delivering its acknowledgement."""
+    _ = await DreamingMutationCoordinator(database, workspace_root).record_mutation(
+        run_id=uuid7(),
+        tool_call_id="delete-topic",
+        actor="dream",
+        operation="delete",
+        workspace_path=topic_path,
+        payload="dream payload",
+    )
 
 
 @test()
-def post_memories_captures_trimmed_content() -> None:
-    """`POST /api/memories` accepts `content` and returns a loose Memory."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = rest_capture(client, "  I prefer aisle seats  ")
+def external_edit_cannot_replace_dreamed_memory() -> None:
+    """Startup restores Dreaming-authored content before Topic reads."""
+    with TemporaryDirectory() as directory:
+        app_root = Path(directory)
+        memory_root = app_root / ".tether" / "memory"
+        topic_path = memory_root / "dream" / "preferences.md"
+        dreamed = "---\ntitle: Travel preferences\n---\nPrefers aisle seats.\n"
+        manual = "---\ntitle: Travel preferences\n---\nPrefers window seats.\n"
 
-    assert_eq(memory["content"], "I prefer aisle seats")
-    assert_eq(memory["state"], "loose")
-    assert_eq(memory["version"], 1)
+        with make_client(app_root) as client:
+            topic_path.parent.mkdir(parents=True, exist_ok=True)
+            topic_path.write_text(dreamed, encoding="utf-8")
+            portal = client.portal
+            assert portal is not None
+            portal.call(
+                _seed_dream_topic,
+                app_runtime(cast("Starlette", client.app)).dreaming_service.database,
+                "dream/preferences.md",
+                dreamed,
+            )
+
+        topic_path.write_text(manual, encoding="utf-8")
+
+        with make_client(app_root) as client:
+            login(client)
+            response = client.get("/api/memory-topics", params={"q": "seats"})
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()[0]["body"], "Prefers aisle seats.\n")
 
 
 @test()
-def post_memories_rejects_blank_content() -> None:
-    """`content` must be non-empty after trimming."""
+def live_external_addition_does_not_become_memory() -> None:
+    """Topic reads reject a file added while the host is running."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        topic_path = Path(directory) / ".tether" / "memory" / "live-manual.md"
+        topic_path.parent.mkdir(parents=True, exist_ok=True)
+        topic_path.write_text(
+            "---\ntitle: Live manual topic\n---\nAdded while running.\n",
+            encoding="utf-8",
+        )
+
         login(client)
-        response = client.post("/api/memories", json={"content": "   "})
+        response = client.get("/api/memory-topics", params={"q": "manual"})
 
-    assert_eq(response.status_code, 422)
-    assert_eq(response.json()["detail"][0]["loc"], ["body", "content"])
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), [])
+
+
+@test()
+def external_recreation_cannot_revive_dreamed_deletion() -> None:
+    """Startup excludes a manually recreated Dreaming tombstone path."""
+    with TemporaryDirectory() as directory:
+        app_root = Path(directory)
+        memory_root = app_root / ".tether" / "memory"
+        topic_path = memory_root / "dream" / "retired.md"
+
+        with make_client(app_root) as client:
+            portal = client.portal
+            assert portal is not None
+            portal.call(
+                _seed_dream_tombstone,
+                app_runtime(cast("Starlette", client.app)).dreaming_service.database,
+                "dream/retired.md",
+            )
+
+        topic_path.parent.mkdir(parents=True, exist_ok=True)
+        topic_path.write_text(
+            "---\ntitle: Retired topic\n---\nManually revived.\n",
+            encoding="utf-8",
+        )
+
+        with make_client(app_root) as client:
+            login(client)
+            response = client.get("/api/memory-topics", params={"q": "revived"})
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), [])
+
+
+@test()
+def external_deletion_cannot_remove_dreamed_memory() -> None:
+    """Startup restores a Dreaming-authored topic deleted outside Dreaming."""
+    with TemporaryDirectory() as directory:
+        app_root = Path(directory)
+        memory_root = app_root / ".tether" / "memory"
+        topic_path = memory_root / "dream" / "preferences.md"
+        dreamed = "---\ntitle: Travel preferences\n---\nPrefers aisle seats.\n"
+
+        with make_client(app_root) as client:
+            topic_path.parent.mkdir(parents=True, exist_ok=True)
+            topic_path.write_text(dreamed, encoding="utf-8")
+            portal = client.portal
+            assert portal is not None
+            portal.call(
+                _seed_dream_topic,
+                app_runtime(cast("Starlette", client.app)).dreaming_service.database,
+                "dream/preferences.md",
+                dreamed,
+            )
+
+        topic_path.unlink()
+
+        with make_client(app_root) as client:
+            login(client)
+            response = client.get("/api/memory-topics", params={"q": "seats"})
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        response.json(),
+        [
+            {
+                "body": "Prefers aisle seats.\n",
+                "evidence": [],
+                "path": "dream/preferences.md",
+                "title": "Travel preferences",
+            }
+        ],
+    )
+
+
+@test()
+def unacknowledged_dream_write_survives_restart() -> None:
+    """Startup preserves a completed Dreaming write for acknowledgement retry."""
+    with TemporaryDirectory() as directory:
+        app_root = Path(directory)
+        memory_root = app_root / ".tether" / "memory"
+        topic_path = memory_root / "dream" / "new-topic.md"
+        dreamed = "---\ntitle: Dreamed topic\n---\nCreated by Dreaming.\n"
+
+        with make_client(app_root) as client:
+            topic_path.parent.mkdir(parents=True, exist_ok=True)
+            topic_path.write_text(dreamed, encoding="utf-8")
+            portal = client.portal
+            assert portal is not None
+            portal.call(
+                _record_unacknowledged_dream_topic,
+                app_runtime(cast("Starlette", client.app)).dreaming_service.database,
+                memory_root,
+                topic_path,
+            )
+
+        with make_client(app_root) as client:
+            login(client)
+            response = client.get("/api/memory-topics", params={"q": "dreamed"})
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()[0]["body"], "Created by Dreaming.\n")
+
+
+@test()
+def unacknowledged_dream_deletion_survives_restart() -> None:
+    """Startup preserves a completed Dreaming deletion for acknowledgement retry."""
+    with TemporaryDirectory() as directory:
+        app_root = Path(directory)
+        memory_root = app_root / ".tether" / "memory"
+        topic_path = memory_root / "dream" / "old-topic.md"
+        dreamed = "---\ntitle: Old topic\n---\nRemove through Dreaming.\n"
+
+        with make_client(app_root) as client:
+            topic_path.parent.mkdir(parents=True, exist_ok=True)
+            topic_path.write_text(dreamed, encoding="utf-8")
+            portal = client.portal
+            assert portal is not None
+            database = app_runtime(
+                cast("Starlette", client.app)
+            ).dreaming_service.database
+            portal.call(
+                _seed_dream_topic,
+                database,
+                "dream/old-topic.md",
+                dreamed,
+            )
+            topic_path.unlink()
+            portal.call(
+                _record_unacknowledged_dream_deletion,
+                database,
+                memory_root,
+                topic_path,
+            )
+
+        with make_client(app_root) as client:
+            login(client)
+            response = client.get("/api/memory-topics", params={"q": "old"})
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json(), [])
 
 
 @test()
 def get_workspace_diagnostics_reports_malformed_files() -> None:
-    """`GET /api/memories/workspace-diagnostics` exposes scan failures."""
+    """`GET /api/memory-topics/diagnostics` exposes scan failures."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         root = Path(directory) / ".tether" / "memory"
         root.mkdir(parents=True, exist_ok=True)
         (root / "bad.md").write_text("plain text no frontmatter\n", encoding="utf-8")
 
         login(client)
-        response = client.get("/api/memories/workspace-diagnostics")
+        response = client.get("/api/memory-topics/diagnostics")
 
     assert_eq(response.status_code, 200)
     payload = response.json()
@@ -84,23 +343,21 @@ def get_memory_topics_searches_canonical_workspace() -> None:
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         root = Path(directory) / ".tether" / "memory"
         root.mkdir(parents=True, exist_ok=True)
-        (root / "gaming.md").write_text(
-            "\n".join(
-                (
-                    "---",
-                    "title: Gaming preferences",
-                    "evidence:",
-                    "  - tether://message/019f0000-0000-7000-8000-000000000001",
-                    "---",
-                    "Uses a controller for almost all games.",
-                )
-            ),
-            encoding="utf-8",
+        gaming = "\n".join(
+            (
+                "---",
+                "title: Gaming preferences",
+                "evidence:",
+                "  - tether://message/019f0000-0000-7000-8000-000000000001",
+                "---",
+                "Uses a controller for almost all games.",
+            )
         )
-        (root / "travel.md").write_text(
-            "---\ntitle: Travel\n---\nPrefers aisle seats.\n",
-            encoding="utf-8",
-        )
+        travel = "---\ntitle: Travel\n---\nPrefers aisle seats.\n"
+        (root / "gaming.md").write_text(gaming, encoding="utf-8")
+        (root / "travel.md").write_text(travel, encoding="utf-8")
+        _record_dreamed_topic(client, "gaming.md", gaming)
+        _record_dreamed_topic(client, "travel.md", travel)
 
         login(client)
         response = client.get("/api/memory-topics", params={"q": "controller"})
@@ -125,14 +382,12 @@ def internal_memory_context_resurfaces_relevant_topics() -> None:
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         root = Path(directory) / ".tether" / "memory"
         root.mkdir(parents=True, exist_ok=True)
-        (root / "gaming.md").write_text(
-            "---\ntitle: Gaming preferences\n---\nLikes Roboquest.\n",
-            encoding="utf-8",
-        )
-        (root / "travel.md").write_text(
-            "---\ntitle: Travel\n---\nPrefers aisle seats.\n",
-            encoding="utf-8",
-        )
+        gaming = "---\ntitle: Gaming preferences\n---\nLikes Roboquest.\n"
+        travel = "---\ntitle: Travel\n---\nPrefers aisle seats.\n"
+        (root / "gaming.md").write_text(gaming, encoding="utf-8")
+        (root / "travel.md").write_text(travel, encoding="utf-8")
+        _record_dreamed_topic(client, "gaming.md", gaming)
+        _record_dreamed_topic(client, "travel.md", travel)
 
         response = client.post(
             "/internal/memory-context",
@@ -148,316 +403,6 @@ def internal_memory_context_resurfaces_relevant_topics() -> None:
 
 
 @test()
-def patch_memories_edits_content_and_keeps_version_checks() -> None:
-    """`PATCH /api/memories/{id}` edits `content` at the observed version."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = rest_capture(client, "I live in Berlin")
-        response = client.patch(
-            f"/api/memories/{memory['id']}",
-            json={"content": "  I live in Munich  ", "version": memory["version"]},
-        )
-
-    assert_eq(response.status_code, 200)
-    assert_eq(response.json()["content"], "I live in Munich")
-    assert_eq(response.json()["version"], 2)
-
-
-@test()
-def delete_memories_soft_deletes_and_removes_from_search() -> None:
-    """`DELETE /api/memories/{id}` uses the version query param and hides Memory."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = rest_capture(client, "needle deleted memory")
-        tether_response = client.post(
-            f"/api/memories/{memory['id']}/tether",
-            json={"version": memory["version"]},
-        )
-        tethered = tether_response.json()
-
-        delete_response = client.delete(
-            f"/api/memories/{memory['id']}",
-            params={"version": tethered["version"]},
-        )
-        search_response = client.get("/api/memories/search", params={"q": "needle"})
-
-    assert_eq(delete_response.status_code, 200)
-    assert_eq(search_response.json(), [])
-
-
-@test()
-def rest_tethering_an_absent_memory_is_404() -> None:
-    """REST absence surfaces as a 404 with the domain's fixed detail."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        login(client)
-        response = client.post(
-            "/api/memories/018f0000-0000-7000-8000-000000000000/tether",
-            json={"version": 1},
-        )
-
-    assert_eq(response.status_code, 404)
-    assert_eq(response.json(), {"detail": "memory not found"})
-
-
-@test()
-def rest_re_tethering_is_a_409_conflict() -> None:
-    """The same domain conflict that envelopes as `conflict` is a REST 409."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = rest_capture(client, "I prefer window seats")
-        first = client.post(
-            f"/api/memories/{memory['id']}/tether",
-            json={"version": memory["version"]},
-        )
-        again = client.post(
-            f"/api/memories/{memory['id']}/tether",
-            json={"version": memory["version"]},
-        )
-
-    assert_eq(first.status_code, 200)
-    assert_eq(again.status_code, 409)
-
-
-@test()
-def call_without_secret_is_rejected() -> None:
-    """A call lacking the per-process secret never reaches a tool."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        response = client.post(
-            "/internal/tools/capture",
-            json={"session_id": SESSION, "content": "I prefer aisle seats"},
-        )
-
-    assert_eq(response.status_code, 401)
-
-
-@test()
-def call_with_wrong_secret_is_rejected() -> None:
-    """A mismatched secret is rejected the same as a missing one."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        response = client.post(
-            "/internal/tools/capture",
-            json={"session_id": SESSION, "content": "x"},
-            headers={"X-Tether-Tool-Secret": "wrong"},
-        )
-
-    assert_eq(response.status_code, 401)
-
-
-@test()
-def call_with_unknown_session_is_rejected() -> None:
-    """Identity must resolve to a registered session id."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        response = client.post(
-            "/internal/tools/capture",
-            json={"session_id": "ghost", "content": "x"},
-            headers={"X-Tether-Tool-Secret": "test-process-secret"},
-        )
-
-    assert_eq(response.status_code, 401)
-
-
-@test()
-def capture_returns_a_well_formed_success_envelope() -> None:
-    """A successful capture conforms to the envelope; quota is null internally."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        envelope = call_tool(client, "capture", content="  I prefer aisle seats  ")
-
-    assert_eq(envelope["success"], True)
-    assert_eq(envelope["result"]["content"], "I prefer aisle seats")
-    assert_eq(envelope["result"]["state"], "loose")
-    assert_is_none(envelope["error"])
-    assert_eq(envelope["provenance"], {"kind": "manual"})
-    assert_is_none(envelope["quota"])
-
-
-@test()
-def malformed_input_yields_a_success_false_envelope_without_state() -> None:
-    """Blank content is rejected as a well-formed envelope, capturing nothing."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        envelope = call_tool(client, "capture", content="   ")
-
-        assert_eq(envelope["success"], False)
-        assert_eq(envelope["error"]["code"], "invalid_input")
-        assert_is_none(envelope["result"])
-
-        queue = call_tool(client, "browse", state="loose")
-
-    assert_eq(queue["result"], [])
-
-
-@test()
-def malformed_memory_id_yields_a_success_false_envelope() -> None:
-    """A non-UUID memory id is dumb input, not a destructive action."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        envelope = call_tool(client, "tether", memory_id="not-a-uuid", version=1)
-
-    assert_eq(envelope["success"], False)
-    assert_eq(envelope["error"]["code"], "invalid_input")
-
-
-@test()
-def capture_tether_search_invariant_holds_at_the_tool_seam() -> None:
-    """Loose Memories are unsearchable; tethering makes them searchable."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "needle in the corpus")
-
-        before = call_tool(client, "search", q="needle")
-        assert_eq(before["result"], [])
-
-        tethered = call_tool(
-            client, "tether", memory_id=memory["id"], version=memory["version"]
-        )
-        assert_eq(tethered["success"], True)
-        assert_eq(tethered["result"]["state"], "tethered")
-
-        after = call_tool(client, "search", q="needle")
-
-    found = [
-        hit["memory"]["id"] for hit in after["result"] if hit["source"] == "memory"
-    ]
-    assert_in(memory["id"], found)
-    assert_is_none(after["provenance"])
-
-
-@test()
-def append_tool_adds_a_marked_block() -> None:
-    """`append` preserves existing Memory content and marks agent routing."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "Desk mull")
-
-        envelope = call_tool(
-            client,
-            "append",
-            memory_id=memory["id"],
-            content="maybe move the lamp left",
-            version=memory["version"],
-        )
-
-    assert_eq(envelope["success"], True)
-    assert_eq(envelope["result"]["version"], memory["version"] + 1)
-    assert_in("Desk mull", envelope["result"]["content"])
-    assert_in("agent-routed", envelope["result"]["content"])
-    assert_in("maybe move the lamp left", envelope["result"]["content"])
-
-
-@test()
-def edit_tool_rejects_tethered_content_overwrite() -> None:
-    """The agent cannot overwrite trusted human-authored Memory content in place."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "I live in Berlin")
-        tethered = call_tool(
-            client, "tether", memory_id=memory["id"], version=memory["version"]
-        )["result"]
-
-        envelope = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="I live in Munich",
-            version=tethered["version"],
-        )
-
-    assert_eq(envelope["success"], False)
-    assert_eq(envelope["error"]["code"], "conflict")
-
-
-@test()
-def rest_patch_still_edits_tethered_memory() -> None:
-    """A human REST edit is itself the review and can overwrite trusted content."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = rest_capture(client, "I live in Berlin")
-        tethered = client.post(
-            f"/api/memories/{memory['id']}/tether",
-            json={"version": memory["version"]},
-        ).json()
-
-        response = client.patch(
-            f"/api/memories/{memory['id']}",
-            json={"content": "I live in Munich", "version": tethered["version"]},
-        )
-
-    assert_eq(response.status_code, 200)
-    assert_eq(response.json()["content"], "I live in Munich")
-
-
-@test()
-def all_seven_memory_tools_are_invokable() -> None:
-    """capture, browse, search, tether, edit, append, reject reach MemoryService."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "I live in Berlin")
-
-        edited = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="I live in Munich",
-            version=memory["version"],
-        )
-        assert_eq(edited["result"]["content"], "I live in Munich")
-
-        appended = call_tool(
-            client,
-            "append",
-            memory_id=memory["id"],
-            content="also near the river",
-            version=edited["result"]["version"],
-        )
-        assert_in("also near the river", appended["result"]["content"])
-
-        tethered = call_tool(
-            client,
-            "tether",
-            memory_id=memory["id"],
-            version=appended["result"]["version"],
-        )
-        assert_eq(tethered["result"]["state"], "tethered")
-
-        browsed = call_tool(client, "browse", state="tethered")
-        assert_in(memory["id"], [m["id"] for m in browsed["result"]])
-
-        rejected = call_tool(
-            client,
-            "reject",
-            memory_id=memory["id"],
-            version=tethered["result"]["version"],
-        )
-        assert_eq(rejected["success"], True)
-
-        gone = call_tool(client, "search", q="Munich")
-        assert_eq(gone["result"], [])
-
-
-@test()
-def tethering_an_absent_memory_is_a_not_found_envelope() -> None:
-    """A live-but-absent target surfaces as `not_found`, never a crash."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        envelope = call_tool(
-            client,
-            "tether",
-            memory_id="018f0000-0000-7000-8000-000000000000",
-            version=1,
-        )
-
-    assert_eq(envelope["success"], False)
-    assert_eq(envelope["error"]["code"], "not_found")
-
-
-@test()
-def re_tethering_is_a_conflict_envelope() -> None:
-    """Tethering an already-tethered Memory is a domain conflict, enveloped."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "I prefer window seats")
-        first = call_tool(
-            client, "tether", memory_id=memory["id"], version=memory["version"]
-        )
-
-        again = call_tool(
-            client, "tether", memory_id=memory["id"], version=memory["version"]
-        )
-
-    assert_eq(first["success"], True)
-    assert_eq(again["success"], False)
-    assert_eq(again["error"]["code"], "conflict")
-
-
-@test()
 def internal_surface_is_absent_from_the_public_openapi() -> None:
     """The tool surface is not described by the public OpenAPI document."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
@@ -469,155 +414,42 @@ def internal_surface_is_absent_from_the_public_openapi() -> None:
 
 
 @test()
-def capture_tool_persists_supplied_facets() -> None:
-    """`capture(facets=...)` at the tool seam persists the facet set verbatim."""
+def explicit_remember_tool_targets_the_active_conversation() -> None:
+    """Foreground remember/correction intent queues post-turn Dreaming only."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        envelope = call_tool(
-            client,
-            "capture",
-            content="I prefer aisle seats",
-            facets={"topic": "travel"},
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        runtime = app_runtime(cast("Starlette", client.app))
+        _ = runtime.trace_recorder.begin_run(
+            session_id=SESSION,
+            kind="conversation",
+            conversation_id=conversation_id,
         )
+
+        envelope = call_tool(client, "queue_memory_assimilation")
+
+        assert_eq(envelope["success"], True)
+        assert_eq(envelope["result"], {"queued": True})
+        assert_eq(
+            runtime.dreaming_service.consume_immediate_assimilation_request(
+                UUID(conversation_id)
+            ),
+            True,
+        )
+
+
+@test()
+def search_tool_reads_current_dreaming_topics() -> None:
+    """Foreground Search returns current Topics without any mutation surface."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        root = Path(directory) / ".tether" / "memory"
+        root.mkdir(parents=True, exist_ok=True)
+        topic = "---\ntitle: Travel preferences\n---\nPrefers aisle seats.\n"
+        (root / "travel.md").write_text(topic, encoding="utf-8")
+        _record_dreamed_topic(client, "travel.md", topic)
+
+        envelope = call_tool(client, "search", q="aisle")
 
     assert_eq(envelope["success"], True)
-    assert_eq(envelope["result"]["facets"], {"topic": "travel"})
-
-
-@test()
-def edit_tool_facets_round_trip_and_omission_leaves_unchanged() -> None:
-    """`edit(facets=...)` replaces facets; omitting it leaves them unchanged."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "I live in Berlin")
-        first_edit = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="I live in Berlin",
-            version=memory["version"],
-            facets={"topic": "housing"},
-        )
-        second_edit = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="I live in Munich",
-            version=first_edit["result"]["version"],
-        )
-
-    assert_eq(first_edit["result"]["facets"], {"topic": "housing"})
-    assert_eq(second_edit["result"]["facets"], {"topic": "housing"})
-
-
-@test()
-def search_tool_filters_by_facets() -> None:
-    """`search(facets=...)` at the tool seam keeps only exact-matching Memories."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        travel = tool_capture(client, "needle travel note")
-        _ = call_tool(
-            client,
-            "edit",
-            memory_id=travel["id"],
-            content="needle travel note",
-            version=travel["version"],
-            facets={"topic": "travel"},
-        )
-        edited_travel = call_tool(client, "browse", state="loose")["result"][0]
-        tethered_travel = call_tool(
-            client, "tether", memory_id=travel["id"], version=edited_travel["version"]
-        )["result"]
-
-        other = tool_capture(client, "needle shopping note")
-        tethered_other = call_tool(
-            client, "tether", memory_id=other["id"], version=other["version"]
-        )["result"]
-
-        filtered = call_tool(client, "search", q="needle", facets={"topic": "travel"})
-
-    found = [
-        hit["memory"]["id"] for hit in filtered["result"] if hit["source"] == "memory"
-    ]
-    assert_in(tethered_travel["id"], found)
-    assert_not_in(tethered_other["id"], found)
-
-
-@test()
-def facet_overview_tool_reports_counts() -> None:
-    """`facet_overview` reports distinct keys/values and counts through the tool seam."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        _ = call_tool(client, "capture", content="first", facets={"topic": "travel"})
-        _ = call_tool(client, "capture", content="second", facets={"topic": "travel"})
-
-        envelope = call_tool(client, "facet_overview")
-
-    entries = {
-        (entry["key"], entry["value"]): entry["count"] for entry in envelope["result"]
-    }
-    assert_eq(entries[("topic", "travel")], 2)
-
-
-@test()
-def rename_facet_key_tool_renames_across_the_corpus() -> None:
-    """`rename_facet_key` at the tool seam renames the key on every carrier."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "a fact")
-        _ = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="a fact",
-            version=memory["version"],
-            facets={"topik": "travel"},
-        )
-
-        envelope = call_tool(
-            client, "rename_facet_key", old_key="topik", new_key="topic"
-        )
-
-        browsed = call_tool(client, "browse", state="loose")
-
-    assert_eq(envelope["result"], {"changed_count": 1})
-    assert_eq(browsed["result"][0]["facets"], {"topic": "travel"})
-
-
-@test()
-def merge_facet_value_tool_merges_across_the_corpus() -> None:
-    """`merge_facet_value` at the tool seam rewrites the value on every carrier."""
-    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        memory = tool_capture(client, "a fact")
-        _ = call_tool(
-            client,
-            "edit",
-            memory_id=memory["id"],
-            content="a fact",
-            version=memory["version"],
-            facets={"topic": "travle"},
-        )
-
-        envelope = call_tool(
-            client,
-            "merge_facet_value",
-            key="topic",
-            old_value="travle",
-            new_value="travel",
-        )
-
-        browsed = call_tool(client, "browse", state="loose")
-
-    assert_eq(envelope["result"], {"changed_count": 1})
-    assert_eq(browsed["result"][0]["facets"], {"topic": "travel"})
-
-
-@test()
-def configured_database_path_persists_between_app_instances() -> None:
-    """A configured SQLite path survives app shutdown and restart."""
-    with TemporaryDirectory() as directory:
-        root = Path(directory)
-        with make_client(root) as client:
-            memory = rest_capture(client, "I prefer aisle seats")
-        with make_client(root) as client:
-            login(client)
-            response = client.get("/api/memories", params={"state": "loose"})
-
-        found = [memory["id"] for memory in response.json()]
-        assert_in(memory["id"], found)
-        assert_eq((root / "tether.sqlite3").exists(), True)
+    assert_eq(envelope["result"][0]["path"], "travel.md")
+    assert_eq(envelope["result"][0]["body"], "Prefers aisle seats.\n")

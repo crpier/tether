@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from re import findall
+from typing import Protocol
 
-from tether.memory_projection import memory_projection_root
 from tether.memory_workspace import (
     MemoryWorkspace,
     MemoryWorkspaceDiagnostic,
@@ -18,6 +18,12 @@ _SEARCH_STOP_WORDS = frozenset(
     {"a", "an", "and", "have", "i", "in", "is", "of", "the", "what"}
 )
 _SEARCH_SUFFIXES = ("ing", "ed", "es", "s")
+
+
+class MemoryWorkspaceReconciler(Protocol):
+    """Repair workspace bytes against authorized Dreaming mutations."""
+
+    async def reconcile_workspace(self, *, logger: Logger) -> object: ...
 
 
 def _search_terms(text: str) -> set[str]:
@@ -38,16 +44,21 @@ def _search_terms(text: str) -> set[str]:
 def memory_workspace_root(kb_root: str | Path) -> Path:
     """Return the canonical workspace directory under a knowledge-base root."""
 
-    return memory_projection_root(kb_root)
+    return Path(kb_root) / "memory"
 
 
 class MemoryWorkspaceService:
     """Expose Memory workspace scanning as a typed service boundary."""
 
-    def __init__(self, kb_root: str | Path) -> None:
-        self.kb_root = Path(kb_root)
-        self.workspace_root = memory_workspace_root(self.kb_root)
-        self.workspace = MemoryWorkspace(self.workspace_root)
+    def __init__(
+        self,
+        kb_root: str | Path,
+        reconciler: MemoryWorkspaceReconciler,
+    ) -> None:
+        self.kb_root: Path = Path(kb_root)
+        self.reconciler: MemoryWorkspaceReconciler = reconciler
+        self.workspace_root: Path = memory_workspace_root(self.kb_root)
+        self.workspace: MemoryWorkspace = MemoryWorkspace(self.workspace_root)
 
     async def scan(self, logger: Logger) -> MemoryWorkspaceScanResult:
         """Scan the canonical workspace for valid topics and diagnostics.
@@ -56,6 +67,7 @@ class MemoryWorkspaceService:
         :class:`~tether.memory_workspace.MemoryWorkspace` and logs whether it
         found valid topics so callers can decide how to proceed.
         """
+        _ = await self.reconciler.reconcile_workspace(logger=logger)
         result = await self.workspace.scan()
         if result.diagnostics:
             logger.debug(
@@ -119,6 +131,7 @@ class MemoryWorkspaceService:
 
 __all__ = [
     "MemoryWorkspaceDiagnostic",
+    "MemoryWorkspaceReconciler",
     "MemoryWorkspaceScanResult",
     "MemoryWorkspaceService",
     "MemoryWorkspaceTopic",

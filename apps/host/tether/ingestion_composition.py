@@ -29,7 +29,6 @@ from tether.ingestion_lifecycle import (
     IngestionBootOutcome,
     IngestionLifecycle,
 )
-from tether.memories import MemoryService
 from tether.model_selection import AgentModelCatalog
 from tether.proposals import ProposalService
 from tether.reader import ReaderClient, ReaderSyncService
@@ -281,13 +280,12 @@ def _activate_youtube_transcripts(
     )
 
 
-async def compose_readwise(  # noqa: PLR0913 - composition owns every dependency
+async def compose_readwise(
     *,
     config: AppConfig,
     database: Database,
     ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
-    memory_service: MemoryService,
     resources: contextlib.AsyncExitStack,
 ) -> None:
     """Compose the optional Readwise export adapter into Ingestion lifecycle."""
@@ -301,9 +299,7 @@ async def compose_readwise(  # noqa: PLR0913 - composition owns every dependency
     )
     _ = resources.push_async_callback(transport.aclose)
     client = ReadwiseClient(transport=transport)
-    sync = ReadwiseSyncService(
-        database=database, client=client, memory_service=memory_service
-    )
+    sync = ReadwiseSyncService(database=database, client=client)
 
     async def _boot_readwise() -> IngestionBootOutcome:
         token = await client.verify_token(logger=logger)
@@ -337,13 +333,12 @@ async def compose_readwise(  # noqa: PLR0913 - composition owns every dependency
     )
 
 
-async def compose_reader(  # noqa: PLR0913 - composition owns every dependency
+async def compose_reader(
     *,
     config: AppConfig,
     database: Database,
     ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
-    memory_service: MemoryService,
     resources: contextlib.AsyncExitStack,
 ) -> None:
     """Compose the optional Reader progress adapter into Ingestion lifecycle."""
@@ -357,7 +352,6 @@ async def compose_reader(  # noqa: PLR0913 - composition owns every dependency
     sync = ReaderSyncService(
         database=database,
         client=ReaderClient(transport=transport),
-        memory_service=memory_service,
     )
 
     async def _boot_reader() -> IngestionBootOutcome:
@@ -391,7 +385,6 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
     ingestion_lifecycle: IngestionLifecycle,
     kb_root: Path,
     logger: Logger,
-    memory_service: MemoryService,
     model_catalog: AgentModelCatalog,
     trigger_service: TriggerService,
     todo_service: TodoService,
@@ -422,7 +415,6 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
     sync = GmailSyncService(
         database=database,
         client=client,
-        memory_service=memory_service,
         trigger_service=trigger_service,
         todo_service=todo_service,
         triage_runner=triage_runner,
@@ -561,7 +553,6 @@ class IngestionDependencies:
     ingestion_lifecycle: IngestionLifecycle
     kb_root: Path
     logger: Logger
-    memory_service: MemoryService
     model_catalog: AgentModelCatalog
     proposal_service: ProposalService
     todo_service: TodoService
@@ -592,7 +583,6 @@ async def compose_ingestion(
         database=dependencies.database,
         ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
-        memory_service=dependencies.memory_service,
         resources=resources,
     )
     await compose_reader(
@@ -600,7 +590,6 @@ async def compose_ingestion(
         database=dependencies.database,
         ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
-        memory_service=dependencies.memory_service,
         resources=resources,
     )
     await compose_gmail(
@@ -610,7 +599,6 @@ async def compose_ingestion(
         ingestion_lifecycle=dependencies.ingestion_lifecycle,
         kb_root=dependencies.kb_root,
         logger=dependencies.logger,
-        memory_service=dependencies.memory_service,
         model_catalog=dependencies.model_catalog,
         trigger_service=dependencies.trigger_service,
         todo_service=dependencies.todo_service,

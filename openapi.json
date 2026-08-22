@@ -122,17 +122,12 @@
           "quality": {
             "title": "Quality",
             "type": "integer"
-          },
-          "tethered": {
-            "title": "Tethered",
-            "type": "boolean"
           }
         },
         "required": [
           "correct",
           "quality",
           "completed",
-          "tethered",
           "prompt"
         ],
         "title": "AnswerOutcomeRead",
@@ -460,19 +455,6 @@
           "source"
         ],
         "title": "CacheMeta",
-        "type": "object"
-      },
-      "CaptureRequest": {
-        "description": "Body for capturing a loose Memory.\n\n>>> CaptureRequest(content=\"I prefer aisle seats\").content\n'I prefer aisle seats'",
-        "properties": {
-          "content": {
-            "$ref": "#/components/schemas/MemoryContent"
-          }
-        },
-        "required": [
-          "content"
-        ],
-        "title": "CaptureRequest",
         "type": "object"
       },
       "CompleteDreamRunRequest": {
@@ -1292,7 +1274,7 @@
         "type": "object"
       },
       "EbookDocumentRead": {
-        "description": "HTTP/tool representation of a document Tether has seen progress for.\n\n`finished` collapses the internal `finished_captured_at` stamp to the only\nfact a surface needs \u2014 whether the one finished Memory has been minted.\n\n>>> EbookDocumentRead(document_hash=\"abc\", title=None, finished=False).finished\nFalse",
+        "description": "HTTP/tool representation of a document Tether has seen progress for.\n\n`finished` collapses the internal `finished_at` stamp to the only\nfact a surface needs \u2014 whether the one source completion has been minted.\n\n>>> EbookDocumentRead(document_hash=\"abc\", title=None, finished=False).finished\nFalse",
         "properties": {
           "document_hash": {
             "title": "Document Hash",
@@ -1320,25 +1302,6 @@
           "finished"
         ],
         "title": "EbookDocumentRead",
-        "type": "object"
-      },
-      "EditRequest": {
-        "description": "Body for editing a Memory's content at an observed `version`.\n\n>>> EditRequest(content=\"I prefer window seats\", version=1).version\n1",
-        "properties": {
-          "content": {
-            "$ref": "#/components/schemas/MemoryContent"
-          },
-          "version": {
-            "exclusiveMinimum": 0.0,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "content",
-          "version"
-        ],
-        "title": "EditRequest",
         "type": "object"
       },
       "EssayGradeProposalRead": {
@@ -1619,39 +1582,6 @@
           "repetitions_count"
         ],
         "title": "ExerciseSegment",
-        "type": "object"
-      },
-      "FusedSearchResultRead": {
-        "description": "One fused, source-tagged Search result.\n\nExactly one of `memory` / `bucket_item` is populated, matching `source` \u2014\na discriminated shape so a heterogeneous result list is self-describing\nwithout a second round trip.\n\n>>> read = FusedSearchResultRead.from_hit(hit)\n>>> read.source\n'bucket_item'",
-        "properties": {
-          "bucket_item": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BucketItemRead"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "memory": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/MemoryRead"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "source": {
-            "$ref": "#/components/schemas/SourceType"
-          }
-        },
-        "required": [
-          "source"
-        ],
-        "title": "FusedSearchResultRead",
         "type": "object"
       },
       "GenericRecord": {
@@ -2898,80 +2828,6 @@
         "title": "MatchEbookFilenameRequest",
         "type": "object"
       },
-      "MemoryContent": {
-        "minLength": 1,
-        "type": "string"
-      },
-      "MemoryRead": {
-        "description": "HTTP representation of a Memory, exposing its derived trust `state`.\n\n>>> read = MemoryRead(\n...     content=\"I prefer aisle seats\",\n...     created_at=datetime(2026, 1, 1),\n...     facets={},\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     state=\"loose\",\n...     tethered_at=None,\n...     updated_at=datetime(2026, 1, 1),\n...     version=1,\n... )\n>>> read.state\n'loose'",
-        "properties": {
-          "content": {
-            "title": "Content",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "facets": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Facets",
-            "type": "object"
-          },
-          "id": {
-            "format": "uuid7",
-            "title": "Id",
-            "type": "string"
-          },
-          "state": {
-            "$ref": "#/components/schemas/MemoryState"
-          },
-          "tethered_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tethered At"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "version": {
-            "exclusiveMinimum": 0.0,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "content",
-          "created_at",
-          "facets",
-          "id",
-          "state",
-          "tethered_at",
-          "updated_at",
-          "version"
-        ],
-        "title": "MemoryRead",
-        "type": "object"
-      },
-      "MemoryState": {
-        "enum": [
-          "loose",
-          "tethered"
-        ],
-        "type": "string"
-      },
       "MemoryTopicRead": {
         "description": "One current canonical Topic rendered from its workspace file.",
         "properties": {
@@ -3327,13 +3183,13 @@
         "type": "string"
       },
       "PanelResultsRead": {
-        "description": "One panel execution: the capped rows plus the uncapped match count.",
+        "description": "One panel execution: the capped Topics plus uncapped match count.",
         "properties": {
-          "memories": {
+          "topics": {
             "items": {
-              "$ref": "#/components/schemas/MemoryRead"
+              "$ref": "#/components/schemas/PanelTopicRead"
             },
-            "title": "Memories",
+            "title": "Topics",
             "type": "array"
           },
           "total": {
@@ -3342,10 +3198,48 @@
           }
         },
         "required": [
-          "memories",
+          "topics",
           "total"
         ],
         "title": "PanelResultsRead",
+        "type": "object"
+      },
+      "PanelTopicRead": {
+        "description": "One current Topic selected by a Synthetic panel.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "evidence",
+          "metadata",
+          "path",
+          "title"
+        ],
+        "title": "PanelTopicRead",
         "type": "object"
       },
       "PostArtifactEventRequest": {
@@ -4139,13 +4033,6 @@
         "title": "SleepStage",
         "type": "object"
       },
-      "SourceType": {
-        "enum": [
-          "memory",
-          "bucket_item"
-        ],
-        "type": "string"
-      },
       "StaleItem": {
         "description": "An active item old enough to reconsider, with its decayed intent context.",
         "properties": {
@@ -4337,14 +4224,13 @@
             "title": "Created At",
             "type": "string"
           },
+          "distilled_learnings": {
+            "title": "Distilled Learnings",
+            "type": "string"
+          },
           "id": {
             "format": "uuid7",
             "title": "Id",
-            "type": "string"
-          },
-          "memory_id": {
-            "format": "uuid7",
-            "title": "Memory Id",
             "type": "string"
           },
           "source_title": {
@@ -4366,9 +4252,9 @@
         },
         "required": [
           "id",
-          "memory_id",
           "source_video_id",
           "source_title",
+          "distilled_learnings",
           "state",
           "created_at",
           "updated_at",
@@ -4406,21 +4292,6 @@
           "auth"
         ],
         "title": "SubscribeRequest",
-        "type": "object"
-      },
-      "TetherRequest": {
-        "description": "Body for tethering a Memory at an observed `version`.\n\n>>> TetherRequest(version=1).version\n1",
-        "properties": {
-          "version": {
-            "exclusiveMinimum": 0.0,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "version"
-        ],
-        "title": "TetherRequest",
         "type": "object"
       },
       "TodoRead": {
@@ -6598,328 +6469,11 @@
         "summary": "Revoke Grant"
       }
     },
-    "/api/memories": {
-      "get": {
-        "description": "Filter the review queue (`loose`) or browse the corpus (`tethered`).",
-        "operationId": "browse_memories_api_memories_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "state",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/MemoryState"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MemoryRead"
-                  },
-                  "title": "Response Browse Memories Api Memories Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Browse Memories"
-      },
-      "post": {
-        "description": "Capture a loose Memory.",
-        "operationId": "capture_memory_api_memories_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CaptureRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Capture Memory"
-      }
-    },
-    "/api/memories/search": {
-      "get": {
-        "description": "Keyword Search over tethered Memories.",
-        "operationId": "search_memories_api_memories_search_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "exclusiveMinimum": 0,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "q",
-            "required": true,
-            "schema": {
-              "title": "Q",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MemoryRead"
-                  },
-                  "title": "Response Search Memories Api Memories Search Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Search Memories"
-      }
-    },
-    "/api/memories/workspace-diagnostics": {
-      "get": {
-        "description": "Return current workspace diagnostic findings from the latest scan.",
-        "operationId": "list_workspace_diagnostics_api_memories_workspace_diagnostics_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MemoryWorkspaceDiagnosticRead"
-                  },
-                  "title": "Response List Workspace Diagnostics Api Memories Workspace Diagnostics Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Workspace Diagnostics"
-      }
-    },
-    "/api/memories/{memory_id}": {
-      "delete": {
-        "description": "Soft-delete (reject) a Memory.",
-        "operationId": "reject_memory_api_memories__memory_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "memory_id",
-            "required": true,
-            "schema": {
-              "title": "Memory Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "version",
-            "required": true,
-            "schema": {
-              "exclusiveMinimum": 0,
-              "title": "Version",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Reject Memory"
-      },
-      "patch": {
-        "description": "Edit a Memory's `content`; a human edit keeps trust.",
-        "operationId": "edit_memory_api_memories__memory_id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "memory_id",
-            "required": true,
-            "schema": {
-              "title": "Memory Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EditRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Edit Memory"
-      }
-    },
-    "/api/memories/{memory_id}/tether": {
-      "post": {
-        "description": "Promote a loose Memory to tethered.",
-        "operationId": "tether_memory_api_memories__memory_id__tether_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "memory_id",
-            "required": true,
-            "schema": {
-              "title": "Memory Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TetherRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Tether Memory"
-      }
-    },
     "/api/memory-topics": {
       "get": {
         "description": "Search valid canonical Topic files without stale index dependence.",
         "operationId": "search_memory_topics_api_memory_topics_get",
         "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "exclusiveMinimum": 0,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
           {
             "in": "query",
             "name": "q",
@@ -6928,6 +6482,17 @@
               "default": "",
               "title": "Q",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "title": "Limit",
+              "type": "integer"
             }
           }
         ],
@@ -6958,6 +6523,29 @@
           }
         },
         "summary": "Search Memory Topics"
+      }
+    },
+    "/api/memory-topics/diagnostics": {
+      "get": {
+        "description": "Return workspace diagnostics from current recorded Memory files.",
+        "operationId": "list_workspace_diagnostics_api_memory_topics_diagnostics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryWorkspaceDiagnosticRead"
+                  },
+                  "title": "Response List Workspace Diagnostics Api Memory Topics Diagnostics Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Workspace Diagnostics"
       }
     },
     "/api/models": {
@@ -7812,114 +7400,6 @@
           }
         },
         "summary": "Start Recall"
-      }
-    },
-    "/api/search": {
-      "get": {
-        "description": "Cross-source Search: RRF-fused Memory + Bucket-item arms, source-tagged.",
-        "operationId": "search_fused_api_search_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "exclusiveMinimum": 0,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "q",
-            "required": true,
-            "schema": {
-              "title": "Q",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sources",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "items": {
-                    "$ref": "#/components/schemas/SourceType"
-                  },
-                  "type": "array"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Sources"
-            }
-          },
-          {
-            "in": "query",
-            "name": "after",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "After"
-            }
-          },
-          {
-            "in": "query",
-            "name": "before",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Before"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/FusedSearchResultRead"
-                  },
-                  "title": "Response Search Fused Api Search Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Search Fused"
       }
     },
     "/api/stt/transcriptions": {

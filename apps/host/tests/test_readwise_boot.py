@@ -6,11 +6,8 @@ import asyncio
 import contextlib
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from pathlib import Path
 
 import structlog
-from anyio import TemporaryDirectory
-from opentelemetry import trace
 from snekok import Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
@@ -18,9 +15,6 @@ from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from tether.host_config import AppConfig
 from tether.ingestion_composition import compose_reader, compose_readwise
 from tether.ingestion_lifecycle import IngestionLifecycle
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_store import create_memory_schema
 from tether.readwise_http import ReadwiseNetworkFailure, ReadwiseResponse
 from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger
@@ -91,32 +85,24 @@ class ReadwiseBootEnvironment:
     database: Database
     lifecycle: IngestionLifecycle
     logger: Logger
-    memory_service: MemoryService
     resources: contextlib.AsyncExitStack
 
 
 @fixture
 async def readwise_boot_environment() -> AsyncGenerator[ReadwiseBootEnvironment]:
-    """A database, Memory service, lifecycle, and resource owner."""
+    """A database, lifecycle, and resource owner."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_memory_schema(database)
     await create_readwise_schema(database)
     logger = structlog.stdlib.get_logger("test.readwise_boot")
     lifecycle = IngestionLifecycle(logger)
     resources = contextlib.AsyncExitStack()
     await resources.__aenter__()
-    async with TemporaryDirectory() as kb_root:
-        yield ReadwiseBootEnvironment(
-            database=database,
-            lifecycle=lifecycle,
-            logger=logger,
-            memory_service=MemoryService(
-                database=database,
-                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
-                tracer=trace.NoOpTracerProvider().get_tracer("test.readwise_boot"),
-            ),
-            resources=resources,
-        )
+    yield ReadwiseBootEnvironment(
+        database=database,
+        lifecycle=lifecycle,
+        logger=logger,
+        resources=resources,
+    )
     await lifecycle.stop(grace_seconds=0.1)
     await resources.aclose()
     await database.close()
@@ -132,7 +118,6 @@ async def a_disabled_readwise_gate_is_immediately_ready() -> None:
         database=environment.database,
         ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
-        memory_service=environment.memory_service,
         resources=environment.resources,
     )
 
@@ -154,7 +139,6 @@ async def an_authenticated_readwise_gate_completes_its_boot_sync() -> None:
         database=environment.database,
         ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
-        memory_service=environment.memory_service,
         resources=environment.resources,
     )
 
@@ -181,7 +165,6 @@ async def an_owned_readwise_transport_closes_once() -> None:
         database=environment.database,
         ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
-        memory_service=environment.memory_service,
         resources=environment.resources,
     )
     await asyncio.wait_for(
@@ -209,7 +192,6 @@ async def a_rejected_readwise_token_stops_before_export() -> None:
         database=environment.database,
         ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
-        memory_service=environment.memory_service,
         resources=environment.resources,
     )
 
@@ -236,7 +218,6 @@ async def a_rejected_reader_token_stops_after_the_boot_request() -> None:
         database=environment.database,
         ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
-        memory_service=environment.memory_service,
         resources=environment.resources,
     )
 

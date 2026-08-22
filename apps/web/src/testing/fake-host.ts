@@ -5,7 +5,6 @@ import type {
   DreamRunDetail,
   Grant,
   GrantSuggestion,
-  Memory,
   MemoryTopic,
   Message,
   MemoryWorkspaceDiagnostic,
@@ -61,7 +60,6 @@ export class FakeHost implements WebHost {
     dreamRuns?: DreamRun[];
     grants?: Grant[];
     grantSuggestions?: GrantSuggestion[];
-    memories?: Memory[];
     memoryTopics?: MemoryTopic[];
     memoryWorkspaceDiagnostics?: MemoryWorkspaceDiagnostic[];
     messages?: Message[];
@@ -80,9 +78,8 @@ export class FakeHost implements WebHost {
       options.dreamRunDetails,
       options.dreamNowRuns,
     );
-    this.memories = new FakeMemoriesHost(options.memories);
-    this.memories.storedTopics = options.memoryTopics ?? [];
-    this.memories.storedWorkspaceDiagnostics =
+    this.memories = new FakeMemoriesHost(options.memoryTopics);
+    this.memories.workspaceDiagnostics =
       options.memoryWorkspaceDiagnostics ?? [];
     this.panels = new FakePanelsHost(options.panels, options.panelResults);
     this.proposals = new FakeProposalsHost(options);

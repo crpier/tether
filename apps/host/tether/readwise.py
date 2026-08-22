@@ -1,26 +1,16 @@
-"""Readwise Export ingestion into tethered Memories."""
+"""Readwise Export ingestion into canonical highlight Evidence."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
-from uuid import UUID
 
 from snekok import Err, Ok, Result
 from snekql.sqlite import Database, Fetched, insert, select, update
 
-from tether.memories import (
-    MemoryConflictError,
-    MemoryService,
-)
-from tether.memory_store import (
-    Memory,
-    MemoryProvenance,
-)
 from tether.readwise_http import (
     ReadwiseAuthenticationFailure,
     ReadwiseFailure,
@@ -296,17 +286,11 @@ class ReadwiseClient:
 
 
 class ReadwiseSyncService:
-    """Mirror exported highlights into tethered Memories idempotently."""
+    """Mirror exported highlights into source-owned Evidence idempotently."""
 
-    def __init__(
-        self,
-        database: Database,
-        client: ReadwiseClient,
-        memory_service: MemoryService,
-    ) -> None:
+    def __init__(self, database: Database, client: ReadwiseClient) -> None:
         self.database: Database = database
         self.client: ReadwiseClient = client
-        self.memory_service: MemoryService = memory_service
 
     async def sync(
         self, *, logger: Logger
@@ -383,53 +367,39 @@ class ReadwiseSyncService:
                 return "skipped"
             await self._delete_highlight(mapping, logger=logger)
             return "deleted"
-        return await self._upsert_highlight(book, highlight, mapping, logger=logger)
+        return await self._upsert_highlight(book, highlight, mapping)
 
     async def _upsert_highlight(
         self,
         book: ReadwiseBook,
         highlight: ReadwiseHighlightRecord,
         mapping: ReadwiseHighlight[Fetched] | None,
-        *,
-        logger: Logger,
     ) -> str:
         content = _highlight_content(highlight)
         if not content.strip():
             return "skipped"
         facets = _highlight_facets(book, highlight)
         if mapping is None:
-            await self._create_highlight(highlight, content, facets, logger=logger)
+            await self._create_highlight(highlight, content, facets)
             return "created"
         if not self._is_newer(highlight, mapping):
             return "skipped"
-        edited = await self._edit_highlight(
-            mapping, highlight, content, facets, logger=logger
-        )
-        if not edited:
-            await self._create_highlight(highlight, content, facets, logger=logger)
-            return "created"
+        await self._edit_highlight(mapping, highlight, content, facets)
         return "updated"
 
     async def _create_highlight(
         self,
         highlight: ReadwiseHighlightRecord,
         content: str,
-        facets: dict[str, str],
-        *,
-        logger: Logger,
+        metadata: dict[str, str],
     ) -> None:
-        memory = await self.memory_service.capture_tethered(
-            content,
-            provenance=MemoryProvenance(kind="readwise"),
-            facets=facets,
-            logger=logger,
-        )
         async with self.database.transaction(mode="immediate") as transaction:
             _ = await transaction.execute(
                 insert(
                     ReadwiseHighlight(
                         highlight_id=highlight.highlight_id,
-                        memory_id=str(memory.id),
+                        content=content,
+                        metadata=metadata,
                         updated_at=_isoformat_or_empty(highlight.updated_at),
                     )
                 )
@@ -440,43 +410,25 @@ class ReadwiseSyncService:
         mapping: ReadwiseHighlight[Fetched],
         highlight: ReadwiseHighlightRecord,
         content: str,
-        facets: dict[str, str],
-        *,
-        logger: Logger,
-    ) -> bool:
-        memory = await self._fetch_memory(mapping.memory_id)
-        if memory is None:
-            return False
-        try:
-            _ = await self.memory_service.edit_content(
-                memory, content, facets=facets, logger=logger
-            )
-        except MemoryConflictError:
-            _info(
-                logger,
-                "Readwise highlight edit conflicted; deferring",
-                highlight_id=mapping.highlight_id,
-            )
-            return True
+        metadata: dict[str, str],
+    ) -> None:
         async with self.database.transaction(mode="immediate") as transaction:
             _ = await transaction.execute(
                 update(ReadwiseHighlight)
                 .set(
+                    ReadwiseHighlight.content.to(content),
+                    ReadwiseHighlight.metadata.to(metadata),
                     ReadwiseHighlight.updated_at.to(
                         _isoformat_or_empty(highlight.updated_at)
-                    )
+                    ),
                 )
                 .where(ReadwiseHighlight.highlight_id.eq(mapping.highlight_id))
             )
-        return True
 
     async def _delete_highlight(
         self, mapping: ReadwiseHighlight[Fetched], *, logger: Logger
     ) -> None:
-        memory = await self._fetch_memory(mapping.memory_id)
-        if memory is not None:
-            with contextlib.suppress(MemoryConflictError):
-                _ = await self.memory_service.delete(memory, logger=logger)
+        _ = logger
         async with self.database.transaction(mode="immediate") as transaction:
             connection = transaction.require_connection()
             cursor = await connection.execute(
@@ -493,14 +445,6 @@ class ReadwiseSyncService:
             return False
         stored = _parse_datetime(mapping.updated_at)
         return stored is None or highlight.updated_at > stored
-
-    async def _fetch_memory(self, memory_id: str) -> Memory[Fetched] | None:
-        async with self.database.transaction() as transaction:
-            return await transaction.fetch_one_or_none(
-                select(Memory).where(
-                    Memory.id.eq(UUID(memory_id)), Memory.deleted_at.is_null()
-                )
-            )
 
     async def _fetch_mapping(
         self, highlight_id: int

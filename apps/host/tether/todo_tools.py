@@ -8,9 +8,8 @@ translation (`tether.tools`). The capability executes live in
 each tool's params model and mounts it.
 
 The agent captures a one-off task (`create_todo`), settles it (`set_todo_status`),
-attaches a deadline or context (`link_todo_trigger`, `link_todo_memory`), and
-reads what is on the plate (`list_todos`). The panel only ever transitions
-status; chat authors everything else.
+attaches a deadline (`link_todo_trigger`), and reads what is on the plate
+(`list_todos`). The panel only ever transitions status; chat authors everything else.
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from tether.capabilities import bind_params
 from tether.todo_capabilities import (
     TODO_ERRORS,
     create,
-    link_memory,
     link_trigger,
     list_todos,
     set_status,
@@ -60,13 +58,6 @@ class LinkTodoTriggerParams(BaseModel):
     trigger_id: UUID7
 
 
-class LinkTodoMemoryParams(BaseModel):
-    """Params for linking a Memory's context to a Todo."""
-
-    todo_id: UUID7
-    memory_id: UUID7
-
-
 class ListTodosParams(BaseModel):
     """Params for listing the active Todos, split into ready and waiting.
 
@@ -84,9 +75,6 @@ TODO_TOOL_SPECS: tuple[ToolSpec, ...] = (
         LinkTodoTriggerParams,
         bind_params(link_trigger),
         TODO_ERRORS,
-    ),
-    ToolSpec(
-        "link_todo_memory", LinkTodoMemoryParams, bind_params(link_memory), TODO_ERRORS
     ),
     ToolSpec("list_todos", ListTodosParams, bind_params(list_todos), TODO_ERRORS),
 )

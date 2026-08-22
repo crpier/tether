@@ -26,7 +26,6 @@ from tether.capability_contracts import (
     catchable_exceptions,
     match_rule,
 )
-from tether.memory_store import MemoryProvenance
 
 TOOL_AUTH_HEADER = "X-Tether-Tool-Secret"
 """Header carrying the per-process credential injected into pi at spawn."""
@@ -63,7 +62,7 @@ class ToolEnvelope(BaseModel):
     success: bool
     result: Any = None
     error: ToolError | None = None
-    provenance: MemoryProvenance | BucketItemProvenance | None = None
+    provenance: BucketItemProvenance | None = None
     quota: QuotaMeta | None = None
     cache: CacheMeta | None = None
 

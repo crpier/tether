@@ -20,9 +20,9 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.bucket_item_store import BucketItemProvenance
 from tether.capabilities import bind_params, rest_response, translate_domain_errors
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
-from tether.memory_store import MemoryProvenance
 from tether.tool_runtime import SessionRegistry, ToolEndpoint, ToolRoute
 from tether.youtube import CacheMeta
 from tether.youtube.quota import QuotaMeta
@@ -205,7 +205,7 @@ def tool_success_envelope_carries_the_outcome_metadata() -> None:
     async def handler(_request: Request, _params: PokeParams) -> CapabilityOutcome:
         return CapabilityOutcome(
             result={"id": "t1"},
-            provenance=MemoryProvenance(kind="manual"),
+            provenance=BucketItemProvenance(kind="manual"),
             quota=QuotaMeta(limit=10, used=3, remaining=7),
             cache=CacheMeta(hit=True, source="cache"),
         )

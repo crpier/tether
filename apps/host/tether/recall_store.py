@@ -30,12 +30,12 @@ type StudyItemState = Literal["studying", "completed"]
 
 
 class StudyItem[S = Pending](Model[S, "StudyItem[Fetched]"]):
-    """A loose Memory under Recall, paired with its source."""
+    """Distilled source material progressing through Recall."""
 
     id: StudyItem.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    memory_id: StudyItem.Col[UUID7] = Text()
     source_video_id: StudyItem.Col[str] = Text(unique=True)
     source_title: StudyItem.Col[str] = Text()
+    distilled_learnings: StudyItem.Col[str] = Text()
     state: StudyItem.Col[StudyItemState] = Text()
     created_at: StudyItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     updated_at: StudyItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
@@ -151,6 +151,16 @@ def _recall_migrations() -> dict[str, str]:
     )
     migrations["010_recall_answer_answer_text"] = (
         'ALTER TABLE "recall_answer" ADD COLUMN "answer_text" TEXT'
+    )
+    # Recall now owns its distilled study material and no longer participates in
+    # the removed loose/tethered Memory lifecycle. The cutover is destructive:
+    # old Memory links are discarded rather than translated into current Memory.
+    migrations["017_recall_add_distilled_learnings"] = (
+        'ALTER TABLE "study_item" ADD COLUMN "distilled_learnings" '
+        "TEXT NOT NULL DEFAULT ''"
+    )
+    migrations["018_recall_drop_memory_id"] = (
+        'ALTER TABLE "study_item" DROP COLUMN "memory_id"'
     )
     return migrations
 

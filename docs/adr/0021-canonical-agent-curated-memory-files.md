@@ -8,7 +8,7 @@ Tether's current Memory is the small, current understanding that it carries forw
 
 Each Markdown file has parseable YAML frontmatter with a non-empty `title`. Recognized optional fields include source `evidence` URIs, `context: always`, and `review_after`; unknown fields are preserved, and invalid optional hints are ignored. Evidence references may also appear inline for claim-level precision. These conventions guide the agent without imposing a topic taxonomy or making Claims first-class rows.
 
-SQLite remains canonical for source evidence, Tether Conversations and Messages, user suppressions, dreaming orchestration, and typed verticals. It stores complete historical versions of memory files and rebuildable indexing/reconciliation state, but the current filesystem content and organization win whenever the two disagree. LanceDB and per-turn context are disposable projections of current files. Valid external Markdown edits are therefore authoritative human corrections, while malformed external files are preserved, excluded from retrieval, and surfaced for repair.
+SQLite remains canonical for source Evidence, Tether Conversations and Messages, user suppressions, Dreaming orchestration, complete file history, and typed verticals. Current filesystem content is accepted only when it exactly matches an authorized acknowledged or recoverable Dreaming mutation; recorded Dreaming state repairs every other disagreement. Per-turn context and indexes are disposable projections. External Markdown edits are not corrections; malformed external files are preserved, excluded from retrieval, and surfaced diagnostically.
 
 Dreaming automatically assimilates settled evidence and maintains the workspace; it does not create a Review inbox. Authority is explicit correction or instruction, then explicit user assertion, appropriately scoped verified evidence, repeated implicit patterns, and finally assistant output as context only. Prior memory prose is state to revise, never independent evidence. User controls replace item approval: **Don't remember this** retains source conversation while suppressing and deleting affected memory files; **Delete this everywhere** also purges source material and every derived or historical copy.
 
@@ -20,4 +20,6 @@ This supersedes ADRs 0001 and 0004, ADR 0003 for Memory, ADR 0007, and ADR 0010.
 - Topic quality and organization are prompt-shaped and maintained over time rather than schema-shaped.
 - Exact source records stay durable outside Memory; deleting a topic does not normally delete its evidence.
 - Whole-file deletion is the correction and erasure granularity. A later dream may reconstruct unrelated material from remaining evidence.
-- Obsidian, Neovim, and similar editors can operate directly on canonical files; a built-in editor is not required.
+- Obsidian, Neovim, and similar editors can inspect canonical files; a built-in editor is not required.
+
+ADR 0026 records the sole-writer refinement: human corrections enter through conversational Evidence.

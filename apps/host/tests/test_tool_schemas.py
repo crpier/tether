@@ -34,17 +34,8 @@ def tool_schema_document_describes_the_internal_tools() -> None:
     assert_eq(
         set(tools),
         {
-            "capture",
-            "browse",
             "search",
-            "review_digest",
-            "tether",
-            "edit",
-            "append",
-            "reject",
-            "facet_overview",
-            "rename_facet_key",
-            "merge_facet_value",
+            "queue_memory_assimilation",
             "add_movie",
             "add_place",
             "add_book",
@@ -58,7 +49,6 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "create_todo",
             "set_todo_status",
             "link_todo_trigger",
-            "link_todo_memory",
             "list_todos",
             "triage_report",
             "browse_youtube",
@@ -98,25 +88,33 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "list_proposals",
         },
     )
-    capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
-    browse_schema = cast("dict[str, Any]", tools["browse"]["schema"])
     search_schema = cast("dict[str, Any]", tools["search"]["schema"])
-    tether_schema = cast("dict[str, Any]", tools["tether"]["schema"])
-    append_schema = cast("dict[str, Any]", tools["append"]["schema"])
 
-    assert_eq(tools["capture"]["endpoint"], "/internal/tools/capture")
-    assert_eq(tools["capture"]["params_model"], "CaptureParams")
-    assert_eq(
-        capture_schema["properties"]["content"], {"$ref": "#/$defs/MemoryContent"}
-    )
-    assert_eq(
-        browse_schema["$defs"]["MemoryState"]["enum"],
-        ["loose", "tethered"],
-    )
+    assert_eq(tools["search"]["endpoint"], "/internal/tools/search")
+    assert_eq(tools["search"]["params_model"], "SearchParams")
     assert_eq(search_schema["properties"]["limit"]["default"], 50)
-    assert_in("memory_id", tether_schema["required"])
-    assert_eq(tools["append"]["endpoint"], "/internal/tools/append")
-    assert_in("content", append_schema["required"])
+    assert_eq(search_schema["required"], ["q"])
+
+
+@test()
+def legacy_memory_mutation_and_review_tools_are_absent() -> None:
+    """Dreaming leaves foreground agents only a read-only Memory Search seam."""
+    tools = {tool["name"] for tool in build_tool_schema_document()["tools"]}
+
+    for removed in (
+        "append",
+        "browse",
+        "capture",
+        "edit",
+        "facet_overview",
+        "merge_facet_value",
+        "reject",
+        "rename_facet_key",
+        "review_digest",
+        "tether",
+    ):
+        assert_not_in(removed, tools)
+    assert_in("search", tools)
 
 
 @test()
@@ -135,46 +133,6 @@ def health_connect_query_schema_is_typed_and_bounded() -> None:
     summary_schema = cast("dict[str, Any]", tools["summarize_health_connect"]["schema"])
     assert_eq(summary_schema["required"], ["after", "before"])
     assert_in("overview", cast("str", summary_schema["description"]).lower())
-
-
-@test()
-def bulk_facet_curation_tools_require_prior_chat_approval_by_description() -> None:
-    """`rename_facet_key`/`merge_facet_value` schemas warn the model to ask first.
-
-    These bulk-rewrite every carrying Memory row; the approval gate is a
-    convention enforced by what the model reads in its tool description, not by
-    the host, so the description text is the load-bearing artifact under test.
-    """
-    document = build_tool_schema_document()
-    tools = {tool["name"]: tool for tool in document["tools"]}
-
-    rename_schema = cast("dict[str, Any]", tools["rename_facet_key"]["schema"])
-    merge_schema = cast("dict[str, Any]", tools["merge_facet_value"]["schema"])
-
-    assert_in("approval", cast("str", rename_schema["description"]).lower())
-    assert_in("approval", cast("str", merge_schema["description"]).lower())
-
-
-@test()
-def capture_tool_exposes_an_optional_facets_object() -> None:
-    """The `capture` schema carries an optional `facets` string-map field."""
-    document = build_tool_schema_document()
-    tools = {tool["name"]: tool for tool in document["tools"]}
-    capture_schema = cast("dict[str, Any]", tools["capture"]["schema"])
-
-    assert_not_in_required(capture_schema, "facets")
-    facets_schema = capture_schema["properties"]["facets"]
-    non_null_member = next(
-        member for member in facets_schema["anyOf"] if member.get("type") != "null"
-    )
-    assert_eq(non_null_member["type"], "object")
-    assert_eq(non_null_member["additionalProperties"], {"type": "string"})
-
-
-def assert_not_in_required(schema: dict[str, Any], field: str) -> None:
-    """Assert `field` is present as a property but absent from `required`."""
-    assert_in(field, schema["properties"])
-    assert_not_in(field, schema.get("required", []))
 
 
 @test()

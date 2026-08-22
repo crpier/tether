@@ -85,8 +85,8 @@ def post_voice(client: TestClient, audio: bytes) -> Any:
 
 
 def loose_memory_count(client: TestClient) -> int:
-    """The number of loose memories currently captured."""
-    response = client.get("/api/memories", params={"state": "loose"})
+    """The number of current Topics, for no-direct-Memory checks."""
+    response = client.get("/api/memory-topics")
     assert_eq(response.status_code, 200)
     return len(response.json())
 

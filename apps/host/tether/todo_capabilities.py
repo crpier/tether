@@ -144,20 +144,6 @@ async def link_trigger(
     return _single(todo)
 
 
-async def link_memory(
-    request: Request,
-    todo_id: UUID,
-    memory_id: UUID,
-) -> CapabilityOutcome:
-    """Link a Memory to a Todo so its context travels with the task."""
-    await app_runtime(request.app).todo_service.link_memory(
-        todo_id, memory_id, logger=get_request_logger(request)
-    )
-    return CapabilityOutcome(
-        result={"todo_id": str(todo_id), "memory_id": str(memory_id), "linked": True}
-    )
-
-
 async def list_todos(request: Request) -> CapabilityOutcome:
     """List the active Todos split into ready and waiting."""
     readiness = await app_runtime(request.app).todo_service.readiness(

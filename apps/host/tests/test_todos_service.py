@@ -135,19 +135,6 @@ async def set_status_raises_for_an_absent_todo() -> None:
 
 
 @test()
-async def link_memory_is_idempotent_and_guards_absence() -> None:
-    """Linking the same Memory twice is a no-op; a dangling Todo raises."""
-    env = await load_fixture(todo_env())
-    todo = await env.service.create("follow up", logger=env.logger)
-    memory_id = uuid7()
-    await env.service.link_memory(todo.id, memory_id, logger=env.logger)
-    await env.service.link_memory(todo.id, memory_id, logger=env.logger)
-    assert_eq(await env.service.linked_memory_ids(todo.id), [str(memory_id)])
-    with assert_raises(TodoNotFoundError):
-        await env.service.link_memory(uuid7(), memory_id, logger=env.logger)
-
-
-@test()
 async def a_bare_todo_is_ready() -> None:
     """A Todo with no condition and no trigger is ready now."""
     env = await load_fixture(todo_env())

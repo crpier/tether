@@ -43,7 +43,7 @@ class SyntheticPanel[S = Pending](Model[S, "SyntheticPanel[Fetched]"]):
     query: SyntheticPanel.Col[str | None] = Text(default=None, nullable=True)
     """Optional text query; when present, results ride hybrid Search's ranking."""
     window_days: SyntheticPanel.Col[int | None] = Integer(default=None, nullable=True)
-    """Optional relative window bounding `tethered_at`, resolved at query time."""
+    """Optional relative window bounding recorded Topic updates at query time."""
     columns: SyntheticPanel.Col[Json[list[str]]] = Text(default_factory=list[str])
     """Facet keys shown as table columns beside the Memory content."""
     render_kind: SyntheticPanel.Col[PanelRenderKind] = Text(

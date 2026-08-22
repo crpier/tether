@@ -2,13 +2,17 @@ import { cleanup, screen, waitFor, within } from "@solidjs/testing-library";
 import { fireEvent } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import {
-  FakeHost,
-  memory,
-  navigateTo,
-  panel,
-  renderApp,
-} from "../testing/harness";
+import { FakeHost, navigateTo, panel, renderApp } from "../testing/harness";
+
+function topic(body: string, metadata: Record<string, unknown> = {}) {
+  return {
+    body,
+    evidence: [],
+    metadata,
+    path: `${body.replaceAll(" ", "-")}.md`,
+    title: `Topic: ${body}`,
+  };
+}
 
 afterEach(cleanup);
 
@@ -34,14 +38,7 @@ describe("Synthetic panels", () => {
       authenticated: true,
       panelResults: {
         [finance.id]: {
-          memories: [
-            memory({
-              content: "rent is 900",
-              facets: { domain: "finance", due: "monthly" },
-              state: "tethered",
-              tethered_at: "2026-06-01T00:00:00Z",
-            }),
-          ],
+          topics: [topic("rent is 900", { domain: "finance", due: "monthly" })],
           total: 1,
         },
       },
@@ -68,7 +65,7 @@ describe("Synthetic panels", () => {
 
     const card = await screen.findByLabelText("Panel: travel");
     expect(
-      await within(card).findByText(/No memories match this panel/),
+      await within(card).findByText(/No Memory Topics match this panel/),
     ).toBeInTheDocument();
   });
 
@@ -78,7 +75,7 @@ describe("Synthetic panels", () => {
       authenticated: true,
       panelResults: {
         [broad.id]: {
-          memories: [memory({ content: "one" }), memory({ content: "two" })],
+          topics: [topic("one"), topic("two")],
           total: 5,
         },
       },
@@ -102,7 +99,7 @@ describe("Synthetic panels", () => {
       authenticated: true,
       panelResults: {
         [chart.id]: {
-          memories: [memory({ content: "rent is 900" })],
+          topics: [topic("rent is 900")],
           total: 1,
         },
       },

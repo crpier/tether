@@ -1,12 +1,9 @@
 """Behaviour tests for the Readwise ingestion gate.
 
 These drive `ReadwiseClient` and `ReadwiseSyncService` against a real in-memory
-SQLite database and a real `MemoryService`, mocking only the HTTP boundary with a
-scripted `FakeReadwiseTransport` — never a live Readwise call. They assert the
-mapping between an export payload and the Commons: one machine-synced Memory per
-highlight, content/facets shaping, the create/edit/delete state machine over the
-`readwise_highlight` idempotency table, the full-then-incremental export request
-shape, and the persisted watermark.
+SQLite database, mocking only the HTTP boundary with a scripted transport. They
+assert canonical highlight content/metadata, create/edit/delete convergence,
+full-then-incremental request shape, and the persisted watermark.
 """
 
 from __future__ import annotations
@@ -14,14 +11,10 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import structlog
-from anyio import TemporaryDirectory
-from opentelemetry import trace
-from opentelemetry.trace import Tracer
 from snekok import Err, Ok, Result
-from snekql.sqlite import Config, Database, Fetched
+from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,
     assert_false,
@@ -33,13 +26,6 @@ from snektest import (
     test,
 )
 
-from tether.memories import MemoryService
-from tether.memory_projection import KnowledgeBaseService
-from tether.memory_store import (
-    Memory,
-    create_memory_schema,
-    tethered_corpus,
-)
 from tether.readwise import ReadwiseClient, ReadwiseSyncService
 from tether.readwise_http import (
     ReadwiseAuthenticationFailure,
@@ -49,13 +35,8 @@ from tether.readwise_http import (
     ReadwiseRateLimitFailure,
     ReadwiseResponse,
 )
-from tether.readwise_store import create_readwise_schema
+from tether.readwise_store import ReadwiseHighlight, create_readwise_schema
 from tether.structured_logging import Logger
-
-
-def noop_tracer() -> Tracer:
-    """A tracer that emits nowhere."""
-    return trace.NoOpTracerProvider().get_tracer("test.readwise")
 
 
 def test_logger() -> Logger:
@@ -177,10 +158,9 @@ def export_response(
 
 @dataclass
 class ReadwiseEnv:
-    """A Readwise-ready database plus a live `MemoryService` over a temp KB."""
+    """A Readwise-ready canonical source store."""
 
     database: Database
-    memory_service: MemoryService
     logger: Logger
 
     def sync_service(self, transport: FakeReadwiseTransport) -> ReadwiseSyncService:
@@ -188,31 +168,24 @@ class ReadwiseEnv:
         return ReadwiseSyncService(
             database=self.database,
             client=ReadwiseClient(transport=transport, sleep=_noop_sleep),
-            memory_service=self.memory_service,
         )
 
-    async def tethered_memories(self) -> list[Memory[Fetched]]:
-        """The current tethered corpus, for content/facet assertions."""
+    async def highlights(self) -> list[ReadwiseHighlight[Fetched]]:
+        """Return canonical highlight Evidence ordered by upstream identity."""
         async with self.database.transaction() as transaction:
-            return await transaction.fetch_all(tethered_corpus())
+            return await transaction.fetch_all(
+                select(ReadwiseHighlight)
+                .all()
+                .order_by(ReadwiseHighlight.highlight_id.asc())
+            )
 
 
 @fixture
 async def readwise_env() -> AsyncGenerator[ReadwiseEnv]:
-    """A fresh database with the Memory + Readwise schema and a live KB dir."""
+    """A fresh database with the Readwise Evidence schema."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_memory_schema(db)
     await create_readwise_schema(db)
-    async with TemporaryDirectory() as kb_root:
-        yield ReadwiseEnv(
-            database=db,
-            memory_service=MemoryService(
-                database=db,
-                kb_service=KnowledgeBaseService(kb_root=Path(kb_root)),
-                tracer=noop_tracer(),
-            ),
-            logger=test_logger(),
-        )
+    yield ReadwiseEnv(database=db, logger=test_logger())
     await db.close()
 
 
@@ -420,7 +393,7 @@ async def a_failed_sync_returns_the_provider_failure() -> None:
 
 
 @test()
-async def first_sync_creates_one_memory_per_highlight() -> None:
+async def first_sync_persists_one_evidence_row_per_highlight() -> None:
     """A full backfill mirrors each highlight into its own tethered Memory."""
     env = await load_fixture(readwise_env())
     transport = FakeReadwiseTransport(
@@ -439,7 +412,7 @@ async def first_sync_creates_one_memory_per_highlight() -> None:
 
     assert isinstance(report, Ok)
     assert_eq(report.value.created, 2)
-    assert_eq(len(await env.tethered_memories()), 2)
+    assert_eq(len(await env.highlights()), 2)
 
 
 @test()
@@ -470,7 +443,7 @@ async def a_note_is_appended_as_a_trailing_paragraph() -> None:
 
     _ = await env.sync_service(transport).sync(logger=env.logger)
 
-    memory = (await env.tethered_memories())[0]
+    memory = (await env.highlights())[0]
     assert_eq(memory.content, "passage\n\nNote: my thought")
 
 
@@ -495,9 +468,9 @@ async def book_and_tag_fields_map_to_facets() -> None:
 
     _ = await env.sync_service(transport).sync(logger=env.logger)
 
-    memory = (await env.tethered_memories())[0]
+    memory = (await env.highlights())[0]
     assert_eq(
-        memory.facets,
+        memory.metadata,
         {
             "source": "readwise",
             "title": "Deep Work",
@@ -529,8 +502,8 @@ async def empty_book_fields_are_omitted_from_facets() -> None:
 
     _ = await env.sync_service(transport).sync(logger=env.logger)
 
-    memory = (await env.tethered_memories())[0]
-    assert_eq(memory.facets, {"source": "readwise", "title": "Solo"})
+    memory = (await env.highlights())[0]
+    assert_eq(memory.metadata, {"source": "readwise", "title": "Solo"})
 
 
 @test()
@@ -549,11 +522,11 @@ async def a_discarded_highlight_is_not_ingested() -> None:
 
     assert isinstance(report, Ok)
     assert_eq(report.value.created, 0)
-    assert_eq(await env.tethered_memories(), [])
+    assert_eq(await env.highlights(), [])
 
 
 @test()
-async def synced_memory_carries_readwise_provenance() -> None:
+async def highlight_metadata_carries_readwise_source() -> None:
     """Every ingested highlight lands with machine-synced Readwise provenance."""
     env = await load_fixture(readwise_env())
     transport = FakeReadwiseTransport(
@@ -562,8 +535,8 @@ async def synced_memory_carries_readwise_provenance() -> None:
 
     _ = await env.sync_service(transport).sync(logger=env.logger)
 
-    memory = (await env.tethered_memories())[0]
-    assert_eq(memory.provenance, {"kind": "readwise"})
+    memory = (await env.highlights())[0]
+    assert_eq(memory.metadata["source"], "readwise")
 
 
 @test()
@@ -586,7 +559,7 @@ async def a_successful_pass_persists_the_watermark() -> None:
 
 
 @test()
-async def an_edited_highlight_updates_the_memory_in_place() -> None:
+async def an_edited_highlight_updates_evidence_in_place() -> None:
     """A newer `updated_at` rewrites the mapped Memory rather than duplicating it."""
     env = await load_fixture(readwise_env())
     transport = FakeReadwiseTransport(
@@ -620,7 +593,7 @@ async def an_edited_highlight_updates_the_memory_in_place() -> None:
     _ = await service.sync(logger=env.logger)
     report = await service.sync(logger=env.logger)
 
-    memories = await env.tethered_memories()
+    memories = await env.highlights()
     assert isinstance(report, Ok)
     assert_eq(report.value.updated, 1)
     assert_eq([memory.content for memory in memories], ["after"])
@@ -641,14 +614,14 @@ async def an_unchanged_highlight_is_skipped_on_reexport() -> None:
     _ = await service.sync(logger=env.logger)
     report = await service.sync(logger=env.logger)
 
-    memory = (await env.tethered_memories())[0]
+    memory = (await env.highlights())[0]
     assert isinstance(report, Ok)
     assert_eq(report.value.skipped, 1)
-    assert_eq(memory.version, 1)
+    assert_eq(memory.updated_at, "2026-01-01T00:00:00+00:00")
 
 
 @test()
-async def a_deleted_highlight_removes_the_memory() -> None:
+async def a_deleted_highlight_removes_evidence() -> None:
     """An incremental `is_deleted` soft-deletes the Memory the highlight produced."""
     env = await load_fixture(readwise_env())
     transport = FakeReadwiseTransport(
@@ -677,7 +650,7 @@ async def a_deleted_highlight_removes_the_memory() -> None:
 
     assert isinstance(report, Ok)
     assert_eq(report.value.deleted, 1)
-    assert_eq(await env.tethered_memories(), [])
+    assert_eq(await env.highlights(), [])
 
 
 @test()
@@ -710,4 +683,4 @@ async def discarding_a_previously_ingested_highlight_removes_it() -> None:
 
     assert isinstance(report, Ok)
     assert_eq(report.value.deleted, 1)
-    assert_eq(await env.tethered_memories(), [])
+    assert_eq(await env.highlights(), [])

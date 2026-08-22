@@ -26,14 +26,8 @@ from tether.gmail.triage import (
     GmailVerdict,
     build_gmail_triage_prompt,
     gmail_deadline_fire_at,
-    gmail_message_excerpt,
     gmail_trigger_message,
     parse_gmail_verdicts,
-)
-from tether.memories import MemoryService
-from tether.memory_store import (
-    Memory,
-    MemoryProvenance,
 )
 from tether.structured_logging import Logger
 from tether.todos import TodoService
@@ -107,13 +101,12 @@ def _chunk(items: Sequence[GmailMessage], size: int) -> list[list[GmailMessage]]
 
 
 class GmailSyncService:
-    """Synchronize Gmail messages into Memories, Todos, and triggers."""
+    """Synchronize Gmail Evidence and derive Todos and triggers."""
 
     def __init__(  # noqa: PLR0913 - each argument is an independent collaborator
         self,
         database: Database,
         client: GmailClient,
-        memory_service: MemoryService,
         trigger_service: TriggerService,
         todo_service: TodoService,
         triage_runner: GmailTriageRunner,
@@ -123,7 +116,6 @@ class GmailSyncService:
     ) -> None:
         self.client: GmailClient = client
         self.database: Database = database
-        self.memory_service: MemoryService = memory_service
         self.todo_service: TodoService = todo_service
         self.triage_batch_size: int = triage_batch_size
         self.triage_runner: GmailTriageRunner = triage_runner
@@ -272,13 +264,16 @@ class GmailSyncService:
         now: datetime,
         logger: Logger,
     ) -> str:
-        """Persist one verdict while preventing duplicate captured Memories."""
+        """Persist one verdict and any typed Todo or trigger derivations."""
         classification = "interesting" if force_interesting else verdict.classification
         if classification == "noise":
             await self._record_status(message, status="noise")
             return "noise"
-        memory = await self._capture_memory(message, verdict, logger=logger)
-        await self._record_status(message, status="ingested", memory_id=str(memory.id))
+        await self._record_status(
+            message,
+            status="ingested",
+            verdict_reason=verdict.why,
+        )
         trigger_id: UUID7 | None = None
         if verdict.deadline is not None and verdict.deadline.at > now:
             trigger_id = await self._create_deadline_trigger(
@@ -287,35 +282,16 @@ class GmailSyncService:
             await self._record_status(
                 message,
                 status="ingested",
-                memory_id=str(memory.id),
                 trigger_id=str(trigger_id),
+                verdict_reason=verdict.why,
             )
         if verdict.actionable:
             todo = await self.todo_service.create(message.subject, logger=logger)
-            await self.todo_service.link_memory(todo.id, memory.id, logger=logger)
             if trigger_id is not None:
                 _ = await self.todo_service.link_trigger(
                     todo, str(trigger_id), logger=logger
                 )
         return "ingested"
-
-    async def _capture_memory(
-        self, message: GmailMessage, verdict: GmailVerdict, *, logger: Logger
-    ) -> Memory[Fetched]:
-        facets: dict[str, str] = {
-            "source": "gmail",
-            "sender": message.from_header,
-            "subject": message.subject,
-            "date": message.internal_date.isoformat(),
-        }
-        if verdict.deadline is not None:
-            facets["deadline"] = verdict.deadline.at.isoformat()
-        return await self.memory_service.capture_tethered(
-            f"{verdict.why}\n\n{gmail_message_excerpt(message.body_text)}",
-            provenance=MemoryProvenance(kind="gmail"),
-            facets=facets,
-            logger=logger,
-        )
 
     async def _create_deadline_trigger(
         self,
@@ -362,8 +338,8 @@ class GmailSyncService:
         message: GmailMessage,
         *,
         status: GmailMessageStatus,
-        memory_id: str | None = None,
         trigger_id: str | None = None,
+        verdict_reason: str = "",
     ) -> None:
         """Insert or update one message's idempotency state."""
 
@@ -378,10 +354,13 @@ class GmailSyncService:
                     insert(
                         GmailMessageRecord(
                             internal_date=message.internal_date.isoformat(),
-                            memory_id=memory_id,
+                            from_header=message.from_header,
+                            subject=message.subject,
+                            body_text=message.body_text,
                             message_id=message.message_id,
                             status=status,
                             trigger_id=trigger_id,
+                            verdict_reason=verdict_reason,
                         )
                     )
                 )
@@ -389,9 +368,12 @@ class GmailSyncService:
             _ = await transaction.execute(
                 update(GmailMessageRecord)
                 .set(
-                    GmailMessageRecord.memory_id.to(memory_id),
+                    GmailMessageRecord.from_header.to(message.from_header),
+                    GmailMessageRecord.subject.to(message.subject),
+                    GmailMessageRecord.body_text.to(message.body_text),
                     GmailMessageRecord.status.to(status),
                     GmailMessageRecord.trigger_id.to(trigger_id),
+                    GmailMessageRecord.verdict_reason.to(verdict_reason),
                 )
                 .where(GmailMessageRecord.message_id.eq(message.message_id))
             )

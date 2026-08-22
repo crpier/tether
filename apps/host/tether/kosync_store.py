@@ -41,13 +41,11 @@ class EbookProgressEvent[S = Pending](Model[S, "EbookProgressEvent[Fetched]"]):
 
 
 class EbookDocument[S = Pending](Model[S, "EbookDocument[Fetched]"]):
-    """A KOReader document identity and its finished-Memory guard."""
+    """A reading-source document identity and completion state."""
 
     document_hash: EbookDocument.Col[str] = Text(primary_key=True)
     title: EbookDocument.Col[str | None] = Text(default=None, nullable=True)
-    finished_captured_at: EbookDocument.Col[str | None] = Text(
-        default=None, nullable=True
-    )
+    finished_at: EbookDocument.Col[str | None] = Text(default=None, nullable=True)
     created_at: EbookDocument.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     updated_at: EbookDocument.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
@@ -147,11 +145,11 @@ class KosyncStore:
             )
 
     async def stamp_finished(self, document_hash: str) -> None:
-        """Record that the document's finished Memory was captured."""
+        """Record the source document's first observed completion."""
         async with self.database.transaction(mode="immediate") as transaction:
             _ = await transaction.execute(
                 update(EbookDocument)
-                .set(EbookDocument.finished_captured_at.to(CurrentTimestamp))
+                .set(EbookDocument.finished_at.to(CurrentTimestamp))
                 .where(EbookDocument.document_hash.eq(document_hash))
             )
 
@@ -185,6 +183,10 @@ _KOSYNC_MIGRATIONS: dict[str, str] = {
         "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
         "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
         ") STRICT"
+    ),
+    "028_rename_ebook_finished_at": (
+        'ALTER TABLE "ebook_document" RENAME COLUMN '
+        '"finished_captured_at" TO "finished_at"'
     ),
 }
 

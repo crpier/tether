@@ -30,8 +30,8 @@ absent and no conflict lifecycle exists. Malformed params are rejected as
 class EbookDocumentRead(BaseModel):
     """HTTP/tool representation of a document Tether has seen progress for.
 
-    `finished` collapses the internal `finished_captured_at` stamp to the only
-    fact a surface needs — whether the one finished Memory has been minted.
+    `finished` collapses the internal `finished_at` stamp to the only
+    fact a surface needs — whether the one source completion has been minted.
 
     >>> EbookDocumentRead(document_hash="abc", title=None, finished=False).finished
     False
@@ -47,7 +47,7 @@ class EbookDocumentRead(BaseModel):
         return cls(
             document_hash=document.document_hash,
             title=document.title,
-            finished=document.finished_captured_at is not None,
+            finished=document.finished_at is not None,
         )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
+from pydantic import Json
 from snekql.sqlite import (
     Database,
     Fetched,
@@ -28,10 +29,13 @@ type ReadwiseSyncKey = Literal["highlights_export_watermark", "reader_list_water
 
 
 class ReadwiseHighlight[S = Pending](Model[S, "ReadwiseHighlight[Fetched]"]):
-    """A Readwise highlight id mapped to its captured Memory."""
+    """Canonical Readwise highlight Evidence retained for Dreaming."""
 
     highlight_id: ReadwiseHighlight.Col[int] = Integer(primary_key=True)
-    memory_id: ReadwiseHighlight.Col[str] = Text(nullable=False)
+    content: ReadwiseHighlight.Col[str] = Text(nullable=False)
+    metadata: ReadwiseHighlight.Col[Json[dict[str, str]]] = Text(
+        default_factory=dict[str, str]
+    )
     updated_at: ReadwiseHighlight.Col[str] = Text(nullable=False)
 
 
@@ -101,6 +105,24 @@ _READWISE_MIGRATIONS: dict[str, str] = {
         'CREATE TABLE "readwise_sync_state" ('
         '"key" TEXT PRIMARY KEY NOT NULL, "value" TEXT NOT NULL'
         ") STRICT"
+    ),
+    # The #507 cutover keeps highlights as source-owned Evidence instead of
+    # mappings to removed loose/tethered Memory rows. Existing mappings contain
+    # no source bytes and are intentionally discarded.
+    "019_drop_readwise_memory_mapping": 'DROP TABLE "readwise_highlight"',
+    "020_create_readwise_evidence": (
+        'CREATE TABLE "readwise_highlight" ('
+        '"highlight_id" INTEGER PRIMARY KEY NOT NULL, '
+        '"content" TEXT NOT NULL, '
+        "\"metadata\" TEXT NOT NULL DEFAULT '{}', "
+        '"updated_at" TEXT NOT NULL'
+        ") STRICT"
+    ),
+    # Existing mappings had no source bytes. Force one full export so the new
+    # Evidence table is repopulated instead of resuming past every old highlight.
+    "029_reset_readwise_highlight_watermark": (
+        'DELETE FROM "readwise_sync_state" '
+        "WHERE \"key\" = 'highlights_export_watermark'"
     ),
 }
 

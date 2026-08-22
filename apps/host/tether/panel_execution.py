@@ -1,4 +1,4 @@
-"""Read-only execution of saved Synthetic panels against the live corpus."""
+"""Read-only execution of saved Synthetic panels against current Memory Topics."""
 
 from __future__ import annotations
 
@@ -8,23 +8,21 @@ from typing import Protocol
 
 from opentelemetry.trace import Tracer
 from pydantic import PositiveInt
-from snekql.sqlite import Database, Fetched
+from snekql.sqlite import Database, Fetched, select
 
-from tether.memory_search import MemorySearchService
-from tether.memory_store import Memory, tethered_corpus
+from tether.dreaming_store import DreamingWorkspaceFile
+from tether.memory_workspace import MemoryWorkspaceTopic
+from tether.memory_workspace_service import MemoryWorkspaceService
 from tether.panel_model import EXECUTE_DEFAULT_LIMIT
 from tether.panel_store import SyntheticPanel
 from tether.structured_logging import Logger
 
-_SEARCH_CANDIDATE_LIMIT = 200
-"""Candidate bound before panel facet and window post-filtering."""
-
 
 @dataclass(frozen=True)
 class PanelResults:
-    """One execution of a panel: capped rows plus the uncapped match count."""
+    """One execution of a panel: capped Topics plus the uncapped match count."""
 
-    memories: list[Memory[Fetched]]
+    topics: list[MemoryWorkspaceTopic]
     total: int
 
 
@@ -39,18 +37,21 @@ class PanelExecutionPort(Protocol):
         limit: PositiveInt = EXECUTE_DEFAULT_LIMIT,
         logger: Logger,
     ) -> PanelResults:
-        """Recompute a panel against the trusted corpus."""
+        """Recompute a panel against current Memory."""
         ...
 
 
 class PanelExecutor:
-    """Recompute saved panel queries through canonical Memory Search."""
+    """Recompute saved panel queries over Dreaming-maintained Topics."""
 
     def __init__(
-        self, database: Database, memory_search: MemorySearchService, tracer: Tracer
+        self,
+        database: Database,
+        workspace_service: MemoryWorkspaceService,
+        tracer: Tracer,
     ) -> None:
         self.database: Database = database
-        self.memory_search: MemorySearchService = memory_search
+        self.workspace_service: MemoryWorkspaceService = workspace_service
         self.tracer: Tracer = tracer
 
     async def execute(
@@ -61,12 +62,7 @@ class PanelExecutor:
         limit: PositiveInt = EXECUTE_DEFAULT_LIMIT,
         logger: Logger,
     ) -> PanelResults:
-        """Run a panel's saved query against the trusted corpus, capped.
-
-        The relative window resolves against the caller's `now` on every call.
-        Text queries retain hybrid Search ranking; facets-only panels use
-        recency-of-trust order. SQLite hydration remains authoritative.
-        """
+        """Run a panel against current Topics, metadata, and recorded age."""
         after = (
             now - timedelta(days=panel.window_days)
             if panel.window_days is not None
@@ -76,69 +72,48 @@ class PanelExecutor:
             "PanelService.execute",
             attributes={"panel.id": str(panel.id)},
         ) as span:
-            logger.debug(
-                "Executing Synthetic panel",
-                panel_id=str(panel.id),
-                name=panel.name,
+            topics = (
+                await self.workspace_service.search(
+                    panel.query,
+                    limit=10_000,
+                    logger=logger,
+                )
+                if panel.query is not None
+                else (await self.workspace_service.scan(logger=logger)).topics
             )
-            if panel.query is not None:
-                matches = await self._execute_search(
-                    panel.query, panel.facets, after=after, logger=logger
-                )
-            else:
-                matches = await self._execute_listing(
-                    panel.facets, after=after, logger=logger
-                )
-            span.set_attribute("panel.execute.total", len(matches))
+            topics = [
+                topic for topic in topics if self._matches_facets(topic, panel.facets)
+            ]
+            if after is not None:
+                live_paths = await self._paths_updated_after(after)
+                topics = [
+                    topic
+                    for topic in topics
+                    if str(
+                        topic.path.relative_to(self.workspace_service.workspace_root)
+                    )
+                    in live_paths
+                ]
+            span.set_attribute("panel.execute.total", len(topics))
             logger.debug(
                 "Synthetic panel execution completed",
                 panel_id=str(panel.id),
-                total=len(matches),
+                total=len(topics),
             )
-            return PanelResults(memories=matches[:limit], total=len(matches))
+            return PanelResults(topics=topics[:limit], total=len(topics))
 
-    async def _execute_search(
-        self,
-        query: str,
-        facets: dict[str, str],
-        *,
-        after: datetime | None,
-        logger: Logger,
-    ) -> list[Memory[Fetched]]:
-        """Run Search candidates through canonical hydration and rank ordering."""
-        candidates = await self.memory_search.search_candidates(
-            query, limit=_SEARCH_CANDIDATE_LIMIT, logger=logger
-        )
-        if not candidates:
-            return []
-        rank = {candidate.id: position for position, candidate in enumerate(candidates)}
-        memories = await self.memory_search.hydrate_tethered(
-            list(rank),
-            facets=facets or None,
-            after=after,
-            logger=logger,
-        )
-        memories.sort(key=lambda memory: rank[memory.id])
-        return memories
+    @staticmethod
+    def _matches_facets(topic: MemoryWorkspaceTopic, facets: dict[str, str]) -> bool:
+        """Treat string-valued Topic frontmatter as panel metadata."""
+        return all(topic.frontmatter.get(key) == value for key, value in facets.items())
 
-    async def _execute_listing(
-        self,
-        facets: dict[str, str],
-        *,
-        after: datetime | None,
-        logger: Logger,
-    ) -> list[Memory[Fetched]]:
-        """List the trusted corpus most-recently-tethered first."""
-        query = tethered_corpus().order_by(Memory.tethered_at.desc())
-        if after is not None:
-            query = query.where(Memory.tethered_at.gte(after))
+    async def _paths_updated_after(self, after: datetime) -> set[str]:
+        """Return current recorded paths changed inside a relative window."""
         async with self.database.transaction() as transaction:
-            memories = await transaction.fetch_all(query)
-        _ = logger
-        if facets:
-            memories = [
-                memory
-                for memory in memories
-                if all(memory.facets.get(key) == value for key, value in facets.items())
-            ]
-        return memories
+            files = await transaction.fetch_all(
+                select(DreamingWorkspaceFile).where(
+                    DreamingWorkspaceFile.is_tombstone.eq(0),
+                    DreamingWorkspaceFile.updated_at.gte(after),
+                )
+            )
+        return {file.path for file in files}

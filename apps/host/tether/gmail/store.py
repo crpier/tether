@@ -34,9 +34,12 @@ class GmailMessageRecord[S = Pending](Model[S, "GmailMessageRecord[Fetched]"]):
 
     message_id: GmailMessageRecord.Col[str] = Text(primary_key=True)
     status: GmailMessageRecord.Col[GmailMessageStatus] = Text()
-    memory_id: GmailMessageRecord.Col[str | None] = Text(default=None, nullable=True)
     trigger_id: GmailMessageRecord.Col[str | None] = Text(default=None, nullable=True)
     internal_date: GmailMessageRecord.Col[str] = Text()
+    from_header: GmailMessageRecord.Col[str] = Text(default="")
+    subject: GmailMessageRecord.Col[str] = Text(default="")
+    body_text: GmailMessageRecord.Col[str] = Text(default="")
+    verdict_reason: GmailMessageRecord.Col[str] = Text(default="")
     created_at: GmailMessageRecord.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
@@ -103,6 +106,27 @@ _GMAIL_MIGRATIONS: dict[str, str] = {
         'CREATE TABLE "gmail_sync_state" ('
         '"key" TEXT PRIMARY KEY NOT NULL, "value" TEXT NOT NULL'
         ") STRICT"
+    ),
+    # Gmail messages are canonical Evidence after #507. Preserve source bytes
+    # and triage context locally, then discard the obsolete Memory-row link.
+    "021_gmail_from_header": (
+        'ALTER TABLE "gmail_message_record" ADD COLUMN "from_header" '
+        "TEXT NOT NULL DEFAULT ''"
+    ),
+    "022_gmail_subject": (
+        'ALTER TABLE "gmail_message_record" ADD COLUMN "subject" '
+        "TEXT NOT NULL DEFAULT ''"
+    ),
+    "023_gmail_body_text": (
+        'ALTER TABLE "gmail_message_record" ADD COLUMN "body_text" '
+        "TEXT NOT NULL DEFAULT ''"
+    ),
+    "024_gmail_verdict_reason": (
+        'ALTER TABLE "gmail_message_record" ADD COLUMN "verdict_reason" '
+        "TEXT NOT NULL DEFAULT ''"
+    ),
+    "025_gmail_drop_memory_id": (
+        'ALTER TABLE "gmail_message_record" DROP COLUMN "memory_id"'
     ),
 }
 

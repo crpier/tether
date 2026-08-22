@@ -62,7 +62,7 @@ class BucketItemSearchService:
     ) -> list[BucketItem[Fetched]]:
         """Ranked hybrid Search over active Bucket items.
 
-        Mirrors `MemoryService.search`: the query is embedded and run through
+        The query is embedded and run through
         the index's lexical + semantic arms, fused by RRF; the ranked candidate
         ids are then re-fetched from SQLite and re-filtered to active-only
         (non-completed, non-deleted). Results keep the index's relevance order,
@@ -132,7 +132,7 @@ class BucketItemSearchService:
         from the index carry no guarantee they're still active rows, so this
         is where the per-arm canonical re-filter happens. `after`/`before`, when
         supplied, bound `created_at` (inclusive) — Bucket items have no
-        `tethered_at` equivalent, so their creation timestamp is the capture
+        trust-date equivalent, so their creation timestamp is the capture
         moment a time window bounds. A narrow window can shrink the hydrated
         set below the candidate count the index returned; callers do not
         re-fetch to compensate, mirroring the Memory arm's facet-filter

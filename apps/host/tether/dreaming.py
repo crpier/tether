@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -99,6 +100,13 @@ class DreamingMutationCoordinator:
     def __init__(self, database: Database, workspace_root: Path) -> None:
         self.database: Database = database
         self.workspace_root: Path = workspace_root
+        self._workspace_lock: asyncio.Lock = asyncio.Lock()
+
+    @contextlib.asynccontextmanager
+    async def mutation_scope(self) -> AsyncGenerator[None]:
+        """Serialize one Dream mutation against workspace reconciliation."""
+        async with self._workspace_lock:
+            yield
 
     @staticmethod
     def _content_hash(text: str) -> str:
@@ -273,63 +281,182 @@ class DreamingMutationCoordinator:
         *,
         logger: Logger,
     ) -> DreamingWorkspaceReconcileResult:
-        """Reconcile every discoverable file and mark missing ones as tombstones."""
-        result = await MemoryWorkspace(self.workspace_root).scan()
-        current_topics: dict[str, str] = {}
-        for topic in result.topics:
-            path = AsyncPath(topic.path)
-            text = await path.read_text(encoding="utf-8")
-            current_topics[self._to_relative_path(self.workspace_root, topic.path)] = (
-                text
-            )
+        """Repair workspace drift while preserving completed Dreaming mutations."""
+        async with self._workspace_lock:
+            return await self._reconcile_workspace(logger=logger)
 
-        async with self.database.transaction(mode="immediate") as tx:
-            current = await tx.fetch_all(
+    async def _reconcile_workspace(
+        self,
+        *,
+        logger: Logger,
+    ) -> DreamingWorkspaceReconcileResult:
+        """Perform one serialized repair pass."""
+        scan = await MemoryWorkspace(self.workspace_root).scan()
+        workspace_topics: dict[str, str] = {}
+        for topic in scan.topics:
+            workspace_topics[
+                self._to_relative_path(self.workspace_root, topic.path)
+            ] = await AsyncPath(topic.path).read_text(encoding="utf-8")
+
+        async with self.database.transaction(mode="immediate") as transaction:
+            recorded_files = await transaction.fetch_all(
                 select(DreamingWorkspaceFile).where(
                     DreamingWorkspaceFile.path.is_not_null()
                 )
             )
-            current_by_path = {row.path: row for row in current}
-            updated = 0
-            for relative_path, text in current_topics.items():
-                await self._upsert_file_state(
-                    tx,
-                    workspace_path=relative_path,
-                    content_hash=self._content_hash(text),
-                    content=text,
-                    is_tombstone=False,
-                    mutation_actor="human_external",
-                )
-                if (
-                    relative_path not in current_by_path
-                    or current_by_path[relative_path].content_hash
-                    != self._content_hash(text)
-                    or current_by_path[relative_path].is_tombstone == 1
-                ):
-                    updated += 1
-            tombstones = 0
-            for relative_path, existing in current_by_path.items():
-                if relative_path not in current_topics and existing.is_tombstone == 0:
-                    await self._upsert_file_state(
-                        tx,
-                        workspace_path=relative_path,
-                        content_hash=existing.content_hash,
-                        content=None,
-                        is_tombstone=True,
-                        source_run_id=existing.source_run_id,
-                        source_tool_call_id=existing.source_tool_call_id,
-                        mutation_actor=existing.actor,
+            pending_mutations = [
+                *await transaction.fetch_all(
+                    select(DreamingMutation).where(
+                        DreamingMutation.status.eq("executed")
                     )
-                    tombstones += 1
-            logger.debug(
-                "Reconciled dreaming workspace",
-                updated=updated,
-                tombstones=tombstones,
+                ),
+                *await transaction.fetch_all(
+                    select(DreamingMutation).where(DreamingMutation.status.eq("failed"))
+                ),
+            ]
+            pending_by_path: dict[str, list[DreamingMutation[Fetched]]] = {}
+            for mutation in pending_mutations:
+                if mutation.actor == "dream":
+                    pending_by_path.setdefault(mutation.workspace_path, []).append(
+                        mutation
+                    )
+
+            recorded_by_path = {file.path: file for file in recorded_files}
+            updated_files = 0
+            for relative_path, content in workspace_topics.items():
+                if await self._reconcile_present_file(
+                    transaction,
+                    relative_path=relative_path,
+                    content=content,
+                    recorded_file=recorded_by_path.get(relative_path),
+                    pending_mutations=pending_by_path.get(relative_path, []),
+                ):
+                    updated_files += 1
+
+            tombstones = 0
+            for relative_path, recorded_file in recorded_by_path.items():
+                if relative_path in workspace_topics or recorded_file.is_tombstone == 1:
+                    continue
+                outcome = await self._reconcile_missing_file(
+                    transaction,
+                    relative_path=relative_path,
+                    recorded_file=recorded_file,
+                    pending_mutations=pending_by_path.get(relative_path, []),
+                )
+                updated_files += int(outcome == "restored")
+                tombstones += int(outcome == "tombstoned")
+
+        logger.debug(
+            "Reconciled dreaming workspace",
+            updated=updated_files,
+            tombstones=tombstones,
+        )
+        return DreamingWorkspaceReconcileResult(
+            updated_files=updated_files,
+            tombstones=tombstones,
+        )
+
+    async def _reconcile_present_file(
+        self,
+        transaction: Transaction,
+        *,
+        relative_path: str,
+        content: str,
+        recorded_file: DreamingWorkspaceFile[Fetched] | None,
+        pending_mutations: list[DreamingMutation[Fetched]],
+    ) -> bool:
+        """Accept a pending Dream write or repair an unauthorized file."""
+        recorded_content = (
+            recorded_file.content
+            if recorded_file is not None and recorded_file.is_tombstone == 0
+            else None
+        )
+        pending_write = next(
+            (
+                mutation
+                for mutation in pending_mutations
+                if mutation.after_content == content
+                and mutation.before_content == recorded_content
+            ),
+            None,
+        )
+        content_hash = self._content_hash(content)
+        if pending_write is not None:
+            await self._upsert_file_state(
+                transaction,
+                workspace_path=relative_path,
+                content_hash=content_hash,
+                content=content,
+                is_tombstone=False,
+                source_run_id=pending_write.run_id,
+                source_tool_call_id=pending_write.tool_call_id,
+                mutation_actor="dream",
             )
-            return DreamingWorkspaceReconcileResult(
-                updated_files=updated,
-                tombstones=tombstones,
+            return (
+                recorded_file is None
+                or recorded_file.is_tombstone == 1
+                or recorded_file.content_hash != content_hash
             )
+        if recorded_file is None or recorded_file.is_tombstone == 1:
+            await AsyncPath(self.workspace_root / relative_path).unlink()
+            return True
+        if (
+            recorded_file.content is not None
+            and recorded_file.content_hash != content_hash
+        ):
+            await self._restore_file(relative_path, recorded_file.content)
+            return True
+        return False
+
+    async def _reconcile_missing_file(
+        self,
+        transaction: Transaction,
+        *,
+        relative_path: str,
+        recorded_file: DreamingWorkspaceFile[Fetched],
+        pending_mutations: list[DreamingMutation[Fetched]],
+    ) -> Literal["restored", "tombstoned", "unchanged"]:
+        """Accept a pending Dream deletion or restore unauthorized removal."""
+        pending_deletion = next(
+            (
+                mutation
+                for mutation in pending_mutations
+                if mutation.operation == "delete"
+                and mutation.after_content is None
+                and mutation.before_content == recorded_file.content
+            ),
+            None,
+        )
+        if pending_deletion is not None:
+            await self._upsert_file_state(
+                transaction,
+                workspace_path=relative_path,
+                content_hash="",
+                content=None,
+                is_tombstone=True,
+                source_run_id=pending_deletion.run_id,
+                source_tool_call_id=pending_deletion.tool_call_id,
+                mutation_actor="dream",
+            )
+            return "tombstoned"
+        if recorded_file.content is not None:
+            await self._restore_file(relative_path, recorded_file.content)
+            return "restored"
+        return "unchanged"
+
+    async def _restore_file(self, relative_path: str, content: str) -> None:
+        """Atomically replace unauthorized workspace drift with recorded content."""
+        workspace_path = AsyncPath(self.workspace_root / relative_path)
+        await workspace_path.parent.mkdir(parents=True, exist_ok=True)
+        async with NamedTemporaryFile(
+            mode="w",
+            dir=str(workspace_path.parent),
+            delete=False,
+            encoding="utf-8",
+        ) as file:
+            temporary_path = AsyncPath(file.wrapped.name)
+            _ = await file.write(content)
+        _ = await temporary_path.replace(workspace_path)
 
     async def _reconcile_file(
         self,
@@ -594,37 +721,38 @@ class ConversationWindowDreamingExecutor:
             ):
                 return DreamRunExecutionResult(status="failed", error=validation_error)
             curated_body = normalized_curated_body
-        written = await self._write_dream_document(
-            run=run,
-            evidence=evidence,
-            workspace_path=workspace_path,
-            logger=logger,
-            curated_body=curated_body,
-        )
-        logger.info(
-            "Dream run wrote evidence file",
-            run_id=str(run.id),
-            workspace_path=str(workspace_path),
-            message_count=len(evidence),
-            result="success" if written is not None else "no_op",
-        )
-        if written is None:
-            return DreamRunExecutionResult(status="no_op")
+        async with self.mutation_coordinator.mutation_scope():
+            written = await self._write_dream_document(
+                run=run,
+                evidence=evidence,
+                workspace_path=workspace_path,
+                logger=logger,
+                curated_body=curated_body,
+            )
+            logger.info(
+                "Dream run wrote evidence file",
+                run_id=str(run.id),
+                workspace_path=str(workspace_path),
+                message_count=len(evidence),
+                result="success" if written is not None else "no_op",
+            )
+            if written is None:
+                return DreamRunExecutionResult(status="no_op")
 
-        payload = self._render_run_section(run, evidence)
-        _ = await self.mutation_coordinator.record_mutation(
-            run_id=run.id,
-            tool_call_id=tool_call_id,
-            actor="dream",
-            operation="write",
-            workspace_path=Path(workspace_path),
-            payload=payload,
-        )
-        settlement = await self.mutation_coordinator.settle(
-            run.id,
-            tool_call_id,
-            acknowledger=self.mutation_acknowledger,
-        )
+            payload = self._render_run_section(run, evidence)
+            _ = await self.mutation_coordinator.record_mutation(
+                run_id=run.id,
+                tool_call_id=tool_call_id,
+                actor="dream",
+                operation="write",
+                workspace_path=Path(workspace_path),
+                payload=payload,
+            )
+            settlement = await self.mutation_coordinator.settle(
+                run.id,
+                tool_call_id,
+                acknowledger=self.mutation_acknowledger,
+            )
         return DreamRunExecutionResult(
             status="success" if settlement.acknowledged else "failed",
             error=settlement.error,
@@ -943,6 +1071,18 @@ class DreamingService:
         self.settle_window: timedelta = settle_window
         self.max_messages_per_run: PositiveInt = max_messages_per_run
         self.tracer: Tracer | None = tracer
+        self._immediate_assimilation_requests: set[UUID] = set()
+
+    def request_immediate_assimilation(self, conversation_id: UUID) -> None:
+        """Mark one active Conversation for post-turn settle-window bypass."""
+        self._immediate_assimilation_requests.add(conversation_id)
+
+    def consume_immediate_assimilation_request(self, conversation_id: UUID) -> bool:
+        """Consume one collapsed post-turn immediate-assimilation request."""
+        if conversation_id not in self._immediate_assimilation_requests:
+            return False
+        self._immediate_assimilation_requests.remove(conversation_id)
+        return True
 
     async def queue_manual_run(
         self,

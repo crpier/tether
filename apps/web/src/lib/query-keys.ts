@@ -16,9 +16,7 @@ export const queryKeys = {
   // ["memories", "review-queue"]; the prefix alone already covers every
   // memories query — queue, corpus and search).
   memories: ["memories"] as const,
-  memoriesSearch: (q: string) => ["memories", "search", q] as const,
   memoryTopics: (q: string) => ["memories", "topics", q] as const,
-  memoriesState: (state: "loose" | "tethered") => ["memories", state] as const,
   memoriesWorkspaceDiagnostics: [
     "memories",
     "workspace",

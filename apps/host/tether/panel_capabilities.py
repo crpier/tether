@@ -4,14 +4,14 @@ The pieces the REST routes (`tether.panel_routes`) and the internal tools
 (`tether.panel_tools`) both need live here once: the `PanelRead` model, the
 shared spec body (`PanelSpecBody`), the detached-reference builder, the
 domain→code map (`PANEL_ERRORS`), and one execute function per capability —
-the service call plus its Read-model rendering. Panel *results* render each
-Memory through the Memory domain's own `MemoryRead`, so the two surfaces never
-grow a second Memory shape.
+the service call plus its Read-model rendering. Panel results expose current
+Dreaming-maintained Topics rather than legacy Memory rows.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 from uuid import UUID
 
@@ -21,7 +21,7 @@ from starlette.requests import Request
 
 from tether.app_runtime import app_runtime
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
-from tether.memory_capabilities import MemoryRead
+from tether.memory_workspace import MemoryWorkspaceTopic
 from tether.panel_errors import (
     InvalidPanelSpecError,
     PanelConflictError,
@@ -104,10 +104,33 @@ class PanelRead(BaseModel):
         )
 
 
-class PanelResultsRead(BaseModel):
-    """One panel execution: the capped rows plus the uncapped match count."""
+class PanelTopicRead(BaseModel):
+    """One current Topic selected by a Synthetic panel."""
 
-    memories: list[MemoryRead]
+    body: str
+    evidence: list[str]
+    metadata: dict[str, object]
+    path: str
+    title: str
+
+    @classmethod
+    def from_topic(
+        cls, topic: MemoryWorkspaceTopic, *, workspace_root: Path
+    ) -> PanelTopicRead:
+        """Render one Topic relative to the canonical workspace."""
+        return cls(
+            body=topic.body,
+            evidence=list(topic.evidence),
+            metadata=topic.frontmatter,
+            path=str(topic.path.relative_to(Path(workspace_root))),
+            title=topic.title,
+        )
+
+
+class PanelResultsRead(BaseModel):
+    """One panel execution: the capped Topics plus uncapped match count."""
+
+    topics: list[PanelTopicRead]
     total: int
 
 
@@ -192,9 +215,13 @@ async def execute(
         limit=limit,
         logger=get_request_logger(request),
     )
+    workspace_root = app_runtime(request.app).memory_workspace_service.workspace_root
     return CapabilityOutcome(
         result=PanelResultsRead(
-            memories=[MemoryRead.from_memory(memory) for memory in results.memories],
+            topics=[
+                PanelTopicRead.from_topic(topic, workspace_root=workspace_root)
+                for topic in results.topics
+            ],
             total=results.total,
         ).model_dump(mode="json")
     )

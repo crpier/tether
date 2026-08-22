@@ -374,7 +374,14 @@ async def _queue_dreaming_run(
     if not dependencies.dreaming_enabled:
         return
     try:
-        _ = await dependencies.dreaming_service.queue_assimilation_run(
+        queue = (
+            dependencies.dreaming_service.queue_manual_run
+            if dependencies.dreaming_service.consume_immediate_assimilation_request(
+                conversation_id
+            )
+            else dependencies.dreaming_service.queue_assimilation_run
+        )
+        _ = await queue(
             conversation_id,
             logger=dependencies.logger,
             now=datetime.now(UTC),

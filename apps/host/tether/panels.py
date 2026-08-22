@@ -4,14 +4,11 @@ A Synthetic panel is a saved faceted query over the Commons — a panel assemble
 from convention, with no dedicated code per domain. The row stores the *scope*
 (a facet AND-filter, an optional text query, an optional relative time window)
 and the *render choice* (a Tether-styled table by default, or a stored
-Vega-Lite spec template); execution recomputes the results on every view
-(ADR 0006) against the trusted corpus only (ADR 0001).
+Vega-Lite spec template); execution recomputes current Dreaming-maintained
+Topics on every view (ADR 0006).
 
-The service owns the human/agent-facing CRUD (create / list / update / delete,
-the mutations optimistic-concurrency checked like Scheduled triggers) plus
-`execute`, which reuses the Memory search seam end-to-end: a text query rides
-`search_candidates` + `hydrate_tethered` (rank order), a facets-only panel is a
-recency-ordered corpus listing with the same facet post-filter semantics.
+The service owns human/agent-facing CRUD plus `execute`. Text queries use the
+small-corpus direct Topic search; panel facets match string-valued frontmatter.
 
 >>> service = PanelService(database=db, executor=executor, tracer=tracer)
 >>> panel = await service.create(
@@ -114,7 +111,7 @@ class PanelService:
     """Capability surface for Synthetic panels, over a snekql database.
 
     Mutations own one transaction each and return the resulting row; `execute`
-    owns no panel state at all — it recomputes through the Memory search seam
+    owns no panel state at all — it recomputes through the Memory Topic seam
     on every call (ADR 0006).
     """
 
