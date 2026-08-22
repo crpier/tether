@@ -77,10 +77,16 @@ class LocalTtsTransport:
     """Return stable audio without calling a speech provider."""
 
     async def synthesize(
-        self, *, text: str, model: str, voice: str, response_format: str
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        response_format: str,
+        speed: float,
     ) -> Result[SpeechResponse, TtsFailure]:
         """Render every local fragment as a tiny deterministic MP3 fixture."""
-        _ = (text, model, voice, response_format)
+        _ = (text, model, voice, response_format, speed)
         return Ok(
             SpeechResponse(
                 audio=b64decode(_LOCAL_SILENCE_WAV_BASE64),

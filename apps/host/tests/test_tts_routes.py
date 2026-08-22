@@ -27,10 +27,16 @@ class ScriptedTtsTransport:
         self.response: SpeechResponse = response
 
     async def synthesize(
-        self, *, text: str, model: str, voice: str, response_format: str
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        response_format: str,
+        speed: float,
     ) -> Result[SpeechResponse, TtsFailure]:
         """Return the scripted speech response."""
-        _ = (text, model, voice, response_format)
+        _ = (text, model, voice, response_format, speed)
         return Ok(self.response)
 
 

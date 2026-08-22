@@ -157,7 +157,9 @@ $EDITOR .env restic.env
 Fill in `.env` (see the template's comments for detail on each var):
 `TETHER_APP_PASSWORD`, `TETHER_SESSION_SECRET`, `TETHER_API_TOKEN`,
 `TETHER_STT_API_KEY`, `TETHER_TTS_API_KEY`, `TETHER_DEFAULT_MODEL` /
-`TETHER_MODEL_ALLOWLIST`.
+`TETHER_MODEL_ALLOWLIST`. Set `TETHER_TTS_VOICE` and `TETHER_TTS_SPEED` when
+production should differ from the `alloy` / 1.0 speech defaults; speed must be
+between 0.25 and 4.0.
 Generate `TETHER_API_TOKEN` independently and enter the same value in the
 phone/watch capture settings; it is the static bearer credential for those
 non-browser clients. Because Funnel makes HTTPS internet-accessible, these

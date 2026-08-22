@@ -40,7 +40,13 @@ class TtsTransport(Protocol):
     """Structural interface to one configured speech provider."""
 
     async def synthesize(
-        self, *, text: str, model: str, voice: str, response_format: str
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        response_format: str,
+        speed: float,
     ) -> Result[SpeechResponse, TtsFailure]:
         """Submit text and return its normalized provider outcome."""
         ...
@@ -72,7 +78,13 @@ class HttpTtsTransport:
         self._timeout: timedelta = timeout or _DEFAULT_TIMEOUT
 
     async def synthesize(
-        self, *, text: str, model: str, voice: str, response_format: str
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        response_format: str,
+        speed: float,
     ) -> Result[SpeechResponse, TtsFailure]:
         """Post one speech request, translating known network failures."""
         try:
@@ -88,6 +100,7 @@ class HttpTtsTransport:
                         "input": text,
                         "model": model,
                         "response_format": response_format,
+                        "speed": speed,
                         "voice": voice,
                     },
                 )

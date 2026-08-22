@@ -30,9 +30,11 @@ class TtsClient:
         model: str,
         voice: str,
         response_format: str = _DEFAULT_RESPONSE_FORMAT,
+        speed: float = 1.0,
     ) -> None:
         self._model: str = model
         self._response_format: str = response_format
+        self._speed: float = speed
         self._transport: TtsTransport = transport
         self._voice: str = voice
 
@@ -43,6 +45,7 @@ class TtsClient:
             model=self._model,
             voice=self._voice,
             response_format=self._response_format,
+            speed=self._speed,
         )
         if isinstance(outcome, Err):
             return Err(outcome.error)

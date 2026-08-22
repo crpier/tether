@@ -146,8 +146,11 @@ normalized fragment to authenticated `POST /api/tts/speech`; the host calls its
 configured OpenAI-compatible provider and returns ephemeral audio. Generated
 audio is played sequentially and discarded after playback. Provider requests,
 audio playback, and the remaining queue are cancelled together on barge-in,
-Escape, or ending voice conversation. Configure the provider with `TETHER_TTS_API_KEY`,
-`TETHER_TTS_BASE_URL`, `TETHER_TTS_MODEL`, and `TETHER_TTS_VOICE`.
+Escape, or ending voice conversation. Configure the provider with
+`TETHER_TTS_API_KEY`, `TETHER_TTS_BASE_URL`, `TETHER_TTS_MODEL`,
+`TETHER_TTS_VOICE`, and `TETHER_TTS_SPEED` (a 0.25–4.0 multiplier, default 1.0).
+Speech normalization keeps descriptive Markdown link labels but omits URL and
+custom-URI destinations, including internal `tether://` evidence references.
 
 Only successfully settled spoken turns auto-play (never reasoning, tools,
 errors, aborted turns, or hydrated history); playback is cancellable

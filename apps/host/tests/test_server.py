@@ -145,6 +145,8 @@ def host_settings_read_tether_environment_variables() -> None:
             TETHER_SESSION_SECRET="configured-session-secret",
             TETHER_STT_API_KEY="configured-stt-key",
             TETHER_TTS_API_KEY="configured-tts-key",
+            TETHER_TTS_SPEED="1.3",
+            TETHER_TTS_VOICE="cedar",
             TETHER_TELEMETRY_DATABASE_PATH=f"{directory}/health.sqlite3",
             TETHER_TELEMETRY_ENVIRONMENT="test",
             TETHER_TELEMETRY_EXPORTER="none",
@@ -178,6 +180,8 @@ def host_settings_read_tether_environment_variables() -> None:
     assert_eq(settings.session_secret, "configured-session-secret")
     assert_eq(settings.stt_api_key, "configured-stt-key")
     assert_eq(settings.tts_api_key, "configured-tts-key")
+    assert_eq(settings.tts_speed, 1.3)
+    assert_eq(settings.tts_voice, "cedar")
     assert_eq(settings.telemetry_database_path, Path(directory) / "health.sqlite3")
     assert_eq(settings.telemetry.environment, "test")
     assert_eq(settings.telemetry.exporter, TelemetryExporter.NONE)
@@ -211,6 +215,7 @@ def app_config_carries_tts_provider_settings() -> None:
         tts_api_key="test-tts-key",
         tts_base_url="https://speech.example/v1",
         tts_model="speech-model",
+        tts_speed=1.3,
         tts_voice="cedar",
     )
 
@@ -219,7 +224,22 @@ def app_config_carries_tts_provider_settings() -> None:
     assert_eq(config.tts_api_key, "test-tts-key")
     assert_eq(config.tts_base_url, "https://speech.example/v1")
     assert_eq(config.tts_model, "speech-model")
+    assert_eq(config.tts_speed, 1.3)
     assert_eq(config.tts_voice, "cedar")
+
+
+@test()
+def host_settings_reject_tts_speed_outside_provider_range() -> None:
+    """Speech speed stays inside OpenAI's accepted 0.25x-4.0x range."""
+    for speed in (0.24, 4.01):
+        with assert_raises(ValueError):
+            _ = HostSettings(
+                app_password="test-app-password",
+                session_secret="test-session-secret",
+                stt_api_key="test-stt-key",
+                tts_api_key="test-tts-key",
+                tts_speed=speed,
+            )
 
 
 @test()
