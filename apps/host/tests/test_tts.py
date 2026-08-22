@@ -28,6 +28,7 @@ class SynthesisCall:
 
     model: str
     response_format: str
+    speed: float
     text: str
     voice: str
 
@@ -40,13 +41,20 @@ class FakeTtsTransport:
     calls: list[SynthesisCall] = field(default_factory=list[SynthesisCall])
 
     async def synthesize(
-        self, *, text: str, model: str, voice: str, response_format: str
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        response_format: str,
+        speed: float,
     ) -> Result[SpeechResponse, TtsFailure]:
         """Record the call and return the configured outcome."""
         self.calls.append(
             SynthesisCall(
                 model=model,
                 response_format=response_format,
+                speed=speed,
                 text=text,
                 voice=voice,
             )
@@ -63,9 +71,14 @@ def successful_response() -> SpeechResponse:
 
 @test()
 async def client_sends_configured_speech_settings() -> None:
-    """Each synthesis uses configured model, voice, and MP3 format."""
+    """Each synthesis uses configured model, voice, speed, and MP3 format."""
     transport = FakeTtsTransport(Ok(successful_response()))
-    client = TtsClient(transport=transport, model="gpt-4o-mini-tts", voice="alloy")
+    client = TtsClient(
+        transport=transport,
+        model="gpt-4o-mini-tts",
+        speed=1.3,
+        voice="cedar",
+    )
 
     _ = await client.synthesize("Hello there.")
 
@@ -75,8 +88,9 @@ async def client_sends_configured_speech_settings() -> None:
             SynthesisCall(
                 model="gpt-4o-mini-tts",
                 response_format="mp3",
+                speed=1.3,
                 text="Hello there.",
-                voice="alloy",
+                voice="cedar",
             )
         ],
     )
@@ -170,6 +184,7 @@ async def http_transport_posts_openai_compatible_request() -> None:
         model="speech-model",
         voice="cedar",
         response_format="mp3",
+        speed=1.3,
     )
 
     assert isinstance(outcome, Ok)
@@ -181,6 +196,7 @@ async def http_transport_posts_openai_compatible_request() -> None:
             "input": "Read this.",
             "model": "speech-model",
             "response_format": "mp3",
+            "speed": 1.3,
             "voice": "cedar",
         },
     )
@@ -198,7 +214,11 @@ async def http_transport_returns_network_failure() -> None:
     )
 
     outcome = await transport.synthesize(
-        text="Hello.", model="model", voice="voice", response_format="mp3"
+        text="Hello.",
+        model="model",
+        voice="voice",
+        response_format="mp3",
+        speed=1.0,
     )
 
     assert isinstance(outcome, Err)

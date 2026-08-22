@@ -15,15 +15,16 @@ const BLOCKQUOTE = /^\s{0,3}>\s?/;
 const HORIZONTAL_RULE = /^\s{0,3}((-\s*){3,}|(\*\s*){3,}|(_\s*){3,})$/;
 const IMAGE = /!\[[^\]]*\]\([^)]*\)/g;
 const LINK = /\[([^\]]+)\]\([^)]*\)/g;
-const BARE_URL = /https?:\/\/\S+/g;
+const BARE_URI = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 const INLINE_EMPHASIS = /(\*\*\*|\*\*|\*|___|__|_|~~|`)/g;
 
 function stripInlineMarkup(line: string): string {
   return line
     .replace(IMAGE, " ")
     .replace(LINK, "$1")
-    .replace(BARE_URL, " ")
+    .replace(BARE_URI, " ")
     .replace(INLINE_EMPHASIS, "")
+    .replace(/(?:Evidence|Source):\s*$/i, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 }

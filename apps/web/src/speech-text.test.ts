@@ -44,6 +44,14 @@ describe("speech text normalization", () => {
     ).toBe("Visit today.");
   });
 
+  test("custom evidence URIs and their orphaned label are omitted", () => {
+    expect(
+      toSpeechText(
+        "That is longer than usual. Evidence: `tether://health-connect/sleep/id@v396`",
+      ),
+    ).toBe("That is longer than usual.");
+  });
+
   test("fenced code bodies are omitted, surrounding prose kept", () => {
     expect(
       toSpeechText(

@@ -97,6 +97,7 @@ def _resolve_tts_client(config: AppConfig) -> TtsClient:
     return TtsClient(
         transport=HttpTtsTransport(config.tts_api_key, base_url=config.tts_base_url),
         model=config.tts_model,
+        speed=config.tts_speed,
         voice=config.tts_voice,
     )
 
@@ -431,6 +432,7 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         tts_api_key=settings.tts_api_key,
         tts_base_url=settings.tts_base_url,
         tts_model=settings.tts_model,
+        tts_speed=settings.tts_speed,
         tts_voice=settings.tts_voice,
         web_dist=settings.web_dist,
         youtube_api=youtube_api,

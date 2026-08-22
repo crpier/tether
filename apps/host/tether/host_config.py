@@ -130,6 +130,7 @@ class AppConfig:
     Production wiring always uses validated `HostSettings`."""
     tts_base_url: str = "https://api.openai.com/v1"
     tts_model: str = "gpt-4o-mini-tts"
+    tts_speed: float = 1.0
     tts_voice: str = "alloy"
     study_item_generator: StudyItemGenerator | None = None
     answer_grader: AnswerGrader | None = None
@@ -328,6 +329,8 @@ class HostSettings(BaseSettings):
     """Root of the OpenAI-compatible text-to-speech API."""
     tts_model: str = "gpt-4o-mini-tts"
     """Speech model requested for each spoken fragment."""
+    tts_speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    """Provider speaking speed multiplier requested for every fragment."""
     tts_voice: str = "alloy"
     """Provider voice requested for every generated reply."""
     readwise_reader_sync_enabled: bool = False
