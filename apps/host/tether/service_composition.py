@@ -34,6 +34,7 @@ from tether.dreaming import (
 )
 from tether.events import EventHub
 from tether.gmail import GmailClient
+from tether.health_connect import HealthEpisodeSummarizer
 from tether.health_distillation import (
     HealthDistillationExecutor,
     HealthDistillationService,
@@ -774,6 +775,16 @@ async def compose_core_services(
         asyncio.create_task(runtime_registry.reap_idle_forever()),
         asyncio.create_task(scheduler_component.scheduler.run_forever()),
     ]
+    # PR #558 left the post-sync trigger open. This cursor-based sweep
+    # materializes deterministic episode summaries after syncs.
+    background_tasks.append(
+        asyncio.create_task(
+            HealthEpisodeSummarizer(host.telemetry_database).sweep_forever(
+                interval_seconds=config.health_episode_sweep_seconds,
+                logger=host.logger,
+            )
+        )
+    )
     if config.dreaming_enabled:
         dreaming_runner = EphemeralPiPromptRunner(
             replace(
