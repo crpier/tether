@@ -7981,7 +7981,7 @@
     },
     "/api/telemetry/health-connect/dream-now": {
       "post": {
-        "description": "Queue a manual consolidation run over Health Connect summaries.\n\nWithout a period, bounds cover every summary not yet captured by a prior\nrun; with `{start, end}`, only episodes ending inside the period are\nreconsidered.",
+        "description": "Queue manual consolidation runs over Health Connect summaries.\n\nWithout a period, every summary not yet captured by a prior run is\nwindowed into successive capped runs (bounded prompts) and all of them\nare queued. With `{start, end}`, only episodes ending inside the period\nare reconsidered, as one run.",
         "operationId": "health_dream_now_api_telemetry_health_connect_dream_now_post",
         "requestBody": {
           "content": {

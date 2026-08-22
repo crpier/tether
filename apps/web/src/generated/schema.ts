@@ -1232,11 +1232,12 @@ export interface paths {
     put?: never;
     /**
      * Health Dream Now
-     * @description Queue a manual consolidation run over Health Connect summaries.
+     * @description Queue manual consolidation runs over Health Connect summaries.
      *
-     *     Without a period, bounds cover every summary not yet captured by a prior
-     *     run; with `{start, end}`, only episodes ending inside the period are
-     *     reconsidered.
+     *     Without a period, every summary not yet captured by a prior run is
+     *     windowed into successive capped runs (bounded prompts) and all of them
+     *     are queued. With `{start, end}`, only episodes ending inside the period
+     *     are reconsidered, as one run.
      */
     post: operations["health_dream_now_api_telemetry_health_connect_dream_now_post"];
     delete?: never;
