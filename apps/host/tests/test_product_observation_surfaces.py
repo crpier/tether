@@ -118,6 +118,49 @@ def list_product_observations_tool_returns_open_feedback() -> None:
 
 
 @test()
+def record_product_observation_route_uses_the_selected_user_message() -> None:
+    """The browser can explicitly capture server-owned wording from one Message."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
+        if client.portal is None:
+            raise RuntimeError("test client portal is not running")
+        selected = client.portal.call(
+            runtime.conversation_service.append_message,
+            MessageDraft(
+                content="The model selector should be easier to understand.",
+                conversation_id=conversation_id,
+                role="user",
+            ),
+        )
+        _ = client.portal.call(
+            runtime.conversation_service.append_message,
+            MessageDraft(
+                content="A later message must not replace the selected source.",
+                conversation_id=conversation_id,
+                role="user",
+            ),
+        )
+
+        response = client.post(
+            "/api/product-observations",
+            json={
+                "conversation_id": str(conversation_id),
+                "message_id": str(selected.id),
+                "interpretation": "Model selection should name the active profile.",
+            },
+        )
+
+        assert_eq(response.status_code, 200)
+        assert_eq(
+            response.json()["wording"],
+            "The model selector should be easier to understand.",
+        )
+        assert_eq(response.json()["message_id"], str(selected.id))
+
+
+@test()
 def resolve_product_observation_route_removes_feedback_from_the_open_list() -> None:
     """The browser resolves feedback at its observed version."""
     with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:

@@ -63,6 +63,12 @@ export interface SpokenTurnSink {
   restart(): void;
 }
 
+export interface ContextUsage {
+  contextPercent: number;
+  contextTokens: number;
+  contextWindow: number;
+}
+
 export interface LiveChatTurnDependencies {
   conversationId: Accessor<string | undefined>;
   history: LiveChatHistory;
@@ -85,6 +91,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const [error, setError] = createSignal<string>();
   const [interrupted, setInterrupted] = createSignal(false);
   const [loadedSkillCount, setLoadedSkillCount] = createSignal<number>();
+  const [contextUsage, setContextUsage] = createSignal<ContextUsage>();
   const [accumulated, setAccumulated] = createSignal<Map<number, Message>>(
     new Map(),
   );
@@ -173,6 +180,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       setHasMoreHistory(false);
       setHistoryReady(false);
       setLoadedSkillCount(undefined);
+      setContextUsage(undefined);
       if (conversationId !== undefined) {
         loadLatestHistory(conversationId);
       }
@@ -214,6 +222,43 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         setLoadingOlder(false);
       });
     return true;
+  };
+
+  const loadAllMessages = async (): Promise<void> => {
+    const conversationId = dependencies.conversationId();
+    if (conversationId === undefined || loadingOlder() || !hasMoreHistory()) {
+      return;
+    }
+    const sequenceNumbers = Array.from(accumulated().keys());
+    if (sequenceNumbers.length === 0) {
+      return;
+    }
+    setLoadingOlder(true);
+    let beforeSeq = Math.min(...sequenceNumbers);
+    try {
+      while (dependencies.conversationId() === conversationId) {
+        const page = await dependencies.history.listMessages(conversationId, {
+          beforeSeq,
+          limit: MESSAGES_PAGE_SIZE,
+        });
+        setAccumulated((current) => {
+          const merged = new Map(current);
+          for (const message of page) {
+            merged.set(message.seq, message);
+          }
+          return merged;
+        });
+        if (page.length < MESSAGES_PAGE_SIZE) {
+          setHasMoreHistory(false);
+          return;
+        }
+        beforeSeq = Math.min(...page.map((message) => message.seq));
+      }
+    } catch {
+      return;
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const dispatchPrompt = (prompt: QueuedPrompt, conversationId: string) => {
@@ -340,6 +385,28 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       setLoadedSkillCount(frame.loaded_count);
       return;
     }
+    if (frame.event === "session_status") {
+      if (
+        typeof frame.context_tokens === "number" &&
+        Number.isInteger(frame.context_tokens) &&
+        frame.context_tokens >= 0 &&
+        typeof frame.context_window === "number" &&
+        Number.isInteger(frame.context_window) &&
+        frame.context_window > 0 &&
+        typeof frame.context_percent === "number" &&
+        Number.isFinite(frame.context_percent) &&
+        frame.context_percent >= 0
+      ) {
+        setContextUsage({
+          contextPercent: frame.context_percent,
+          contextTokens: frame.context_tokens,
+          contextWindow: frame.context_window,
+        });
+      } else {
+        setContextUsage(undefined);
+      }
+      return;
+    }
     setTurn((current) => reduceFrame(current, frame, now()));
     if (frame.event === "user_message") {
       setOutboundPrompt(null);
@@ -422,6 +489,10 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     awaitingAgentEnd,
     busy,
     cancelQueuedPrompt,
+    clearContextUsage: () => {
+      setContextUsage(undefined);
+    },
+    contextUsage,
     dismissError: () => {
       setError(undefined);
     },
@@ -431,6 +502,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     handleFrame,
     historyIncomplete,
     historyReady,
+    loadAllMessages,
     loadOlderMessages,
     loadedSkillCount,
     queuedPrompts,

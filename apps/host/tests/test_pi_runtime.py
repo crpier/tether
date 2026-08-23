@@ -16,6 +16,7 @@ import uvicorn
 from snektest import (
     assert_eq,
     assert_in,
+    assert_isinstance,
     assert_not_in,
     assert_raises,
     assert_true,
@@ -30,7 +31,7 @@ from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiRuntimeConfig, build_pi_spawn_command
 from tether.pi_rpc import PiRpcClient
-from tether.pi_runtime import PiRuntime
+from tether.pi_runtime import ContextUsage, PiRuntime
 from tether.pi_turn_events import AgentEnded, MessageSettled, ModelTurnStarted
 from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import WS_PROTOCOL, AppConfig, create_app
@@ -247,6 +248,7 @@ class ScriptedRpcClient:
         thinking_success: bool | None = None,
         error: str | None = None,
         thinking_error: str | None = None,
+        session_stats: dict[str, object] | None = None,
     ) -> None:
         self._success: bool = success
         self._thinking_success: bool = (
@@ -254,11 +256,14 @@ class ScriptedRpcClient:
         )
         self._error: str | None = error
         self._thinking_error: str | None = thinking_error
+        self._session_stats: dict[str, object] | None = session_stats
         self.requests: list[tuple[str, dict[str, object]]] = []
 
     async def request(self, command_type: str, **fields: object) -> dict[str, object]:
         """Log the command and answer with the scripted success flag."""
         self.requests.append((command_type, fields))
+        if command_type == "get_session_stats":
+            return {"success": True, "data": self._session_stats}
         if command_type == "get_commands":
             return {"success": True, "data": {"commands": "not-a-list"}}
         if command_type == "set_thinking_level":
@@ -407,6 +412,31 @@ async def apply_model_thinking_level_error_includes_pis_rejection_detail() -> No
         await runtime.apply_model(_TEST_MODEL_WITH_THINKING)
 
     assert_in("Model does not support thinking level: medium", str(exc_info.exception))
+
+
+@test()
+async def fetch_context_usage_returns_pis_current_compaction_estimate() -> None:
+    """The runtime exposes pi's context estimate without recalculating tokens."""
+    runtime = _runtime_with_client(
+        ScriptedRpcClient(
+            success=True,
+            session_stats={
+                "contextUsage": {
+                    "tokens": 63_100,
+                    "contextWindow": 200_000,
+                    "percent": 31.55,
+                }
+            },
+        )
+    )
+
+    usage = await runtime.fetch_context_usage()
+
+    assert_isinstance(usage, ContextUsage)
+    assert usage is not None
+    assert_eq(usage.tokens, 63_100)
+    assert_eq(usage.context_window, 200_000)
+    assert_eq(usage.percent, 31.55)
 
 
 @test()

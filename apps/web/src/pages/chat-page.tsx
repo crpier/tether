@@ -58,6 +58,13 @@ const bubbleLabelClass =
 
 const CHAT_INPUT_MAX_ROWS = 10;
 
+function formatContextTokens(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return `${(Math.round(tokens / 100_000) / 10).toString()}m`;
+  }
+  return `${Math.round(tokens / 1_000).toString()}k`;
+}
+
 function fitChatInputToContent(element: HTMLTextAreaElement): void {
   element.style.height = "auto";
 
@@ -85,25 +92,16 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       modelsQuery.data?.default_model ??
       "",
   );
-  const selectedIndex = createMemo(() => {
-    const index = (modelsQuery.data?.models ?? []).findIndex(
-      (model) => model.id === selectedModel(),
-    );
-    return Math.max(0, index);
-  });
-  const [sliderIndex, setSliderIndex] = createSignal(0);
-  const profilePosition = createMemo(
-    () =>
-      `Profile ${(sliderIndex() + 1).toString()} of ${(modelsQuery.data?.models.length ?? 1).toString()}`,
-  );
+  const [menuModel, setMenuModel] = createSignal("");
 
   let requestedModel = "";
   let persistingModel = false;
 
   createEffect(() => {
-    setSliderIndex(selectedIndex());
+    const resolvedModel = selectedModel();
     if (!persistingModel) {
-      requestedModel = selectedModel();
+      requestedModel = resolvedModel;
+      setMenuModel(resolvedModel);
     }
   });
 
@@ -121,6 +119,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       });
     } catch (error) {
       requestedModel = selectedModel();
+      setMenuModel(selectedModel());
       throw error;
     } finally {
       persistingModel = false;
@@ -143,52 +142,251 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   return (
     <div
       aria-label="Model"
-      class="w-32 shrink-0 sm:w-36"
+      class="flex shrink-0 items-center gap-1.5"
       role="group"
-      title={profilePosition()}
     >
+      <span class="text-muted-foreground text-xs">Model</span>
       <Show
         fallback={
           <p class="text-muted-foreground text-xs" role="status">
             {modelsQuery.isLoading
-              ? "Loading model profiles…"
+              ? "Loading profiles…"
               : "No model profiles available."}
           </p>
         }
         when={(modelsQuery.data?.models.length ?? 0) > 0}
       >
-        <input
+        <select
           aria-label="Model profile"
-          aria-valuetext={profilePosition()}
-          class="accent-primary h-6 w-full cursor-pointer disabled:cursor-default"
+          class="border-input bg-background h-8 max-w-32 rounded-md border px-2 text-xs"
           disabled={
             modelsQuery.isLoading || (modelsQuery.data?.models.length ?? 0) < 2
           }
-          max={(modelsQuery.data?.models.length ?? 1) - 1}
-          min="0"
           onChange={(event) => {
-            const profile =
-              modelsQuery.data?.models[event.currentTarget.valueAsNumber];
-            if (profile !== undefined) {
-              persistModel(profile.id);
-            }
+            setMenuModel(event.currentTarget.value);
+            persistModel(event.currentTarget.value);
           }}
-          onInput={(event) => {
-            setSliderIndex(event.currentTarget.valueAsNumber);
-          }}
-          step="1"
-          type="range"
-          value={sliderIndex()}
-        />
+          value={menuModel()}
+        >
+          <For each={modelsQuery.data?.models ?? []}>
+            {(profile, index) => (
+              <option value={profile.id}>
+                Profile {(index() + 1).toString()}
+              </option>
+            )}
+          </For>
+        </select>
       </Show>
     </div>
   );
 }
 
-function toolText(row: Extract<TimelineRow, { kind: "tool" }>): string {
-  return row.status === "running"
-    ? `using ${row.toolName}…`
-    : `used ${row.toolName}`;
+type ToolRow = Extract<TimelineRow, { kind: "tool" }>;
+type DisplayRow =
+  | Exclude<TimelineRow, { kind: "tool" }>
+  | { kind: "tool-group"; id: string; tools: ToolRow[] };
+
+const TOOL_LABELS: Partial<
+  Record<string, { done: string; running: string; receipt?: boolean }>
+> = {
+  add_book: { done: "Added book", receipt: true, running: "Adding book…" },
+  add_movie: { done: "Added movie", receipt: true, running: "Adding movie…" },
+  add_place: { done: "Added place", receipt: true, running: "Adding place…" },
+  add_purchase: {
+    done: "Added purchase",
+    receipt: true,
+    running: "Adding purchase…",
+  },
+  add_travel: { done: "Added trip", receipt: true, running: "Adding trip…" },
+  archive_gmail_message: {
+    done: "Archived email",
+    receipt: true,
+    running: "Archiving email…",
+  },
+  complete_bucket_item: {
+    done: "Completed bucket item",
+    receipt: true,
+    running: "Completing bucket item…",
+  },
+  create_artifact: {
+    done: "Created document",
+    receipt: true,
+    running: "Creating document…",
+  },
+  create_panel: {
+    done: "Created panel",
+    receipt: true,
+    running: "Creating panel…",
+  },
+  create_todo: {
+    done: "Created todo",
+    receipt: true,
+    running: "Creating todo…",
+  },
+  create_trigger: {
+    done: "Created reminder",
+    receipt: true,
+    running: "Creating reminder…",
+  },
+  delete_bucket_item: {
+    done: "Deleted bucket item",
+    receipt: true,
+    running: "Deleting bucket item…",
+  },
+  delete_panel: {
+    done: "Deleted panel",
+    receipt: true,
+    running: "Deleting panel…",
+  },
+  delete_trigger: {
+    done: "Deleted reminder",
+    receipt: true,
+    running: "Deleting reminder…",
+  },
+  ignore_youtube_video: {
+    done: "Ignored video",
+    receipt: true,
+    running: "Ignoring video…",
+  },
+  label_ebook: {
+    done: "Labeled ebook",
+    receipt: true,
+    running: "Labeling ebook…",
+  },
+  link_todo_trigger: {
+    done: "Linked reminder to todo",
+    receipt: true,
+    running: "Linking reminder…",
+  },
+  queue_memory_assimilation: {
+    done: "Queued memory update",
+    receipt: true,
+    running: "Queueing memory update…",
+  },
+  read_gmail_message: { done: "Read email", running: "Reading email…" },
+  record_product_observation: {
+    done: "Recorded product feedback",
+    receipt: true,
+    running: "Recording product feedback…",
+  },
+  retry_youtube_video: {
+    done: "Retried video",
+    receipt: true,
+    running: "Retrying video…",
+  },
+  search_gmail: { done: "Searched Gmail", running: "Searching Gmail…" },
+  set_bucket_item_intent: {
+    done: "Updated bucket item",
+    receipt: true,
+    running: "Updating bucket item…",
+  },
+  set_purchase_decision: {
+    done: "Updated purchase decision",
+    receipt: true,
+    running: "Updating purchase decision…",
+  },
+  set_todo_status: {
+    done: "Updated todo",
+    receipt: true,
+    running: "Updating todo…",
+  },
+  trash_gmail_message: {
+    done: "Moved email to Trash",
+    receipt: true,
+    running: "Moving email to Trash…",
+  },
+  update_artifact: {
+    done: "Updated document",
+    receipt: true,
+    running: "Updating document…",
+  },
+  update_gmail_labels: {
+    done: "Updated email labels",
+    receipt: true,
+    running: "Updating email labels…",
+  },
+  update_panel: {
+    done: "Updated panel",
+    receipt: true,
+    running: "Updating panel…",
+  },
+  web_search: { done: "Searched the web", running: "Searching the web…" },
+};
+
+function groupedTimelineRows(rows: TimelineRow[]): DisplayRow[] {
+  const grouped: DisplayRow[] = [];
+  for (const row of rows) {
+    const previous = grouped.at(-1);
+    if (row.kind === "tool" && previous?.kind === "tool-group") {
+      previous.tools.push(row);
+      continue;
+    }
+    if (row.kind === "tool") {
+      grouped.push({
+        id: `tool-group-${row.id}`,
+        kind: "tool-group",
+        tools: [row],
+      });
+      continue;
+    }
+    grouped.push(row);
+  }
+  return grouped;
+}
+
+function displayRowText(row: DisplayRow): string {
+  if (row.kind === "message" || row.kind === "reasoning") {
+    return row.text;
+  }
+  return row.tools
+    .map(
+      (tool) =>
+        `${toolText(tool)} ${formatToolDetail(tool.args)} ${formatToolResult(tool.result)}`,
+    )
+    .join(" ");
+}
+
+function toolResultPayload(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+  const details = (value as Record<string, unknown>).details;
+  if (details === null || typeof details !== "object") {
+    return undefined;
+  }
+  const result = (details as Record<string, unknown>).result;
+  return result !== null && typeof result === "object" && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : undefined;
+}
+
+function undoableArchiveMessageId(row: ToolRow): string | undefined {
+  if (row.status !== "done" || row.toolName !== "archive_gmail_message") {
+    return undefined;
+  }
+  const result = toolResultPayload(row.result);
+  return result?.outcome === "done" && typeof result.message_id === "string"
+    ? result.message_id
+    : undefined;
+}
+
+function toolText(row: ToolRow): string {
+  const configured = TOOL_LABELS[row.toolName];
+  const fallbackName = row.toolName.replaceAll("_", " ");
+  const label =
+    configured?.[row.status] ??
+    (row.status === "running"
+      ? `Using ${fallbackName}…`
+      : `Used ${fallbackName}`);
+  if (row.status !== "done" || row.toolName !== "search_gmail") {
+    return label;
+  }
+  const messages = toolResultPayload(row.result)?.messages;
+  return Array.isArray(messages)
+    ? `${label} · ${messages.length.toString()} results`
+    : label;
 }
 
 // Render a tool's args/result for the transcript. Strings pass through; objects
@@ -255,67 +453,242 @@ function WorkingIndicator(props: { startedAt: number }) {
   );
 }
 
+function UndoArchiveButton(props: {
+  messageId: string;
+  onUndo: (messageId: string) => Promise<void>;
+}) {
+  const [status, setStatus] = createSignal<
+    "ready" | "undoing" | "done" | "error"
+  >("ready");
+  return (
+    <Show
+      fallback={<span class="text-primary font-medium">Restored to Inbox</span>}
+      when={status() !== "done"}
+    >
+      <button
+        aria-label="Undo archive"
+        class="text-primary ml-auto font-medium hover:underline"
+        disabled={status() === "undoing"}
+        onClick={() => {
+          setStatus("undoing");
+          void props
+            .onUndo(props.messageId)
+            .then(() => {
+              setStatus("done");
+            })
+            .catch(() => {
+              setStatus("error");
+            });
+        }}
+        type="button"
+      >
+        {status() === "undoing"
+          ? "Undoing…"
+          : status() === "error"
+            ? "Retry undo"
+            : "Undo"}
+      </button>
+    </Show>
+  );
+}
+
+function MessageActions(props: {
+  canRecordFeedback: boolean;
+  messageId: string;
+  onCopy: () => void;
+  onQuote: () => void;
+  onRecordFeedback: (
+    messageId: string,
+    interpretation: string,
+  ) => Promise<void>;
+}) {
+  const [feedbackOpen, setFeedbackOpen] = createSignal(false);
+  const [interpretation, setInterpretation] = createSignal("");
+  const [feedbackStatus, setFeedbackStatus] = createSignal<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+
+  const saveFeedback = async () => {
+    const expectedBehavior = interpretation().trim();
+    if (expectedBehavior.length === 0 || feedbackStatus() === "saving") {
+      return;
+    }
+    setFeedbackStatus("saving");
+    try {
+      await props.onRecordFeedback(props.messageId, expectedBehavior);
+      setFeedbackStatus("saved");
+      setFeedbackOpen(false);
+    } catch {
+      setFeedbackStatus("error");
+    }
+  };
+
+  return (
+    <div class="mt-2 text-xs">
+      <div class="flex gap-3 opacity-70 focus-within:opacity-100 hover:opacity-100">
+        <button
+          aria-label="Copy message"
+          class="hover:underline"
+          onClick={props.onCopy}
+          type="button"
+        >
+          Copy
+        </button>
+        <button
+          aria-label="Quote message"
+          class="hover:underline"
+          onClick={props.onQuote}
+          type="button"
+        >
+          Quote
+        </button>
+        <Show when={props.canRecordFeedback && feedbackStatus() !== "saved"}>
+          <button
+            aria-label="Record product feedback"
+            class="hover:underline"
+            onClick={() => {
+              setFeedbackOpen(true);
+              setFeedbackStatus("idle");
+            }}
+            type="button"
+          >
+            Feedback
+          </button>
+        </Show>
+      </div>
+      <Show when={feedbackOpen()}>
+        <form
+          class="mt-2 space-y-2 rounded-md border p-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveFeedback();
+          }}
+        >
+          <label class="block space-y-1">
+            <span class="font-medium">Expected behavior</span>
+            <textarea
+              aria-label="Expected behavior"
+              class="border-input min-h-16 w-full rounded-md border bg-transparent p-2"
+              onInput={(event) => {
+                setInterpretation(event.currentTarget.value);
+              }}
+              placeholder="What should Tether do instead?"
+              value={interpretation()}
+            />
+          </label>
+          <div class="flex gap-2">
+            <Button
+              aria-label="Save feedback"
+              disabled={
+                interpretation().trim().length === 0 ||
+                feedbackStatus() === "saving"
+              }
+              size="sm"
+              type="submit"
+            >
+              {feedbackStatus() === "saving" ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              onClick={() => {
+                setFeedbackOpen(false);
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+          </div>
+          <Show when={feedbackStatus() === "error"}>
+            <p class="text-destructive" role="alert">
+              Feedback could not be recorded.
+            </p>
+          </Show>
+        </form>
+      </Show>
+      <Show when={feedbackStatus() === "saved"}>
+        <p class="text-muted-foreground mt-1" role="status">
+          Feedback recorded.
+        </p>
+      </Show>
+    </div>
+  );
+}
+
 function MessageRow(props: {
   isSpoken: (text: string) => boolean;
-  row: TimelineRow;
+  row: DisplayRow;
   transcriptItemNumber: number;
+  onCopy: (text: string) => void;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
   onOpenEvidence: (uri: string) => void;
+  onQuote: (text: string) => void;
+  onRecordFeedback: (
+    messageId: string,
+    interpretation: string,
+  ) => Promise<void>;
+  onUndoArchive: (messageId: string) => Promise<void>;
 }) {
   return (
     <Switch>
-      <Match when={props.row.kind === "tool" && props.row}>
-        {(tool) => {
-          const args = () => formatToolDetail(tool().args);
-          // Results get the deep-parse + trim treatment (see lib/tool-result):
-          // huge/nested tool payloads only need to convey shape, not
-          // completeness. Arguments stay untouched — they're small and the
-          // model needs to see them verbatim to debug a call.
-          const result = () => formatToolResult(tool().result);
-          return (
-            <article
-              aria-label="Tool activity"
-              class="bg-muted/50 text-muted-foreground mr-auto max-w-[96%] rounded-lg px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%]"
-            >
-              <div class="flex items-center gap-2">
-                <Show
-                  fallback={<span aria-hidden="true">✓</span>}
-                  when={tool().status === "running"}
-                >
-                  <span
-                    aria-hidden="true"
-                    class="border-muted-foreground/40 border-t-muted-foreground inline-block size-3 animate-spin rounded-full border-2"
-                  />
-                </Show>
-                <strong class={bubbleLabelClass}>{toolText(tool())}</strong>
-              </div>
-              {/* Keep the raw tool-call arguments out of the transcript flow —
-                  dumping the model's tool-call JSON (e.g. a memory capture's
-                  {"content": …}) read as an assistant message. Tuck it behind a
-                  collapsed disclosure so it stays available without leaking. */}
-              <Show when={args().length > 0}>
-                <details class="mt-1.5">
-                  <summary class="cursor-pointer select-none opacity-80">
-                    arguments
-                  </summary>
-                  <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
-                    {args()}
-                  </pre>
-                </details>
-              </Show>
-              <Show when={result().length > 0}>
-                <details class="mt-1.5">
-                  <summary class="cursor-pointer select-none opacity-80">
-                    result
-                  </summary>
-                  <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
-                    {result()}
-                  </pre>
-                </details>
-              </Show>
-            </article>
-          );
-        }}
+      <Match when={props.row.kind === "tool-group" && props.row}>
+        {(group) => (
+          <article
+            aria-label="Tool activity"
+            class={`text-muted-foreground mr-auto max-w-[96%] space-y-2 rounded-lg border px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some((tool) => TOOL_LABELS[tool.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
+          >
+            <For each={group().tools}>
+              {(tool) => {
+                const args = () => formatToolDetail(tool.args);
+                const result = () => formatToolResult(tool.result);
+                return (
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <Show
+                        fallback={<span aria-hidden="true">✓</span>}
+                        when={tool.status === "running"}
+                      >
+                        <span
+                          aria-hidden="true"
+                          class="border-muted-foreground/40 border-t-muted-foreground inline-block size-3 animate-spin rounded-full border-2"
+                        />
+                      </Show>
+                      <strong class={bubbleLabelClass}>{toolText(tool)}</strong>
+                      <Show when={undoableArchiveMessageId(tool)}>
+                        {(messageId) => (
+                          <UndoArchiveButton
+                            messageId={messageId()}
+                            onUndo={props.onUndoArchive}
+                          />
+                        )}
+                      </Show>
+                    </div>
+                    <Show when={args().length > 0}>
+                      <details class="mt-1.5">
+                        <summary class="cursor-pointer select-none opacity-80">
+                          arguments
+                        </summary>
+                        <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
+                          {args()}
+                        </pre>
+                      </details>
+                    </Show>
+                    <Show when={result().length > 0}>
+                      <details class="mt-1.5">
+                        <summary class="cursor-pointer select-none opacity-80">
+                          result
+                        </summary>
+                        <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
+                          {result()}
+                        </pre>
+                      </details>
+                    </Show>
+                  </div>
+                );
+              }}
+            </For>
+          </article>
+        )}
       </Match>
       <Match when={props.row.kind === "reasoning" && props.row}>
         {(reasoning) => {
@@ -393,6 +766,21 @@ function MessageRow(props: {
                 text={message().text}
               />
             </Show>
+            <Show when={!message().streaming && message().role !== "tool"}>
+              <MessageActions
+                canRecordFeedback={
+                  message().role === "user" && !message().id.startsWith("live-")
+                }
+                messageId={message().id}
+                onCopy={() => {
+                  props.onCopy(message().text);
+                }}
+                onQuote={() => {
+                  props.onQuote(message().text);
+                }}
+                onRecordFeedback={props.onRecordFeedback}
+              />
+            </Show>
           </article>
         )}
       </Match>
@@ -416,11 +804,51 @@ function MessageRows(props: {
   // so the caller only arms its scroll-position restore when rows are really
   // about to prepend.
   onNearTop: () => boolean;
+  onSearchOpen: () => Promise<void>;
+  onCopy: (text: string) => void;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
   onOpenEvidence: (uri: string) => void;
+  onQuote: (text: string) => void;
+  onRecordFeedback: (
+    messageId: string,
+    interpretation: string,
+  ) => Promise<void>;
+  onUndoArchive: (messageId: string) => Promise<void>;
 }) {
   let viewport: HTMLElement | undefined;
   const [pinned, setPinned] = createSignal(true);
+  const [searchOpen, setSearchOpen] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [activeMatch, setActiveMatch] = createSignal(0);
+  const displayRows = createMemo(() => groupedTimelineRows(props.rows));
+  const matchingIds = createMemo(() => {
+    const query = searchQuery().trim().toLocaleLowerCase();
+    if (query.length === 0) {
+      return [];
+    }
+    return displayRows()
+      .filter((row) => displayRowText(row).toLocaleLowerCase().includes(query))
+      .map((row) => row.id);
+  });
+  const activeMatchId = createMemo<string | undefined>(() =>
+    matchingIds().at(activeMatch() % Math.max(matchingIds().length, 1)),
+  );
+  const rowElements = new Map<string, HTMLDivElement>();
+  createEffect(() => {
+    const matchId = activeMatchId();
+    const element =
+      matchId === undefined ? undefined : rowElements.get(matchId);
+    if (viewport !== undefined && element !== undefined) {
+      viewport.scrollTop = Math.max(
+        0,
+        element.offsetTop - viewport.clientHeight / 2,
+      );
+    }
+  });
+  createEffect(() => {
+    void searchQuery();
+    setActiveMatch(0);
+  });
   let pendingRestore: { scrollHeight: number; scrollTop: number } | null = null;
 
   const updatePinned = () => {
@@ -461,7 +889,85 @@ function MessageRows(props: {
   });
 
   return (
-    <div class="relative flex min-h-0 flex-1 flex-col">
+    <div class="relative flex min-h-0 flex-1 flex-col gap-2">
+      <Show
+        fallback={
+          <Button
+            aria-label="Search transcript"
+            class="absolute top-2 right-2 z-10 shadow-sm"
+            onClick={() => {
+              setSearchOpen(true);
+              void props.onSearchOpen();
+            }}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            Search
+          </Button>
+        }
+        when={searchOpen()}
+      >
+        <div class="bg-card flex shrink-0 items-center gap-2 rounded-lg border p-2 shadow-sm">
+          <input
+            aria-label="Search transcript"
+            autofocus
+            class="border-input min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1 text-sm"
+            onInput={(event) => {
+              setSearchQuery(event.currentTarget.value);
+            }}
+            placeholder="Search transcript"
+            type="search"
+            value={searchQuery()}
+          />
+          <span
+            class="text-muted-foreground min-w-14 text-right text-xs"
+            role="status"
+          >
+            {matchingIds().length.toString()}{" "}
+            {matchingIds().length === 1 ? "match" : "matches"}
+          </span>
+          <Button
+            aria-label="Previous transcript match"
+            disabled={matchingIds().length < 2}
+            onClick={() => {
+              setActiveMatch(
+                (current) =>
+                  (current - 1 + matchingIds().length) % matchingIds().length,
+              );
+            }}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            ↑
+          </Button>
+          <Button
+            aria-label="Next transcript match"
+            disabled={matchingIds().length < 2}
+            onClick={() => {
+              setActiveMatch((current) => (current + 1) % matchingIds().length);
+            }}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            ↓
+          </Button>
+          <Button
+            aria-label="Close transcript search"
+            onClick={() => {
+              setSearchOpen(false);
+              setSearchQuery("");
+            }}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            ✕
+          </Button>
+        </div>
+      </Show>
       <section
         ref={(element) => {
           viewport = element;
@@ -484,16 +990,36 @@ function MessageRows(props: {
           }
         }}
       >
-        <For each={props.rows}>
-          {(row, index) => (
-            <MessageRow
-              isSpoken={props.isSpoken}
-              onOpenArtifact={props.onOpenArtifact}
-              onOpenEvidence={props.onOpenEvidence}
-              row={row}
-              transcriptItemNumber={index() + 1}
-            />
-          )}
+        <For each={displayRows()}>
+          {(row, index) => {
+            const matches = () => matchingIds().includes(row.id);
+            const active = () => matches() && activeMatchId() === row.id;
+            return (
+              <div
+                ref={(element) => {
+                  rowElements.set(row.id, element);
+                }}
+                class={
+                  active() ? "rounded-lg ring-2 ring-primary/60" : undefined
+                }
+                data-search-match={
+                  active() ? "active" : matches() ? "match" : undefined
+                }
+              >
+                <MessageRow
+                  isSpoken={props.isSpoken}
+                  onCopy={props.onCopy}
+                  onOpenArtifact={props.onOpenArtifact}
+                  onOpenEvidence={props.onOpenEvidence}
+                  onQuote={props.onQuote}
+                  onRecordFeedback={props.onRecordFeedback}
+                  onUndoArchive={props.onUndoArchive}
+                  row={row}
+                  transcriptItemNumber={index() + 1}
+                />
+              </div>
+            );
+          }}
         </For>
         <Show when={props.working && props.startedAt !== null}>
           <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
@@ -534,6 +1060,7 @@ export function ChatPage() {
   const { bus, chatFrame, connection, openEvidence } = useAppContext();
   const api = useHost("chat");
   const artifacts = useHost("artifacts");
+  const productObservations = useHost("productObservations");
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const promptParam = searchParams.prompt;
@@ -576,6 +1103,18 @@ export function ChatPage() {
   }));
   const conversation = createMemo(() => conversationsQuery.data?.[0]);
   const conversationId = createMemo(() => conversation()?.id);
+
+  createEffect(() => {
+    const currentBus = bus();
+    const currentConversationId = conversationId();
+    if (
+      connection() === "open" &&
+      currentBus !== undefined &&
+      currentConversationId !== undefined
+    ) {
+      currentBus.requestSessionStatus(currentConversationId);
+    }
+  });
 
   const [nowTick, setNowTick] = createSignal(Date.now());
   onMount(() => {
@@ -635,6 +1174,8 @@ export function ChatPage() {
     awaitingAgentEnd,
     busy,
     cancelQueuedPrompt: removeQueuedPrompt,
+    clearContextUsage,
+    contextUsage,
     dismissError,
     editQueuedPrompt: savePromptEdit,
     error,
@@ -642,6 +1183,7 @@ export function ChatPage() {
     handleFrame,
     historyIncomplete,
     historyReady,
+    loadAllMessages,
     loadOlderMessages,
     loadedSkillCount,
     queuedPrompts,
@@ -652,6 +1194,21 @@ export function ChatPage() {
     stopped,
     working,
   } = liveTurn;
+
+  const visibleContextUsage = createMemo(() => {
+    const usage = contextUsage();
+    return usage !== undefined && usage.contextTokens >= 50_000
+      ? usage
+      : undefined;
+  });
+
+  createEffect((wasFresh: boolean) => {
+    const fresh = startsFreshSession();
+    if (fresh && !wasFresh) {
+      clearContextUsage();
+    }
+    return fresh;
+  }, startsFreshSession());
 
   createEffect(() => {
     const frame = chatFrame();
@@ -771,9 +1328,38 @@ export function ChatPage() {
           <MessageRows
             historyReady={historyReady()}
             isSpoken={(text) => conversationMode.isSpoken(text)}
+            onCopy={(text) => {
+              void navigator.clipboard.writeText(text).catch(() => undefined);
+            }}
             onNearTop={loadOlderMessages}
             onOpenArtifact={setOpenArtifact}
             onOpenEvidence={openEvidence}
+            onQuote={(text) => {
+              const quote = text
+                .split("\n")
+                .map((line) => `> ${line}`)
+                .join("\n");
+              setDraft(
+                (current) =>
+                  `${current}${current.trim().length > 0 ? "\n\n" : ""}${quote}\n\n`,
+              );
+              queueMicrotask(() => messageInput?.focus());
+            }}
+            onRecordFeedback={async (messageId, interpretation) => {
+              const currentConversationId = conversationId();
+              if (currentConversationId === undefined) {
+                return;
+              }
+              await productObservations.recordProductObservation(
+                currentConversationId,
+                messageId,
+                interpretation,
+              );
+            }}
+            onSearchOpen={loadAllMessages}
+            onUndoArchive={(messageId) =>
+              api.undoGmailArchive(messageId).then(() => undefined)
+            }
             rows={rows()}
             startedAt={startedAt()}
             stopped={stopped()}
@@ -789,7 +1375,7 @@ export function ChatPage() {
                 <ModelSelector api={api} conversation={currentConversation()} />
               )}
             </Show>
-            <div class="min-w-0 flex-1">
+            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               <Show when={historyIncomplete() && !generating()}>
                 <p class="text-muted-foreground text-xs" role="status">
                   Previous turn did not finish. Send a new message to recover.
@@ -797,15 +1383,39 @@ export function ChatPage() {
               </Show>
               <Show
                 when={
-                  startsFreshSession() && !generating() && !historyIncomplete()
+                  startsFreshSession() &&
+                  contextUsage() === undefined &&
+                  !generating() &&
+                  !historyIncomplete()
                 }
               >
                 <p
                   class="text-muted-foreground text-xs"
-                  title="The assistant's working context resets after a few minutes idle; chat history stays."
+                  title="Pi's working context resets after a few minutes idle; chat history stays."
                 >
-                  Next message starts a fresh session
+                  Next message starts a fresh working session
                 </p>
+              </Show>
+              <Show when={visibleContextUsage()}>
+                {(usage) => {
+                  const roundedPercent = () =>
+                    Math.round(usage().contextPercent);
+                  const severityClass = () =>
+                    usage().contextPercent >= 90
+                      ? "border-destructive/50 text-destructive"
+                      : usage().contextPercent >= 70
+                        ? "border-amber-500/50 text-amber-700 dark:text-amber-300"
+                        : "text-muted-foreground";
+                  return (
+                    <span
+                      class={`rounded-full border px-2 py-0.5 text-xs tabular-nums ${severityClass()}`}
+                      role="status"
+                      title={`${formatContextTokens(usage().contextTokens)} of ${formatContextTokens(usage().contextWindow)} tokens · ${roundedPercent().toString()}% of pi working context`}
+                    >
+                      {formatContextTokens(usage().contextTokens)} context
+                    </span>
+                  );
+                }}
               </Show>
             </div>
           </div>

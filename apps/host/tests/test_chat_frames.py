@@ -17,6 +17,7 @@ from tether.chat_frames import (
     MessageEndFrame,
     MessageStartFrame,
     NotifyFrame,
+    SessionStatusFrame,
     StreamUpdateFrame,
     ToolEndFrame,
     ToolStartFrame,
@@ -112,6 +113,45 @@ def agent_end_frame_can_flag_tool_only_turns() -> None:
             "reply_mode": "spoken",
             "final_text": "Turn ended after tool use without a final answer.",
             "tool_only": True,
+        },
+    )
+
+
+@test()
+def session_status_frame_carries_current_context_usage() -> None:
+    """Session status reports pi's current context estimate to the browser."""
+    frame = SessionStatusFrame(
+        context_percent=31.55,
+        context_tokens=63_100,
+        context_window=200_000,
+        conversation_id=_CONVERSATION_ID,
+    )
+    assert_eq(
+        frame.wire(),
+        {
+            "type": "chat",
+            "conversation_id": str(_CONVERSATION_ID),
+            "event": "session_status",
+            "context_tokens": 63_100,
+            "context_window": 200_000,
+            "context_percent": 31.55,
+        },
+    )
+
+
+@test()
+def session_status_frame_can_clear_unavailable_context_usage() -> None:
+    """A post-compaction null estimate clears stale browser context state."""
+    frame = SessionStatusFrame(conversation_id=_CONVERSATION_ID)
+    assert_eq(
+        frame.wire(),
+        {
+            "type": "chat",
+            "conversation_id": str(_CONVERSATION_ID),
+            "event": "session_status",
+            "context_tokens": None,
+            "context_window": None,
+            "context_percent": None,
         },
     )
 

@@ -125,6 +125,18 @@ describe("createBrowserChatBus reconnection", () => {
     });
   });
 
+  test("session status requests carry the conversation identity", () => {
+    const bus = createBrowserChatBus({ onDisconnect: noop, onFrame: noop });
+    bus.requestSessionStatus("c1");
+
+    FakeSocket.instances[0].open();
+
+    expect(JSON.parse(FakeSocket.instances[0].sent[0])).toEqual({
+      conversation_id: "c1",
+      type: "session_status",
+    });
+  });
+
   test("spoken prompts carry their captured reply mode", () => {
     const bus = createBrowserChatBus({ onDisconnect: noop, onFrame: noop });
     bus.sendPrompt("c1", "hello", "spoken");

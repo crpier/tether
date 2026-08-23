@@ -111,6 +111,31 @@ async def record(request: Request, interpretation: str) -> CapabilityOutcome:
     return _single(observation)
 
 
+async def record_message(
+    request: Request,
+    *,
+    conversation_id: UUID,
+    interpretation: str,
+    message_id: UUID,
+) -> CapabilityOutcome:
+    """Record explicit feedback from a browser-selected user Message."""
+    runtime = _runtime(request)
+    source = await runtime.conversation_service.fetch_user_message(
+        conversation_id,
+        message_id,
+    )
+    if source is None:
+        message = "product feedback source must be a user message in the conversation"
+        raise InvalidProductObservationError(message)
+    observation = await runtime.product_observation_service.record(
+        wording=source.content,
+        interpretation=interpretation,
+        conversation_id=source.conversation_id,
+        message_id=source.id,
+    )
+    return _single(observation)
+
+
 async def list_open(request: Request) -> CapabilityOutcome:
     """List unresolved Product observations newest first."""
     observations = await _runtime(request).product_observation_service.list_open()

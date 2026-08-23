@@ -18,6 +18,7 @@ export class FakeChatHost implements ChatHost {
   synthesizeSpeechRejections: ApiError[] = [];
   transcribeAudioCalls: Blob[] = [];
   transcribeAudioRejections: ApiError[] = [];
+  undoGmailArchiveCalls: string[] = [];
   nextTranscript = "";
 
   constructor(messages: Message[] = []) {
@@ -67,6 +68,15 @@ export class FakeChatHost implements ChatHost {
       selected_model: selectedModel,
     };
     return Promise.resolve(this.storedConversation);
+  }
+
+  undoGmailArchive(messageId: string) {
+    this.undoGmailArchiveCalls.push(messageId);
+    return Promise.resolve({
+      detail: null,
+      message_id: messageId,
+      outcome: "done" as const,
+    });
   }
 
   synthesizeSpeech(text: string, signal: AbortSignal): Promise<Blob> {

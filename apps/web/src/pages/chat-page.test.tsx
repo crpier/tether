@@ -228,6 +228,65 @@ describe("Chat view", () => {
     expect(screen.queryByText(/Skills loaded/)).not.toBeInTheDocument();
   });
 
+  test("requests context usage for the current pi session", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+
+    await screen.findByRole("combobox", { name: "Model profile" });
+
+    expect(bus.statusRequests).toEqual([conversation.id]);
+  });
+
+  test("shows pi context usage only after fifty thousand tokens", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+    await screen.findByRole("heading", { name: "Tether chat" });
+    await screen.findByRole("combobox", { name: "Model profile" });
+
+    bus.emit({
+      context_percent: 24,
+      context_tokens: 48_000,
+      context_window: 200_000,
+      conversation_id: conversation.id,
+      event: "session_status",
+      type: "chat",
+    });
+    expect(screen.queryByText("48k context")).not.toBeInTheDocument();
+
+    bus.emit({
+      context_percent: 31.55,
+      context_tokens: 63_100,
+      context_window: 200_000,
+      conversation_id: conversation.id,
+      event: "session_status",
+      type: "chat",
+    });
+
+    expect(await screen.findByText("63k context")).toHaveAttribute(
+      "title",
+      "63k of 200k tokens · 32% of pi working context",
+    );
+  });
+
+  test("warns when pi working context nears capacity", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+    await screen.findByRole("combobox", { name: "Model profile" });
+
+    bus.emit({
+      context_percent: 91,
+      context_tokens: 182_000,
+      context_window: 200_000,
+      conversation_id: conversation.id,
+      event: "session_status",
+      type: "chat",
+    });
+
+    expect(await screen.findByText("182k context")).toHaveClass(
+      "text-destructive",
+    );
+  });
+
   test("hides a confirmed zero skill count", async () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
@@ -266,7 +325,7 @@ describe("Chat view", () => {
     renderApp(host);
 
     expect(await screen.findByText("remember aisle seats")).toBeInTheDocument();
-    expect(screen.getByText("used capture")).toBeInTheDocument();
+    expect(screen.getByText("Used capture")).toBeInTheDocument();
     expect(screen.getByText("Captured that preference.")).toBeInTheDocument();
 
     // Settled tool rows must stay expandable (same disclosure as a live tool
@@ -307,7 +366,7 @@ describe("Chat view", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Next message starts a fresh session"),
+      screen.queryByText("Next message starts a fresh working session"),
     ).not.toBeInTheDocument();
   });
 
@@ -359,6 +418,75 @@ describe("Chat view", () => {
     });
 
     expect(await screen.findByText("Hi there")).toBeInTheDocument();
+  });
+
+  test("copies a transcript message", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [message({ content: "Keep this text", role: "assistant" })],
+    });
+    renderApp(host);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Copy message" }),
+    );
+
+    expect(writeText).toHaveBeenCalledWith("Keep this text");
+  });
+
+  test("quotes a transcript message into the composer", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({ content: "First line\nSecond line", role: "assistant" }),
+      ],
+    });
+    renderApp(host);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Quote message" }),
+    );
+
+    expect(
+      textarea(screen.getByRole("textbox", { name: "Message" })),
+    ).toHaveValue("> First line\n> Second line\n\n");
+  });
+
+  test("records explicit product feedback from a settled user message", async () => {
+    const source = message({
+      content: "The model selector is confusing.",
+      role: "user",
+      seq: 1,
+    });
+    const host = new FakeHost({ authenticated: true, messages: [source] });
+    renderApp(host);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Record product feedback" }),
+    );
+    fireEvent.input(
+      screen.getByRole("textbox", { name: "Expected behavior" }),
+      {
+        target: { value: "Model selection should name the active profile." },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save feedback" }));
+
+    await waitFor(() => {
+      expect(host.productObservations.recordCalls).toEqual([
+        {
+          conversationId: conversation.id,
+          interpretation: "Model selection should name the active profile.",
+          messageId: source.id,
+        },
+      ]);
+    });
+    expect(await screen.findByText("Feedback recorded.")).toBeInTheDocument();
   });
 
   test("renders streamed answers as markdown", async () => {
@@ -439,7 +567,7 @@ describe("Chat view", () => {
       tool_name: "search",
       type: "chat",
     });
-    expect(await screen.findByText("using search…")).toBeInTheDocument();
+    expect(await screen.findByText("Using search…")).toBeInTheDocument();
 
     bus.emit({
       conversation_id: conversation.id,
@@ -448,7 +576,91 @@ describe("Chat view", () => {
       tool_name: "search",
       type: "chat",
     });
-    expect(await screen.findByText("used search")).toBeInTheDocument();
+    expect(await screen.findByText("Used search")).toBeInTheDocument();
+  });
+
+  test("groups consecutive tools with human-readable summaries", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "check my email" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_start",
+      tool_id: "search-1",
+      tool_name: "search_gmail",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_end",
+      tool_id: "search-1",
+      tool_name: "search_gmail",
+      tool_result: {
+        details: { result: { messages: [{}, {}] } },
+      },
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_start",
+      tool_id: "read-1",
+      tool_name: "read_gmail_message",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_end",
+      tool_id: "read-1",
+      tool_name: "read_gmail_message",
+      type: "chat",
+    });
+
+    expect(await screen.findByText("Searched Gmail · 2 results")).toBeVisible();
+    expect(screen.getByText("Read email")).toBeVisible();
+    expect(screen.getAllByLabelText("Tool activity")).toHaveLength(1);
+  });
+
+  test("undoes a completed archive from its action receipt", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "archive it" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_start",
+      tool_id: "archive-1",
+      tool_name: "archive_gmail_message",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "tool_end",
+      tool_id: "archive-1",
+      tool_name: "archive_gmail_message",
+      tool_result: {
+        details: {
+          result: { message_id: "message-1", outcome: "done" },
+        },
+      },
+      type: "chat",
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Undo archive" }),
+    );
+
+    await waitFor(() => {
+      expect(host.chat.undoGmailArchiveCalls).toEqual(["message-1"]);
+    });
+    expect(await screen.findByText("Restored to Inbox")).toBeInTheDocument();
   });
 
   test("surfaces tool call args and result inline", async () => {
@@ -889,7 +1101,7 @@ describe("Chat view", () => {
     });
   });
 
-  test("puts the unlabeled model beside session status above the composer", async () => {
+  test("puts a labeled model menu beside working-session status", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
@@ -899,13 +1111,14 @@ describe("Chat view", () => {
     const composer = screen.getByRole("group", { name: "Message composer" });
 
     expect(
-      within(context).getByText("Next message starts a fresh session"),
+      within(context).getByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
+    expect(within(context).getByText("Model")).toBeInTheDocument();
     expect(
-      await within(context).findByRole("slider", { name: "Model profile" }),
-    ).toBeInTheDocument();
+      await within(context).findByRole("combobox", { name: "Model profile" }),
+    ).toHaveDisplayValue("Profile 1");
     expect(
-      within(composer).queryByRole("slider", { name: "Model profile" }),
+      within(composer).queryByRole("combobox", { name: "Model profile" }),
     ).not.toBeInTheDocument();
     expect(
       within(composer).getByRole("textbox", { name: "Message" }),
@@ -918,23 +1131,19 @@ describe("Chat view", () => {
     expect(
       within(composer).getByRole("button", { name: "Send" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Model")).not.toBeInTheDocument();
-    expect(screen.queryByText("Message")).not.toBeInTheDocument();
   });
 
   test("presents model profiles without exposing model or effort details", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
+    const menu = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    expect(slider).toHaveAttribute("min", "0");
-    expect(slider).toHaveAttribute("max", "4");
-    expect(slider).toHaveAttribute("step", "1");
-    expect(slider).toHaveValue("0");
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
+    expect(menu).toHaveValue("gpt-5.6-luna");
+    expect(menu).toHaveDisplayValue("Profile 1");
+    expect(within(menu).getAllByRole("option")).toHaveLength(5);
     expect(screen.queryAllByText(/GPT-5\.6|thinking/)).toHaveLength(0);
   });
 
@@ -942,35 +1151,29 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
     const transcript = await screen.findByLabelText("Chat transcript");
-    const slider = await screen.findByRole("slider", {
+    const menu = await screen.findByRole("combobox", {
       name: "Model profile",
     });
     transcript.scrollTop = 123;
 
-    fireEvent.input(slider, { target: { value: "2" } });
-    fireEvent.input(slider, { target: { value: "4" } });
-    expect(host.chat.selectedModel).toBeUndefined();
-
-    fireEvent.change(slider, { target: { value: "4" } });
+    fireEvent.change(menu, { target: { value: "gpt-5.6-sol" } });
 
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-sol");
     });
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 5 of 5");
+    expect(menu).toHaveDisplayValue("Profile 5");
     expect(transcript.scrollTop).toBe(123);
   });
 
   test("serializes rapid profile commits and keeps the latest selection", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
-    const slider = await screen.findByRole("slider", {
+    const menu = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    fireEvent.input(slider, { target: { value: "4" } });
-    fireEvent.change(slider, { target: { value: "4" } });
-    fireEvent.input(slider, { target: { value: "0" } });
-    fireEvent.change(slider, { target: { value: "0" } });
+    fireEvent.change(menu, { target: { value: "gpt-5.6-sol" } });
+    fireEvent.change(menu, { target: { value: "gpt-5.6-luna" } });
 
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-luna");
@@ -985,12 +1188,12 @@ describe("Chat view", () => {
     };
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
+    const menu = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    expect(slider).toHaveValue("0");
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
+    expect(menu).toHaveValue("gpt-5.6-luna");
+    expect(menu).toHaveDisplayValue("Profile 1");
   });
 
   test("shows a fixed profile when the catalog has one entry", async () => {
@@ -1014,16 +1217,16 @@ describe("Chat view", () => {
       });
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
+    const menu = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    expect(slider).toBeDisabled();
-    expect(slider).toHaveAttribute("max", "0");
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 1");
+    expect(menu).toBeDisabled();
+    expect(menu).toHaveValue("local");
+    expect(menu).toHaveDisplayValue("Profile 1");
   });
 
-  test("reports an empty model catalog without rendering a slider", async () => {
+  test("reports an empty model catalog without rendering a menu", async () => {
     const host = new FakeHost({ authenticated: true });
     host.chat.listModels = () =>
       Promise.resolve({ default_model: null, models: [] });
@@ -1033,8 +1236,63 @@ describe("Chat view", () => {
       await screen.findByText("No model profiles available."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("slider", { name: "Model profile" }),
+      screen.queryByRole("combobox", { name: "Model profile" }),
     ).not.toBeInTheDocument();
+  });
+
+  test("searches the loaded transcript without hiding unmatched messages", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({ content: "ordinary text", role: "assistant", seq: 1 }),
+        message({ content: "the hidden needle", role: "assistant", seq: 2 }),
+      ],
+    });
+    renderApp(host);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Search transcript" }),
+    );
+    fireEvent.input(
+      screen.getByRole("searchbox", { name: "Search transcript" }),
+      {
+        target: { value: "needle" },
+      },
+    );
+
+    expect(await screen.findByText("1 match")).toBeInTheDocument();
+    expect(screen.getByText("ordinary text")).toBeInTheDocument();
+    expect(
+      screen.getByText("the hidden needle").closest("[data-search-match]"),
+    ).toHaveAttribute("data-search-match", "active");
+  });
+
+  test("loads older transcript pages when search opens", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: Array.from({ length: 31 }, (_, index) =>
+        message({
+          content: index === 0 ? "old needle" : `message ${index.toString()}`,
+          role: "assistant",
+          seq: index + 1,
+        }),
+      ),
+    });
+    renderApp(host);
+    await screen.findByText("message 30");
+    expect(screen.queryByText("old needle")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search transcript" }));
+    fireEvent.input(
+      screen.getByRole("searchbox", { name: "Search transcript" }),
+      {
+        target: { value: "needle" },
+      },
+    );
+
+    expect(await screen.findByText("old needle")).toBeInTheDocument();
+    expect(screen.getByText("1 match")).toBeInTheDocument();
+    expect(host.chat.listMessagesCalls).toHaveLength(2);
   });
 
   test("only fetches the latest page of history by default", async () => {
@@ -1103,7 +1361,7 @@ describe("Chat view", () => {
     renderApp(host);
 
     expect(
-      await screen.findByText("Next message starts a fresh session"),
+      await screen.findByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
   });
 
@@ -1118,7 +1376,7 @@ describe("Chat view", () => {
 
     await screen.findByRole("heading", { name: "Tether chat" });
     expect(
-      screen.queryByText("Next message starts a fresh session"),
+      screen.queryByText("Next message starts a fresh working session"),
     ).not.toBeInTheDocument();
   });
 
@@ -1132,7 +1390,7 @@ describe("Chat view", () => {
     renderApp(host);
 
     expect(
-      await screen.findByText("Next message starts a fresh session"),
+      await screen.findByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
   });
 
@@ -1141,7 +1399,7 @@ describe("Chat view", () => {
     const bus = renderApp(host);
 
     expect(
-      await screen.findByText("Next message starts a fresh session"),
+      await screen.findByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
 
     fireEvent.input(textarea(await screen.findByLabelText("Message")), {
@@ -1150,7 +1408,7 @@ describe("Chat view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(
-      screen.queryByText("Next message starts a fresh session"),
+      screen.queryByText("Next message starts a fresh working session"),
     ).not.toBeInTheDocument();
 
     bus.emit({
@@ -1160,7 +1418,7 @@ describe("Chat view", () => {
     });
 
     expect(
-      await screen.findByText("Next message starts a fresh session"),
+      await screen.findByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
   });
 

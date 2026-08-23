@@ -77,6 +77,15 @@ class SkillStatusFrame(_ConversationFrame):
     loaded_count: int
 
 
+class SessionStatusFrame(_ConversationFrame):
+    """Pi's current estimate of working-context occupancy."""
+
+    event: Literal["session_status"] = "session_status"
+    context_tokens: int | None = None
+    context_window: int | None = None
+    context_percent: float | None = None
+
+
 class ToolStartFrame(_ConversationFrame):
     """pi began executing one tool call."""
 

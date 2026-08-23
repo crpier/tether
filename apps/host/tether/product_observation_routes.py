@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter
-from pydantic import BaseModel, PositiveInt
+from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -14,6 +14,14 @@ from tether.product_observation_capabilities import (
     ProductObservationRead,
 )
 from tether.product_observation_errors import ProductObservationNotFoundError
+
+
+class RecordProductObservationRequest(BaseModel):
+    """Explicit browser capture of one conversational user Message."""
+
+    conversation_id: UUID7
+    interpretation: str
+    message_id: UUID7
 
 
 class ResolveProductObservationRequest(BaseModel):
@@ -41,6 +49,26 @@ router = APIRouter()
 async def list_product_observations(request: Request) -> Response:
     """List unresolved Product observations newest first."""
     return rest_response(await product_observation_capabilities.list_open(request))
+
+
+@router.post(
+    "/api/product-observations",
+    response_model=ProductObservationRead,
+)
+@_translate_domain_errors
+async def record_product_observation(
+    request: Request,
+    body: RecordProductObservationRequest,
+) -> Response:
+    """Capture explicit feedback from a selected conversational Message."""
+    return rest_response(
+        await product_observation_capabilities.record_message(
+            request,
+            conversation_id=body.conversation_id,
+            interpretation=body.interpretation,
+            message_id=body.message_id,
+        )
+    )
 
 
 @router.post(

@@ -21,6 +21,7 @@ from tether.chat_frames import (
     ErrorFrame,
     MessageEndFrame,
     MessageStartFrame,
+    SessionStatusFrame,
     SkillStatusFrame,
     StreamUpdateFrame,
     ToolEndFrame,
@@ -33,6 +34,7 @@ from tether.conversation_store import Conversation
 from tether.conversations import SESSION_GAP, ConversationService
 from tether.dreaming import DreamingService
 from tether.pi_errors import PiRuntimeError
+from tether.pi_runtime import ContextUsage
 from tether.pi_turn_events import (
     AgentEnded,
     AssistantStreamNote,
@@ -78,6 +80,8 @@ class ChatPiRuntime(Protocol):
 
     @property
     def skills_confirmed(self) -> bool: ...
+
+    async def fetch_context_usage(self) -> ContextUsage | None: ...
 
     def drain_events(self) -> int: ...
 
@@ -153,6 +157,7 @@ class _TurnContext:
     conversation_id: UUID
     dependencies: ChatTurnDependencies
     reply_mode: ReplyMode
+    runtime: ChatPiRuntime
     session_id: str
     websocket: ChatFrameSink
 
@@ -394,6 +399,40 @@ async def _queue_dreaming_run(
         )
 
 
+async def send_session_status(
+    websocket: ChatFrameSink,
+    runtime: ChatPiRuntime,
+    conversation_id: UUID,
+) -> None:
+    """Send optional pi context state without risking chat operation."""
+    try:
+        usage = await runtime.fetch_context_usage()
+    except Exception as error:
+        _logger.warning(
+            "Pi context usage unavailable",
+            conversation_id=str(conversation_id),
+            error_type=type(error).__name__,
+        )
+        return
+    await websocket.send_json(
+        SessionStatusFrame(
+            context_percent=None if usage is None else usage.percent,
+            context_tokens=None if usage is None else usage.tokens,
+            context_window=None if usage is None else usage.context_window,
+            conversation_id=conversation_id,
+        ).wire()
+    )
+
+
+async def _send_session_status(context: _TurnContext) -> None:
+    """Send context state for the runtime completing the current turn."""
+    await send_session_status(
+        context.websocket,
+        context.runtime,
+        context.conversation_id,
+    )
+
+
 async def _handle_turn_event(
     context: _TurnContext,
     state: _TurnState,
@@ -451,6 +490,7 @@ async def _handle_turn_event(
                 or state.needs_final_answer
             )
         case AgentEnded():
+            await _send_session_status(context)
             tool_only = False
             if state.needs_final_answer:
                 await _settle_tool_only_turn_marker(
@@ -481,6 +521,7 @@ async def stream_chat_turn(
         conversation_id=spec.conversation_id,
         dependencies=dependencies,
         reply_mode=spec.reply_mode,
+        runtime=runtime,
         session_id=spec.session_id,
         websocket=websocket,
     )
@@ -631,5 +672,6 @@ __all__ = [
     "TurnSpec",
     "run_chat_prompt",
     "send_chat_error",
+    "send_session_status",
     "stream_chat_turn",
 ]
