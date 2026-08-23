@@ -33,6 +33,7 @@ from tether.conversation_model import ConversationNotFoundError, MessageDraft
 from tether.conversation_store import Conversation
 from tether.conversations import SESSION_GAP, ConversationService
 from tether.dreaming import DreamingService
+from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
 from tether.pi_runtime import ContextUsage
 from tether.pi_turn_events import (
@@ -80,6 +81,8 @@ class ChatPiRuntime(Protocol):
 
     @property
     def skills_confirmed(self) -> bool: ...
+
+    async def apply_model(self, model: AgentModelConfig) -> None: ...
 
     async def fetch_context_usage(self) -> ContextUsage | None: ...
 
@@ -139,6 +142,16 @@ class _TurnState:
     streamed_text: list[str] = field(default_factory=list[str])
     final_text: str = ""
     needs_final_answer: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ChatPromptSpec:
+    """One queued prompt plus its optional scheduled profile override."""
+
+    conversation_id: UUID
+    content: str
+    model_profile: str | None = None
+    reply_mode: ReplyMode = "text"
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,15 +546,55 @@ async def stream_chat_turn(
     return state.final_text
 
 
+@asynccontextmanager
+async def _use_model_profile(
+    runtime: ChatPiRuntime,
+    conversation_service: ConversationService,
+    *,
+    conversation_id: UUID,
+    model_profile: str | None,
+) -> AsyncGenerator[None]:
+    """Apply a pinned profile for one turn, then restore the live selection."""
+    if model_profile is None:
+        yield
+        return
+    pinned_model = conversation_service.model_catalog.resolve(model_profile)
+    if pinned_model is None:
+        yield
+        return
+    current_conversation = await conversation_service.fetch_conversation(
+        conversation_id
+    )
+    current_model = conversation_service.model_catalog.resolve(
+        current_conversation.selected_model
+    )
+    if current_model is not None and current_model.id == pinned_model.id:
+        yield
+        return
+    await runtime.apply_model(pinned_model)
+    try:
+        yield
+    finally:
+        current_conversation = await conversation_service.fetch_conversation(
+            conversation_id
+        )
+        current_model = conversation_service.model_catalog.resolve(
+            current_conversation.selected_model
+        )
+        if current_model is not None:
+            await runtime.apply_model(current_model)
+
+
 async def _run_chat_prompt(
     websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
-    *,
-    conversation_id: UUID,
-    content: str,
-    reply_mode: ReplyMode,
+    spec: ChatPromptSpec,
 ) -> str:
     """Persist, submit, stream, and settle one prompt with ownership held."""
+    content = spec.content
+    conversation_id = spec.conversation_id
+    model_profile = spec.model_profile
+    reply_mode = spec.reply_mode
     try:
         conversation = await dependencies.conversation_service.fetch_conversation(
             conversation_id
@@ -594,38 +647,47 @@ async def _run_chat_prompt(
                         ),
                     ).wire()
                 )
-            _ = runtime.drain_events()
-            now = datetime.now().astimezone()
-            prompt_response = await runtime.client.request(
-                "prompt",
-                message=prompt_with_time_context(
-                    content,
-                    now=now,
-                    timezone_name=local_timezone_name(now),
-                    reply_mode=reply_mode,
-                ),
-            )
-            if prompt_response.get("success") is not True:
-                failure_detail = _prompt_failure_detail(prompt_response)
-                run.mark("error", failure_detail)
-                await send_chat_error(
-                    websocket,
-                    conversation_id=conversation_id,
-                    detail=failure_detail,
+            async with _use_model_profile(
+                runtime,
+                dependencies.conversation_service,
+                conversation_id=conversation_id,
+                model_profile=model_profile,
+            ):
+                _ = runtime.drain_events()
+                now = datetime.now().astimezone()
+                prompt_response = await runtime.client.request(
+                    "prompt",
+                    message=prompt_with_time_context(
+                        content,
+                        now=now,
+                        timezone_name=local_timezone_name(now),
+                        reply_mode=reply_mode,
+                    ),
                 )
-                return ""
-            final_text = await stream_chat_turn(
-                websocket,
-                dependencies,
-                runtime=runtime,
-                spec=TurnSpec(
+                if prompt_response.get("success") is not True:
+                    failure_detail = _prompt_failure_detail(prompt_response)
+                    run.mark("error", failure_detail)
+                    await send_chat_error(
+                        websocket,
+                        conversation_id=conversation_id,
+                        detail=failure_detail,
+                    )
+                    return ""
+                final_text = await stream_chat_turn(
+                    websocket,
+                    dependencies,
+                    runtime=runtime,
+                    spec=TurnSpec(
+                        conversation_id=conversation_id,
+                        reply_mode=reply_mode,
+                        session_id=session_id,
+                    ),
+                )
+                await _queue_dreaming_run(
+                    dependencies,
                     conversation_id=conversation_id,
-                    reply_mode=reply_mode,
-                    session_id=session_id,
-                ),
-            )
-            await _queue_dreaming_run(dependencies, conversation_id=conversation_id)
-            return final_text
+                )
+                return final_text
     except PiRuntimeError as error:
         await send_chat_error(
             websocket,
@@ -647,25 +709,17 @@ async def _run_chat_prompt(
 async def run_chat_prompt(
     websocket: ChatFrameSink,
     dependencies: ChatTurnDependencies,
-    *,
-    conversation_id: UUID,
-    content: str,
-    reply_mode: ReplyMode = "text",
+    spec: ChatPromptSpec,
 ) -> str:
     """Queue, persist, submit, stream, and settle one user prompt."""
-    async with dependencies.turn_queue.serialize(conversation_id):
-        return await _run_chat_prompt(
-            websocket,
-            dependencies,
-            conversation_id=conversation_id,
-            content=content,
-            reply_mode=reply_mode,
-        )
+    async with dependencies.turn_queue.serialize(spec.conversation_id):
+        return await _run_chat_prompt(websocket, dependencies, spec)
 
 
 __all__ = [
     "ChatFrameSink",
     "ChatPiRuntime",
+    "ChatPromptSpec",
     "ChatRuntimeRegistry",
     "ChatTurnDependencies",
     "ConversationTurnQueue",

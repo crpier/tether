@@ -28,9 +28,9 @@ export const create_triggerTool: ToolDefinition<
   name: "create_trigger",
   label: "CreateTrigger",
   description:
-    "Params for scheduling a trigger.\n\n`once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and\n`time_of_day` (and a `weekday` for weekly). Mismatched fields are rejected\nas a well-formed `invalid_input` envelope, never a corrupt row.",
+    "Params for scheduling a trigger.\n\n`once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and\n`time_of_day` (and a `weekday` for weekly). A recurring prompt captures the\ncurrent chat profile. Mismatched fields are rejected as a well-formed\n`invalid_input` envelope, never a corrupt row.",
   promptSnippet:
-    "Params for scheduling a trigger.\n\n`once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and\n`time_of_day` (and a `weekday` for weekly). Mismatched fields are rejected\nas a well-formed `invalid_input` envelope, never a corrupt row.",
+    "Params for scheduling a trigger.\n\n`once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and\n`time_of_day` (and a `weekday` for weekly). A recurring prompt captures the\ncurrent chat profile. Mismatched fields are rejected as a well-formed\n`invalid_input` envelope, never a corrupt row.",
   parameters: create_triggerParameters,
   async execute(_toolCallId, params, signal) {
     return executeTetherTool(

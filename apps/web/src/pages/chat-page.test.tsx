@@ -232,7 +232,7 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
 
-    await screen.findByRole("combobox", { name: "Model profile" });
+    await screen.findByRole("slider", { name: "Model profile" });
 
     expect(bus.statusRequests).toEqual([conversation.id]);
   });
@@ -241,7 +241,7 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
     await screen.findByRole("heading", { name: "Tether chat" });
-    await screen.findByRole("combobox", { name: "Model profile" });
+    await screen.findByRole("slider", { name: "Model profile" });
 
     bus.emit({
       context_percent: 24,
@@ -271,7 +271,7 @@ describe("Chat view", () => {
   test("warns when pi working context nears capacity", async () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
-    await screen.findByRole("combobox", { name: "Model profile" });
+    await screen.findByRole("slider", { name: "Model profile" });
 
     bus.emit({
       context_percent: 91,
@@ -1101,7 +1101,7 @@ describe("Chat view", () => {
     });
   });
 
-  test("puts a labeled model menu beside working-session status", async () => {
+  test("puts the model slider beside working-session status", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
@@ -1113,12 +1113,11 @@ describe("Chat view", () => {
     expect(
       within(context).getByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
-    expect(within(context).getByText("Model")).toBeInTheDocument();
     expect(
-      await within(context).findByRole("combobox", { name: "Model profile" }),
-    ).toHaveDisplayValue("Profile 1");
+      await within(context).findByRole("slider", { name: "Model profile" }),
+    ).toBeInTheDocument();
     expect(
-      within(composer).queryByRole("combobox", { name: "Model profile" }),
+      within(composer).queryByRole("slider", { name: "Model profile" }),
     ).not.toBeInTheDocument();
     expect(
       within(composer).getByRole("textbox", { name: "Message" }),
@@ -1137,13 +1136,15 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
-    const menu = await screen.findByRole("combobox", {
+    const slider = await screen.findByRole("slider", {
       name: "Model profile",
     });
 
-    expect(menu).toHaveValue("gpt-5.6-luna");
-    expect(menu).toHaveDisplayValue("Profile 1");
-    expect(within(menu).getAllByRole("option")).toHaveLength(5);
+    expect(slider).toHaveAttribute("min", "0");
+    expect(slider).toHaveAttribute("max", "4");
+    expect(slider).toHaveAttribute("step", "1");
+    expect(slider).toHaveValue("0");
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
     expect(screen.queryAllByText(/GPT-5\.6|thinking/)).toHaveLength(0);
   });
 
@@ -1151,29 +1152,34 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
     const transcript = await screen.findByLabelText("Chat transcript");
-    const menu = await screen.findByRole("combobox", {
+    const slider = await screen.findByRole("slider", {
       name: "Model profile",
     });
     transcript.scrollTop = 123;
 
-    fireEvent.change(menu, { target: { value: "gpt-5.6-sol" } });
+    fireEvent.input(slider, { target: { value: "4" } });
+    expect(host.chat.selectedModel).toBeUndefined();
+
+    fireEvent.change(slider, { target: { value: "4" } });
 
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-sol");
     });
-    expect(menu).toHaveDisplayValue("Profile 5");
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 5 of 5");
     expect(transcript.scrollTop).toBe(123);
   });
 
   test("serializes rapid profile commits and keeps the latest selection", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
-    const menu = await screen.findByRole("combobox", {
+    const slider = await screen.findByRole("slider", {
       name: "Model profile",
     });
 
-    fireEvent.change(menu, { target: { value: "gpt-5.6-sol" } });
-    fireEvent.change(menu, { target: { value: "gpt-5.6-luna" } });
+    fireEvent.input(slider, { target: { value: "4" } });
+    fireEvent.change(slider, { target: { value: "4" } });
+    fireEvent.input(slider, { target: { value: "0" } });
+    fireEvent.change(slider, { target: { value: "0" } });
 
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-luna");
@@ -1188,12 +1194,12 @@ describe("Chat view", () => {
     };
     renderApp(host);
 
-    const menu = await screen.findByRole("combobox", {
+    const slider = await screen.findByRole("slider", {
       name: "Model profile",
     });
 
-    expect(menu).toHaveValue("gpt-5.6-luna");
-    expect(menu).toHaveDisplayValue("Profile 1");
+    expect(slider).toHaveValue("0");
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
   });
 
   test("shows a fixed profile when the catalog has one entry", async () => {
@@ -1217,16 +1223,16 @@ describe("Chat view", () => {
       });
     renderApp(host);
 
-    const menu = await screen.findByRole("combobox", {
+    const slider = await screen.findByRole("slider", {
       name: "Model profile",
     });
 
-    expect(menu).toBeDisabled();
-    expect(menu).toHaveValue("local");
-    expect(menu).toHaveDisplayValue("Profile 1");
+    expect(slider).toBeDisabled();
+    expect(slider).toHaveAttribute("max", "0");
+    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 1");
   });
 
-  test("reports an empty model catalog without rendering a menu", async () => {
+  test("reports an empty model catalog without rendering a slider", async () => {
     const host = new FakeHost({ authenticated: true });
     host.chat.listModels = () =>
       Promise.resolve({ default_model: null, models: [] });
@@ -1236,7 +1242,7 @@ describe("Chat view", () => {
       await screen.findByText("No model profiles available."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("combobox", { name: "Model profile" }),
+      screen.queryByRole("slider", { name: "Model profile" }),
     ).not.toBeInTheDocument();
   });
 

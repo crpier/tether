@@ -32,7 +32,7 @@ from snekql.sqlite import Fetched
 from tether.agent_run import record_run
 from tether.agent_trace_model import RunKind
 from tether.agent_trace_recorder import AgentTraceRecorder
-from tether.chat_turn import ChatTurnDependencies, run_chat_prompt
+from tether.chat_turn import ChatPromptSpec, ChatTurnDependencies, run_chat_prompt
 from tether.events import EventPublisher, InvalidateEvent
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
@@ -187,8 +187,8 @@ class ScheduledChatPromptRunner:
         self.dependencies: ChatTurnDependencies = dependencies
         self.event_publisher: EventPublisher = event_publisher
 
-    async def run(self, prompt: str) -> str:
-        """Submit `prompt` to the default chat and return its settled answer."""
+    async def run(self, prompt: str, model_profile: str | None) -> str:
+        """Submit `prompt` to the default chat with its pinned profile."""
         conversation = (
             await self.dependencies.conversation_service.list_conversations()
         )[0]
@@ -196,8 +196,11 @@ class ScheduledChatPromptRunner:
             return await run_chat_prompt(
                 _BackgroundChatSink(),
                 self.dependencies,
-                conversation_id=conversation.id,
-                content=prompt,
+                ChatPromptSpec(
+                    conversation_id=conversation.id,
+                    content=prompt,
+                    model_profile=model_profile,
+                ),
             )
         finally:
             await self.event_publisher.publish(

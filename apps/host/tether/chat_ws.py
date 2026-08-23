@@ -16,6 +16,7 @@ from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame, ReplyMode
 from tether.chat_turn import (
+    ChatPromptSpec,
     ChatTurnDependencies,
     ConversationTurnQueue,
     run_chat_prompt,
@@ -108,9 +109,11 @@ async def _handle_frame(
                 run_chat_prompt(
                     websocket,
                     _turn_dependencies(websocket),
-                    conversation_id=frame.conversation_id,
-                    content=frame.content,
-                    reply_mode=frame.reply_mode or "text",
+                    ChatPromptSpec(
+                        conversation_id=frame.conversation_id,
+                        content=frame.content,
+                        reply_mode=frame.reply_mode or "text",
+                    ),
                 )
             )
         case "abort":

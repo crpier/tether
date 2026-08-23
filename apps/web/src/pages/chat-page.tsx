@@ -92,16 +92,25 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       modelsQuery.data?.default_model ??
       "",
   );
-  const [menuModel, setMenuModel] = createSignal("");
+  const selectedIndex = createMemo(() => {
+    const index = (modelsQuery.data?.models ?? []).findIndex(
+      (model) => model.id === selectedModel(),
+    );
+    return Math.max(0, index);
+  });
+  const [sliderIndex, setSliderIndex] = createSignal(0);
+  const profilePosition = createMemo(
+    () =>
+      `Profile ${(sliderIndex() + 1).toString()} of ${(modelsQuery.data?.models.length ?? 1).toString()}`,
+  );
 
   let requestedModel = "";
   let persistingModel = false;
 
   createEffect(() => {
-    const resolvedModel = selectedModel();
+    setSliderIndex(selectedIndex());
     if (!persistingModel) {
-      requestedModel = resolvedModel;
-      setMenuModel(resolvedModel);
+      requestedModel = selectedModel();
     }
   });
 
@@ -119,7 +128,6 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       });
     } catch (error) {
       requestedModel = selectedModel();
-      setMenuModel(selectedModel());
       throw error;
     } finally {
       persistingModel = false;
@@ -142,40 +150,43 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   return (
     <div
       aria-label="Model"
-      class="flex shrink-0 items-center gap-1.5"
+      class="w-32 shrink-0 sm:w-36"
       role="group"
+      title={profilePosition()}
     >
-      <span class="text-muted-foreground text-xs">Model</span>
       <Show
         fallback={
           <p class="text-muted-foreground text-xs" role="status">
             {modelsQuery.isLoading
-              ? "Loading profiles…"
+              ? "Loading model profiles…"
               : "No model profiles available."}
           </p>
         }
         when={(modelsQuery.data?.models.length ?? 0) > 0}
       >
-        <select
+        <input
           aria-label="Model profile"
-          class="border-input bg-background h-8 max-w-32 rounded-md border px-2 text-xs"
+          aria-valuetext={profilePosition()}
+          class="accent-primary h-6 w-full cursor-pointer disabled:cursor-default"
           disabled={
             modelsQuery.isLoading || (modelsQuery.data?.models.length ?? 0) < 2
           }
+          max={(modelsQuery.data?.models.length ?? 1) - 1}
+          min="0"
           onChange={(event) => {
-            setMenuModel(event.currentTarget.value);
-            persistModel(event.currentTarget.value);
+            const profile =
+              modelsQuery.data?.models[event.currentTarget.valueAsNumber];
+            if (profile !== undefined) {
+              persistModel(profile.id);
+            }
           }}
-          value={menuModel()}
-        >
-          <For each={modelsQuery.data?.models ?? []}>
-            {(profile, index) => (
-              <option value={profile.id}>
-                Profile {(index() + 1).toString()}
-              </option>
-            )}
-          </For>
-        </select>
+          onInput={(event) => {
+            setSliderIndex(event.currentTarget.valueAsNumber);
+          }}
+          step="1"
+          type="range"
+          value={sliderIndex()}
+        />
       </Show>
     </div>
   );

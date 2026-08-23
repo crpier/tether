@@ -114,6 +114,7 @@ class TriggerRead(BaseModel):
     recurrence: TriggerRecurrence
     action_kind: TriggerActionKind
     payload: str
+    model_profile: str | None
     timezone: str
     wall_time: str | None
     weekday: int | None
@@ -134,6 +135,7 @@ class TriggerRead(BaseModel):
             recurrence=trigger.recurrence,
             action_kind=trigger.action_kind,
             payload=trigger.payload,
+            model_profile=trigger.model_profile,
             timezone=trigger.timezone,
             wall_time=trigger.wall_time,
             weekday=trigger.weekday,
@@ -180,12 +182,23 @@ def _single(trigger: ScheduledTrigger[Fetched]) -> CapabilityOutcome:
     )
 
 
+async def _model_profile_for(request: Request, spec: TriggerSpec) -> str | None:
+    """Snapshot chat effort only for prompts that will run more than once."""
+    if spec.action_kind != "prompt" or spec.recurrence == "once":
+        return None
+    runtime = app_runtime(request.app)
+    conversation = (await runtime.conversation_service.list_conversations())[0]
+    return conversation.selected_model or runtime.model_catalog.default_model
+
+
 async def create(request: Request, spec: TriggerSpec) -> CapabilityOutcome:
     """Create a Scheduled trigger."""
-    trigger = await app_runtime(request.app).trigger_service.create(
+    runtime = app_runtime(request.app)
+    trigger = await runtime.trigger_service.create(
         spec,
         now=datetime.now(UTC),
         logger=get_request_logger(request),
+        model_profile=await _model_profile_for(request, spec),
     )
     return _single(trigger)
 
@@ -215,6 +228,7 @@ async def update(
         spec,
         now=datetime.now(UTC),
         logger=get_request_logger(request),
+        model_profile=await _model_profile_for(request, spec),
     )
     return _single(trigger)
 

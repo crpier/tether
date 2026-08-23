@@ -3721,6 +3721,8 @@ export interface components {
       id: string;
       /** Last Error */
       last_error: string | null;
+      /** Model Profile */
+      model_profile: string | null;
       /** Next Attempt At */
       next_attempt_at: string | null;
       /**

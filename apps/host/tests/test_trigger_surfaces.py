@@ -14,6 +14,7 @@ from snektest import assert_eq, assert_in, assert_is_none, test
 from starlette.testclient import TestClient
 
 from tests.surfaces import call_tool, login, surface_client
+from tether.model_selection import AgentModelConfig
 
 FAR_FUTURE = "2099-01-01T15:00:00+00:00"
 FAR_PAST = "2020-01-01T15:00:00+00:00"
@@ -66,6 +67,39 @@ def post_creates_a_daily_prompt_trigger() -> None:
     assert_eq(body["action_kind"], "prompt")
     assert_eq(body["wall_time"], "09:00")
     assert_eq(body["status"], "active")
+
+
+@test()
+def recurring_prompt_snapshots_the_selected_chat_profile() -> None:
+    """A recurring prompt retains the profile selected when it is created."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(
+            Path(directory),
+            default_model="high-effort",
+            model_allowlist=(
+                AgentModelConfig(
+                    display_name="High effort",
+                    id="high-effort",
+                    model_id="faux-high",
+                    provider="faux",
+                    thinking_level="high",
+                ),
+            ),
+        ) as client,
+    ):
+        login(client)
+
+        body = create_trigger(
+            client,
+            recurrence="daily",
+            action_kind="prompt",
+            payload="summarise my day",
+            timezone="UTC",
+            time_of_day="09:00",
+        )
+
+    assert_eq(body["model_profile"], "high-effort")
 
 
 @test()
@@ -153,6 +187,51 @@ def put_updates_a_trigger_at_its_observed_version() -> None:
     updated = response.json()
     assert_eq(updated["payload"], "new")
     assert_eq(updated["version"], created["version"] + 1)
+
+
+@test()
+def updating_to_a_recurring_prompt_snapshots_the_selected_chat_profile() -> None:
+    """Editing a trigger into a recurring prompt pins the current profile."""
+    with (
+        TemporaryDirectory() as directory,
+        make_client(
+            Path(directory),
+            default_model="low-effort",
+            model_allowlist=(
+                AgentModelConfig(
+                    display_name="Low effort",
+                    id="low-effort",
+                    model_id="faux-low",
+                    provider="faux",
+                    thinking_level="low",
+                ),
+            ),
+        ) as client,
+    ):
+        login(client)
+        created = create_trigger(
+            client,
+            recurrence="daily",
+            action_kind="message",
+            payload="old",
+            timezone="UTC",
+            time_of_day="09:00",
+        )
+
+        response = client.put(
+            f"/api/triggers/{created['id']}",
+            json={
+                "recurrence": "daily",
+                "action_kind": "prompt",
+                "payload": "summarise my day",
+                "timezone": "UTC",
+                "time_of_day": "09:00",
+                "version": created["version"],
+            },
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["model_profile"], "low-effort")
 
 
 @test()
