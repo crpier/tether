@@ -1068,12 +1068,20 @@ _MAINTENANCE_MAX_FILES = 8
 _MAINTENANCE_MAX_CHARS = 24_000
 """Upper bound on total input characters handed to one consolidation call."""
 
-_EVIDENCE_URI_PATTERN = re.compile(r"tether://message/[0-9a-fA-F-]+")
+_EVIDENCE_URI_PATTERN = re.compile(r"tether://[^\s)\]>,]+")
 _FILE_SEPARATOR_PATTERN = re.compile(r"^===\s+(\S+)\s+===\s*$", re.MULTILINE)
 
 
 class _MaintenanceError(Exception):
     """A consolidated response violated a maintenance invariant."""
+
+
+def maintenance_group_run_id(folder: str) -> UUID7:
+    """Stable synthetic UUIDv7 for a non-conversation workspace folder."""
+    raw = bytearray(uuid5(NAMESPACE_URL, f"tether:maintenance-group:{folder}").bytes)
+    raw[6] = (raw[6] & 0x0F) | 0x70
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return UUID(bytes=bytes(raw))
 
 
 class MaintenanceDreamingExecutor:
@@ -1149,16 +1157,31 @@ class MaintenanceDreamingExecutor:
         )
         return DreamRunExecutionResult(status="success")
 
+    def _folder_name(self, conversation_id: UUID) -> str:
+        """Resolve the workspace folder a maintenance run targets."""
+        direct = self.workspace_root / str(conversation_id)
+        if direct.is_dir():
+            return str(conversation_id)
+        for child in sorted(self.workspace_root.iterdir()):
+            if child.is_dir() and maintenance_group_run_id(child.name) == (
+                conversation_id
+            ):
+                return child.name
+        return ""
+
     async def _conversation_topics(
         self, conversation_id: UUID
     ) -> list[tuple[str, str]]:
-        """Return current valid topics under one conversation folder."""
+        """Return current valid topics under the targeted folder group."""
         scan = await MemoryWorkspace(self.workspace_root).scan()
-        prefix = f"{conversation_id}/"
+        folder = self._folder_name(conversation_id)
         pairs: list[tuple[str, str]] = []
         for topic in scan.topics:
             relative = topic.path.relative_to(self.workspace_root).as_posix()
-            if not relative.startswith(prefix):
+            if folder:
+                if not relative.startswith(f"{folder}/"):
+                    continue
+            elif "/" in relative:
                 continue
             pairs.append((relative, await AsyncPath(topic.path).read_text("utf-8")))
         return pairs
@@ -1206,7 +1229,7 @@ Rules:
 - Merge duplicate Claims across inputs into one Claim; keep distinct facts distinct.
 - Unify related fragments into fewer larger Topic files with meaningful titles and stable kebab-case `.md` paths.
 - Never drop information that appears in only one input; preserve uncertainty, corrections, and recognized hints (`context: always`, `review_after`).
-- Every evidence citation must be copied verbatim from the inputs; never invent or alter `tether://message/<id>` URIs.
+- Every evidence citation must be copied verbatim from the inputs; never invent or alter any `tether://` evidence URI.
 - Return either exactly `NO_CHANGES` or one document per resulting file:
 
 === <workspace-relative/path.md> ===
@@ -1552,8 +1575,9 @@ class DreamingService:
         if self.workspace_root is None:
             return []
         queued: list[DreamRun[Fetched]] = []
-        for conversation_id in await self._fragmented_conversation_ids():
+        for folder, conversation_id in await self._fragmented_groups():
             run = await self._queue_maintenance_run(
+                folder,
                 conversation_id,
                 logger=logger,
                 now=now,
@@ -1563,8 +1587,12 @@ class DreamingService:
                 queued.append(run)
         return queued
 
-    async def _fragmented_conversation_ids(self) -> list[UUID]:
-        """List conversation ids whose workspace folder holds 2+ topics."""
+    async def _fragmented_groups(self) -> list[tuple[str, UUID]]:
+        """List (folder, run-id) pairs whose folder holds 2+ current topics.
+
+        Conversation folders use their own id; other folders (verticals like
+        `health/`, and the workspace root itself) get a stable synthetic id.
+        """
         assert self.workspace_root is not None
         scan = await MemoryWorkspace(self.workspace_root).scan()
         counts: dict[str, int] = {}
@@ -1572,15 +1600,16 @@ class DreamingService:
             relative = topic.path.relative_to(self.workspace_root)
             folder = relative.parts[0] if len(relative.parts) > 1 else ""
             counts[folder] = counts.get(folder, 0) + 1
-        fragmented: list[UUID] = []
+        groups: list[tuple[str, UUID]] = []
         for folder, count in counts.items():
-            if count < _MAINTENANCE_MIN_FILES or folder == "":
+            if count < _MAINTENANCE_MIN_FILES:
                 continue
             try:
-                fragmented.append(UUID(folder))
+                conversation_id: UUID = UUID(folder)
             except ValueError:
-                continue
-        return sorted(fragmented)
+                conversation_id = maintenance_group_run_id(folder)
+            groups.append((folder, conversation_id))
+        return sorted(groups)
 
     async def queue_maintenance_run(
         self,
@@ -1589,8 +1618,9 @@ class DreamingService:
         logger: Logger,
         now: datetime,
     ) -> DreamRun[Fetched] | None:
-        """Queue one forced maintenance run, bypassing only the interval."""
+        """Queue one forced maintenance run for a conversation folder."""
         return await self._queue_maintenance_run(
+            str(conversation_id),
             conversation_id,
             logger=logger,
             now=now,
@@ -1599,18 +1629,21 @@ class DreamingService:
 
     async def _queue_maintenance_run(
         self,
+        folder: str,
         conversation_id: UUID,
         *,
         logger: Logger,
         now: datetime,
         force: bool,
     ) -> DreamRun[Fetched] | None:
-        """Queue a maintenance run when the conversation is eligible."""
+        """Queue a maintenance run when the folder group is eligible."""
         if self.workspace_root is None:
             return None
-        folder = self.workspace_root / str(conversation_id)
+        folder_path = self.workspace_root / folder if folder else self.workspace_root
         topics = [
-            path for path in folder.glob("*.md") if not path.name.startswith((".", "~"))
+            path
+            for path in folder_path.glob("*.md")
+            if not path.name.startswith((".", "~"))
         ]
         if len(topics) < _MAINTENANCE_MIN_FILES:
             return None
