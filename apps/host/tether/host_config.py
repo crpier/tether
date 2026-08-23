@@ -102,6 +102,7 @@ class AppConfig:
     gmail_purge_chunk_size: int = 10
     health_episode_sweep_seconds: float = 60.0
     dreaming_enabled: bool = False
+    dream_maintenance_interval_seconds: float = 24 * 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
     proposal_action_specs: Sequence[ActionSpec] | None = None
@@ -378,6 +379,10 @@ class HostSettings(BaseSettings):
     bundles. Bounds both the prompt size and how large a single proposal gets."""
     dreaming_enabled: bool = False
     """Whether Dreaming orchestration is allowed to queue and complete runs."""
+    dream_maintenance_interval_seconds: float = 24 * 60 * 60
+    """Seconds between maintenance scans that queue topic-consolidation runs.
+    A conversation is only maintained once per interval, and only when its
+    workspace folder holds multiple topic files and no unassimilated evidence."""
     ebook_statistics_db_path: str = ""
     """Host-visible path to a Syncthing-mirrored copy of KOReader's
     `statistics.sqlite`. Empty (the default) keeps the ingestion worker off, so

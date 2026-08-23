@@ -6,10 +6,10 @@ import asyncio
 import contextlib
 import hashlib
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -23,6 +23,7 @@ from snekql.sqlite import (
     Database,
     Fetched,
     Transaction,
+    delete,
     insert,
     select,
     update,
@@ -38,6 +39,7 @@ from tether.dreaming_store import (
     DreamingMutationActor,
     DreamingMutationOperation,
     DreamingWorkspaceFile,
+    DreamMaintenanceProgress,
     DreamRun,
     DreamRunKind,
     DreamRunTerminalStatus,
@@ -48,6 +50,7 @@ from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
 
 _DREAM_SETTLE_WINDOW = timedelta(minutes=20)
+_MAINTENANCE_INTERVAL = timedelta(hours=24)
 """Delay before an auto run can consume new user-level evidence."""
 _DREAM_MAX_MESSAGES = 200
 """Default max transcript rows per Dream run."""
@@ -1056,21 +1059,399 @@ evidence_end_seq: {run.evidence_end_seq}
         ]
 
 
+_MAINTENANCE_MIN_FILES = 2
+"""Fewer topic files than this leaves a conversation nothing to consolidate."""
+
+_MAINTENANCE_MAX_FILES = 8
+"""Upper bound on topic files consolidated in one maintenance run."""
+
+_MAINTENANCE_MAX_CHARS = 24_000
+"""Upper bound on total input characters handed to one consolidation call."""
+
+_EVIDENCE_URI_PATTERN = re.compile(r"tether://message/[0-9a-fA-F-]+")
+_FILE_SEPARATOR_PATTERN = re.compile(r"^===\s+(\S+)\s+===\s*$", re.MULTILINE)
+
+
+class _MaintenanceError(Exception):
+    """A consolidated response violated a maintenance invariant."""
+
+
+class MaintenanceDreamingExecutor:
+    """Consolidate fragmented topic documents into fewer, larger files.
+
+    Plan 507 §5: the dreaming agent chooses boundaries, merges, and splits.
+    This executor hands one bounded batch of related topic files to an
+    unattended consolidation call, validates the proposal (safe paths, real
+    titles, no invented citations), and applies it as recorded Dreaming
+    mutations so file history and reconciliation stay intact. It never reads
+    or advances the assimilation cursor.
+    """
+
+    def __init__(
+        self,
+        database: Database,
+        workspace_root: Path,
+        *,
+        mutation_coordinator: DreamingMutationCoordinator | None = None,
+        mutation_acknowledger: DreamingMutationAcknowledger | None = None,
+        consolidation_runner: DreamingCurationRunner | None = None,
+    ) -> None:
+        self.database: Database = database
+        self.workspace_root: Path = Path(workspace_root)
+        self.consolidation_runner: DreamingCurationRunner | None = consolidation_runner
+        self.mutation_coordinator: DreamingMutationCoordinator = (
+            mutation_coordinator
+            if mutation_coordinator is not None
+            else DreamingMutationCoordinator(database, self.workspace_root)
+        )
+        self.mutation_acknowledger: DreamingMutationAcknowledger = (
+            mutation_acknowledger
+            if mutation_acknowledger is not None
+            else self.mutation_coordinator.acknowledge_mutation
+        )
+
+    async def __call__(
+        self,
+        run: DreamRun[Fetched],
+        *,
+        logger: Logger,
+    ) -> DreamRunExecutionResult:
+        batch = await self._select_batch(run.conversation_id)
+        if len(batch) < _MAINTENANCE_MIN_FILES:
+            return DreamRunExecutionResult(status="no_op")
+        runner = self.consolidation_runner
+        if runner is None:
+            return DreamRunExecutionResult(
+                status="failed",
+                error="maintenance requires a consolidation runner",
+            )
+        response = (await runner.run(self._render_prompt(batch))).strip()
+        if response == "NO_CHANGES":
+            await self._mark_maintained(batch)
+            logger.info(
+                "Maintenance found nothing to consolidate",
+                run_id=str(run.id),
+                files=len(batch),
+            )
+            return DreamRunExecutionResult(status="no_op")
+        try:
+            proposed = self._parse_response(response)
+            self._validate_citations(batch, proposed)
+        except _MaintenanceError as error:
+            return DreamRunExecutionResult(status="failed", error=str(error))
+
+        applied = await self._apply(run, batch, proposed)
+        logger.info(
+            "Maintenance consolidated topics",
+            run_id=str(run.id),
+            inputs=len(batch),
+            outputs=len(applied),
+        )
+        return DreamRunExecutionResult(status="success")
+
+    async def _conversation_topics(
+        self, conversation_id: UUID
+    ) -> list[tuple[str, str]]:
+        """Return current valid topics under one conversation folder."""
+        scan = await MemoryWorkspace(self.workspace_root).scan()
+        prefix = f"{conversation_id}/"
+        pairs: list[tuple[str, str]] = []
+        for topic in scan.topics:
+            relative = topic.path.relative_to(self.workspace_root).as_posix()
+            if not relative.startswith(prefix):
+                continue
+            pairs.append((relative, await AsyncPath(topic.path).read_text("utf-8")))
+        return pairs
+
+    async def _select_batch(self, conversation_id: UUID) -> list[tuple[str, str]]:
+        """Pick never-maintained-then-least-recently-maintained files, bounded."""
+        topics = await self._conversation_topics(conversation_id)
+        if len(topics) < _MAINTENANCE_MIN_FILES:
+            return []
+        progress = {row.path: row for row in await self._fetch_progress()}
+
+        def _maintenance_key(pair: tuple[str, str]) -> tuple[str, str]:
+            entry = progress.get(pair[0])
+            maintained = "" if entry is None else str(entry.maintained_at)
+            return (maintained, pair[0])
+
+        ordered = sorted(topics, key=_maintenance_key)
+        batch: list[tuple[str, str]] = []
+        total = 0
+        for pair in ordered:
+            if len(batch) >= _MAINTENANCE_MAX_FILES:
+                break
+            if batch and total + len(pair[1]) > _MAINTENANCE_MAX_CHARS:
+                break
+            batch.append(pair)
+            total += len(pair[1])
+        return batch
+
+    async def _fetch_progress(self) -> list[DreamMaintenanceProgress[Fetched]]:
+        async with self.database.transaction() as tx:
+            return list(await tx.fetch_all(select(DreamMaintenanceProgress).all()))
+
+    def _render_prompt(self, batch: list[tuple[str, str]]) -> str:
+        """Render exact bounded inputs for unattended Topic consolidation."""
+        blocks = "\n\n".join(
+            f"<<< {relative}\n{content}\n>>>" for relative, content in batch
+        )
+        return f"""Consolidate fragmented Memory Topic documents into fewer, larger canonical Topic files.
+
+Inputs (workspace-relative paths with complete contents):
+
+{blocks}
+
+Rules:
+- Merge duplicate Claims across inputs into one Claim; keep distinct facts distinct.
+- Unify related fragments into fewer larger Topic files with meaningful titles and stable kebab-case `.md` paths.
+- Never drop information that appears in only one input; preserve uncertainty, corrections, and recognized hints (`context: always`, `review_after`).
+- Every evidence citation must be copied verbatim from the inputs; never invent or alter `tether://message/<id>` URIs.
+- Return either exactly `NO_CHANGES` or one document per resulting file:
+
+=== <workspace-relative/path.md> ===
+---
+title: <Topic title>
+---
+
+<document body>
+"""
+
+    def _parse_response(self, response: str) -> list[tuple[str, str]]:
+        """Parse the multi-document consolidation shape into proposals."""
+        separators = list(_FILE_SEPARATOR_PATTERN.finditer(response))
+        if not separators:
+            message = "consolidation response contained no documents"
+            raise _MaintenanceError(message)
+        proposals: list[tuple[str, str]] = []
+        seen_paths: set[str] = set()
+        for index, separator in enumerate(separators):
+            raw_path = separator.group(1)
+            safe_path = self._safe_relative_path(raw_path)
+            if safe_path is None:
+                message = f"consolidated path is unsafe: {raw_path}"
+                raise _MaintenanceError(message)
+            if safe_path in seen_paths:
+                message = f"consolidated path repeated: {safe_path}"
+                raise _MaintenanceError(message)
+            seen_paths.add(safe_path)
+            end = (
+                separators[index + 1].start()
+                if index + 1 < len(separators)
+                else len(response)
+            )
+            document = response[separator.end() : end].strip("\n")
+            frontmatter = self._document_title(document)
+            if not frontmatter:
+                message = f"consolidated document lacks frontmatter title: {safe_path}"
+                raise _MaintenanceError(message)
+            proposals.append((safe_path, document + "\n"))
+        return proposals
+
+    @staticmethod
+    def _document_title(document: str) -> str | None:
+        """Return the frontmatter title of one proposed document, or `None`."""
+        if not document.startswith("---\n"):
+            return None
+        parts = document.split(_FRONTMATTER_SEPARATOR, 1)
+        if len(parts) != _FRONTMATTER_PART_COUNT:
+            return None
+        loaded = cast("dict[str, object] | None", safe_load(parts[0][3:]))
+        if loaded is None:
+            return None
+        raw_title = loaded.get("title")
+        if not isinstance(raw_title, str) or not raw_title.strip():
+            return None
+        return raw_title
+
+    @staticmethod
+    def _safe_relative_path(raw_path: str) -> str | None:
+        """Normalize a proposed path, refusing anything outside the root."""
+        if "\\" in raw_path or not raw_path.endswith(".md"):
+            return None
+        candidate = PurePosixPath(raw_path)
+        if candidate.is_absolute() or any(
+            part in ("..", "") for part in candidate.parts
+        ):
+            return None
+        return candidate.as_posix()
+
+    @staticmethod
+    def _validate_citations(
+        batch: list[tuple[str, str]],
+        proposed: list[tuple[str, str]],
+    ) -> None:
+        """Refuse output that cites evidence the batch does not carry."""
+        supported: set[str] = set()
+        for _, content in batch:
+            supported.update(_EVIDENCE_URI_PATTERN.findall(content))
+        for relative, document in proposed:
+            unsupported = set(_EVIDENCE_URI_PATTERN.findall(document)) - supported
+            if unsupported:
+                message = f"consolidated document contains an unsupported citation: {relative}"
+                raise _MaintenanceError(message)
+
+    async def _apply(
+        self,
+        run: DreamRun[Fetched],
+        batch: list[tuple[str, str]],
+        proposed: list[tuple[str, str]],
+    ) -> list[str]:
+        """Write consolidated files, delete replaced ones, record mutations."""
+        written: list[tuple[str, str]] = []
+        replaced_inputs: dict[str, str] = dict(batch)
+        async with self.mutation_coordinator.mutation_scope():
+            for index, (relative, document) in enumerate(proposed):
+                target = self.workspace_root / relative
+                existing = (
+                    await AsyncPath(target).read_text("utf-8")
+                    if await AsyncPath(target).exists()
+                    else None
+                )
+                _ = replaced_inputs.pop(relative, None)
+                if existing == document:
+                    written.append((relative, document))
+                    continue
+                await AsyncPath(target.parent).mkdir(parents=True, exist_ok=True)
+                async with NamedTemporaryFile(
+                    mode="w",
+                    dir=str(target.parent),
+                    delete=False,
+                    encoding="utf-8",
+                ) as file:
+                    temporary_path = AsyncPath(file.wrapped.name)
+                    _ = await file.write(document)
+                _ = await temporary_path.replace(AsyncPath(target))
+                written.append((relative, document))
+                tool_call_id = self._mutation_tool_call_id(run, index, relative)
+                _ = await self.mutation_coordinator.record_mutation(
+                    run_id=run.id,
+                    tool_call_id=tool_call_id,
+                    actor="dream",
+                    operation="write",
+                    workspace_path=target,
+                    payload=document,
+                )
+                settlement = await self.mutation_coordinator.settle(
+                    run.id,
+                    tool_call_id,
+                    acknowledger=self.mutation_acknowledger,
+                )
+                _ = settlement
+            for relative in replaced_inputs:
+                target = self.workspace_root / relative
+                if await AsyncPath(target).exists():
+                    await AsyncPath(target).unlink()
+                tool_call_id = self._mutation_tool_call_id(run, len(proposed), relative)
+                _ = await self.mutation_coordinator.record_mutation(
+                    run_id=run.id,
+                    tool_call_id=tool_call_id,
+                    actor="dream",
+                    operation="delete",
+                    workspace_path=target,
+                    payload="",
+                )
+                settlement = await self.mutation_coordinator.settle(
+                    run.id,
+                    tool_call_id,
+                    acknowledger=self.mutation_acknowledger,
+                )
+                _ = settlement
+        await self._record_progress(written, deleted=replaced_inputs.keys())
+        return [relative for relative, _ in written]
+
+    @staticmethod
+    def _mutation_tool_call_id(
+        run: DreamRun[Fetched], index: int, relative: str
+    ) -> str:
+        seed = f"{run.id}:maintenance:{index}:{relative}"
+        return str(uuid5(NAMESPACE_URL, seed))
+
+    async def _record_progress(
+        self,
+        written: list[tuple[str, str]],
+        *,
+        deleted: Iterable[str],
+    ) -> None:
+        """Persist maintained paths and drop tombstoned ones."""
+        async with self.database.transaction(mode="immediate") as tx:
+            for relative, document in written:
+                existing = await tx.fetch_one_or_none(
+                    select(DreamMaintenanceProgress).where(
+                        DreamMaintenanceProgress.path.eq(relative)
+                    )
+                )
+                content_hash = hashlib.sha256(document.encode()).hexdigest()
+                if existing is None:
+                    _ = await tx.execute(
+                        insert(
+                            DreamMaintenanceProgress(
+                                path=relative,
+                                content_hash=content_hash,
+                            )
+                        )
+                    )
+                else:
+                    _ = await tx.execute(
+                        update(DreamMaintenanceProgress)
+                        .set(DreamMaintenanceProgress.content_hash.to(content_hash))
+                        .set(
+                            DreamMaintenanceProgress.maintained_at.to(CurrentTimestamp)
+                        )
+                        .where(DreamMaintenanceProgress.path.eq(relative))
+                    )
+            for relative in deleted:
+                _ = await tx.execute(
+                    delete(DreamMaintenanceProgress).where(
+                        DreamMaintenanceProgress.path.eq(relative)
+                    )
+                )
+
+    async def _mark_maintained(self, batch: list[tuple[str, str]]) -> None:
+        """Record unchanged files as maintained at their current content."""
+        await self._record_progress(batch, deleted=())
+
+
+class KindDispatchingDreamExecutor:
+    """Route claimed runs to the executor matching their kind."""
+
+    def __init__(self, routes: Mapping[str, DreamRunExecutor]) -> None:
+        self.routes: Mapping[str, DreamRunExecutor] = routes
+
+    async def __call__(
+        self,
+        run: DreamRun[Fetched],
+        *,
+        logger: Logger,
+    ) -> DreamRunExecutionResult:
+        route = self.routes.get(run.kind)
+        if route is None:
+            return DreamRunExecutionResult(
+                status="failed",
+                error=f"no executor registered for run kind {run.kind}",
+            )
+        return await route(run, logger=logger)
+
+
 class DreamingService:
     """Stateful orchestration surface for Dream run request scheduling."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - keyword-only tuning knobs, all defaulted
         self,
         database: Database,
         *,
         settle_window: timedelta = _DREAM_SETTLE_WINDOW,
         max_messages_per_run: PositiveInt = _DREAM_MAX_MESSAGES,
         tracer: Tracer | None = None,
+        workspace_root: Path | None = None,
+        maintenance_interval: timedelta = _MAINTENANCE_INTERVAL,
     ) -> None:
         self.database: Database = database
         self.settle_window: timedelta = settle_window
         self.max_messages_per_run: PositiveInt = max_messages_per_run
         self.tracer: Tracer | None = tracer
+        self.workspace_root: Path | None = workspace_root
+        self.maintenance_interval: timedelta = maintenance_interval
         self._immediate_assimilation_requests: set[UUID] = set()
 
     def request_immediate_assimilation(self, conversation_id: UUID) -> None:
@@ -1154,6 +1535,169 @@ class DreamingService:
             now=now,
         )
 
+    async def queue_maintenance_runs(
+        self,
+        *,
+        logger: Logger,
+        now: datetime,
+        force: bool = False,
+    ) -> list[DreamRun[Fetched]]:
+        """Queue maintenance runs for every fragmented, due conversation.
+
+        Maintenance consolidates fragmented topic files; it never consumes
+        evidence, so it yields to any conversation with an unassimilated
+        window and stays quiet until `maintenance_interval` has passed since
+        its last completed maintenance run (unless `force`).
+        """
+        if self.workspace_root is None:
+            return []
+        queued: list[DreamRun[Fetched]] = []
+        for conversation_id in await self._fragmented_conversation_ids():
+            run = await self._queue_maintenance_run(
+                conversation_id,
+                logger=logger,
+                now=now,
+                force=force,
+            )
+            if run is not None:
+                queued.append(run)
+        return queued
+
+    async def _fragmented_conversation_ids(self) -> list[UUID]:
+        """List conversation ids whose workspace folder holds 2+ topics."""
+        assert self.workspace_root is not None
+        scan = await MemoryWorkspace(self.workspace_root).scan()
+        counts: dict[str, int] = {}
+        for topic in scan.topics:
+            relative = topic.path.relative_to(self.workspace_root)
+            folder = relative.parts[0] if len(relative.parts) > 1 else ""
+            counts[folder] = counts.get(folder, 0) + 1
+        fragmented: list[UUID] = []
+        for folder, count in counts.items():
+            if count < _MAINTENANCE_MIN_FILES or folder == "":
+                continue
+            try:
+                fragmented.append(UUID(folder))
+            except ValueError:
+                continue
+        return sorted(fragmented)
+
+    async def queue_maintenance_run(
+        self,
+        conversation_id: UUID,
+        *,
+        logger: Logger,
+        now: datetime,
+    ) -> DreamRun[Fetched] | None:
+        """Queue one forced maintenance run, bypassing only the interval."""
+        return await self._queue_maintenance_run(
+            conversation_id,
+            logger=logger,
+            now=now,
+            force=True,
+        )
+
+    async def _queue_maintenance_run(
+        self,
+        conversation_id: UUID,
+        *,
+        logger: Logger,
+        now: datetime,
+        force: bool,
+    ) -> DreamRun[Fetched] | None:
+        """Queue a maintenance run when the conversation is eligible."""
+        if self.workspace_root is None:
+            return None
+        folder = self.workspace_root / str(conversation_id)
+        topics = [
+            path for path in folder.glob("*.md") if not path.name.startswith((".", "~"))
+        ]
+        if len(topics) < _MAINTENANCE_MIN_FILES:
+            return None
+        pending_window = await self._resolve_window(
+            conversation_id,
+            explicit=True,
+            now=now,
+        )
+        if pending_window is not None:
+            return None
+        if not force and not await self._maintenance_due(conversation_id, now=now):
+            return None
+        return await self._insert_maintenance_run(
+            conversation_id,
+            logger=logger,
+        )
+
+    async def _maintenance_due(
+        self,
+        conversation_id: UUID,
+        *,
+        now: datetime,
+    ) -> bool:
+        """Return whether the interval has elapsed since last completion."""
+        async with self.database.transaction() as tx:
+            last = await tx.fetch_one_or_none(
+                select(DreamRun)
+                .where(DreamRun.conversation_id.eq(conversation_id))
+                .where(DreamRun.kind.eq("maintenance"))
+                .where(DreamRun.status.in_("success", "no_op"))
+                .order_by(DreamRun.created_at.desc())
+                .limit(1)
+            )
+        if last is None:
+            return True
+        finished = last.completed_at or last.created_at
+        return _as_utc(now) - _as_utc(finished) >= self.maintenance_interval
+
+    async def _insert_maintenance_run(
+        self,
+        conversation_id: UUID,
+        *,
+        logger: Logger,
+    ) -> DreamRun[Fetched] | None:
+        """Insert a maintenance run unless one is already active."""
+        async with self.database.transaction() as tx:
+            cursor = await tx.fetch_one_or_none(
+                select(DreamConversationCursor).where(
+                    DreamConversationCursor.conversation_id.eq(conversation_id)
+                )
+            )
+        seq = max(cursor.last_assimilated_seq if cursor is not None else 0, 1)
+
+        async with self.database.transaction(mode="immediate") as tx:
+            active = await tx.fetch_one_or_none(
+                select(DreamRun)
+                .where(DreamRun.conversation_id.eq(conversation_id))
+                .where(DreamRun.status.in_("queued", "running"))
+                .order_by(DreamRun.created_at.desc())
+                .limit(1)
+            )
+            if active is not None:
+                logger.info(
+                    "Maintenance skipped: active Dream run",
+                    conversation_id=str(conversation_id),
+                    run_id=str(active.id),
+                )
+                return None
+            run = await tx.execute(
+                insert(
+                    DreamRun(
+                        conversation_id=conversation_id,
+                        kind="maintenance",
+                        status="queued",
+                        evidence_start_seq=seq,
+                        evidence_end_seq=seq,
+                    )
+                ).returning()
+            )
+        logger.info(
+            "Queued Dream run",
+            conversation_id=str(conversation_id),
+            run_id=str(run.id),
+            kind="maintenance",
+        )
+        return run
+
     async def scan_forever(
         self, *, interval_seconds: float = 60.0, logger: Logger
     ) -> None:
@@ -1173,6 +1717,21 @@ class DreamingService:
             initial_delay_seconds=interval_seconds,
             logger=logger,
             failure_message="Dream assimilation scan failed",
+        )
+
+    async def maintenance_forever(
+        self, *, interval_seconds: float = 86_400.0, logger: Logger
+    ) -> None:
+        """Queue consolidation runs for fragmented conversations on a cadence."""
+        await run_reconcile_loop(
+            lambda: self.queue_maintenance_runs(
+                logger=logger,
+                now=datetime.now(UTC),
+            ),
+            interval_seconds=interval_seconds,
+            initial_delay_seconds=interval_seconds,
+            logger=logger,
+            failure_message="Dream maintenance scan failed",
         )
 
     async def _queue_for_all_conversations(
@@ -1274,7 +1833,7 @@ class DreamingService:
                 .set(DreamRun.updated_at.to(resolved_now))
                 .where(DreamRun.id.eq(run_id))
             )
-            if status in {"success", "no_op"}:
+            if status in {"success", "no_op"} and run.kind != "maintenance":
                 await self._advance_cursor(
                     tx, run.conversation_id, run.evidence_end_seq
                 )
