@@ -729,3 +729,38 @@ async def dream_now_is_disabled_without_dreaming() -> None:
             _login(client)
             response = client.post("/api/dream-now")
             assert_eq(response.status_code, 404)
+
+
+@test()
+async def dream_maintenance_now_queues_maintenance_runs() -> None:
+    """The manual maintenance trigger queues runs for fragmented conversations."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory), dreaming_enabled=True)
+        with TestClient(app) as client:
+            _login(client)
+            runtime = app_runtime(cast("Starlette", client.app))
+            conversation_id = await _first_conversation(runtime)
+            folder = Path(directory) / ".tether" / "memory" / str(conversation_id)
+            folder.mkdir(parents=True)
+            for name in ("a.md", "b.md"):
+                _ = (folder / name).write_text(
+                    "---\ntitle: Topic\n---\n\n- Claim.\n", encoding="utf-8"
+                )
+
+            queued = client.post("/api/dream-maintenance-now")
+            assert_eq(queued.status_code, 200)
+            body = queued.json()
+            assert_len(body, 1)
+            assert_eq(body[0]["kind"], "maintenance")
+
+
+@test()
+async def dream_maintenance_now_disabled_by_default() -> None:
+    """Feature-flagged deployments keep the maintenance trigger off."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory))
+        with TestClient(app) as client:
+            _login(client)
+
+            denied = client.post("/api/dream-maintenance-now")
+            assert_eq(denied.status_code, 404)

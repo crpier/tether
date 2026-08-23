@@ -45,11 +45,14 @@ from tether.dreaming import (
     DreamingWorkerConfig,
     DreamRunExecutionResult,
     HttpDreamingMutationAcknowledger,
+    KindDispatchingDreamExecutor,
+    MaintenanceDreamingExecutor,
 )
 from tether.dreaming_store import (
     DreamConversationCursor,
     DreamingMutation,
     DreamingWorkspaceFile,
+    DreamMaintenanceProgress,
     DreamRun,
     create_dreaming_schema,
 )
@@ -1289,3 +1292,412 @@ async def explicit_window_is_bounded_by_message_count() -> None:
     assert run is not None
     assert_eq(run.evidence_start_seq, 1)
     assert_eq(run.evidence_end_seq, 2)
+
+
+# ---------------------------------------------------------------------------
+# Maintenance runs: consolidation of fragmented topic files (issue #601)
+# ---------------------------------------------------------------------------
+
+
+def _maintenance_service(
+    conversation_service: ConversationService,
+    workspace_root: Path,
+) -> DreamingService:
+    """Dreaming service wired to a scratch workspace with a 12h cadence."""
+    return DreamingService(
+        conversation_service.database,
+        workspace_root=workspace_root,
+        maintenance_interval=timedelta(hours=12),
+    )
+
+
+def _write_topic(  # noqa: PLR0913 - fixture helper mirrors document shape
+    workspace_root: Path,
+    conversation_id: UUID,
+    name: str,
+    *,
+    title: str,
+    body: str,
+    uris: tuple[str, ...] = (),
+) -> Path:
+    """Write one canonical topic document into the conversation folder."""
+    directory = workspace_root / str(conversation_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    evidence_lines = "".join(f"- {uri}\n" for uri in uris)
+    document = f"---\ntitle: {title}\nevidence:\n{evidence_lines}---\n\n{body}\n"
+    path = directory / name
+    _ = path.write_text(document, encoding="utf-8")
+    return path
+
+
+@fixture
+async def maintenance_fixture() -> AsyncGenerator[
+    tuple[ConversationService, DreamingService, UUID, Path]
+]:
+    """Conversation + Dreaming stack with a scratch memory workspace."""
+    db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_conversation_schema(db)
+    await create_dreaming_schema(db)
+    conversation_service = ConversationService(db)
+    conversation = (await conversation_service.list_conversations())[0]
+    scratch = TemporaryDirectory()
+    root = Path(scratch.name)
+    yield (
+        conversation_service,
+        _maintenance_service(conversation_service, root),
+        conversation.id,
+        root,
+    )
+    await db.close()
+    scratch.cleanup()
+
+
+@test()
+async def maintenance_queueing_requires_two_topic_files() -> None:
+    """A single-file conversation has nothing to consolidate."""
+    _, service, conversation_id, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+
+    queued = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert_is_none(queued)
+
+
+@test()
+async def maintenance_run_queues_for_a_fragmented_conversation() -> None:
+    """Two or more topic files make the conversation eligible."""
+    _, service, conversation_id, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+
+    assert run is not None
+    assert_eq(run.kind, "maintenance")
+    assert_eq(run.status, "queued")
+
+
+@test()
+async def due_maintenance_scan_respects_the_interval() -> None:
+    """A recently maintained conversation is skipped until the interval elapses."""
+    _, service, conversation_id, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    now = datetime.now(UTC)
+    first = await service.queue_maintenance_runs(logger=test_logger(), now=now)
+    assert_eq(len(first), 1)
+    claimed = await service.claim_next_run(logger=test_logger())
+    assert claimed is not None
+    _ = await service.complete_run(claimed.id, status="success", logger=test_logger())
+
+    soon = await service.queue_maintenance_runs(
+        logger=test_logger(), now=now + timedelta(hours=1)
+    )
+    assert_eq(soon, [])
+
+    later = await service.queue_maintenance_runs(
+        logger=test_logger(), now=now + timedelta(hours=13)
+    )
+    assert_eq(len(later), 1)
+
+
+@test()
+async def due_maintenance_scan_waits_for_pending_evidence() -> None:
+    """Assimilation always wins: unassimilated evidence blocks maintenance."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    message = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I finished the campaign",
+    )
+    await _retime(
+        message.id,
+        database=conversation_service.database,
+        when=datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    queued = await service.queue_maintenance_runs(
+        logger=test_logger(), now=datetime.now(UTC)
+    )
+    assert_eq(queued, [])
+
+
+@test()
+async def maintenance_completion_never_advances_the_assimilation_cursor() -> None:
+    """Consolidation is not evidence: the cursor must stay put."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    async with conversation_service.database.transaction() as tx:
+        _ = await tx.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=5,
+                )
+            )
+        )
+
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    _ = await service.complete_run(run.id, status="success", logger=test_logger())
+
+    async with conversation_service.database.transaction() as tx:
+        cursor = await tx.fetch_one_or_none(
+            select(DreamConversationCursor).where(
+                DreamConversationCursor.conversation_id.eq(conversation_id)
+            )
+        )
+        assert cursor is not None
+        assert_eq(cursor.last_assimilated_seq, 5)
+
+
+class _ConsolidationRunner:
+    """Scripted consolidation runner recording prompts."""
+
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.prompts: list[str] = []
+
+    async def run(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self.response
+
+
+@test()
+async def maintenance_executor_merges_fragmented_topics() -> None:
+    """The executor applies a consolidated rewrite as recorded mutations."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    first = _write_topic(
+        root,
+        conversation_id,
+        "a.md",
+        title="Gaming",
+        body="## Gaming\n\n- Likes Roboquest.",
+        uris=("tether://message/018f0000-0000-7000-8000-0000000000a1",),
+    )
+    second = _write_topic(
+        root,
+        conversation_id,
+        "b.md",
+        title="Gaming notes",
+        body="## Gaming notes\n\n- Owns a Switch.",
+        uris=("tether://message/018f0000-0000-7000-8000-0000000000a2",),
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    merged = (
+        f"=== {conversation_id}/gaming.md ===\n"
+        "---\n"
+        "title: Gaming\n"
+        "---\n\n"
+        "## Gaming\n\n"
+        "- Likes Roboquest. [source](tether://message/"
+        "018f0000-0000-7000-8000-0000000000a1)\n"
+        "- Owns a Switch. [source](tether://message/"
+        "018f0000-0000-7000-8000-0000000000a2)\n"
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        consolidation_runner=_ConsolidationRunner(merged),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "success")
+    assert not first.exists()
+    assert not second.exists()
+    merged_path = root / str(conversation_id) / "gaming.md"
+    assert merged_path.exists()
+    assert "Owns a Switch" in merged_path.read_text(encoding="utf-8")
+
+    async with conversation_service.database.transaction() as tx:
+        mutations = await tx.fetch_all(
+            select(DreamingMutation).where(DreamingMutation.run_id.eq(run.id))
+        )
+        operations = sorted(mutation.operation for mutation in mutations)
+        assert_eq(operations, ["delete", "delete", "write"])
+        assert all(mutation.status == "acknowledged" for mutation in mutations)
+        progress = await tx.fetch_all(select(DreamMaintenanceProgress).all())
+        assert_eq([row.path for row in progress], [f"{conversation_id}/gaming.md"])
+
+
+@test()
+async def maintenance_executor_marks_no_changes_and_records_progress() -> None:
+    """NO_CHANGES leaves files alone but marks the batch maintained."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    first = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    second = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        consolidation_runner=_ConsolidationRunner("NO_CHANGES"),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert first.exists()
+    assert second.exists()
+    async with conversation_service.database.transaction() as tx:
+        progress = await tx.fetch_all(select(DreamMaintenanceProgress).all())
+        assert_eq(len(progress), 2)
+
+
+@test()
+async def maintenance_executor_rejects_invented_citations() -> None:
+    """Output may only cite evidence that the batch supports."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "a.md",
+        title="Gaming",
+        body="- Likes Roboquest.",
+        uris=("tether://message/018f0000-0000-7000-8000-0000000000a1",),
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    fabricated = (
+        f"=== {conversation_id}/gaming.md ===\n"
+        "---\n"
+        "title: Gaming\n"
+        "---\n\n"
+        "- Likes Roboquest. [source](tether://message/"
+        "018f0000-0000-7000-8000-0000000000ffff)\n"
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        consolidation_runner=_ConsolidationRunner(fabricated),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert result.error is not None
+    assert "citation" in result.error
+
+
+@test()
+async def maintenance_executor_rejects_unsafe_paths() -> None:
+    """Consolidated output must stay inside the workspace root."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    escape = "=== ../escape.md ===\n---\ntitle: Escape\n---\n\n- Likes Roboquest.\n"
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        consolidation_runner=_ConsolidationRunner(escape),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert not (root.parent / "escape.md").exists()
+
+
+@test()
+async def dispatching_executor_routes_runs_by_kind() -> None:
+    """The worker callback dispatches maintenance runs to their executor."""
+    _, service, conversation_id, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    maintenance = _Callback(DreamRunExecutionResult(status="no_op"))
+    fallback = _Callback(DreamRunExecutionResult(status="failed"))
+    dispatcher = KindDispatchingDreamExecutor(
+        {"maintenance": maintenance, "assimilation": fallback}
+    )
+
+    result = await dispatcher(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert_eq(maintenance.calls, 1)
+    assert_eq(fallback.calls, 0)

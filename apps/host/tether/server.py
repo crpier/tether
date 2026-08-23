@@ -426,6 +426,9 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         gmail_auth_backend=GoogleGmailAuthBackend(_gmail_oauth_config(settings)),
         gmail_oauth_config=_gmail_oauth_config(settings),
         dreaming_enabled=settings.dreaming_enabled,
+        dream_maintenance_interval_seconds=(
+            settings.dream_maintenance_interval_seconds
+        ),
         secure_cookies=settings.secure_cookies,
         session_secret=settings.session_secret,
         vapid_private_key=settings.vapid_private_key,

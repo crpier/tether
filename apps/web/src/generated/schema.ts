@@ -524,6 +524,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/dream-maintenance-now": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Dream Maintenance Now
+     * @description Queue an immediate maintenance run for every fragmented conversation.
+     */
+    post: operations["dream_maintenance_now_api_dream_maintenance_now_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/dream-now": {
     parameters: {
       query?: never;
@@ -5217,6 +5237,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  dream_maintenance_now_api_dream_maintenance_now_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DreamRunRead"][];
         };
       };
     };

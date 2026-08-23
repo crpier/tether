@@ -7575,6 +7575,29 @@
         "summary": "Fetch Turn Detail"
       }
     },
+    "/api/dream-maintenance-now": {
+      "post": {
+        "description": "Queue an immediate maintenance run for every fragmented conversation.",
+        "operationId": "dream_maintenance_now_api_dream_maintenance_now_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DreamRunRead"
+                  },
+                  "title": "Response Dream Maintenance Now Api Dream Maintenance Now Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dream Maintenance Now"
+      }
+    },
     "/api/dream-now": {
       "post": {
         "description": "Queue an instant manual Dream run for every conversation with new evidence.",

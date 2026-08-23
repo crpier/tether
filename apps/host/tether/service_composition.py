@@ -33,6 +33,8 @@ from tether.dreaming import (
     DreamingService,
     DreamingWorker,
     HttpDreamingMutationAcknowledger,
+    KindDispatchingDreamExecutor,
+    MaintenanceDreamingExecutor,
 )
 from tether.events import EventHub
 from tether.gmail import GmailClient
@@ -690,7 +692,11 @@ async def compose_core_services(
         runtime_registry=runtime_registry,
     )
     _ = resources.push_async_callback(provider_auth_service.shutdown)
-    dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
+    dreaming_service = DreamingService(
+        host.database,
+        tracer=host.telemetry.tracer,
+        workspace_root=memory_workspace_root(host.kb_root),
+    )
     titler = _build_conversation_titler(
         _TitlerDependencies(
             bootstrap=bootstrap,
@@ -789,19 +795,34 @@ async def compose_core_services(
                 load_tether_tools=False,
             )
         )
+        dream_mutation_acknowledger = HttpDreamingMutationAcknowledger(
+            base_url=config.tool_base_url,
+            tool_secret=bootstrap.tool_secret,
+        )
+        window_executor = ConversationWindowDreamingExecutor(
+            conversation_service,
+            memory_workspace_service.workspace_root,
+            mutation_coordinator=dreaming_mutation_coordinator,
+            mutation_acknowledger=dream_mutation_acknowledger,
+            curation_runner=dreaming_runner,
+        )
+        maintenance_executor = MaintenanceDreamingExecutor(
+            host.database,
+            memory_workspace_service.workspace_root,
+            mutation_coordinator=dreaming_mutation_coordinator,
+            mutation_acknowledger=dream_mutation_acknowledger,
+            consolidation_runner=dreaming_runner,
+        )
         background_tasks.append(
             asyncio.create_task(
                 DreamingWorker(
                     dreaming_service,
-                    ConversationWindowDreamingExecutor(
-                        conversation_service,
-                        memory_workspace_service.workspace_root,
-                        mutation_coordinator=dreaming_mutation_coordinator,
-                        mutation_acknowledger=HttpDreamingMutationAcknowledger(
-                            base_url=config.tool_base_url,
-                            tool_secret=bootstrap.tool_secret,
-                        ),
-                        curation_runner=dreaming_runner,
+                    KindDispatchingDreamExecutor(
+                        {
+                            "assimilation": window_executor,
+                            "manual": window_executor,
+                            "maintenance": maintenance_executor,
+                        }
                     ),
                     logger=host.logger,
                 ).run_forever()
@@ -811,6 +832,16 @@ async def compose_core_services(
         # the backstop that assimilates settled evidence during quiet spells.
         background_tasks.append(
             asyncio.create_task(dreaming_service.scan_forever(logger=host.logger))
+        )
+        # Plan 507 §5: periodic maintenance consolidates fragmented topic files
+        # into fewer, larger documents and dedupes claims across runs.
+        background_tasks.append(
+            asyncio.create_task(
+                dreaming_service.maintenance_forever(
+                    interval_seconds=config.dream_maintenance_interval_seconds,
+                    logger=host.logger,
+                )
+            )
         )
         # Health consolidation (ADR-0016 bespoke sibling): bounded Distillations
         # over Health Connect episode summaries into the same Memory workspace.

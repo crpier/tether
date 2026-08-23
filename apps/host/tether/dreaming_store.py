@@ -119,6 +119,18 @@ class DreamRun[S = Pending](Model[S, "DreamRun[Fetched]"]):
     updated_at: DreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
+class DreamMaintenanceProgress[S = Pending](
+    Model[S, "DreamMaintenanceProgress[Fetched]"]
+):
+    """Last maintenance outcome for one workspace path."""
+
+    path: DreamMaintenanceProgress.GenCol[str] = Text(primary_key=True)
+    content_hash: DreamMaintenanceProgress.Col[str] = Text()
+    maintained_at: DreamMaintenanceProgress.GenCol[UtcDatetime] = Text(
+        default=CurrentTimestamp
+    )
+
+
 class HealthDreamRun[S = Pending](Model[S, "HealthDreamRun[Fetched]"]):
     """One Health consolidation run over a bounded summary version window.
 
@@ -208,6 +220,12 @@ _DREAM_MIGRATIONS = {
         '"updated_at" TEXT NOT NULL DEFAULT '
         "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))) STRICT"
     ),
+    "009_create_dream_maintenance_progress": (
+        'CREATE TABLE "dream_maintenance_progress" ('
+        '"path" TEXT PRIMARY KEY NOT NULL, "content_hash" TEXT NOT NULL, '
+        '"maintained_at" TEXT NOT NULL DEFAULT '
+        "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))) STRICT"
+    ),
 }
 """Ordered startup migrations for Dreaming state tables."""
 
@@ -219,6 +237,7 @@ async def create_dreaming_schema(database: Database) -> None:
 
 __all__ = [
     "DreamConversationCursor",
+    "DreamMaintenanceProgress",
     "DreamRun",
     "DreamRunKind",
     "DreamRunStatus",
