@@ -1313,7 +1313,7 @@ def _maintenance_service(
 
 def _write_topic(  # noqa: PLR0913 - fixture helper mirrors document shape
     workspace_root: Path,
-    conversation_id: UUID,
+    folder: UUID | str,
     name: str,
     *,
     title: str,
@@ -1321,7 +1321,8 @@ def _write_topic(  # noqa: PLR0913 - fixture helper mirrors document shape
     uris: tuple[str, ...] = (),
 ) -> Path:
     """Write one canonical topic document into the conversation folder."""
-    directory = workspace_root / str(conversation_id)
+    key = str(folder)
+    directory = workspace_root / key if key else workspace_root
     directory.mkdir(parents=True, exist_ok=True)
     evidence_lines = "".join(f"- {uri}\n" for uri in uris)
     document = f"---\ntitle: {title}\nevidence:\n{evidence_lines}---\n\n{body}\n"
@@ -1701,3 +1702,104 @@ async def dispatching_executor_routes_runs_by_kind() -> None:
     assert_eq(result.status, "no_op")
     assert_eq(maintenance.calls, 1)
     assert_eq(fallback.calls, 0)
+
+
+@test()
+async def maintenance_covers_non_conversation_folders_like_health() -> None:
+    """Vertical folders (e.g. health/) consolidate via a synthetic run id."""
+    _, service, _, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(
+        root,
+        "health",
+        "a.md",
+        title="Exercise",
+        body="- Runs weekly.",
+        uris=("tether://health-connect/exercise/e51e4ead@v1",),
+    )
+    _ = _write_topic(
+        root,
+        "health",
+        "b.md",
+        title="Exercise",
+        body="- Lifts twice weekly.",
+        uris=("tether://health-connect/exercise/014eeb5e@v241",),
+    )
+
+    queued = await service.queue_maintenance_runs(
+        logger=test_logger(), now=datetime.now(UTC), force=True
+    )
+
+    assert_eq(len(queued), 1)
+    assert_eq(queued[0].kind, "maintenance")
+
+    merged = (
+        "=== health/exercise.md ===\n"
+        "---\n"
+        "title: Exercise\n"
+        "---\n\n"
+        "- Runs weekly. [source](tether://health-connect/exercise/e51e4ead@v1)\n"
+        "- Lifts twice weekly. [source](tether://health-connect/exercise/"
+        "014eeb5e@v241)\n"
+    )
+    executor = MaintenanceDreamingExecutor(
+        service.database,
+        workspace_root=root,
+        consolidation_runner=_ConsolidationRunner(merged),
+    )
+    result = await executor(queued[0], logger=test_logger())
+
+    assert_eq(result.status, "success")
+    assert not (root / "health" / "a.md").exists()
+    assert not (root / "health" / "b.md").exists()
+    assert (root / "health" / "exercise.md").exists()
+
+
+@test()
+async def maintenance_includes_root_level_topics() -> None:
+    """Workspace-root topic files form their own consolidation group."""
+    _, service, _, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(root, "", "a.md", title="Interests", body="- Likes robotics.")
+    _ = _write_topic(root, "", "b.md", title="Learning", body="- Reads papers.")
+
+    queued = await service.queue_maintenance_runs(
+        logger=test_logger(), now=datetime.now(UTC), force=True
+    )
+
+    assert_eq(len(queued), 1)
+
+
+@test()
+async def maintenance_executor_rejects_unsupported_health_citations() -> None:
+    """Non-message evidence URIs are validated just like message ones."""
+    _, service, _, root = await load_fixture(maintenance_fixture())
+    _ = _write_topic(
+        root,
+        "health",
+        "a.md",
+        title="Exercise",
+        body="- Runs weekly.",
+        uris=("tether://health-connect/exercise/e51e4ead@v1",),
+    )
+    _ = _write_topic(root, "health", "b.md", title="Sleep", body="- Sleeps 8h.")
+    queued = await service.queue_maintenance_runs(
+        logger=test_logger(), now=datetime.now(UTC), force=True
+    )
+    assert_eq(len(queued), 1)
+    fabricated = (
+        "=== health/exercise.md ===\n"
+        "---\n"
+        "title: Exercise\n"
+        "---\n\n"
+        "- Runs weekly. [source](tether://health-connect/exercise/fabricated@v9)\n"
+    )
+    executor = MaintenanceDreamingExecutor(
+        service.database,
+        workspace_root=root,
+        consolidation_runner=_ConsolidationRunner(fabricated),
+    )
+
+    result = await executor(queued[0], logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert result.error is not None
+    assert "citation" in result.error
