@@ -66,6 +66,14 @@ class ChatFrameSink(Protocol):
     async def send(self, frame: ChatFrame) -> None: ...
 
 
+class TurnTitler(Protocol):
+    """Schedules one fire-and-forget first-message title generation."""
+
+    def schedule(self, *, conversation_id: UUID, first_message: str) -> None:
+        """Queue a background titling run; never blocks the turn."""
+        ...
+
+
 class ChatRpcClient(Protocol):
     """RPC operation required to submit one prompt."""
 
@@ -133,6 +141,8 @@ class ChatTurnDependencies:
     trace_recorder: AgentTraceRecorder | None
     turn_queue: ConversationTurnQueue
     logger: Logger
+    titler: TurnTitler | None = None
+    """Best-effort first-message auto-titling; absent when disabled."""
 
 
 @dataclass(slots=True)
@@ -604,6 +614,11 @@ async def _run_chat_prompt(
                 role="user",
             )
         )
+        if dependencies.titler is not None:
+            dependencies.titler.schedule(
+                conversation_id=conversation_id,
+                first_message=content,
+            )
     except ConversationNotFoundError:
         await send_chat_error(
             websocket,

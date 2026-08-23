@@ -141,15 +141,17 @@ class ConversationService:
     async def create_scoped_conversation(
         self,
         *,
-        display_name: str,
+        display_name: str | None = None,
         scope_brief: str,
     ) -> Conversation[Fetched]:
-        """Create one active Scoped Conversation with its own model profile."""
-        display_name = display_name.strip()
+        """Create one active Scoped Conversation with its own model profile.
+
+        `display_name` may be `None` (or blank): the chat then starts untitled
+        and is named later by first-message auto-titling.
+        """
+        if display_name is not None:
+            display_name = display_name.strip() or None
         scope_brief = scope_brief.strip()
-        if not display_name:
-            message = "display name must not be blank"
-            raise ConversationValidationError(message)
         if not scope_brief:
             message = "scope brief must not be blank"
             raise ConversationValidationError(message)
@@ -166,6 +168,35 @@ class ConversationService:
                     )
                 ).returning()
             )
+
+    async def set_generated_title(
+        self,
+        conversation_id: UUID,
+        *,
+        title: str,
+    ) -> bool:
+        """Name an untitled chat; never override an existing name.
+
+        Returns whether the generated title was applied.
+        """
+        title = title.strip()
+        if not title:
+            return False
+        async with self.database.transaction(mode="immediate") as transaction:
+            conversation = await transaction.fetch_one_or_none(
+                select(Conversation).where(Conversation.id.eq(conversation_id))
+            )
+            if conversation is None or conversation.title is not None:
+                return False
+            _ = await transaction.execute(
+                update(Conversation)
+                .set(
+                    Conversation.title.to(title),
+                    Conversation.display_name.to(title),
+                )
+                .where(Conversation.id.eq(conversation_id))
+            )
+            return True
 
     async def update_scoped_conversation(
         self,

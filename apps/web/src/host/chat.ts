@@ -20,7 +20,7 @@ export function conversationLabel(
   if (conversation.kind === "main") {
     return "Main Chat";
   }
-  const name = conversation.display_name ?? "Scoped Conversation";
+  const name = conversation.display_name ?? "Untitled chat";
   const duplicateCount = conversations.filter(
     (candidate) =>
       candidate.kind === "scoped" &&

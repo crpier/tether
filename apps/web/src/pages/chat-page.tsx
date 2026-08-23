@@ -1183,18 +1183,15 @@ function ConversationCreateForm(props: {
   const [error, setError] = createSignal<string>();
   const submit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
     event.preventDefault();
-    if (
-      saving() ||
-      displayName().trim().length === 0 ||
-      scopeBrief().trim().length === 0
-    ) {
+    if (saving() || scopeBrief().trim().length === 0) {
       return;
     }
     setSaving(true);
     setError(undefined);
+    const name = displayName().trim();
     void props.api
       .createConversation({
-        display_name: displayName().trim(),
+        display_name: name.length > 0 ? name : undefined,
         scope_brief: scopeBrief().trim(),
       })
       .then(props.onCreated)
@@ -1213,12 +1210,13 @@ function ConversationCreateForm(props: {
       <div>
         <h1 class="text-lg font-semibold">New Scoped Conversation</h1>
         <p class="text-muted-foreground mt-1 text-sm">
-          Name the work and give Tether a durable scope brief.
+          Give Tether a durable scope brief. The chat is named automatically
+          from its first message if you leave the name blank.
         </p>
       </div>
       <TextField onChange={setDisplayName} value={displayName()}>
-        <TextFieldLabel>Conversation name</TextFieldLabel>
-        <TextFieldInput autofocus />
+        <TextFieldLabel>Conversation name (optional)</TextFieldLabel>
+        <TextFieldInput autofocus placeholder="Untitled chat" />
       </TextField>
       <TextField onChange={setScopeBrief} value={scopeBrief()}>
         <TextFieldLabel>Scope brief</TextFieldLabel>
@@ -1233,11 +1231,7 @@ function ConversationCreateForm(props: {
       </Show>
       <div class="flex gap-2">
         <Button
-          disabled={
-            saving() ||
-            displayName().trim().length === 0 ||
-            scopeBrief().trim().length === 0
-          }
+          disabled={saving() || scopeBrief().trim().length === 0}
           type="submit"
         >
           {saving() ? "Creating…" : "Create conversation"}
@@ -1441,7 +1435,7 @@ function ConversationHeader(props: {
               <h2 class="truncate text-base font-semibold">
                 {props.conversation.kind === "main"
                   ? "Main Chat"
-                  : props.conversation.display_name}
+                  : (props.conversation.display_name ?? "Untitled chat")}
               </h2>
               <Show when={props.conversation.kind === "scoped"}>
                 <p class="text-muted-foreground line-clamp-2 text-xs">

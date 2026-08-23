@@ -382,7 +382,8 @@ class MessageRead(BaseModel):
 class CreateConversationRequest(BaseModel):
     """Body for creating an active Scoped Conversation."""
 
-    display_name: str
+    display_name: str | None = None
+    """Optional; an unnamed chat is titled from its first message."""
     scope_brief: str
 
 
