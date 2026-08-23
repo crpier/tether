@@ -194,6 +194,26 @@ async def _archive_gmail_message(
     )
 
 
+async def undo_archive(request: Request, message_id: str) -> CapabilityOutcome:
+    """Restore one archived message to the inbox."""
+    restored = await _require_client(request).update_labels(
+        message_id,
+        add_label_ids=("INBOX",),
+        remove_label_ids=(),
+    )
+    if isinstance(restored, Ok):
+        outcome = restored.value
+    else:
+        _translate_failure(restored.error, not_found_if_404=True)
+    return CapabilityOutcome(
+        result={
+            "detail": outcome.detail,
+            "message_id": message_id,
+            "outcome": outcome.outcome,
+        }
+    )
+
+
 async def _search_gmail(request: Request, params: BaseModel) -> CapabilityOutcome:
     """Search Gmail and return useful message previews plus pagination."""
     search_params = cast("GmailSearchParams", params)

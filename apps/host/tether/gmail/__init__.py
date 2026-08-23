@@ -5,6 +5,7 @@ in ``tether.gmail`` is an internal seam owned by this Integration and its
 tests.
 """
 
+from tether.gmail.action_routes import router as action_routes_router
 from tether.gmail.auth_routes import router as auth_routes_router
 from tether.gmail.auth_service import (
     GmailAuthBackend,
@@ -51,6 +52,7 @@ __all__ = [
     "GoogleGmailAuthService",
     "HttpGmailTransport",
     "ReauthorizableGmailClient",
+    "action_routes_router",
     "auth_routes_router",
     "create_gmail_schema",
     "internal_gmail_tool_routes",

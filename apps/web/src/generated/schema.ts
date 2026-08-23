@@ -584,6 +584,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/gmail/actions/undo": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Undo Gmail Action
+     * @description Undo one archive by restoring the message's inbox label.
+     */
+    post: operations["undo_gmail_action_api_gmail_actions_undo_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/grants": {
     parameters: {
       query?: never;
@@ -833,7 +853,11 @@ export interface paths {
      */
     get: operations["list_product_observations_api_product_observations_get"];
     put?: never;
-    post?: never;
+    /**
+     * Record Product Observation
+     * @description Capture explicit feedback from a selected conversational Message.
+     */
+    post: operations["record_product_observation_api_product_observations_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2351,6 +2375,21 @@ export interface components {
       state: components["schemas"]["GmailAuthState"];
     };
     /**
+     * GmailUndoRead
+     * @description Result of applying a safe mailbox inverse.
+     */
+    GmailUndoRead: {
+      /** Detail */
+      detail: string | null;
+      /** Message Id */
+      message_id: string;
+      /**
+       * Outcome
+       * @enum {string}
+       */
+      outcome: "done" | "already" | "gone";
+    };
+    /**
      * GrantRead
      * @description HTTP representation of a live autonomy grant.
      */
@@ -3251,6 +3290,24 @@ export interface components {
       recording_method: number | null;
     };
     /**
+     * RecordProductObservationRequest
+     * @description Explicit browser capture of one conversational user Message.
+     */
+    RecordProductObservationRequest: {
+      /**
+       * Conversation Id
+       * Format: uuid7
+       */
+      conversation_id: string;
+      /** Interpretation */
+      interpretation: string;
+      /**
+       * Message Id
+       * Format: uuid7
+       */
+      message_id: string;
+    };
+    /**
      * RejectProposalRequest
      * @description Body for rejecting a proposal at an observed version.
      */
@@ -3705,6 +3762,19 @@ export interface components {
       bucket_item_id: string;
       /** Reason */
       reason: string;
+    };
+    /**
+     * UndoGmailActionRequest
+     * @description One completed Gmail action with a safe inverse.
+     */
+    UndoGmailActionRequest: {
+      /**
+       * Action
+       * @constant
+       */
+      action: "archive";
+      /** Message Id */
+      message_id: string;
     };
     /**
      * UnsubscribeRequest
@@ -4832,6 +4902,39 @@ export interface operations {
       };
     };
   };
+  undo_gmail_action_api_gmail_actions_undo_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UndoGmailActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GmailUndoRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   list_grants_api_grants_get: {
     parameters: {
       query?: never;
@@ -5243,6 +5346,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProductObservationRead"][];
+        };
+      };
+    };
+  };
+  record_product_observation_api_product_observations_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RecordProductObservationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProductObservationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

@@ -1790,6 +1790,42 @@
         "title": "GmailAuthStatus",
         "type": "object"
       },
+      "GmailUndoRead": {
+        "description": "Result of applying a safe mailbox inverse.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "already",
+              "gone"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "message_id",
+          "outcome"
+        ],
+        "title": "GmailUndoRead",
+        "type": "object"
+      },
       "GrantRead": {
         "description": "HTTP representation of a live autonomy grant.",
         "properties": {
@@ -4068,6 +4104,32 @@
         "title": "RecordMetadata",
         "type": "object"
       },
+      "RecordProductObservationRequest": {
+        "description": "Explicit browser capture of one conversational user Message.",
+        "properties": {
+          "conversation_id": {
+            "format": "uuid7",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "interpretation": {
+            "title": "Interpretation",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid7",
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "interpretation",
+          "message_id"
+        ],
+        "title": "RecordProductObservationRequest",
+        "type": "object"
+      },
       "RejectProposalRequest": {
         "description": "Body for rejecting a proposal at an observed version.",
         "properties": {
@@ -5060,6 +5122,27 @@
           "reason"
         ],
         "title": "UnderSpecifiedItem",
+        "type": "object"
+      },
+      "UndoGmailActionRequest": {
+        "description": "One completed Gmail action with a safe inverse.",
+        "properties": {
+          "action": {
+            "const": "archive",
+            "title": "Action",
+            "type": "string"
+          },
+          "message_id": {
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "message_id"
+        ],
+        "title": "UndoGmailActionRequest",
         "type": "object"
       },
       "UnsubscribeRequest": {
@@ -6737,6 +6820,45 @@
         "summary": "Start Gmail Auth"
       }
     },
+    "/api/gmail/actions/undo": {
+      "post": {
+        "description": "Undo one archive by restoring the message's inbox label.",
+        "operationId": "undo_gmail_action_api_gmail_actions_undo_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UndoGmailActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailUndoRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Gmail Action"
+      }
+    },
     "/api/grants": {
       "get": {
         "description": "List live (unrevoked) grants, newest first.",
@@ -7247,6 +7369,43 @@
           }
         },
         "summary": "List Product Observations"
+      },
+      "post": {
+        "description": "Capture explicit feedback from a selected conversational Message.",
+        "operationId": "record_product_observation_api_product_observations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordProductObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductObservationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Product Observation"
       }
     },
     "/api/product-observations/{observation_id}/resolve": {

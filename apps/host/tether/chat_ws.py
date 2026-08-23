@@ -20,6 +20,7 @@ from tether.chat_turn import (
     ConversationTurnQueue,
     run_chat_prompt,
     send_chat_error,
+    send_session_status,
 )
 from tether.conversations import ConversationService
 from tether.dreaming import DreamingService
@@ -28,7 +29,7 @@ from tether.structured_logging import Logger
 
 _POLICY_VIOLATION = 1008
 
-type InboundType = Literal["prompt", "abort"]
+type InboundType = Literal["prompt", "abort", "session_status"]
 
 
 class InboundFrame(BaseModel):
@@ -121,6 +122,12 @@ async def _handle_frame(
             await websocket.send_json(
                 AbortAckFrame(conversation_id=frame.conversation_id).wire()
             )
+        case "session_status":
+            runtime = _runtime(websocket).conversation_runtime_registry.current_for(
+                frame.conversation_id
+            )
+            if runtime is not None:
+                await send_session_status(websocket, runtime, frame.conversation_id)
 
 
 async def _event_pump(

@@ -9,6 +9,9 @@ export type ChatFrame =
       detail?: string;
       message_id?: string;
       loaded_count?: number;
+      context_tokens?: number | null;
+      context_window?: number | null;
+      context_percent?: number | null;
       seq?: number;
       tool_name?: string | null;
       tool_id?: string | null;
@@ -42,6 +45,7 @@ const MAX_RETRY_MS = 16_000;
 export interface ChatBus {
   abort(conversationId: string): void;
   close(): void;
+  requestSessionStatus(conversationId: string): void;
   sendPrompt(
     conversationId: string,
     content: string,
@@ -133,6 +137,14 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
         window.clearTimeout(retryTimer);
       }
       socket?.close();
+    },
+    requestSessionStatus(conversationId) {
+      sendSerialized(
+        JSON.stringify({
+          conversation_id: conversationId,
+          type: "session_status",
+        }),
+      );
     },
     sendPrompt(conversationId, content, replyMode) {
       sendSerialized(

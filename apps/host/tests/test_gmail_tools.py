@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from snekok import Ok, Result
 from snektest import assert_eq, test
 
-from tests.surfaces import call_tool, surface_client
+from tests.surfaces import call_tool, login, surface_client
 from tether.gmail.client import GmailNetworkFailure, GmailResponse
 
 
@@ -163,6 +163,35 @@ def archive_gmail_message_removes_the_inbox_label() -> None:
     )
     assert_eq(transport.modify_calls, [("m1", (), ("INBOX",))])
     assert_eq(transport.trash_calls, [])
+
+
+@test()
+def browser_can_undo_a_completed_archive() -> None:
+    """Undo restores `INBOX` after an archive receipt reports a real change."""
+    transport = ScriptedGmailTransport(
+        message_response=Ok(gmail_message_response(labels=["STARRED"]))
+    )
+
+    with (
+        TemporaryDirectory() as directory,
+        surface_client(Path(directory), gmail_transport=transport) as client,
+    ):
+        login(client)
+        response = client.post(
+            "/api/gmail/actions/undo",
+            json={"action": "archive", "message_id": "m1"},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        response.json(),
+        {
+            "detail": None,
+            "message_id": "m1",
+            "outcome": "done",
+        },
+    )
+    assert_eq(transport.modify_calls, [("m1", ("INBOX",), ())])
 
 
 @test()

@@ -31,6 +31,7 @@ from tether.conversation_store import Message
 from tether.conversations import ConversationService
 from tether.model_selection import AgentModelConfig
 from tether.pi_errors import PiRuntimeError
+from tether.pi_runtime import ContextUsage
 from tether.pi_turn_events import (
     AgentEnded,
     AssistantStreamNote,
@@ -73,11 +74,17 @@ class FakeRuntime:
         *,
         loaded_skills: tuple[str, ...] = (),
         skills_confirmed: bool = False,
+        context_usage: ContextUsage | None = None,
     ) -> None:
         self.client: FakePiClient = FakePiClient()
         self.loaded_skills: tuple[str, ...] = loaded_skills
         self.skills_confirmed: bool = skills_confirmed
+        self._context_usage: ContextUsage | None = context_usage
         self._turn_events: list[TurnEvent] = turn_events
+
+    async def fetch_context_usage(self) -> ContextUsage | None:
+        """Return the configured pi context estimate."""
+        return self._context_usage
 
     def drain_events(self) -> int:
         """Match the production runtime's per-prompt queue hygiene hook."""
@@ -1118,6 +1125,7 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
             "text_delta",
             "text_delta",
             "message_end",
+            "session_status",
             "agent_end",
         ],
     )
@@ -1403,6 +1411,91 @@ def websocket_reports_only_the_confirmed_loaded_skill_count() -> None:
 
 
 @test()
+def websocket_reports_context_usage_for_an_existing_session() -> None:
+    """A reconnect can request context state without starting another turn."""
+    fake_runtime = FakeRuntime(
+        [],
+        context_usage=ContextUsage(
+            context_window=200_000,
+            percent=31.55,
+            tokens=63_100,
+        ),
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "session_status",
+                    "conversation_id": conversation_id,
+                }
+            )
+            frame = websocket.receive_json()
+
+    assert_eq(
+        frame,
+        {
+            "type": "chat",
+            "conversation_id": conversation_id,
+            "event": "session_status",
+            "context_tokens": 63_100,
+            "context_window": 200_000,
+            "context_percent": 31.55,
+        },
+    )
+
+
+@test()
+def websocket_reports_context_usage_before_the_turn_closes() -> None:
+    """Chat receives pi's context estimate before the terminal turn frame."""
+    fake_runtime = FakeRuntime(
+        [AgentEnded()],
+        context_usage=ContextUsage(
+            context_window=200_000,
+            percent=31.55,
+            tokens=63_100,
+        ),
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "Hello",
+                }
+            )
+            frames: list[dict[str, Any]] = []
+            while True:
+                frame = cast("dict[str, Any]", websocket.receive_json())
+                frames.append(frame)
+                if frame.get("event") == "agent_end":
+                    break
+
+    assert_eq(
+        [frame for frame in frames if frame.get("event") == "session_status"],
+        [
+            {
+                "type": "chat",
+                "conversation_id": conversation_id,
+                "event": "session_status",
+                "context_tokens": 63_100,
+                "context_window": 200_000,
+                "context_percent": 31.55,
+            }
+        ],
+    )
+    assert_eq(frames[-1]["event"], "agent_end")
+
+
+@test()
 def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
     """Progressive disclosure remains internal to pi's agent session."""
     fake_runtime = FakeRuntime(
@@ -1442,7 +1535,7 @@ def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
 
         messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
 
-    assert_eq(frame_events, ["user_message", "agent_end"])
+    assert_eq(frame_events, ["user_message", "session_status", "agent_end"])
     assert_eq([message["role"] for message in messages], ["user"])
 
 

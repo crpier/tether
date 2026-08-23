@@ -70,6 +70,74 @@ function recordSpokenTurn() {
 }
 
 describe("live chat turn", () => {
+  test("session status exposes pi context usage", () => {
+    createRoot((dispose) => {
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.handleFrame(
+        chat({
+          context_percent: 31.55,
+          context_tokens: 63_100,
+          context_window: 200_000,
+          event: "session_status",
+        }),
+      );
+
+      expect(turn.contextUsage()).toEqual({
+        contextPercent: 31.55,
+        contextTokens: 63_100,
+        contextWindow: 200_000,
+      });
+      dispose();
+    });
+  });
+
+  test("unavailable session status clears stale context usage", () => {
+    createRoot((dispose) => {
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+      turn.handleFrame(
+        chat({
+          context_percent: 80,
+          context_tokens: 160_000,
+          context_window: 200_000,
+          event: "session_status",
+        }),
+      );
+
+      turn.handleFrame(
+        chat({
+          context_percent: null,
+          context_tokens: null,
+          context_window: null,
+          event: "session_status",
+        }),
+      );
+
+      expect(turn.contextUsage()).toBeUndefined();
+      dispose();
+    });
+  });
+
   test("frames form one ordered reasoning, tool, and answer transcript", () => {
     createRoot((dispose) => {
       const turn = createLiveChatTurn({

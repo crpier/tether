@@ -195,6 +195,20 @@ class ConversationService:
             )
             return list(reversed(page))
 
+    async def fetch_user_message(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+    ) -> Message[Fetched] | None:
+        """Return one user Message only when it belongs to the Conversation."""
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_one_or_none(
+                select(Message)
+                .where(Message.id.eq(message_id))
+                .where(Message.conversation_id.eq(conversation_id))
+                .where(Message.role.eq("user"))
+            )
+
     async def fetch_latest_user_message(
         self, conversation_id: UUID
     ) -> Message[Fetched] | None:

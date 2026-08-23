@@ -6,6 +6,7 @@ export type AgentModel = components["schemas"]["AgentModelRead"];
 export type Conversation = components["schemas"]["ConversationRead"];
 export type Message = components["schemas"]["MessageRead"];
 export type ModelList = components["schemas"]["ModelListRead"];
+export type GmailUndo = components["schemas"]["GmailUndoRead"];
 
 export interface ListMessagesOptions {
   limit?: number;
@@ -24,6 +25,7 @@ export interface ChatHost {
     conversationId: string,
     selectedModel: string,
   ): Promise<Conversation>;
+  undoGmailArchive(messageId: string): Promise<GmailUndo>;
   synthesizeSpeech(text: string, signal: AbortSignal): Promise<Blob>;
   transcribeAudio(blob: Blob): Promise<string>;
 }
@@ -67,6 +69,13 @@ export function createChatHost(context: RestContext): ChatHost {
           body: { selected_model: selectedModel },
           params: { path: { conversation_id: conversationId } },
         },
+      );
+      return requireData(data, response);
+    },
+    async undoGmailArchive(messageId) {
+      const { data, response } = await context.client.POST(
+        "/api/gmail/actions/undo",
+        { body: { action: "archive", message_id: messageId } },
       );
       return requireData(data, response);
     },

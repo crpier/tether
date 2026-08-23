@@ -35,6 +35,7 @@ export function createBusHarness(): {
     replyMode?: "spoken" | "text";
     type: "abort" | "prompt";
   }[];
+  statusRequests: string[];
 } {
   let closed = false;
   let handlers: ChatBusHandlers | undefined;
@@ -44,12 +45,16 @@ export function createBusHarness(): {
     replyMode?: "spoken" | "text";
     type: "abort" | "prompt";
   }[] = [];
+  const statusRequests: string[] = [];
   const bus: ChatBus = {
     abort(conversationId) {
       sent.push({ conversationId, type: "abort" });
     },
     close() {
       closed = true;
+    },
+    requestSessionStatus(conversationId) {
+      statusRequests.push(conversationId);
     },
     sendPrompt(conversationId, content, replyMode) {
       sent.push({ content, conversationId, replyMode, type: "prompt" });
@@ -58,6 +63,7 @@ export function createBusHarness(): {
   return {
     createChatBus(nextHandlers) {
       handlers = nextHandlers;
+      nextHandlers.onStatus?.("open");
       return bus;
     },
     emit(frame) {
@@ -66,6 +72,7 @@ export function createBusHarness(): {
       }
     },
     sent,
+    statusRequests,
   };
 }
 

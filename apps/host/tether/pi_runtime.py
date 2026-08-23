@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any, Self, cast
 from uuid import UUID
 
@@ -31,6 +32,15 @@ _UUID_VERSION_7 = 7
 
 _logger = structlog.stdlib.get_logger("tether.pi_runtime")
 """Operational diagnostics for pi startup and resource confirmation."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContextUsage:
+    """Pi's current estimate of working-context occupancy."""
+
+    context_window: int
+    percent: float
+    tokens: int
 
 
 class PiRuntime:
@@ -110,6 +120,39 @@ class PiRuntime:
             return False
         response = await self.client.request("get_state")
         return response.get("success") is True
+
+    async def fetch_context_usage(self) -> ContextUsage | None:
+        """Fetch the same working-context estimate pi uses for compaction."""
+        response = await self.client.request("get_session_stats")
+        if response.get("success") is not True:
+            return None
+        data = response.get("data")
+        if not isinstance(data, dict):
+            return None
+        context_usage = cast("dict[str, object]", data).get("contextUsage")
+        if not isinstance(context_usage, dict):
+            return None
+        fields = cast("dict[str, object]", context_usage)
+        tokens = fields.get("tokens")
+        context_window = fields.get("contextWindow")
+        percent = fields.get("percent")
+        if (
+            not isinstance(tokens, int)
+            or isinstance(tokens, bool)
+            or tokens < 0
+            or not isinstance(context_window, int)
+            or isinstance(context_window, bool)
+            or context_window <= 0
+            or not isinstance(percent, int | float)
+            or isinstance(percent, bool)
+            or percent < 0
+        ):
+            return None
+        return ContextUsage(
+            context_window=context_window,
+            percent=float(percent),
+            tokens=tokens,
+        )
 
     async def apply_model(self, model: AgentModelConfig) -> None:
         """Select the resolved model and optional thinking level for later turns."""
