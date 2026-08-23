@@ -25,7 +25,6 @@ from snektest import (
 from tether.conversation_model import (
     ConversationArchiveBlockedError,
     ConversationNotFoundError,
-    ConversationValidationError,
     MessageDraft,
 )
 from tether.conversation_store import Message, create_conversation_schema
@@ -164,15 +163,27 @@ async def set_generated_title_never_overrides_a_named_chat() -> None:
 
 
 @test()
-async def create_scoped_conversation_rejects_a_blank_scope_brief() -> None:
-    """Whitespace cannot stand in for a Scoped Conversation's scope brief."""
+async def create_scoped_conversation_allows_an_empty_scope_brief() -> None:
+    """A chat can start with neither name nor scope brief."""
     service = await load_fixture(conversation_service())
 
-    with assert_raises(ConversationValidationError):
-        _ = await service.create_scoped_conversation(
-            display_name="Garden planning",
-            scope_brief="\n\t",
-        )
+    conversation = await service.create_scoped_conversation()
+
+    assert_eq(conversation.kind, "scoped")
+    assert_eq(conversation.status, "active")
+    assert_is_none(conversation.display_name)
+    assert_is_none(conversation.title)
+    assert_is_none(conversation.scope_brief)
+
+
+@test()
+async def create_scoped_conversation_rejects_a_blank_scope_brief() -> None:
+    """Whitespace stands in for 'no scope yet', not for a validation error."""
+    service = await load_fixture(conversation_service())
+
+    conversation = await service.create_scoped_conversation(scope_brief="\n\t")
+
+    assert_is_none(conversation.scope_brief)
 
 
 @test()

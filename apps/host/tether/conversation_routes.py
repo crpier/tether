@@ -384,7 +384,8 @@ class CreateConversationRequest(BaseModel):
 
     display_name: str | None = None
     """Optional; an unnamed chat is titled from its first message."""
-    scope_brief: str
+    scope_brief: str | None = None
+    """Optional durable scope; refinable through later edits."""
 
 
 class UpdateConversationRequest(BaseModel):

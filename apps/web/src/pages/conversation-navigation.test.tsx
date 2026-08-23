@@ -111,36 +111,13 @@ describe("Conversation navigation", () => {
     ).toHaveAttribute("href", "/chat");
   });
 
-  test("auxiliary modes select no Conversation and never load or mark Main", async () => {
-    const host = new FakeHost({ authenticated: true });
-    renderApp(host, undefined, { path: "/chat?new=1" });
-
-    expect(
-      await screen.findByLabelText("Conversation name (optional)"),
-    ).toBeVisible();
-    expect(host.chat.messageCalls).toBe(0);
-    expect(host.chat.markConversationReadCalls).toEqual([]);
-    expect(
-      screen.queryByRole("heading", { name: "Main Chat" }),
-    ).not.toBeInTheDocument();
-  });
-
-  test("creates an untitled Scoped Conversation that names itself later", async () => {
+  test("a new-chat link immediately creates an untitled chat and opens it", async () => {
     const host = new FakeHost({ authenticated: true });
     host.chat.storedConversations = [conversation];
     renderApp(host, undefined, { path: "/chat?new=1" });
 
-    fireEvent.input(await screen.findByLabelText("Scope brief"), {
-      target: { value: "Track irrigation work." },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create conversation" }),
-    );
-
     await waitFor(() => {
-      expect(host.chat.createConversationCalls).toEqual([
-        { scope_brief: "Track irrigation work." },
-      ]);
+      expect(host.chat.createConversationCalls).toEqual([{}]);
     });
     await waitFor(() => {
       expect(window.location.pathname).toMatch(/^\/chat\/[0-9a-f-]{36}$/);
@@ -148,38 +125,9 @@ describe("Conversation navigation", () => {
     expect(
       await screen.findByRole("heading", { name: "Untitled chat" }),
     ).toBeVisible();
-  });
-
-  test("creates duplicate-named Scoped Conversations and opens the UUID route", async () => {
-    const existing = scoped("018f0000-0000-7000-8000-000000000101", "Garden");
-    const host = new FakeHost({ authenticated: true });
-    host.chat.storedConversations = [conversation, existing];
-    renderApp(host, undefined, { path: "/chat?new=1" });
-
-    fireEvent.input(
-      await screen.findByLabelText("Conversation name (optional)"),
-      {
-        target: { value: "Garden" },
-      },
-    );
-    fireEvent.input(screen.getByLabelText("Scope brief"), {
-      target: { value: "Track irrigation work." },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create conversation" }),
-    );
-
-    await waitFor(() => {
-      expect(host.chat.createConversationCalls).toEqual([
-        { display_name: "Garden", scope_brief: "Track irrigation work." },
-      ]);
-    });
-    await waitFor(() => {
-      expect(window.location.pathname).toMatch(/^\/chat\/[0-9a-f-]{36}$/);
-    });
     expect(
-      await screen.findByRole("heading", { name: "Garden" }),
-    ).toBeVisible();
+      screen.queryByRole("heading", { name: "Main Chat" }),
+    ).not.toBeInTheDocument();
   });
 
   test("renders archived Conversations read-only and restores them", async () => {

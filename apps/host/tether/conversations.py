@@ -142,19 +142,18 @@ class ConversationService:
         self,
         *,
         display_name: str | None = None,
-        scope_brief: str,
+        scope_brief: str | None = None,
     ) -> Conversation[Fetched]:
         """Create one active Scoped Conversation with its own model profile.
 
-        `display_name` may be `None` (or blank): the chat then starts untitled
-        and is named later by first-message auto-titling.
+        `display_name` and `scope_brief` may be `None` (or blank): the chat
+        then starts untitled and unscoped, named by first-message auto-titling
+        and refined later through edits.
         """
         if display_name is not None:
             display_name = display_name.strip() or None
-        scope_brief = scope_brief.strip()
-        if not scope_brief:
-            message = "scope brief must not be blank"
-            raise ConversationValidationError(message)
+        if scope_brief is not None:
+            scope_brief = scope_brief.strip() or None
         _ = await self.fetch_main_conversation()
         async with self.database.transaction(mode="immediate") as transaction:
             return await transaction.execute(

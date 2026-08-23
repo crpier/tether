@@ -66,7 +66,7 @@ export class FakeChatHost implements ChatHost {
       display_name: body.display_name?.trim() ?? null,
       id: `018f0000-0000-7000-8000-${sequence}`,
       kind: "scoped",
-      scope_brief: body.scope_brief.trim(),
+      scope_brief: body.scope_brief?.trim() ?? null,
       title: body.display_name?.trim() ?? null,
     };
     this.storedConversations = [...this.storedConversations, created];

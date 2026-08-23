@@ -1038,13 +1038,17 @@
             "title": "Display Name"
           },
           "scope_brief": {
-            "title": "Scope Brief",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Brief"
           }
         },
-        "required": [
-          "scope_brief"
-        ],
         "title": "CreateConversationRequest",
         "type": "object"
       },

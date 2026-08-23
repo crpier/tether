@@ -13,16 +13,18 @@ test("root redirects to canonical Chat and preserves its query", async ({
   );
 });
 
-test("new Conversation mode hides the Main transcript", async ({
+test("new Conversation link immediately opens an untitled chat", async ({
   login,
   page,
 }) => {
   await login();
   await page.getByRole("link", { name: "Create Conversation" }).click();
 
-  await expect(page.getByLabel("Conversation name")).toBeVisible();
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await expect(
+    page.getByRole("heading", { name: "Untitled chat" }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Main Chat" })).toHaveCount(0);
-  await expect(page.getByLabel("Chat transcript")).toHaveCount(0);
 });
 
 test("creates, selects, archives, and restores a Scoped Conversation", async ({
@@ -33,13 +35,14 @@ test("creates, selects, archives, and restores a Scoped Conversation", async ({
   const name = `Playwright scope ${Date.now().toString()}`;
 
   await page.getByRole("link", { name: "Create Conversation" }).click();
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+
+  await page.getByRole("button", { name: "Edit conversation" }).click();
   await page.getByLabel("Conversation name").fill(name);
   await page
     .getByLabel("Scope brief")
     .fill("Exercise the Conversation lifecycle.");
-  await page.getByRole("button", { name: "Create conversation" }).click();
-
-  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await page.getByRole("button", { name: "Save conversation" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
   await page.getByRole("button", { name: "Archive conversation" }).click();
   await expect(page).toHaveURL(/\/chat$/);

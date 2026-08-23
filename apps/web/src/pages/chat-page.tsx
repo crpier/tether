@@ -1173,77 +1173,6 @@ function ConversationNotFound() {
   );
 }
 
-function ConversationCreateForm(props: {
-  api: ChatHost;
-  onCreated: (conversation: Conversation) => void;
-}) {
-  const [displayName, setDisplayName] = createSignal("");
-  const [scopeBrief, setScopeBrief] = createSignal("");
-  const [saving, setSaving] = createSignal(false);
-  const [error, setError] = createSignal<string>();
-  const submit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
-    event.preventDefault();
-    if (saving() || scopeBrief().trim().length === 0) {
-      return;
-    }
-    setSaving(true);
-    setError(undefined);
-    const name = displayName().trim();
-    void props.api
-      .createConversation({
-        display_name: name.length > 0 ? name : undefined,
-        scope_brief: scopeBrief().trim(),
-      })
-      .then(props.onCreated)
-      .catch(() => {
-        setError("Conversation could not be created.");
-      })
-      .finally(() => {
-        setSaving(false);
-      });
-  };
-  return (
-    <form
-      class="bg-card m-auto w-full max-w-lg space-y-4 rounded-lg border p-5"
-      onSubmit={submit}
-    >
-      <div>
-        <h1 class="text-lg font-semibold">New Scoped Conversation</h1>
-        <p class="text-muted-foreground mt-1 text-sm">
-          Give Tether a durable scope brief. The chat is named automatically
-          from its first message if you leave the name blank.
-        </p>
-      </div>
-      <TextField onChange={setDisplayName} value={displayName()}>
-        <TextFieldLabel>Conversation name (optional)</TextFieldLabel>
-        <TextFieldInput autofocus placeholder="Untitled chat" />
-      </TextField>
-      <TextField onChange={setScopeBrief} value={scopeBrief()}>
-        <TextFieldLabel>Scope brief</TextFieldLabel>
-        <TextFieldTextArea rows={4} />
-      </TextField>
-      <Show when={error()}>
-        {(message) => (
-          <p class="text-destructive text-sm" role="alert">
-            {message()}
-          </p>
-        )}
-      </Show>
-      <div class="flex gap-2">
-        <Button
-          disabled={saving() || scopeBrief().trim().length === 0}
-          type="submit"
-        >
-          {saving() ? "Creating…" : "Create conversation"}
-        </Button>
-        <Button as="a" href="/chat" variant="ghost">
-          Cancel
-        </Button>
-      </div>
-    </form>
-  );
-}
-
 function ConversationPicker(props: {
   conversations: Conversation[];
   onClose: () => void;
@@ -1535,10 +1464,12 @@ export function ChatPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const params = useParams<{ conversationId?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const promptParam = searchParams.prompt;
   const starterPrompt = typeof promptParam === "string" ? promptParam : "";
   const [draft, setDraft] = createSignal(starterPrompt);
+  const [newChatPending, setNewChatPending] = createSignal(false);
+  const [newChatFailed, setNewChatFailed] = createSignal(false);
   let messageInput: HTMLTextAreaElement | undefined;
   const [editingPromptId, setEditingPromptId] = createSignal<number | null>(
     null,
@@ -1580,7 +1511,9 @@ export function ChatPage() {
     queryKey: ["conversations", "detail", params.conversationId],
   }));
   const creating = createMemo(
-    () => params.conversationId === undefined && searchParams.new === "1",
+    () =>
+      (params.conversationId === undefined && searchParams.new === "1") ||
+      newChatPending(),
   );
   const archivedMode = createMemo(
     () => params.conversationId === undefined && searchParams.archived === "1",
@@ -1804,6 +1737,24 @@ export function ChatPage() {
     });
   };
 
+  createEffect(() => {
+    if (searchParams.new !== "1" || params.conversationId !== undefined) {
+      return;
+    }
+    setNewChatPending(true);
+    void api
+      .createConversation({})
+      .then((created) => {
+        refreshConversations();
+        navigate(`/chat/${created.id}`);
+      })
+      .catch(() => {
+        setNewChatFailed(true);
+        setNewChatPending(false);
+        setSearchParams({ new: null }, { replace: true });
+      });
+  });
+
   const restoreArchived = (archivedConversationId: string) => {
     if (restoringArchivedId() !== undefined) {
       return;
@@ -1952,14 +1903,21 @@ export function ChatPage() {
             </div>
           )}
         </Show>
-        <Show when={creating()}>
-          <ConversationCreateForm
-            api={api}
-            onCreated={(created) => {
-              refreshConversations();
-              navigate(`/chat/${created.id}`);
-            }}
-          />
+        <Show when={newChatFailed()}>
+          <div
+            class="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
+            role="alert"
+          >
+            <p class="flex-1">Conversation could not be created.</p>
+            <button
+              aria-label="Dismiss error"
+              class="shrink-0 opacity-70 hover:opacity-100"
+              onClick={() => setNewChatFailed(false)}
+              type="button"
+            >
+              ✕
+            </button>
+          </div>
         </Show>
         <Show when={routeNotFound()}>
           <ConversationNotFound />

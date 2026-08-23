@@ -2202,7 +2202,7 @@ export interface components {
       /** Display Name */
       display_name?: string | null;
       /** Scope Brief */
-      scope_brief: string;
+      scope_brief?: string | null;
     };
     /**
      * CreateGrantRequest
