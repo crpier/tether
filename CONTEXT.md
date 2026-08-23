@@ -127,7 +127,7 @@ A saved query over the Commons, rendered through Widgets — a panel assembled f
 _Avoid_: dashboard, view, report
 
 **Scheduled trigger**:
-A time-triggered action the human sets up: it fires once or on a recurrence (daily/weekly), and its action is either to deliver a fixed message or to run a prompt through the agent and deliver the result. The push half of the capture → resurface loop (a plain reminder is the fixed-message case).
+A time-triggered action the human sets up: it fires once or on a recurrence (daily/weekly), and its action is either to deliver a fixed message or to run a prompt through the agent and deliver the result. A recurring prompt captures the chat effort profile selected when the trigger is saved and keeps that profile across later firings. The push half of the capture → resurface loop (a plain reminder is the fixed-message case).
 _Avoid_: scheduled prompt task, reminder, cron job, alert
 
 **Bucket item**:

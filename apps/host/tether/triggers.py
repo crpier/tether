@@ -82,6 +82,7 @@ class TriggerService:
         *,
         now: datetime,
         logger: Logger,
+        model_profile: str | None = None,
     ) -> ScheduledTrigger[Fetched]:
         """Create an active trigger, materialising its first occurrence.
 
@@ -114,6 +115,7 @@ class TriggerService:
                             recurrence=spec.recurrence,
                             action_kind=spec.action_kind,
                             payload=normalised_payload,
+                            model_profile=model_profile,
                             timezone=facts.timezone,
                             wall_time=facts.wall_time,
                             weekday=facts.weekday,
@@ -170,6 +172,7 @@ class TriggerService:
         *,
         now: datetime,
         logger: Logger,
+        model_profile: str | None = None,
     ) -> ScheduledTrigger[Fetched]:
         """Replace a trigger's definition at an observed version.
 
@@ -196,6 +199,7 @@ class TriggerService:
                 .set(ScheduledTrigger.recurrence.to(spec.recurrence))
                 .set(ScheduledTrigger.action_kind.to(spec.action_kind))
                 .set(ScheduledTrigger.payload.to(normalised_payload))
+                .set(ScheduledTrigger.model_profile.to(model_profile))
                 .set(ScheduledTrigger.timezone.to(facts.timezone))
                 .set(ScheduledTrigger.wall_time.to(facts.wall_time))
                 .set(ScheduledTrigger.weekday.to(facts.weekday))

@@ -2,11 +2,14 @@
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from uuid import UUID
 
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+
+_LEGACY_TRIGGER_ID = UUID("018f0000-0000-7000-8000-0000000000aa")
 
 _LEGACY_TRIGGER_MIGRATIONS = {
     "005_create_scheduled_trigger": (
@@ -35,6 +38,17 @@ async def existing_trigger_database() -> AsyncGenerator[Database]:
     """Create a database carrying the original Scheduled trigger migrations."""
     database = await Database.initialize(backend=Config(database=":memory:"))
     await database.migrate(_LEGACY_TRIGGER_MIGRATIONS)
+    await database.migrate(
+        {
+            "test_seed_legacy_scheduled_trigger": (
+                'INSERT INTO "scheduled_trigger" '
+                '("id", "recurrence", "action_kind", "payload", "timezone", '
+                '"wall_time", "next_fire_at", "status", "attempts", "version") '
+                f"VALUES ('{_LEGACY_TRIGGER_ID}', 'daily', 'message', 'stand up', "
+                "'UTC', '09:00', '2030-01-01T09:00:00.000Z', 'active', 0, 1)"
+            )
+        }
+    )
     yield database
     await database.close()
 
@@ -74,12 +88,12 @@ async def fresh_schema_persists_the_current_trigger_shape() -> None:
 async def replaying_schema_on_an_existing_database_preserves_rows() -> None:
     """Recognized migration names leave existing Scheduled triggers untouched."""
     database = await load_fixture(existing_trigger_database())
-    trigger = await insert_daily_trigger(database)
 
     await create_trigger_schema(database)
 
     async with database.transaction() as transaction:
         persisted = await transaction.fetch_one(
-            select(ScheduledTrigger).where(ScheduledTrigger.id.eq(trigger.id))
+            select(ScheduledTrigger).where(ScheduledTrigger.id.eq(_LEGACY_TRIGGER_ID))
         )
     assert_eq(persisted.payload, "stand up")
+    assert_eq(persisted.model_profile, None)

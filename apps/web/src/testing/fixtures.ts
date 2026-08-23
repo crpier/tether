@@ -145,6 +145,7 @@ export function trigger(overrides: Partial<Trigger>): Trigger {
     created_at: "2026-01-01T00:00:00Z",
     id: "018f0000-0000-7000-8000-0000000000aa",
     last_error: null,
+    model_profile: null,
     next_attempt_at: null,
     next_fire_at: "2099-01-01T15:00:00Z",
     payload: "call the dentist",

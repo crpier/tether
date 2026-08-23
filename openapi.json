@@ -5004,6 +5004,17 @@
             ],
             "title": "Last Error"
           },
+          "model_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Profile"
+          },
           "next_attempt_at": {
             "anyOf": [
               {
@@ -5073,6 +5084,7 @@
           "recurrence",
           "action_kind",
           "payload",
+          "model_profile",
           "timezone",
           "wall_time",
           "weekday",

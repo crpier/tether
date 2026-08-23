@@ -30,8 +30,9 @@ class CreateTriggerParams(TriggerSpecBody):
     """Params for scheduling a trigger.
 
     `once` carries an absolute `fire_at`; `daily`/`weekly` carry `timezone` and
-    `time_of_day` (and a `weekday` for weekly). Mismatched fields are rejected
-    as a well-formed `invalid_input` envelope, never a corrupt row.
+    `time_of_day` (and a `weekday` for weekly). A recurring prompt captures the
+    current chat profile. Mismatched fields are rejected as a well-formed
+    `invalid_input` envelope, never a corrupt row.
     """
 
 

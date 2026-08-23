@@ -6,9 +6,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from fastapi import FastAPI
 from snektest import assert_eq, test
 from starlette.testclient import TestClient
 
+from tether.app_runtime import app_runtime
+from tether.chat_turn import ChatTurnDependencies
+from tether.model_selection import AgentModelConfig
+from tether.scheduler import ScheduledChatPromptRunner
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
@@ -36,6 +41,40 @@ def make_client(root: Path) -> TestClient:
             ),
             telemetry_settings=TelemetrySettings(install_global_provider=False),
         )
+    )
+
+
+def make_model_app(root: Path) -> FastAPI:
+    """Create an app whose faux provider reports the model used for each turn."""
+    return create_app(
+        config=AppConfig(
+            app_password=APP_PASSWORD,
+            database_path=root / "tether.sqlite3",
+            default_model="cheap",
+            extra_extension_paths=(
+                Path(__file__).resolve().parents[2]
+                / "agent/tests/fixtures/model-echo-faux.ts",
+            ),
+            kb_root=root / ".tether",
+            model_allowlist=(
+                AgentModelConfig(
+                    display_name="Cheap",
+                    id="cheap",
+                    model_id="tether-chat-cheap-faux",
+                    provider="faux",
+                ),
+                AgentModelConfig(
+                    display_name="Smart",
+                    id="smart",
+                    model_id="tether-chat-smart-faux",
+                    provider="faux",
+                ),
+            ),
+            scheduler_tick_seconds=60,
+            session_secret=SESSION_SECRET,
+            tool_base_url="http://127.0.0.1:9",
+        ),
+        telemetry_settings=TelemetrySettings(install_global_provider=False),
     )
 
 
@@ -86,6 +125,35 @@ def a_fired_agent_prompt_runs_as_a_user_chat_turn() -> None:
         [(message["role"], message["content"]) for message in messages],
         [("user", "summarise my day"), ("assistant", "script complete")],
     )
+
+
+@test()
+def a_scheduled_prompt_uses_its_pinned_profile() -> None:
+    """The scheduled turn runs with its profile instead of the chat default."""
+    with TemporaryDirectory() as directory:
+        application = make_model_app(Path(directory))
+        with TestClient(application) as client:
+            login(client)
+            runtime = app_runtime(application)
+            runner = ScheduledChatPromptRunner(
+                ChatTurnDependencies(
+                    conversation_service=runtime.conversation_service,
+                    dreaming_enabled=runtime.dreaming_enabled,
+                    dreaming_service=runtime.dreaming_service,
+                    logger=runtime.logger,
+                    runtime_registry=runtime.conversation_runtime_registry,
+                    trace_recorder=runtime.trace_recorder,
+                    turn_queue=runtime.conversation_turn_queue,
+                ),
+                event_publisher=runtime.event_hub,
+            )
+            portal = client.portal
+            if portal is None:
+                raise AssertionError("test client portal is unavailable")
+
+            answer = portal.call(runner.run, "summarise my day", "smart")
+
+    assert_eq(answer, "tether-chat-smart-faux")
 
 
 @test()

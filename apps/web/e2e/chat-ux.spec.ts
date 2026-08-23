@@ -88,7 +88,7 @@ test("chat session controls and message actions work together", async ({
     });
   });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("combobox", { name: "Model profile" }).waitFor();
+  await page.getByRole("slider", { name: "Model profile" }).waitFor();
 
   await page.getByRole("button", { name: "Search transcript" }).click();
   await page

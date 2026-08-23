@@ -66,6 +66,7 @@ function localDateTimeStamp(date: Date): string {
 function sameDefinition(a: Trigger, b: Trigger): boolean {
   return (
     a.payload === b.payload &&
+    a.model_profile === b.model_profile &&
     a.recurrence === b.recurrence &&
     a.action_kind === b.action_kind &&
     a.wall_time === b.wall_time &&

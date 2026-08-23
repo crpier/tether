@@ -218,20 +218,22 @@ for (const viewport of [PHONE, DESKTOP]) {
     const context = await boundingBox(
       page.getByRole("group", { name: "Composer context" }),
     );
-    const modelMenu = await boundingBox(
-      page.getByRole("combobox", { name: "Model profile" }),
+    const modelSlider = await boundingBox(
+      page.getByRole("slider", { name: "Model profile" }),
     );
     const sessionStatus = await boundingBox(
       page.getByText("Next message starts a fresh working session"),
     );
     expect(
       Math.abs(
-        modelMenu.y +
-          modelMenu.height / 2 -
+        modelSlider.y +
+          modelSlider.height / 2 -
           (sessionStatus.y + sessionStatus.height / 2),
       ),
     ).toBeLessThanOrEqual(4);
-    expect(modelMenu.x + modelMenu.width).toBeLessThanOrEqual(sessionStatus.x);
+    expect(modelSlider.x + modelSlider.width).toBeLessThanOrEqual(
+      sessionStatus.x,
+    );
 
     const composer = page.getByRole("group", { name: "Message composer" });
     const composerBox = await boundingBox(composer);

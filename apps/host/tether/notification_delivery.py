@@ -41,8 +41,8 @@ class PushSender(Protocol):
 class AgentPromptRunner(Protocol):
     """Resolve an unattended agent prompt to final message text."""
 
-    async def run(self, prompt: str) -> str:
-        """Run a prompt and return its final message."""
+    async def run(self, prompt: str, model_profile: str | None) -> str:
+        """Run a prompt with its pinned profile and return the final message."""
         ...
 
 
@@ -115,6 +115,9 @@ class TriggerDispatcher:
         if trigger.action_kind == "message":
             await self.notifier.deliver(trigger=trigger, message=trigger.payload)
             return
-        answer = await self.agent_runner.run(trigger.payload)
+        answer = await self.agent_runner.run(
+            trigger.payload,
+            trigger.model_profile,
+        )
         if self.prompt_push_sender is not None:
             await self.prompt_push_sender.send(answer)

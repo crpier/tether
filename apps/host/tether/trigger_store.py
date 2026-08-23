@@ -19,7 +19,6 @@ from snekql.sqlite import (
     Text,
     UtcDatetime,
 )
-from snekql.sqlite._schema_ddl import scaffold_sqlite_statements
 
 from tether.trigger_schedule import TriggerActionKind, TriggerRecurrence
 
@@ -40,6 +39,8 @@ class ScheduledTrigger[S = Pending](Model[S, "ScheduledTrigger[Fetched]"]):
     """`message` delivers `payload` verbatim; `prompt` runs it through pi."""
     payload: ScheduledTrigger.Col[str] = Text()
     """The fixed message text, or the agent prompt, depending on `action_kind`."""
+    model_profile: ScheduledTrigger.Col[str | None] = Text(default=None, nullable=True)
+    """Profile pinned to a recurring prompt; null for other trigger actions."""
     timezone: ScheduledTrigger.Col[str] = Text()
     """IANA timezone the wall-clock recurrence is anchored to."""
     wall_time: ScheduledTrigger.Col[str | None] = Text(default=None, nullable=True)
@@ -93,9 +94,28 @@ def due_trigger_predicate(now: datetime) -> Predicate[ScheduledTrigger[Pending]]
 
 
 async def create_trigger_schema(database: Database) -> None:
-    """Create the Scheduled trigger table and index on an initialized database."""
+    """Create or upgrade Scheduled trigger persistence."""
     migrations = {
-        f"005_{label}": sql
-        for label, sql in scaffold_sqlite_statements([ScheduledTrigger])
+        "005_create_scheduled_trigger": (
+            'CREATE TABLE "scheduled_trigger" ("id" TEXT PRIMARY KEY NOT NULL, '
+            '"recurrence" TEXT NOT NULL, "action_kind" TEXT NOT NULL, '
+            '"payload" TEXT NOT NULL, "timezone" TEXT NOT NULL, '
+            '"wall_time" TEXT, "weekday" INTEGER, "next_fire_at" TEXT NOT NULL, '
+            '"status" TEXT NOT NULL, "claimed_at" TEXT, '
+            '"attempts" INTEGER NOT NULL, "next_attempt_at" TEXT, '
+            '"last_error" TEXT, "version" INTEGER NOT NULL, '
+            '"created_at" TEXT NOT NULL DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"updated_at" TEXT NOT NULL DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"deleted_at" TEXT) STRICT'
+        ),
+        "005_create_index_ix_scheduled_trigger_status_next_fire_at": (
+            'CREATE INDEX "ix_scheduled_trigger_status_next_fire_at" '
+            'ON "scheduled_trigger" ("status", "next_fire_at")'
+        ),
+        "033_scheduled_trigger_model_profile": (
+            'ALTER TABLE "scheduled_trigger" ADD COLUMN "model_profile" TEXT'
+        ),
     }
     await database.migrate(migrations)

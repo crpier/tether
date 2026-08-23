@@ -46,7 +46,7 @@ from tether.scheduler import (
 from tether.structured_logging import Logger
 from tether.system_prompt import TASK_SYSTEM_PROMPT
 from tether.tool_runtime import SessionRegistry
-from tether.trigger_schedule import OnceTriggerSpec
+from tether.trigger_schedule import DailyTriggerSpec, OnceTriggerSpec
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
 from tether.triggers import TriggerService
 
@@ -132,6 +132,18 @@ class RecordingPushSender:
         self.sent.append(body)
 
 
+class ProfileRunner:
+    """Records the profile supplied for an unattended prompt."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def run(self, prompt: str, model_profile: str | None) -> str:
+        """Record one prompt and its pinned profile."""
+        self.calls.append((prompt, model_profile))
+        return "done"
+
+
 class StubRunner:
     """A stand-in agent prompt runner returning a canned result."""
 
@@ -139,8 +151,9 @@ class StubRunner:
         self.result: str = result
         self.prompts: list[str] = []
 
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str, model_profile: str | None) -> str:
         """Record the prompt and return the canned result."""
+        _ = model_profile
         self.prompts.append(prompt)
         return self.result
 
@@ -260,6 +273,32 @@ async def tick_runs_an_agent_prompt_through_the_prompt_runner() -> None:
     await scheduler.drain()
 
     assert_eq(runner.prompts, ["summarise my day"])
+
+
+@test()
+async def recurring_prompt_dispatch_uses_its_pinned_profile() -> None:
+    """Dispatch passes the recurring prompt's stored profile to its runner."""
+    service = await load_fixture(scheduler_service())
+    runner = ProfileRunner()
+    trigger = await service.create(
+        DailyTriggerSpec(
+            action_kind="prompt",
+            payload="summarise my day",
+            timezone="UTC",
+            time_of_day="09:00",
+        ),
+        now=BASE,
+        logger=LOGGER,
+        model_profile="high-effort",
+    )
+    dispatcher = TriggerDispatcher(
+        notifier=RecordingNotifier(),
+        agent_runner=runner,
+    )
+
+    await dispatcher.dispatch(trigger)
+
+    assert_eq(runner.calls, [("summarise my day", "high-effort")])
 
 
 @test()

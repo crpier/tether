@@ -208,13 +208,23 @@ class OnceRaisingTriggerService(TriggerService):
         self._remaining_failures = fail_times
 
     async def create(
-        self, spec: TriggerSpec, *, now: datetime, logger: Logger
+        self,
+        spec: TriggerSpec,
+        *,
+        now: datetime,
+        logger: Logger,
+        model_profile: str | None = None,
     ) -> ScheduledTrigger[Fetched]:
         if self._remaining_failures > 0:
             self._remaining_failures -= 1
             message = "trigger backend unavailable"
             raise RuntimeError(message)
-        return await super().create(spec, now=now, logger=logger)
+        return await super().create(
+            spec,
+            now=now,
+            logger=logger,
+            model_profile=model_profile,
+        )
 
 
 def _encode_body(text: str) -> str:
