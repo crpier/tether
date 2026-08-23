@@ -3,8 +3,9 @@
 // this file is implementation so transport and rendering can change freely.
 
 import type { ChatFrame } from "./chat-bus";
+import type { Message } from "./host/chat";
 
-export type ChatRole = "user" | "assistant" | "tool";
+export type ChatRole = "user" | "scheduled" | "assistant" | "tool";
 
 // Settled rows can also carry persisted reasoning, which renders as its own
 // collapsible row rather than a chat bubble.
@@ -17,6 +18,7 @@ export interface StoredMessage {
   toolName?: string | null;
   toolArgs?: unknown;
   toolResult?: unknown;
+  turn?: Message["turn"];
 }
 
 export type TimelineRow =
@@ -27,6 +29,7 @@ export type TimelineRow =
       text: string;
       toolName: string | null;
       streaming: boolean;
+      turn?: Message["turn"];
     }
   | {
       kind: "reasoning";
@@ -255,6 +258,7 @@ export function reduceFrame(
     case "abort_ack":
       return { ...turn, generating: false, stopped: true, endedAt: now };
     case "agent_end":
+    case "turn_ended":
       return { ...turn, generating: false, endedAt: now };
     default:
       return turn;
@@ -299,6 +303,7 @@ export function deriveRows(
       text: message.content,
       toolName: message.toolName ?? null,
       streaming: false,
+      turn: message.turn,
     };
   });
   if (turn.userText !== null) {
@@ -360,7 +365,8 @@ function rowContentEqual(a: TimelineRow, b: TimelineRow): boolean {
         a.role === other.role &&
         a.text === other.text &&
         a.toolName === other.toolName &&
-        a.streaming === other.streaming
+        a.streaming === other.streaming &&
+        JSON.stringify(a.turn) === JSON.stringify(other.turn)
       );
     }
     case "reasoning": {

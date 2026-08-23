@@ -51,7 +51,7 @@ from tether.todo_store import Todo, create_todo_schema
 from tether.todos import TodoService
 from tether.trigger_schedule import TriggerSpec
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
-from tether.triggers import TriggerService
+from tether.triggers import ScheduledPromptSnapshot, TriggerService
 
 
 def noop_tracer() -> Tracer:
@@ -213,7 +213,7 @@ class OnceRaisingTriggerService(TriggerService):
         *,
         now: datetime,
         logger: Logger,
-        model_profile: str | None = None,
+        prompt_snapshot: ScheduledPromptSnapshot | None = None,
     ) -> ScheduledTrigger[Fetched]:
         if self._remaining_failures > 0:
             self._remaining_failures -= 1
@@ -223,7 +223,7 @@ class OnceRaisingTriggerService(TriggerService):
             spec,
             now=now,
             logger=logger,
-            model_profile=model_profile,
+            prompt_snapshot=prompt_snapshot,
         )
 
 

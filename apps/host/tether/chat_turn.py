@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -15,9 +15,11 @@ import structlog
 from snekql.sqlite import Fetched
 
 from tether.agent_run import record_run
+from tether.agent_trace_model import RunCorrelation
 from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.chat_frames import (
     AgentEndFrame,
+    ChatFrame,
     ErrorFrame,
     MessageEndFrame,
     MessageStartFrame,
@@ -61,7 +63,7 @@ _logger = structlog.stdlib.get_logger("tether.chat_turn")
 class ChatFrameSink(Protocol):
     """Destination for chat frames produced while running one prompt."""
 
-    async def send_json(self, data: Any) -> None: ...
+    async def send(self, frame: ChatFrame) -> None: ...
 
 
 class ChatRpcClient(Protocol):
@@ -96,12 +98,14 @@ class ChatPiRuntime(Protocol):
 
 
 class ChatRuntimeRegistry(Protocol):
-    """Conversation-bound runtime lookup required by chat turns."""
+    """Conversation-bound runtime lifecycle required by chat turns."""
 
     async def runtime_for(
         self,
         conversation: Conversation[Fetched],
     ) -> ChatPiRuntime: ...
+
+    async def discard(self, conversation_id: object) -> None: ...
 
 
 class ConversationTurnQueue:
@@ -142,6 +146,7 @@ class _TurnState:
     streamed_text: list[str] = field(default_factory=list[str])
     final_text: str = ""
     needs_final_answer: bool = False
+    provider_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +166,8 @@ class TurnSpec:
     conversation_id: UUID
     reply_mode: ReplyMode
     session_id: str
+    turn_id: UUID | None = None
+    before_terminal: Callable[[str, str | None], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +178,9 @@ class _TurnContext:
     dependencies: ChatTurnDependencies
     reply_mode: ReplyMode
     runtime: ChatPiRuntime
+    before_terminal: Callable[[str, str | None], Awaitable[None]] | None
     session_id: str
+    turn_id: UUID | None
     websocket: ChatFrameSink
 
 
@@ -206,179 +215,168 @@ async def send_chat_error(
     *,
     detail: str,
     conversation_id: UUID | None = None,
+    turn_id: UUID | None = None,
 ) -> None:
-    """Send one optionally conversation-tagged error frame."""
-    await websocket.send_json(
-        ErrorFrame(detail=detail, conversation_id=conversation_id).wire()
+    """Send one optionally turn-correlated error frame."""
+    await websocket.send(
+        ErrorFrame(
+            detail=detail,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+        )
     )
 
 
 async def _relay_stream_update(
-    websocket: ChatFrameSink,
-    *,
-    conversation_id: UUID,
+    context: _TurnContext,
+    state: _TurnState,
     update: TextDelta | ThinkingDelta | AssistantStreamNote,
-    streamed_text: list[str],
-    streamed_reasoning: list[str],
 ) -> None:
     """Accumulate channel text and forward the provider delta verbatim."""
     match update:
         case TextDelta(text=chunk):
             event_name = "text_delta"
-            streamed_text.append(chunk)
+            state.streamed_text.append(chunk)
         case ThinkingDelta(text=chunk):
             event_name = "thinking_delta"
-            streamed_reasoning.append(chunk)
+            state.streamed_reasoning.append(chunk)
         case AssistantStreamNote(kind=kind):
             event_name = kind
-    await websocket.send_json(
+    await context.websocket.send(
         StreamUpdateFrame(
-            conversation_id=conversation_id,
+            conversation_id=context.conversation_id,
             event=event_name,
             delta=update.raw_delta,
             content_index=update.content_index,
-        ).wire()
+            turn_id=context.turn_id,
+        )
     )
 
 
 async def _settle_message_end(
-    websocket: ChatFrameSink,
-    dependencies: ChatTurnDependencies,
-    conversation_id: UUID,
+    context: _TurnContext,
     settled: MessageSettled,
     state: _TurnState,
 ) -> str:
     """Persist reasoning before answer text and return the settled answer."""
     reasoning = settled.reasoning or "".join(state.streamed_reasoning)
     if reasoning:
-        _ = await dependencies.conversation_service.append_message(
+        _ = await context.dependencies.conversation_service.append_message(
             MessageDraft(
                 content=reasoning,
-                conversation_id=conversation_id,
+                conversation_id=context.conversation_id,
                 role="reasoning",
+                turn_id=context.turn_id,
             )
         )
     content = settled.text or "".join(state.streamed_text)
     if content:
-        _ = await dependencies.conversation_service.append_message(
+        _ = await context.dependencies.conversation_service.append_message(
             MessageDraft(
                 content=content,
-                conversation_id=conversation_id,
+                conversation_id=context.conversation_id,
                 role="assistant",
+                turn_id=context.turn_id,
             )
         )
-    await websocket.send_json(MessageEndFrame(conversation_id=conversation_id).wire())
+    await context.websocket.send(
+        MessageEndFrame(
+            conversation_id=context.conversation_id,
+            turn_id=context.turn_id,
+        )
+    )
     return content
 
 
 async def _forward_tool_start(
-    websocket: ChatFrameSink,
-    *,
-    conversation_id: UUID,
+    context: _TurnContext,
     started: ToolStarted,
-    pending_tool_args: dict[str, dict[str, Any]],
+    state: _TurnState,
 ) -> None:
     """Remember tool arguments and forward the start frame."""
     if started.tool_call_id is not None:
-        pending_tool_args[started.tool_call_id] = started.args
-    await websocket.send_json(
+        state.pending_tool_args[started.tool_call_id] = started.args
+    await context.websocket.send(
         ToolStartFrame(
-            conversation_id=conversation_id,
+            conversation_id=context.conversation_id,
             tool_name=started.tool_name,
             tool_id=started.tool_call_id,
             tool_args=started.args,
-        ).wire()
+            turn_id=context.turn_id,
+        )
     )
 
 
 async def _settle_tool_end(
-    websocket: ChatFrameSink,
-    dependencies: ChatTurnDependencies,
-    *,
-    conversation_id: UUID,
+    context: _TurnContext,
     settled: ToolSettled,
-    pending_tool_args: dict[str, dict[str, Any]],
+    state: _TurnState,
 ) -> bool:
     """Persist a bounded tool envelope and forward the completion frame."""
     transcript_result = _compact_tool_result(settled.result)
     persisted = False
     if settled.tool_call_id is not None and settled.tool_name is not None:
-        _ = await dependencies.conversation_service.append_message(
+        _ = await context.dependencies.conversation_service.append_message(
             MessageDraft(
                 content=settled.tool_name,
-                conversation_id=conversation_id,
+                conversation_id=context.conversation_id,
                 pi_message_id=settled.tool_call_id,
                 role="tool",
-                tool_args=pending_tool_args.pop(settled.tool_call_id, {}),
+                tool_args=state.pending_tool_args.pop(settled.tool_call_id, {}),
                 tool_name=settled.tool_name,
                 tool_result=transcript_result,
+                turn_id=context.turn_id,
             )
         )
         persisted = True
-    await websocket.send_json(
+    await context.websocket.send(
         ToolEndFrame(
-            conversation_id=conversation_id,
+            conversation_id=context.conversation_id,
             tool_name=settled.tool_name,
             tool_id=settled.tool_call_id,
             tool_result=transcript_result,
-        ).wire()
+            turn_id=context.turn_id,
+        )
     )
     return persisted
 
 
 async def _relay_tool_event(
-    websocket: ChatFrameSink,
-    dependencies: ChatTurnDependencies,
-    *,
-    conversation_id: UUID,
+    context: _TurnContext,
+    state: _TurnState,
     tool_event: ToolStarted | ToolSettled,
-    pending_tool_args: dict[str, dict[str, Any]],
 ) -> bool:
     """Relay ordinary tools while keeping bundled skill reads operational-only."""
     match tool_event:
         case ToolStarted(tool_name="read"):
             _logger.info(
                 "Bundled skill read started",
-                conversation_id=str(conversation_id),
+                conversation_id=str(context.conversation_id),
                 tool_call_id=tool_event.tool_call_id,
             )
             return False
         case ToolSettled(tool_name="read"):
             _logger.info(
                 "Bundled skill read settled",
-                conversation_id=str(conversation_id),
+                conversation_id=str(context.conversation_id),
                 tool_call_id=tool_event.tool_call_id,
             )
             return False
         case ToolStarted():
-            await _forward_tool_start(
-                websocket,
-                conversation_id=conversation_id,
-                started=tool_event,
-                pending_tool_args=pending_tool_args,
-            )
+            await _forward_tool_start(context, tool_event, state)
             return False
         case ToolSettled():
-            return await _settle_tool_end(
-                websocket,
-                dependencies,
-                conversation_id=conversation_id,
-                settled=tool_event,
-                pending_tool_args=pending_tool_args,
-            )
+            return await _settle_tool_end(context, tool_event, state)
 
 
-async def _settle_tool_only_turn_marker(
-    dependencies: ChatTurnDependencies,
-    *,
-    conversation_id: UUID,
-) -> None:
+async def _settle_tool_only_turn_marker(context: _TurnContext) -> None:
     """Append a durable marker when pi ends after tools without answering."""
-    _ = await dependencies.conversation_service.append_message(
+    _ = await context.dependencies.conversation_service.append_message(
         MessageDraft(
             content=_TOOL_ONLY_TURN_MARKER,
-            conversation_id=conversation_id,
+            conversation_id=context.conversation_id,
             role="assistant",
+            turn_id=context.turn_id,
         )
     )
 
@@ -416,6 +414,8 @@ async def send_session_status(
     websocket: ChatFrameSink,
     runtime: ChatPiRuntime,
     conversation_id: UUID,
+    *,
+    turn_id: UUID | None = None,
 ) -> None:
     """Send optional pi context state without risking chat operation."""
     try:
@@ -427,13 +427,14 @@ async def send_session_status(
             error_type=type(error).__name__,
         )
         return
-    await websocket.send_json(
+    await websocket.send(
         SessionStatusFrame(
             context_percent=None if usage is None else usage.percent,
             context_tokens=None if usage is None else usage.tokens,
             context_window=None if usage is None else usage.context_window,
             conversation_id=conversation_id,
-        ).wire()
+            turn_id=turn_id,
+        )
     )
 
 
@@ -443,6 +444,31 @@ async def _send_session_status(context: _TurnContext) -> None:
         context.websocket,
         context.runtime,
         context.conversation_id,
+        turn_id=context.turn_id,
+    )
+
+
+async def _handle_agent_end(
+    context: _TurnContext,
+    state: _TurnState,
+) -> None:
+    """Settle tool-only output and send the terminal frame last."""
+    await _send_session_status(context)
+    tool_only = False
+    if state.needs_final_answer:
+        await _settle_tool_only_turn_marker(context)
+        state.final_text = _TOOL_ONLY_TURN_MARKER
+        tool_only = True
+    if context.before_terminal is not None:
+        await context.before_terminal(state.final_text, state.provider_error)
+    await context.websocket.send(
+        AgentEndFrame(
+            conversation_id=context.conversation_id,
+            reply_mode=context.reply_mode,
+            final_text=state.final_text,
+            tool_only=tool_only,
+            turn_id=context.turn_id,
+        )
     )
 
 
@@ -460,66 +486,31 @@ async def _handle_turn_event(
                 context.dependencies.trace_recorder.record_model_turn(
                     session_id=context.session_id
                 )
-            await context.websocket.send_json(
-                MessageStartFrame(conversation_id=context.conversation_id).wire()
+            await context.websocket.send(
+                MessageStartFrame(
+                    conversation_id=context.conversation_id,
+                    turn_id=context.turn_id,
+                )
             )
         case AssistantStreamNote(kind=kind) if kind.startswith("toolcall_"):
             return
         case TextDelta() | ThinkingDelta() | AssistantStreamNote():
-            await _relay_stream_update(
-                context.websocket,
-                conversation_id=context.conversation_id,
-                update=turn_event,
-                streamed_text=state.streamed_text,
-                streamed_reasoning=state.streamed_reasoning,
-            )
+            await _relay_stream_update(context, state, turn_event)
         case MessageSettled(error=str() as error):
-            await send_chat_error(
-                context.websocket,
-                conversation_id=context.conversation_id,
-                detail=error,
-            )
+            state.provider_error = error
         case MessageSettled():
-            settled_text = await _settle_message_end(
-                context.websocket,
-                context.dependencies,
-                context.conversation_id,
-                turn_event,
-                state,
-            )
+            settled_text = await _settle_message_end(context, turn_event, state)
             state.final_text = settled_text or state.final_text
             state.needs_final_answer = state.needs_final_answer and not settled_text
             state.streamed_text.clear()
             state.streamed_reasoning.clear()
         case ToolStarted() | ToolSettled():
             state.needs_final_answer = (
-                await _relay_tool_event(
-                    context.websocket,
-                    context.dependencies,
-                    conversation_id=context.conversation_id,
-                    tool_event=turn_event,
-                    pending_tool_args=state.pending_tool_args,
-                )
+                await _relay_tool_event(context, state, turn_event)
                 or state.needs_final_answer
             )
         case AgentEnded():
-            await _send_session_status(context)
-            tool_only = False
-            if state.needs_final_answer:
-                await _settle_tool_only_turn_marker(
-                    context.dependencies,
-                    conversation_id=context.conversation_id,
-                )
-                state.final_text = _TOOL_ONLY_TURN_MARKER
-                tool_only = True
-            await context.websocket.send_json(
-                AgentEndFrame(
-                    conversation_id=context.conversation_id,
-                    reply_mode=context.reply_mode,
-                    final_text=state.final_text,
-                    tool_only=tool_only,
-                ).wire()
-            )
+            await _handle_agent_end(context, state)
 
 
 async def stream_chat_turn(
@@ -531,11 +522,13 @@ async def stream_chat_turn(
 ) -> str:
     """Relay one ordered pi turn and return its final assistant text."""
     context = _TurnContext(
+        before_terminal=spec.before_terminal,
         conversation_id=spec.conversation_id,
         dependencies=dependencies,
         reply_mode=spec.reply_mode,
         runtime=runtime,
         session_id=spec.session_id,
+        turn_id=spec.turn_id,
         websocket=websocket,
     )
     state = _TurnState()
@@ -618,12 +611,12 @@ async def _run_chat_prompt(
             detail="conversation not found",
         )
         return ""
-    await websocket.send_json(
+    await websocket.send(
         UserMessageFrame(
             conversation_id=conversation_id,
             message_id=message.id,
             seq=message.seq,
-        ).wire()
+        )
     )
     session_id = str(conversation.pi_session_id)
     try:
@@ -632,12 +625,12 @@ async def _run_chat_prompt(
             session_id=session_id,
             kind="conversation",
             prompt=content,
-            conversation_id=str(conversation_id),
+            correlation=RunCorrelation(conversation_id=str(conversation_id)),
         ) as run:
             runtime = await dependencies.runtime_registry.runtime_for(conversation)
             if getattr(runtime, "skills_confirmed", False):
                 loaded_skills = getattr(runtime, "loaded_skills", ())
-                await websocket.send_json(
+                await websocket.send(
                     SkillStatusFrame(
                         conversation_id=conversation_id,
                         loaded_count=(
@@ -645,7 +638,7 @@ async def _run_chat_prompt(
                             if isinstance(loaded_skills, tuple)
                             else 0
                         ),
-                    ).wire()
+                    )
                 )
             async with _use_model_profile(
                 runtime,

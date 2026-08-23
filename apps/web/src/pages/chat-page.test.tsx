@@ -370,6 +370,26 @@ describe("Chat view", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("hydrates durable running and pending state and Stop targets the running turn", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversation = {
+      ...conversation,
+      pending_turn_count: 2,
+      running_turn_id: "018f0000-0000-7000-8000-000000000099",
+    };
+    const bus = renderApp(host, undefined, { path: "/chat" });
+
+    expect(await screen.findByLabelText("Tether working")).toBeVisible();
+    expect(screen.getByText("2 messages queued")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    expect(bus.sent.at(-1)).toEqual({
+      conversationId: conversation.id,
+      turnId: "018f0000-0000-7000-8000-000000000099",
+      type: "abort",
+    });
+  });
+
   test("hides Stop when no generation is active", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
@@ -841,6 +861,12 @@ describe("Chat view", () => {
         replyMode: "text",
         type: "prompt",
       },
+      {
+        content: "Follow up",
+        conversationId: conversation.id,
+        replyMode: "text",
+        type: "prompt",
+      },
     ]);
     const queue = screen.getByRole("region", { name: "Queued messages" });
     expect(within(queue).getByText("Follow up")).toBeInTheDocument();
@@ -856,39 +882,47 @@ describe("Chat view", () => {
       fireEvent.input(messageBox, { target: { value: content } });
       fireEvent.keyDown(messageBox, { key: "Enter" });
     }
-    expect(bus.sent).toEqual([
-      {
-        content: "First",
-        conversationId: conversation.id,
-        replyMode: "text",
-        type: "prompt",
-      },
-    ]);
+    expect(
+      bus.sent
+        .filter((entry) => entry.type === "prompt")
+        .map((entry) => entry.content),
+    ).toEqual(["First", "Second", "Third"]);
 
+    for (const [turnId, status] of [
+      ["turn-1", "running"],
+      ["turn-2", "pending"],
+      ["turn-3", "pending"],
+    ] as const) {
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "turn_queued",
+        status,
+        turn_id: turnId,
+        type: "chat",
+      });
+    }
     bus.emit({
       conversation_id: conversation.id,
-      event: "agent_end",
+      event: "user_message",
+      turn_id: "turn-1",
       type: "chat",
     });
-    expect(bus.sent.at(-1)).toEqual({
-      content: "Second",
-      conversationId: conversation.id,
-      replyMode: "text",
-      type: "prompt",
-    });
+    expect(bus.sent.filter((entry) => entry.type === "prompt")).toHaveLength(3);
     expect(screen.queryByText("Second")).toBeInTheDocument();
 
     bus.emit({
       conversation_id: conversation.id,
-      event: "agent_end",
+      event: "user_message",
+      turn_id: "turn-2",
       type: "chat",
     });
-    expect(bus.sent.at(-1)).toEqual({
-      content: "Third",
-      conversationId: conversation.id,
-      replyMode: "text",
-      type: "prompt",
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "user_message",
+      turn_id: "turn-3",
+      type: "chat",
     });
+    expect(bus.sent.filter((entry) => entry.type === "prompt")).toHaveLength(3);
     expect(
       screen.queryByRole("region", { name: "Queued messages" }),
     ).not.toBeInTheDocument();
@@ -903,6 +937,26 @@ describe("Chat view", () => {
     fireEvent.keyDown(messageBox, { key: "Enter" });
     fireEvent.input(messageBox, { target: { value: "Needs editing" } });
     fireEvent.keyDown(messageBox, { key: "Enter" });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "turn_queued",
+      status: "running",
+      turn_id: "turn-1",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "turn_queued",
+      status: "pending",
+      turn_id: "turn-2",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "user_message",
+      turn_id: "turn-1",
+      type: "chat",
+    });
 
     const queuedMessage = screen.getByRole("article", {
       name: "Queued message 1",
@@ -920,6 +974,13 @@ describe("Chat view", () => {
       within(queuedMessage).getByRole("button", { name: "Save changes" }),
     );
     expect(screen.getByText("Edited follow up")).toBeInTheDocument();
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "turn_queued",
+      status: "pending",
+      turn_id: "turn-3",
+      type: "chat",
+    });
 
     fireEvent.click(
       within(
@@ -929,7 +990,8 @@ describe("Chat view", () => {
     expect(
       screen.queryByRole("region", { name: "Queued messages" }),
     ).not.toBeInTheDocument();
-    expect(bus.sent).toHaveLength(1);
+    expect(bus.sent.filter((entry) => entry.type === "prompt")).toHaveLength(3);
+    expect(bus.sent.filter((entry) => entry.type === "abort")).toHaveLength(2);
   });
 
   test("Send now stops the active turn before sending the chosen message", async () => {
@@ -941,11 +1003,31 @@ describe("Chat view", () => {
       fireEvent.input(messageBox, { target: { value: content } });
       fireEvent.keyDown(messageBox, { key: "Enter" });
     }
+    for (const [turnId, status] of [
+      ["turn-1", "running"],
+      ["turn-2", "pending"],
+      ["turn-3", "pending"],
+    ] as const) {
+      bus.emit({
+        conversation_id: conversation.id,
+        event: "turn_queued",
+        status,
+        turn_id: turnId,
+        type: "chat",
+      });
+    }
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "user_message",
+      turn_id: "turn-1",
+      type: "chat",
+    });
     const urgent = screen.getByRole("article", { name: "Queued message 2" });
     fireEvent.click(within(urgent).getByRole("button", { name: "Send now" }));
 
     expect(bus.sent.at(-1)).toEqual({
       conversationId: conversation.id,
+      turnId: "turn-1",
       type: "abort",
     });
     expect(
@@ -966,12 +1048,23 @@ describe("Chat view", () => {
       event: "agent_end",
       type: "chat",
     });
-    expect(bus.sent.at(-1)).toEqual({
-      content: "Urgent correction",
-      conversationId: conversation.id,
-      replyMode: "text",
-      type: "prompt",
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "turn_ended",
+      status: "cancelled",
+      type: "chat",
     });
+    expect(
+      bus.sent
+        .filter((entry) => entry.type === "prompt")
+        .map((entry) => entry.content),
+    ).toEqual([
+      "First",
+      "Second",
+      "Urgent correction",
+      "Urgent correction",
+      "Second",
+    ]);
     expect(screen.getByText("Second")).toBeInTheDocument();
   });
 
@@ -1027,6 +1120,12 @@ describe("Chat view", () => {
       target: { value: "Keep going" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "user_message",
+      turn_id: "turn-1",
+      type: "chat",
+    });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
     expect(bus.sent).toEqual([
@@ -1036,7 +1135,7 @@ describe("Chat view", () => {
         replyMode: "text",
         type: "prompt",
       },
-      { conversationId: conversation.id, type: "abort" },
+      { conversationId: conversation.id, turnId: "turn-1", type: "abort" },
     ]);
   });
 

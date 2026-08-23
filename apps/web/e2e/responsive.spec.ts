@@ -110,12 +110,23 @@ async function serveLongChat(page: Page) {
       contentType: "application/json",
       json: [
         {
+          archived_at: null,
           created_at: "2026-08-08T09:18:36Z",
+          display_name: null,
+          has_unread: false,
           id: LONG_CONVERSATION_ID,
+          kind: "main",
+          last_read_seq: 30,
           latest_activity: "2026-08-08T09:18:36Z",
-          pi_session_id: null,
+          latest_message_seq: 30,
+          pending_turn_count: 0,
+          pi_session_id: LONG_CONVERSATION_ID,
+          running_turn_id: null,
+          scope_brief: null,
+          scope_revision: 1,
           selected_model: "gpt-5.6-luna",
           session_gap_seconds: 300,
+          status: "active",
           title: null,
         },
       ],
@@ -204,6 +215,24 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   expect(modelSelector.width).toBeLessThanOrEqual(256);
   expect(modelSelector.y).toBeGreaterThan(chat.y);
   expect(modelSelector.y).toBeLessThan(PHONE.height);
+});
+
+test("phone Conversation picker is modal and Escape restores its trigger", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await login();
+
+  const trigger = page.getByRole("button", { name: "Choose conversation" });
+  await trigger.focus();
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Choose conversation" });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });
 
 for (const viewport of [PHONE, DESKTOP]) {

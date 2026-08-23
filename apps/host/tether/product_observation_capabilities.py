@@ -10,6 +10,10 @@ from pydantic import UUID7, BaseModel, PositiveInt
 from snekql.sqlite import Fetched
 from starlette.requests import Request
 
+from tether.active_user_evidence import (
+    ActiveUserEvidenceError,
+    resolve_active_user_evidence,
+)
 from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
 from tether.conversation_store import Message
@@ -86,17 +90,15 @@ def _single(observation: ProductObservation[Fetched]) -> CapabilityOutcome:
 async def _active_user_message(request: Request) -> Message[Fetched]:
     """Resolve exact source text from the foreground Conversation, not model args."""
     runtime = _runtime(request)
-    run = runtime.trace_recorder.current_run(request.state.session_id)
-    if run is None or run.kind != "conversation" or run.conversation_id is None:
-        message = "product feedback can only be recorded during a conversation"
-        raise InvalidProductObservationError(message)
-    source = await runtime.conversation_service.fetch_latest_user_message(
-        UUID(run.conversation_id)
-    )
-    if source is None:
-        message = "the active conversation has no current user message"
-        raise InvalidProductObservationError(message)
-    return source
+    try:
+        return await resolve_active_user_evidence(
+            conversation_service=runtime.conversation_service,
+            trace_recorder=runtime.trace_recorder,
+            session_id=request.state.session_id,
+        )
+    except ActiveUserEvidenceError as error:
+        message = "product feedback requires active interactive user Evidence"
+        raise InvalidProductObservationError(message) from error
 
 
 async def record(request: Request, interpretation: str) -> CapabilityOutcome:

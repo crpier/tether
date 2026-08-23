@@ -18,7 +18,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from snekok import Ok, Result
-from snektest import assert_eq, test
+from snektest import assert_eq, assert_true, test
 from starlette.testclient import TestClient
 
 from tether.server import AppConfig, create_app
@@ -142,6 +142,9 @@ def voice_capture_adds_a_user_chat_turn_without_creating_memory() -> None:
     assert_eq(messages.status_code, 200)
     assert_eq(messages.json()[0]["role"], "user")
     assert_eq(messages.json()[0]["content"], "call the dentist")
+    assert_true(messages.json()[0]["turn_id"] is not None)
+    assert_eq(messages.json()[0]["turn"]["origin"], "capture")
+    assert_eq(messages.json()[0]["turn"]["status"], "succeeded")
 
 
 @test()

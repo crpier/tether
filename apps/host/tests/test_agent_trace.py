@@ -9,6 +9,7 @@ import structlog
 from snektest import assert_eq, assert_is_none, assert_raises, assert_true, test
 
 from tether.agent_run import record_run
+from tether.agent_trace_model import RunCorrelation
 from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.agent_trace_redaction import redact_args, summarize_result
 from tether.pi_errors import PiRuntimeError
@@ -42,6 +43,28 @@ def begin_run_returns_an_id_and_marks_the_run_active() -> None:
     current = recorder.current_run(SESSION)
     assert current is not None
     assert_eq(current.run_id, run_id)
+
+
+@test()
+def conversation_turn_correlation_is_retained_in_the_trace() -> None:
+    """Trace inspection names durable turn identity and execution origin."""
+    recorder = AgentTraceRecorder()
+
+    run_id = recorder.begin_run(
+        session_id=SESSION,
+        kind="conversation",
+        correlation=RunCorrelation(
+            conversation_id="conversation-1",
+            origin="interactive",
+            turn_id="turn-1",
+        ),
+    )
+
+    run = recorder.get_run(run_id)
+    assert run is not None
+    assert_eq(run.conversation_id, "conversation-1")
+    assert_eq(run.origin, "interactive")
+    assert_eq(run.turn_id, "turn-1")
 
 
 @test()

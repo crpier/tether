@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 from typing import Any, Protocol
 
 from snekok import Err, Ok, Result
 from snekql.sqlite import Fetched
 
+from tether.notification_delivery import PushNotification
 from tether.push_errors import WebPushFailure, WebPushGoneFailure
 from tether.push_model import VapidConfig
 from tether.push_store import PushSubscription
@@ -104,8 +106,16 @@ class StoredPushSender:
         self.push_service: PushSubscriptionPort = push_service
         self.transport: WebPushTransport = transport
 
-    async def send(self, body: str) -> None:
-        """Deliver sequentially, preserving unexpected provider defects."""
+    async def send(self, notification: PushNotification) -> None:
+        """Deliver structured content and preserve unexpected provider defects."""
+        body = json.dumps(
+            {
+                "body": notification.body,
+                "title": notification.title,
+                "url": notification.url,
+            },
+            separators=(",", ":"),
+        )
         for subscription in await self.push_service.active_subscriptions():
             if not subscription.endpoint.startswith(("https://", "http://")):
                 continue

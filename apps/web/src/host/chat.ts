@@ -4,26 +4,86 @@ import { requireData, type RestContext } from "./transport";
 
 export type AgentModel = components["schemas"]["AgentModelRead"];
 export type Conversation = components["schemas"]["ConversationRead"];
+export type ConversationTurn = components["schemas"]["ConversationTurnRead"];
+export type CreateConversation =
+  components["schemas"]["CreateConversationRequest"];
+export type UpdateConversation =
+  components["schemas"]["UpdateConversationRequest"];
 export type Message = components["schemas"]["MessageRead"];
 export type ModelList = components["schemas"]["ModelListRead"];
 export type GmailUndo = components["schemas"]["GmailUndoRead"];
 
+export function conversationLabel(
+  conversation: Conversation,
+  conversations: readonly Conversation[] = [],
+): string {
+  if (conversation.kind === "main") {
+    return "Main Chat";
+  }
+  const name = conversation.display_name ?? "Scoped Conversation";
+  const duplicateCount = conversations.filter(
+    (candidate) =>
+      candidate.kind === "scoped" &&
+      candidate.display_name === conversation.display_name,
+  ).length;
+  if (duplicateCount < 2) {
+    return name;
+  }
+  const scope = conversation.scope_brief?.trim();
+  const scopedLabel =
+    scope === undefined || scope.length === 0 ? name : `${name} · ${scope}`;
+  const exactDuplicateCount = conversations.filter(
+    (candidate) =>
+      candidate.kind === "scoped" &&
+      candidate.display_name === conversation.display_name &&
+      candidate.scope_brief?.trim() === scope,
+  ).length;
+  return exactDuplicateCount < 2
+    ? scopedLabel
+    : `${scopedLabel} · ${conversation.id.slice(-6)}`;
+}
+
 export interface ListMessagesOptions {
   limit?: number;
   beforeSeq?: number;
+  turnId?: string;
+}
+
+export type ConversationArchiveBlocker =
+  "active_prompt_trigger" | "nonterminal_turn";
+
+export class ConversationArchiveBlockedError extends Error {
+  constructor(public readonly blocker: ConversationArchiveBlocker) {
+    super("Conversation archive blocked");
+  }
 }
 
 export interface ChatHost {
-  listConversations(): Promise<Conversation[]>;
+  archiveConversation(conversationId: string): Promise<Conversation>;
+  createConversation(body: CreateConversation): Promise<Conversation>;
+  fetchConversation(conversationId: string): Promise<Conversation>;
+  listConversations(options?: {
+    includeArchived?: boolean;
+  }): Promise<Conversation[]>;
+  fetchTurn(conversationId: string, turnId: string): Promise<ConversationTurn>;
   listMessages(
     conversationId: string,
     options?: ListMessagesOptions,
   ): Promise<Message[]>;
-  clearConversation(conversationId: string): Promise<Conversation>;
+  listNonterminalTurns(conversationId: string): Promise<ConversationTurn[]>;
   listModels(): Promise<ModelList>;
+  markConversationRead(
+    conversationId: string,
+    lastReadSeq: number,
+  ): Promise<Conversation>;
+  restoreConversation(conversationId: string): Promise<Conversation>;
   setConversationModel(
     conversationId: string,
     selectedModel: string,
+  ): Promise<Conversation>;
+  updateConversation(
+    conversationId: string,
+    body: UpdateConversation,
   ): Promise<Conversation>;
   undoGmailArchive(messageId: string): Promise<GmailUndo>;
   synthesizeSpeech(text: string, signal: AbortSignal): Promise<Blob>;
@@ -32,8 +92,54 @@ export interface ChatHost {
 
 export function createChatHost(context: RestContext): ChatHost {
   return {
-    async listConversations() {
-      const { data, response } = await context.client.GET("/api/conversations");
+    async archiveConversation(conversationId) {
+      const { data, error, response } = await context.client.POST(
+        "/api/conversations/{conversation_id}/archive",
+        { params: { path: { conversation_id: conversationId } } },
+      );
+      if (!response.ok && response.status === 409) {
+        const blocker = (error as { blocker?: unknown } | undefined)?.blocker;
+        if (
+          blocker === "active_prompt_trigger" ||
+          blocker === "nonterminal_turn"
+        ) {
+          throw new ConversationArchiveBlockedError(blocker);
+        }
+      }
+      return requireData(data, response);
+    },
+    async createConversation(body) {
+      const { data, response } = await context.client.POST(
+        "/api/conversations",
+        { body },
+      );
+      return requireData(data, response);
+    },
+    async fetchConversation(conversationId) {
+      const { data, response } = await context.client.GET(
+        "/api/conversations/{conversation_id}",
+        { params: { path: { conversation_id: conversationId } } },
+      );
+      return requireData(data, response);
+    },
+    async listConversations(options) {
+      const { data, response } = await context.client.GET(
+        "/api/conversations",
+        {
+          params: { query: { include_archived: options?.includeArchived } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async fetchTurn(conversationId, turnId) {
+      const { data, response } = await context.client.GET(
+        "/api/conversations/{conversation_id}/turns/{turn_id}",
+        {
+          params: {
+            path: { conversation_id: conversationId, turn_id: turnId },
+          },
+        },
+      );
       return requireData(data, response);
     },
     async listMessages(conversationId, options) {
@@ -45,15 +151,16 @@ export function createChatHost(context: RestContext): ChatHost {
             query: {
               limit: options?.limit,
               before_seq: options?.beforeSeq,
+              turn_id: options?.turnId,
             },
           },
         },
       );
       return requireData(data, response);
     },
-    async clearConversation(conversationId) {
-      const { data, response } = await context.client.DELETE(
-        "/api/conversations/{conversation_id}/messages",
+    async listNonterminalTurns(conversationId) {
+      const { data, response } = await context.client.GET(
+        "/api/conversations/{conversation_id}/turns",
         { params: { path: { conversation_id: conversationId } } },
       );
       return requireData(data, response);
@@ -62,11 +169,38 @@ export function createChatHost(context: RestContext): ChatHost {
       const { data, response } = await context.client.GET("/api/models");
       return requireData(data, response);
     },
+    async markConversationRead(conversationId, lastReadSeq) {
+      const { data, response } = await context.client.POST(
+        "/api/conversations/{conversation_id}/read",
+        {
+          body: { last_read_seq: lastReadSeq },
+          params: { path: { conversation_id: conversationId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async restoreConversation(conversationId) {
+      const { data, response } = await context.client.POST(
+        "/api/conversations/{conversation_id}/restore",
+        { params: { path: { conversation_id: conversationId } } },
+      );
+      return requireData(data, response);
+    },
     async setConversationModel(conversationId, selectedModel) {
       const { data, response } = await context.client.POST(
         "/api/conversations/{conversation_id}/model",
         {
           body: { selected_model: selectedModel },
+          params: { path: { conversation_id: conversationId } },
+        },
+      );
+      return requireData(data, response);
+    },
+    async updateConversation(conversationId, body) {
+      const { data, response } = await context.client.PATCH(
+        "/api/conversations/{conversation_id}",
+        {
+          body,
           params: { path: { conversation_id: conversationId } },
         },
       );

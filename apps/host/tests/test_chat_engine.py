@@ -30,6 +30,8 @@ class FakeConversation:
     def __init__(self, pi_session_id: UUID) -> None:
         self.id: UUID = uuid7()
         self.pi_session_id: UUID = pi_session_id
+        self.scope_brief: str | None = None
+        self.scope_revision: int = 1
         self.selected_model: str | None = None
 
 

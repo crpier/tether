@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import structlog
 
-from tether.agent_trace_model import RunKind, Termination
+from tether.agent_trace_model import RunCorrelation, RunKind, Termination
 from tether.agent_trace_recorder import AgentTraceRecorder
 
 
@@ -34,7 +34,7 @@ def record_run(
     session_id: str,
     kind: RunKind,
     prompt: str | None = None,
-    conversation_id: str | None = None,
+    correlation: RunCorrelation | None = None,
 ) -> Generator[RunHandle]:
     """Open, correlate, settle, and close exactly one agent run.
 
@@ -45,7 +45,10 @@ def record_run(
             session_id=session_id,
             kind=kind,
             prompt=prompt,
-            conversation_id=conversation_id,
+            conversation_id=(
+                None if correlation is None else correlation.conversation_id
+            ),
+            correlation=correlation,
         )
         if recorder is not None
         else None

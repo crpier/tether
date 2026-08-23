@@ -4,10 +4,14 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from uuid import UUID
 
+from opentelemetry import trace
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import assert_eq, fixture, load_fixture, test
 
+from tether.conversation_store import create_conversation_schema
+from tether.conversations import ConversationService
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+from tether.triggers import TriggerService
 
 _LEGACY_TRIGGER_ID = UUID("018f0000-0000-7000-8000-0000000000aa")
 
@@ -81,6 +85,55 @@ async def fresh_schema_persists_the_current_trigger_shape() -> None:
 
     assert_eq(trigger.recurrence, "daily")
     assert_eq(trigger.attempts, 0)
+    await database.close()
+
+
+@test()
+async def legacy_actions_migrate_to_main_only_for_prompts() -> None:
+    """Legacy prompts gain Main while fixed messages keep a null target."""
+    database = await Database.initialize(backend=Config(database=":memory:"))
+    await create_conversation_schema(database)
+    await create_trigger_schema(database)
+    main = await ConversationService(database).fetch_main_conversation()
+    async with database.transaction(mode="immediate") as transaction:
+        prompt = await transaction.execute(
+            insert(
+                ScheduledTrigger(
+                    recurrence="daily",
+                    action_kind="prompt",
+                    payload="summarise",
+                    timezone="UTC",
+                    wall_time="09:00",
+                    next_fire_at=datetime(2030, 1, 1, 9, tzinfo=UTC),
+                    status="active",
+                )
+            ).returning()
+        )
+        message = await transaction.execute(
+            insert(
+                ScheduledTrigger(
+                    recurrence="daily",
+                    action_kind="message",
+                    payload="stand up",
+                    target_conversation_id=main.id,
+                    timezone="UTC",
+                    wall_time="10:00",
+                    next_fire_at=datetime(2030, 1, 1, 10, tzinfo=UTC),
+                    status="active",
+                )
+            ).returning()
+        )
+    service = TriggerService(
+        database,
+        tracer=trace.NoOpTracerProvider().get_tracer("test.trigger_store"),
+    )
+
+    await service.migrate_legacy_targets(main.id)
+    prompt = await service.fetch(prompt.id)
+    message = await service.fetch(message.id)
+
+    assert_eq(prompt.target_conversation_id, main.id)
+    assert_eq(message.target_conversation_id, None)
     await database.close()
 
 

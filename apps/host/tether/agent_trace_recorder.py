@@ -8,7 +8,13 @@ from collections.abc import Callable
 from typing import Any, Final
 from uuid import uuid4
 
-from tether.agent_trace_model import RunKind, RunTrace, Termination, ToolCallTrace
+from tether.agent_trace_model import (
+    RunCorrelation,
+    RunKind,
+    RunTrace,
+    Termination,
+    ToolCallTrace,
+)
 from tether.agent_trace_redaction import (
     redact_args,
     summarize_result,
@@ -46,6 +52,7 @@ class AgentTraceRecorder:
         kind: RunKind,
         prompt: str | None = None,
         conversation_id: str | None = None,
+        correlation: RunCorrelation | None = None,
     ) -> str:
         """Open a run, timing out any dangling run for the same session."""
         stale = self._active.get(session_id)
@@ -56,8 +63,16 @@ class AgentTraceRecorder:
             session_id=session_id,
             kind=kind,
             started_at=self._now(),
-            conversation_id=conversation_id,
+            conversation_id=(
+                conversation_id
+                if conversation_id is not None
+                else None
+                if correlation is None
+                else correlation.conversation_id
+            ),
+            origin=None if correlation is None else correlation.origin,
             prompt=truncate_trace_text(prompt) if prompt is not None else None,
+            turn_id=None if correlation is None else correlation.turn_id,
         )
         self._active[session_id] = run
         self._remember(run)

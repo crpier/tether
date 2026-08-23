@@ -4,6 +4,7 @@ export type ChatFrame =
   | {
       type: "chat";
       conversation_id?: string;
+      turn_id?: string;
       event?: string;
       delta?: unknown;
       detail?: string;
@@ -22,7 +23,11 @@ export type ChatFrame =
       final_text?: string;
       /** True when the turn ended after tools without a final answer. */
       tool_only?: boolean;
+      status?: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+      failure_code?: string | null;
+      failure_summary?: string | null;
     }
+  | { type: "connection"; status: ConnectionStatus }
   | { type: "invalidate"; keys: string[] }
   | {
       type: "notify";
@@ -43,13 +48,14 @@ const INITIAL_RETRY_MS = 500;
 const MAX_RETRY_MS = 16_000;
 
 export interface ChatBus {
-  abort(conversationId: string): void;
+  abort(conversationId: string, turnId: string): void;
   close(): void;
   requestSessionStatus(conversationId: string): void;
   sendPrompt(
     conversationId: string,
     content: string,
     replyMode: ReplyMode,
+    requestId: string,
   ): void;
 }
 
@@ -126,9 +132,13 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
   connect();
 
   return {
-    abort(conversationId) {
+    abort(conversationId, turnId) {
       sendSerialized(
-        JSON.stringify({ conversation_id: conversationId, type: "abort" }),
+        JSON.stringify({
+          conversation_id: conversationId,
+          turn_id: turnId,
+          type: "abort",
+        }),
       );
     },
     close() {
@@ -146,12 +156,13 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
         }),
       );
     },
-    sendPrompt(conversationId, content, replyMode) {
+    sendPrompt(conversationId, content, replyMode, requestId) {
       sendSerialized(
         JSON.stringify({
           content,
           conversation_id: conversationId,
           reply_mode: replyMode,
+          request_id: requestId,
           type: "prompt",
         }),
       );

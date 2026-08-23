@@ -36,7 +36,7 @@ from tether.gmail import (
 )
 from tether.google_oauth import OAuthConfig
 from tether.health_connect import internal_health_connect_tool_routes
-from tether.host_composition import app_lifespan
+from tether.host_composition import ServingReadyMiddleware, app_lifespan
 from tether.host_config import AppConfig, HostSettings
 from tether.host_resources import HOST_QUIET_LOGGERS, HostBootstrap
 from tether.kosync_routes import kosync_protocol_routes
@@ -228,6 +228,7 @@ def create_app(
             fallback="index.html",
             check_dir=True,
         )
+    app.add_middleware(ServingReadyMiddleware)
     app.add_middleware(ContextLoggerMiddleware)
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(

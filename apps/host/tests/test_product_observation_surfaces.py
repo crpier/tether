@@ -3,13 +3,14 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from snektest import assert_eq, assert_in, assert_true, test
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tests.surfaces import SESSION, call_tool, login, surface_client
+from tether.agent_trace_model import RunCorrelation
 from tether.app_runtime import app_runtime
 from tether.conversation_model import MessageDraft
 
@@ -20,19 +21,25 @@ def _begin_feedback_turn(client: TestClient, wording: str) -> UUID:
     conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
     if client.portal is None:
         raise RuntimeError("test client portal is not running")
+    turn_id = uuid7()
     _ = client.portal.call(
         runtime.conversation_service.append_message,
         MessageDraft(
             content=wording,
             conversation_id=conversation_id,
             role="user",
+            turn_id=turn_id,
         ),
     )
     _ = runtime.trace_recorder.begin_run(
         session_id=SESSION,
         kind="conversation",
-        conversation_id=str(conversation_id),
         prompt=wording,
+        correlation=RunCorrelation(
+            conversation_id=str(conversation_id),
+            origin="interactive",
+            turn_id=str(turn_id),
+        ),
     )
     return conversation_id
 
@@ -94,6 +101,33 @@ def record_product_observation_finds_the_user_message_after_another_tool() -> No
 
         assert_true(envelope["success"])
         assert_eq(envelope["result"]["wording"], wording)
+
+
+@test()
+def scheduled_run_cannot_record_a_product_observation() -> None:
+    """Scheduled context cannot claim a user Message as fresh Evidence."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        _ = runtime.trace_recorder.begin_run(
+            session_id=SESSION,
+            kind="scheduled",
+            correlation=RunCorrelation(
+                conversation_id=conversation_id,
+                origin="scheduled",
+                turn_id=str(uuid7()),
+            ),
+        )
+
+        envelope = call_tool(
+            client,
+            "record_product_observation",
+            interpretation="Should be rejected.",
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "invalid_input")
 
 
 @test()

@@ -19,7 +19,9 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tests.surfaces import SESSION, call_tool, login, surface_client
+from tether.agent_trace_model import RunCorrelation
 from tether.app_runtime import app_runtime
+from tether.conversation_model import MessageDraft
 from tether.dreaming import DreamingMutationCoordinator
 from tether.dreaming_store import DreamingWorkspaceFile
 from tether.openapi_export import build_openapi_document
@@ -420,10 +422,26 @@ def explicit_remember_tool_targets_the_active_conversation() -> None:
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
         runtime = app_runtime(cast("Starlette", client.app))
+        turn_id = uuid7()
+        if client.portal is None:
+            raise RuntimeError("test client portal is not running")
+        _ = client.portal.call(
+            runtime.conversation_service.append_message,
+            MessageDraft(
+                content="Remember this",
+                conversation_id=UUID(conversation_id),
+                role="user",
+                turn_id=turn_id,
+            ),
+        )
         _ = runtime.trace_recorder.begin_run(
             session_id=SESSION,
             kind="conversation",
-            conversation_id=conversation_id,
+            correlation=RunCorrelation(
+                conversation_id=conversation_id,
+                origin="interactive",
+                turn_id=str(turn_id),
+            ),
         )
 
         envelope = call_tool(client, "queue_memory_assimilation")
@@ -436,6 +454,29 @@ def explicit_remember_tool_targets_the_active_conversation() -> None:
             ),
             True,
         )
+
+
+@test()
+def scheduled_run_cannot_queue_user_evidence_assimilation() -> None:
+    """Scheduled context cannot authorize fresh user-Evidence assimilation."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        runtime = app_runtime(cast("Starlette", client.app))
+        _ = runtime.trace_recorder.begin_run(
+            session_id=SESSION,
+            kind="scheduled",
+            correlation=RunCorrelation(
+                conversation_id=conversation_id,
+                origin="scheduled",
+                turn_id=str(uuid7()),
+            ),
+        )
+
+        envelope = call_tool(client, "queue_memory_assimilation")
+
+    assert_eq(envelope["success"], True)
+    assert_eq(envelope["result"], {"queued": False})
 
 
 @test()

@@ -10,14 +10,28 @@ from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from pydantic import UUID7, BaseModel, PositiveInt
+from pydantic import UUID7, BaseModel, NonNegativeInt, PositiveInt
 from snekql.sqlite import Fetched, select
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from tether.conversation_model import ConversationNotFoundError, MessageRole
-from tether.conversation_store import Conversation, Message
-from tether.conversations import SESSION_GAP, ConversationService
+from tether.chat_prompt import ReplyMode
+from tether.conversation_model import (
+    ConversationArchiveBlockedError,
+    ConversationKind,
+    ConversationNotFoundError,
+    ConversationStatus,
+    ConversationTurnOrigin,
+    ConversationTurnStatus,
+    ConversationValidationError,
+    MessageRole,
+)
+from tether.conversation_store import Conversation, ConversationTurn, Message
+from tether.conversations import (
+    SESSION_GAP,
+    ConversationActivity,
+    ConversationService,
+)
 from tether.dreaming import (
     DreamingMutationCoordinator,
     DreamingService,
@@ -35,10 +49,10 @@ from tether.dreaming_store import (
     DreamRunTerminalStatus,
 )
 from tether.memory_workspace_service import MemoryWorkspaceService
-from tether.model_selection import AgentModelConfig, ModelNotAllowedError
-from tether.pi_errors import PiRuntimeError
+from tether.model_selection import ModelNotAllowedError
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
+from tether.trigger_store import ScheduledOccurrence
 
 
 class ConversationRead(BaseModel):
@@ -49,12 +63,23 @@ class ConversationRead(BaseModel):
     `ConversationService.resolve_session`) without hardcoding the gap.
     """
 
+    archived_at: datetime | None
     created_at: datetime
+    display_name: str | None
     id: UUID7
+    has_unread: bool
+    kind: ConversationKind
+    last_read_seq: NonNegativeInt
     latest_activity: datetime | None
+    latest_message_seq: NonNegativeInt
+    pending_turn_count: NonNegativeInt
     pi_session_id: UUID7
+    running_turn_id: UUID7 | None
+    scope_brief: str | None
+    scope_revision: PositiveInt
     selected_model: str | None
     session_gap_seconds: int
+    status: ConversationStatus
     title: str | None
 
     @classmethod
@@ -62,16 +87,27 @@ class ConversationRead(BaseModel):
         cls,
         conversation: Conversation[Fetched],
         *,
-        latest_activity: datetime | None,
+        activity: ConversationActivity,
     ) -> ConversationRead:
         """Render canonical state with its current activity signal."""
         return cls(
+            archived_at=conversation.archived_at,
             created_at=conversation.created_at,
+            display_name=conversation.display_name,
+            has_unread=activity.latest_message_seq > conversation.last_read_seq,
             id=conversation.id,
-            latest_activity=latest_activity,
+            kind=conversation.kind,
+            last_read_seq=conversation.last_read_seq,
+            latest_activity=activity.latest_activity,
+            latest_message_seq=activity.latest_message_seq,
+            pending_turn_count=activity.pending_turn_count,
             pi_session_id=conversation.pi_session_id,
+            running_turn_id=activity.running_turn_id,
+            scope_brief=conversation.scope_brief,
+            scope_revision=conversation.scope_revision,
             selected_model=conversation.selected_model,
             session_gap_seconds=int(SESSION_GAP.total_seconds()),
+            status=conversation.status,
             title=conversation.title,
         )
 
@@ -228,6 +264,73 @@ class DreamRunDetailRead(BaseModel):
     mutations: list[DreamingMutationRead]
 
 
+class ConversationTurnSummaryRead(BaseModel):
+    """Compact lifecycle repeated beside each flat transcript Message."""
+
+    failure_code: str | None
+    failure_summary: str | None
+    intended_fire_at: datetime | None
+    occurrence_id: UUID | None
+    origin: ConversationTurnOrigin
+    trigger_id: UUID | None
+    status: ConversationTurnStatus
+
+    @classmethod
+    def from_turn(
+        cls,
+        turn: ConversationTurn[Fetched],
+        *,
+        occurrence: ScheduledOccurrence[Fetched] | None = None,
+    ) -> ConversationTurnSummaryRead:
+        """Render stable lifecycle state without raw diagnostics."""
+        return cls(
+            failure_code=turn.failure_code,
+            failure_summary=turn.failure_summary,
+            intended_fire_at=(
+                None if occurrence is None else occurrence.intended_fire_at
+            ),
+            occurrence_id=None if occurrence is None else occurrence.id,
+            origin=turn.origin,
+            status=turn.status,
+            trigger_id=None if occurrence is None else occurrence.trigger_id,
+        )
+
+
+class ConversationTurnRead(BaseModel):
+    """Flat durable turn state used for queue restoration and deep links."""
+
+    completed_at: datetime | None
+    conversation_id: UUID7
+    created_at: datetime
+    failure_code: str | None
+    failure_summary: str | None
+    id: UUID7
+    origin: ConversationTurnOrigin
+    prompt: str
+    reply_mode: ReplyMode
+    request_id: UUID | None
+    started_at: datetime | None
+    status: ConversationTurnStatus
+
+    @classmethod
+    def from_turn(cls, turn: ConversationTurn[Fetched]) -> ConversationTurnRead:
+        """Render stable lifecycle state without execution diagnostics."""
+        return cls(
+            completed_at=turn.completed_at,
+            conversation_id=turn.conversation_id,
+            created_at=turn.created_at,
+            failure_code=turn.failure_code,
+            failure_summary=turn.failure_summary,
+            id=turn.id,
+            origin=turn.origin,
+            prompt=turn.prompt_snapshot or "",
+            reply_mode=cast("ReplyMode", turn.reply_mode),
+            request_id=turn.request_id,
+            started_at=turn.started_at,
+            status=turn.status,
+        )
+
+
 class MessageRead(BaseModel):
     """HTTP representation of a settled transcript row."""
 
@@ -241,9 +344,17 @@ class MessageRead(BaseModel):
     tool_args: dict[str, Any] | None
     tool_name: str | None
     tool_result: dict[str, Any] | None
+    turn: ConversationTurnSummaryRead | None
+    turn_id: UUID7 | None
+    turn_message_seq: PositiveInt | None
 
     @classmethod
-    def from_message(cls, message: Message[Fetched]) -> MessageRead:
+    def from_message(
+        cls,
+        message: Message[Fetched],
+        *,
+        turn: ConversationTurnSummaryRead | None = None,
+    ) -> MessageRead:
         """Decode stored JSON fields at the HTTP presentation boundary."""
         return cls(
             content=message.content,
@@ -262,7 +373,24 @@ class MessageRead(BaseModel):
                 if message.tool_result is not None
                 else None
             ),
+            turn=turn,
+            turn_id=message.turn_id,
+            turn_message_seq=message.turn_message_seq,
         )
+
+
+class CreateConversationRequest(BaseModel):
+    """Body for creating an active Scoped Conversation."""
+
+    display_name: str
+    scope_brief: str
+
+
+class UpdateConversationRequest(BaseModel):
+    """Editable fields of a Scoped Conversation."""
+
+    display_name: str | None = None
+    scope_brief: str | None = None
 
 
 class SetConversationModelRequest(BaseModel):
@@ -271,11 +399,24 @@ class SetConversationModelRequest(BaseModel):
     selected_model: str
 
 
+class MarkConversationReadRequest(BaseModel):
+    """Last Message sequence the client has actually rendered."""
+
+    last_read_seq: NonNegativeInt
+
+
+class ConversationListQuery(BaseModel):
+    """Filters for ordinary or lifecycle-management Conversation lists."""
+
+    include_archived: bool = False
+
+
 class MessagesQuery(BaseModel):
-    """Query string for windowed transcript pagination."""
+    """Query string for windowed or turn-filtered transcript pagination."""
 
     limit: PositiveInt | None = None
     before_seq: PositiveInt | None = None
+    turn_id: UUID7 | None = None
 
 
 class CompleteDreamRunRequest(BaseModel):
@@ -295,12 +436,6 @@ class DreamMutationAckResponse(BaseModel):
 
 class _ConversationRuntimeRegistry(Protocol):
     """Live process operations required by conversation routes."""
-
-    async def set_model(
-        self,
-        conversation_id: object,
-        model: AgentModelConfig,
-    ) -> None: ...
 
     async def discard(self, conversation_id: object) -> None: ...
 
@@ -330,6 +465,14 @@ def _runtime(request: Request) -> _ConversationRuntime:
     return cast("_ConversationRuntime", request.app.state.runtime)
 
 
+def _path_turn_id(raw_turn_id: str) -> UUID:
+    """Parse `{turn_id}` and map malformed ids as `not found`."""
+    try:
+        return UUID(raw_turn_id)
+    except ValueError as error:
+        raise ConversationNotFoundError(raw_turn_id) from error
+
+
 def _path_dream_run_id(raw_run_id: str) -> UUID:
     """Parse `{run_id}` and map malformed ids as `not found`."""
     try:
@@ -345,7 +488,7 @@ async def _to_read(
     """Render canonical conversation state with its latest activity."""
     return ConversationRead.from_conversation(
         conversation,
-        latest_activity=await service.latest_activity(conversation.id),
+        activity=await service.conversation_activity(conversation.id),
     )
 
 
@@ -355,6 +498,7 @@ async def _messages_response(
     *,
     limit: int | None = None,
     before_seq: int | None = None,
+    turn_id: UUID | None = None,
 ) -> Response:
     """Serialize settled transcript rows or translate absence to 404."""
     try:
@@ -362,12 +506,54 @@ async def _messages_response(
             conversation_id,
             limit=limit,
             before_seq=before_seq,
+            turn_id=turn_id,
         )
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    turn_ids = {message.turn_id for message in messages if message.turn_id is not None}
+    async with _runtime(request).conversation_service.database.transaction() as tx:
+        turns = (
+            []
+            if not turn_ids
+            else await tx.fetch_all(
+                select(ConversationTurn).where(ConversationTurn.id.in_(*turn_ids))
+            )
+        )
+    occurrence_ids = {
+        turn.scheduled_occurrence_id
+        for turn in turns
+        if turn.scheduled_occurrence_id is not None
+    }
+    async with _runtime(request).conversation_service.database.transaction() as tx:
+        occurrences = (
+            []
+            if not occurrence_ids
+            else await tx.fetch_all(
+                select(ScheduledOccurrence).where(
+                    ScheduledOccurrence.id.in_(*occurrence_ids)
+                )
+            )
+        )
+    occurrences_by_id = {occurrence.id: occurrence for occurrence in occurrences}
+    summaries = {
+        turn.id: ConversationTurnSummaryRead.from_turn(
+            turn,
+            occurrence=(
+                None
+                if turn.scheduled_occurrence_id is None
+                else occurrences_by_id.get(turn.scheduled_occurrence_id)
+            ),
+        )
+        for turn in turns
+    }
     return JSONResponse(
         [
-            MessageRead.from_message(message).model_dump(mode="json")
+            MessageRead.from_message(
+                message,
+                turn=(
+                    None if message.turn_id is None else summaries.get(message.turn_id)
+                ),
+            ).model_dump(mode="json")
             for message in messages
         ]
     )
@@ -389,16 +575,149 @@ router = APIRouter()
 
 
 @router.get("/api/conversations", response_model=list[ConversationRead])
-async def list_conversations(request: Request) -> Response:
-    """List host-owned conversations."""
+async def list_conversations(
+    request: Request,
+    query: Annotated[ConversationListQuery, Query()],
+) -> Response:
+    """List active Conversations unless archived state is explicitly requested."""
     service = _runtime(request).conversation_service
-    conversations = await service.list_conversations()
+    conversations = await service.list_conversations(
+        include_archived=query.include_archived
+    )
     return JSONResponse(
         [
             (await _to_read(service, conversation)).model_dump(mode="json")
             for conversation in conversations
         ]
     )
+
+
+@router.post(
+    "/api/conversations",
+    response_model=ConversationRead,
+    status_code=201,
+)
+async def create_conversation(
+    request: Request,
+    body: CreateConversationRequest,
+) -> Response:
+    """Create an active Scoped Conversation."""
+    service = _runtime(request).conversation_service
+    try:
+        conversation = await service.create_scoped_conversation(
+            display_name=body.display_name,
+            scope_brief=body.scope_brief,
+        )
+    except ConversationValidationError as error:
+        return JSONResponse({"detail": str(error)}, status_code=422)
+    return JSONResponse(
+        (await _to_read(service, conversation)).model_dump(mode="json"),
+        status_code=201,
+    )
+
+
+@router.get(
+    "/api/conversations/{conversation_id}",
+    response_model=ConversationRead,
+)
+async def fetch_conversation(request: Request, conversation_id: str) -> Response:
+    """Fetch one Conversation including archived lifecycle state."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        service = _runtime(request).conversation_service
+        conversation = await service.fetch_conversation(parsed_conversation_id)
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
+
+
+@router.patch(
+    "/api/conversations/{conversation_id}",
+    response_model=ConversationRead,
+)
+async def update_conversation(
+    request: Request,
+    body: UpdateConversationRequest,
+    conversation_id: str,
+) -> Response:
+    """Edit one Scoped Conversation's name or scope brief."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        service = _runtime(request).conversation_service
+        conversation = await service.update_scoped_conversation(
+            parsed_conversation_id,
+            display_name=body.display_name,
+            scope_brief=body.scope_brief,
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    except ConversationValidationError as error:
+        return JSONResponse({"detail": str(error)}, status_code=422)
+    return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
+
+
+@router.post(
+    "/api/conversations/{conversation_id}/archive",
+    response_model=ConversationRead,
+)
+async def archive_conversation(request: Request, conversation_id: str) -> Response:
+    """Archive a Scoped Conversation whose dependent work has settled."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        service = _runtime(request).conversation_service
+        conversation = await service.archive_conversation(parsed_conversation_id)
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    except ConversationValidationError as error:
+        return JSONResponse({"detail": str(error)}, status_code=422)
+    except ConversationArchiveBlockedError as error:
+        return JSONResponse(
+            {"blocker": error.blocker, "detail": "conversation archive blocked"},
+            status_code=409,
+        )
+    await _runtime(request).conversation_runtime_registry.discard(conversation.id)
+    return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
+
+
+@router.post(
+    "/api/conversations/{conversation_id}/restore",
+    response_model=ConversationRead,
+)
+async def restore_conversation(request: Request, conversation_id: str) -> Response:
+    """Restore an archived Scoped Conversation."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        service = _runtime(request).conversation_service
+        conversation = await service.restore_conversation(parsed_conversation_id)
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    except ConversationValidationError as error:
+        return JSONResponse({"detail": str(error)}, status_code=422)
+    return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
+
+
+@router.post(
+    "/api/conversations/{conversation_id}/read",
+    response_model=ConversationRead,
+)
+async def mark_conversation_read(
+    request: Request,
+    conversation_id: str,
+    body: MarkConversationReadRequest | None = None,
+) -> Response:
+    """Advance durable read position to an observed or current Message tail."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        service = _runtime(request).conversation_service
+        conversation = await service.mark_conversation_read(
+            parsed_conversation_id,
+            last_read_seq=body.last_read_seq if body is not None else None,
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    except ConversationValidationError as error:
+        return JSONResponse({"detail": str(error)}, status_code=422)
+    return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
 
 
 @router.get("/api/dream-runs", response_model=list[DreamRunRead])
@@ -651,7 +970,7 @@ async def set_conversation_model(
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     try:
-        conversation, selected_model = await _runtime(
+        conversation, _ = await _runtime(
             request
         ).conversation_service.set_selected_model(
             parsed_conversation_id,
@@ -661,18 +980,64 @@ async def set_conversation_model(
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
     except ModelNotAllowedError:
         return JSONResponse({"detail": "model not allowed"}, status_code=422)
-    try:
-        await _runtime(request).conversation_runtime_registry.set_model(
-            conversation.id,
-            selected_model,
-        )
-    except PiRuntimeError:
-        return JSONResponse({"detail": "set_model failed"}, status_code=502)
     return JSONResponse(
         (
             await _to_read(_runtime(request).conversation_service, conversation)
         ).model_dump(mode="json")
     )
+
+
+@router.get(
+    "/api/conversations/{conversation_id}/turns",
+    response_model=list[ConversationTurnRead],
+)
+async def list_nonterminal_turns(request: Request, conversation_id: str) -> Response:
+    """List pending and running turns in durable FIFO order."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        runtime = _runtime(request)
+        _ = await runtime.conversation_service.fetch_conversation(
+            parsed_conversation_id
+        )
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    async with runtime.conversation_service.database.transaction() as transaction:
+        turns = await transaction.fetch_all(
+            select(ConversationTurn)
+            .where(ConversationTurn.conversation_id.eq(parsed_conversation_id))
+            .where(ConversationTurn.status.in_("pending", "running"))
+            .order_by(ConversationTurn.turn_seq.asc())
+        )
+    return JSONResponse(
+        [ConversationTurnRead.from_turn(turn).model_dump(mode="json") for turn in turns]
+    )
+
+
+@router.get(
+    "/api/conversations/{conversation_id}/turns/{turn_id}",
+    response_model=ConversationTurnRead,
+)
+async def fetch_turn_detail(
+    request: Request,
+    conversation_id: str,
+    turn_id: str,
+) -> Response:
+    """Fetch one turn only through its owning Conversation."""
+    try:
+        parsed_conversation_id = _path_conversation_id(conversation_id)
+        parsed_turn_id = _path_turn_id(turn_id)
+    except ConversationNotFoundError:
+        return JSONResponse({"detail": "turn not found"}, status_code=404)
+    runtime = _runtime(request)
+    async with runtime.conversation_service.database.transaction() as transaction:
+        turn = await transaction.fetch_one_or_none(
+            select(ConversationTurn)
+            .where(ConversationTurn.id.eq(parsed_turn_id))
+            .where(ConversationTurn.conversation_id.eq(parsed_conversation_id))
+        )
+    if turn is None:
+        return JSONResponse({"detail": "turn not found"}, status_code=404)
+    return JSONResponse(ConversationTurnRead.from_turn(turn).model_dump(mode="json"))
 
 
 @router.get(
@@ -694,30 +1059,13 @@ async def list_messages(
         parsed_conversation_id,
         limit=query.limit,
         before_seq=query.before_seq,
+        turn_id=query.turn_id,
     )
-
-
-@router.delete(
-    "/api/conversations/{conversation_id}/messages",
-    response_model=ConversationRead,
-)
-async def clear_messages(request: Request, conversation_id: str) -> Response:
-    """Clear one conversation's transcript and rotate its pi session."""
-    try:
-        parsed_conversation_id = _path_conversation_id(conversation_id)
-    except ConversationNotFoundError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    service = _runtime(request).conversation_service
-    try:
-        conversation = await service.clear_conversation(parsed_conversation_id)
-    except ConversationNotFoundError:
-        return JSONResponse({"detail": "conversation not found"}, status_code=404)
-    await _runtime(request).conversation_runtime_registry.discard(conversation.id)
-    return JSONResponse((await _to_read(service, conversation)).model_dump(mode="json"))
 
 
 __all__ = [
     "ConversationRead",
+    "ConversationTurnRead",
     "DreamRunDetailRead",
     "DreamRunRead",
     "DreamingMutationRead",

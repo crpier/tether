@@ -53,7 +53,16 @@ async def _create_trigger(
     request: Request, params: CreateTriggerParams
 ) -> CapabilityOutcome:
     """Project the flat tool params onto the shared create capability."""
-    return await trigger_capabilities.create(request, params.to_spec())
+    spec = params.to_spec()
+    return await trigger_capabilities.create(
+        request,
+        spec,
+        target_conversation_id=(
+            trigger_capabilities.invoking_conversation_id(request)
+            if spec.action_kind == "prompt"
+            else None
+        ),
+    )
 
 
 TRIGGER_TOOL_SPECS: tuple[ToolSpec, ...] = (

@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
 
-import type { Message } from "./host/chat";
+import type { ConversationTurn, Message } from "./host/chat";
 import type { ChatFrame, ReplyMode } from "./chat-bus";
 import {
   deriveRows,
@@ -21,23 +21,30 @@ const MESSAGES_PAGE_SIZE = 30;
 export interface QueuedPrompt {
   id: number;
   content: string;
+  conversationId: string;
   replyMode: ReplyMode;
+  requestId: string;
+  retryable?: boolean;
+  turnId?: string;
 }
 
 export interface LiveChatHistory {
+  fetchTurn?(conversationId: string, turnId: string): Promise<ConversationTurn>;
   listMessages(
     conversationId: string,
-    options: { beforeSeq?: number; limit: number },
+    options: { beforeSeq?: number; limit?: number; turnId?: string },
   ): Promise<Message[]>;
+  listNonterminalTurns?(conversationId: string): Promise<ConversationTurn[]>;
   settled(): void;
 }
 
 export interface LiveChatTransport {
-  abort(conversationId: string): void;
+  abort(conversationId: string, turnId: string): void;
   sendPrompt(
     conversationId: string,
     content: string,
     replyMode: ReplyMode,
+    requestId: string,
   ): void;
 }
 
@@ -71,6 +78,9 @@ export interface ContextUsage {
 
 export interface LiveChatTurnDependencies {
   conversationId: Accessor<string | undefined>;
+  durablePendingCount?: Accessor<number>;
+  durableRunningTurnId?: Accessor<string | undefined>;
+  focusTurnId?: Accessor<string | undefined>;
   history: LiveChatHistory;
   now?: () => number;
   /** Current composer toggle value, read once when a prompt is enqueued. */
@@ -84,9 +94,16 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const now = dependencies.now ?? Date.now;
   const [turn, setTurn] = createSignal(emptyTurn());
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([]);
-  const [outboundPrompt, setOutboundPrompt] = createSignal<QueuedPrompt | null>(
-    null,
+  const visibleQueuedPrompts = createMemo(() =>
+    queuedPrompts().map(({ content, id, replyMode, retryable, turnId }) => ({
+      content,
+      id,
+      replyMode,
+      retryable,
+      turnId,
+    })),
   );
+  const [, setOutboundPrompt] = createSignal<QueuedPrompt | null>(null);
   const [awaitingAgentEnd, setAwaitingAgentEnd] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [interrupted, setInterrupted] = createSignal(false);
@@ -98,6 +115,29 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const [hasMoreHistory, setHasMoreHistory] = createSignal(false);
   const [historyReady, setHistoryReady] = createSignal(false);
   const [loadingOlder, setLoadingOlder] = createSignal(false);
+  const [focusedMessageId, setFocusedMessageId] = createSignal<string>();
+  const [focusedTurn, setFocusedTurn] = createSignal<ConversationTurn>();
+  const [focusedTurnError, setFocusedTurnError] = createSignal<
+    "load" | "not_found"
+  >();
+  const [latestBeforeSeq, setLatestBeforeSeq] = createSignal<number>();
+  const [readThroughSeq, setReadThroughSeq] = createSignal(0);
+  const [durableStartedAt, setDurableStartedAt] = createSignal<number | null>(
+    null,
+  );
+  const [durableTurnsReady, setDurableTurnsReady] = createSignal(false);
+  const [hydratedRunningTurnId, setHydratedRunningTurnId] =
+    createSignal<string>();
+  const [activeTurnConversationId, setActiveTurnConversationId] =
+    createSignal<string>();
+  const [settledTurnIds, setSettledTurnIds] = createSignal<Set<string>>(
+    new Set(),
+  );
+  const awaitingTickets: QueuedPrompt[] = [];
+  const cancelAfterTicket = new Set<string>();
+  let activeTurnId: string | undefined;
+  let hydratedRunningConversationId: string | undefined;
+  let runningPrompt: QueuedPrompt | null = null;
   let historyRequest = 0;
   let nextQueuedPromptId = 1;
   let runningReplyMode: ReplyMode = "text";
@@ -108,11 +148,44 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   // assistant prose ends that phase and allows a later tool phase to cue.
   let toolPhaseActive = false;
 
-  const busy = createMemo(() => turn().generating || awaitingAgentEnd());
-  const generating = createMemo(() => turn().generating);
-  const startedAt = createMemo(() => turn().startedAt);
+  const durablePendingCount = createMemo(() =>
+    durableTurnsReady()
+      ? queuedPrompts().filter((prompt) => prompt.turnId !== undefined).length
+      : (dependencies.durablePendingCount?.() ?? 0),
+  );
+  const durableRunningTurnId = createMemo(() => {
+    const currentConversationId = dependencies.conversationId();
+    const hydrated =
+      hydratedRunningConversationId === currentConversationId
+        ? hydratedRunningTurnId()
+        : undefined;
+    const runningId = hydrated ?? dependencies.durableRunningTurnId?.();
+    return runningId !== undefined && !settledTurnIds().has(runningId)
+      ? runningId
+      : undefined;
+  });
+  const busy = createMemo(
+    () =>
+      turn().generating ||
+      awaitingAgentEnd() ||
+      queuedPrompts().length > 0 ||
+      durablePendingCount() > 0 ||
+      durableRunningTurnId() !== undefined,
+  );
+  const generating = createMemo(
+    () =>
+      turn().generating ||
+      queuedPrompts().length > 0 ||
+      durablePendingCount() > 0 ||
+      durableRunningTurnId() !== undefined,
+  );
+  const startedAt = createMemo(() => turn().startedAt ?? durableStartedAt());
   const stopped = createMemo(() => turn().stopped || interrupted());
-  const working = createMemo(() => isAwaitingFirstToken(turn()));
+  const working = createMemo(
+    () =>
+      isAwaitingFirstToken(turn()) ||
+      (!turn().generating && durableRunningTurnId() !== undefined),
+  );
   const historyIncomplete = createMemo(() => {
     const messages = Array.from(accumulated().values());
     if (messages.length === 0) {
@@ -133,19 +206,67 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         toolName: message.tool_name,
         toolArgs: message.tool_args,
         toolResult: message.tool_result,
+        turn: message.turn,
       })),
   );
   const rows = createMemo<TimelineRow[]>(
-    (previous) => stabilizeRows(previous, deriveRows(storedMessages(), turn())),
+    (previous) =>
+      stabilizeRows(
+        previous,
+        deriveRows(
+          storedMessages(),
+          activeTurnConversationId() === dependencies.conversationId()
+            ? turn()
+            : emptyTurn(),
+        ),
+      ),
     [],
   );
 
   const loadLatestHistory = (conversationId: string) => {
     const request = historyRequest + 1;
+    const focusTurnId = dependencies.focusTurnId?.();
     historyRequest = request;
-    void dependencies.history
-      .listMessages(conversationId, { limit: MESSAGES_PAGE_SIZE })
-      .then((page) => {
+    const latest = dependencies.history.listMessages(conversationId, {
+      limit: MESSAGES_PAGE_SIZE,
+    });
+    const focused =
+      focusTurnId === undefined
+        ? Promise.resolve<Message[]>([])
+        : dependencies.history.listMessages(conversationId, {
+            turnId: focusTurnId,
+          });
+    const shouldLoadDurableTurns =
+      (dependencies.durablePendingCount?.() ?? 0) > 0 ||
+      dependencies.durableRunningTurnId?.() !== undefined;
+    const nonterminal =
+      shouldLoadDurableTurns &&
+      dependencies.history.listNonterminalTurns !== undefined
+        ? dependencies.history
+            .listNonterminalTurns(conversationId)
+            .catch(() => [])
+        : Promise.resolve<ConversationTurn[]>([]);
+    const detail =
+      focusTurnId === undefined || dependencies.history.fetchTurn === undefined
+        ? Promise.resolve<ConversationTurn | undefined>(undefined)
+        : dependencies.history
+            .fetchTurn(conversationId, focusTurnId)
+            .then((value) => value)
+            .catch((caught: unknown) => {
+              if (
+                typeof caught === "object" &&
+                caught !== null &&
+                "status" in caught &&
+                caught.status === 404
+              ) {
+                setFocusedTurnError("not_found");
+              } else {
+                setFocusedTurnError("load");
+              }
+              return undefined;
+            });
+    void Promise.all([latest, focused, nonterminal, detail])
+      .then(([page, focusedPage, durableTurns, turnDetail]) => {
         if (
           request !== historyRequest ||
           dependencies.conversationId() !== conversationId
@@ -154,11 +275,85 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         }
         setAccumulated((current) => {
           const merged = new Map(current);
-          for (const message of page) {
-            merged.set(message.seq, message);
+          let changed = false;
+          for (const message of [...page, ...focusedPage]) {
+            if (merged.get(message.seq) !== message) {
+              merged.set(message.seq, message);
+              changed = true;
+            }
           }
-          return merged;
+          return changed ? merged : current;
         });
+        setFocusedMessageId(focusedPage.at(0)?.id);
+        setFocusedTurn(turnDetail);
+        if (turnDetail !== undefined) {
+          setFocusedTurnError(undefined);
+        }
+        const pendingTurns = durableTurns.filter(
+          (durableTurn) =>
+            durableTurn.status === "pending" &&
+            !settledTurnIds().has(durableTurn.id),
+        );
+        setHydratedRunningTurnId(
+          durableTurns.find((durableTurn) => durableTurn.status === "running")
+            ?.id,
+        );
+        hydratedRunningConversationId = conversationId;
+        setQueuedPrompts((current) => {
+          const pendingById = new Map(
+            pendingTurns.map((durableTurn) => [durableTurn.id, durableTurn]),
+          );
+          const pendingByRequest = new Map(
+            pendingTurns.flatMap((durableTurn) =>
+              durableTurn.request_id === null
+                ? []
+                : [[durableTurn.request_id, durableTurn] as const],
+            ),
+          );
+          const seen = new Set<string>();
+          const retained = current.flatMap((prompt) => {
+            const durableTurn =
+              (prompt.turnId === undefined
+                ? undefined
+                : pendingById.get(prompt.turnId)) ??
+              pendingByRequest.get(prompt.requestId);
+            if (durableTurn === undefined) {
+              return settledTurnIds().has(prompt.turnId ?? "") ? [] : [prompt];
+            }
+            seen.add(durableTurn.id);
+            return [{ ...prompt, turnId: durableTurn.id }];
+          });
+          const hydrated = pendingTurns
+            .filter((durableTurn) => !seen.has(durableTurn.id))
+            .map((durableTurn) => {
+              const prompt: QueuedPrompt = {
+                content: durableTurn.prompt,
+                conversationId,
+                id: nextQueuedPromptId,
+                replyMode: durableTurn.reply_mode,
+                requestId:
+                  durableTurn.request_id ?? `durable:${durableTurn.id}`,
+                turnId: durableTurn.id,
+              };
+              nextQueuedPromptId += 1;
+              return prompt;
+            });
+          return [...retained, ...hydrated];
+        });
+        setDurableTurnsReady(
+          dependencies.history.listNonterminalTurns !== undefined &&
+            shouldLoadDurableTurns,
+        );
+        setLatestBeforeSeq(
+          page.length === 0
+            ? undefined
+            : Math.min(...page.map((message) => message.seq)),
+        );
+        setReadThroughSeq(
+          focusTurnId === undefined
+            ? Math.max(0, ...page.map((message) => message.seq))
+            : Math.max(0, ...focusedPage.map((message) => message.seq)),
+        );
         setHasMoreHistory(page.length === MESSAGES_PAGE_SIZE);
         if (!turn().generating) {
           setTurn(emptyTurn());
@@ -168,6 +363,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       .catch(() => {
         if (request === historyRequest) {
           setHistoryReady(true);
+          setDurableTurnsReady(false);
         }
       });
   };
@@ -181,6 +377,29 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       setHistoryReady(false);
       setLoadedSkillCount(undefined);
       setContextUsage(undefined);
+      setFocusedMessageId(undefined);
+      setFocusedTurn(undefined);
+      setFocusedTurnError(undefined);
+      setLatestBeforeSeq(undefined);
+      setReadThroughSeq(0);
+      setQueuedPrompts([]);
+      setDurableTurnsReady(false);
+      setHydratedRunningTurnId(undefined);
+      hydratedRunningConversationId = undefined;
+      setSettledTurnIds(new Set<string>());
+      awaitingTickets.splice(0);
+      cancelAfterTicket.clear();
+      setOutboundPrompt(null);
+      setAwaitingAgentEnd(false);
+      setError(undefined);
+      setInterrupted(false);
+      setTurn(emptyTurn());
+      activeTurnId = undefined;
+      setActiveTurnConversationId(undefined);
+      runningPrompt = null;
+      runningReplyMode = "text";
+      spokenStream = null;
+      toolPhaseActive = false;
       if (conversationId !== undefined) {
         loadLatestHistory(conversationId);
       }
@@ -188,20 +407,40 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     return conversationId;
   }, undefined);
 
+  createEffect((previousRunningId: string | undefined) => {
+    const runningId = durableRunningTurnId();
+    if (runningId !== previousRunningId) {
+      setDurableStartedAt(runningId === undefined ? null : now());
+    }
+    return runningId;
+  }, undefined);
+
+  createEffect((previousTurnId: string | undefined) => {
+    const focusTurnId = dependencies.focusTurnId?.();
+    const conversationId = dependencies.conversationId();
+    if (
+      focusTurnId !== undefined &&
+      focusTurnId !== previousTurnId &&
+      conversationId !== undefined
+    ) {
+      loadLatestHistory(conversationId);
+    }
+    return focusTurnId;
+  }, undefined);
+
   const loadOlderMessages = (): boolean => {
     const conversationId = dependencies.conversationId();
     if (conversationId === undefined || loadingOlder() || !hasMoreHistory()) {
       return false;
     }
-    const sequenceNumbers = Array.from(accumulated().keys());
-    if (sequenceNumbers.length === 0) {
+    const beforeSeq = latestBeforeSeq();
+    if (beforeSeq === undefined) {
       return false;
     }
-    const oldestSequence = Math.min(...sequenceNumbers);
     setLoadingOlder(true);
     void dependencies.history
       .listMessages(conversationId, {
-        beforeSeq: oldestSequence,
+        beforeSeq,
         limit: MESSAGES_PAGE_SIZE,
       })
       .then((page) => {
@@ -215,6 +454,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
           }
           return merged;
         });
+        if (page.length > 0) {
+          setLatestBeforeSeq(Math.min(...page.map((message) => message.seq)));
+        }
         setHasMoreHistory(page.length === MESSAGES_PAGE_SIZE);
       })
       .catch(() => undefined)
@@ -229,12 +471,12 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     if (conversationId === undefined || loadingOlder() || !hasMoreHistory()) {
       return;
     }
-    const sequenceNumbers = Array.from(accumulated().keys());
-    if (sequenceNumbers.length === 0) {
+    const initialBeforeSeq = latestBeforeSeq();
+    if (initialBeforeSeq === undefined) {
       return;
     }
     setLoadingOlder(true);
-    let beforeSeq = Math.min(...sequenceNumbers);
+    let beforeSeq = initialBeforeSeq;
     try {
       while (dependencies.conversationId() === conversationId) {
         const page = await dependencies.history.listMessages(conversationId, {
@@ -253,6 +495,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
           return;
         }
         beforeSeq = Math.min(...page.map((message) => message.seq));
+        setLatestBeforeSeq(beforeSeq);
       }
     } catch {
       return;
@@ -261,11 +504,13 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     }
   };
 
-  const dispatchPrompt = (prompt: QueuedPrompt, conversationId: string) => {
+  const beginPrompt = (prompt: QueuedPrompt) => {
     setAwaitingAgentEnd(false);
     setInterrupted(false);
     setOutboundPrompt(prompt);
+    setActiveTurnConversationId(prompt.conversationId);
     setTurn(startTurn(prompt.content, now()));
+    runningPrompt = prompt;
     runningReplyMode = prompt.replyMode;
     toolPhaseActive = false;
     spokenStream =
@@ -275,21 +520,16 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
             () => dependencies.spokenTurn?.restart(),
           )
         : null;
-    dependencies.transport.sendPrompt(
-      conversationId,
-      prompt.content,
-      prompt.replyMode,
-    );
   };
 
-  const dispatchNextQueuedPrompt = () => {
-    const conversationId = dependencies.conversationId();
-    const next = queuedPrompts().at(0);
-    if (conversationId === undefined || next === undefined) {
-      return;
-    }
-    setQueuedPrompts((current) => current.slice(1));
-    dispatchPrompt(next, conversationId);
+  const submitPrompt = (prompt: QueuedPrompt) => {
+    awaitingTickets.push(prompt);
+    dependencies.transport.sendPrompt(
+      prompt.conversationId,
+      prompt.content,
+      prompt.replyMode,
+      prompt.requestId,
+    );
   };
 
   const sendPrompt = (untrimmedContent: string) => {
@@ -299,34 +539,56 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       return;
     }
     setError(undefined);
-    const prompt = {
+    const prompt: QueuedPrompt = {
       content,
+      conversationId,
       id: nextQueuedPromptId,
       replyMode: dependencies.replyMode?.() ?? "text",
+      requestId: crypto.randomUUID(),
     };
     nextQueuedPromptId += 1;
-    if (busy()) {
-      setQueuedPrompts((current) => [...current, prompt]);
-      return;
-    }
-    dispatchPrompt(prompt, conversationId);
+    setQueuedPrompts((current) => [...current, prompt]);
+    submitPrompt(prompt);
   };
 
   const editQueuedPrompt = (promptId: number, untrimmedContent: string) => {
     const content = untrimmedContent.trim();
-    if (content.length === 0) {
+    const conversationId = dependencies.conversationId();
+    const current = queuedPrompts().find((prompt) => prompt.id === promptId);
+    if (
+      content.length === 0 ||
+      conversationId === undefined ||
+      current?.turnId === undefined
+    ) {
       return;
     }
-    setQueuedPrompts((current) =>
-      current.map((prompt) =>
-        prompt.id === promptId ? { ...prompt, content } : prompt,
-      ),
+    dependencies.transport.abort(conversationId, current.turnId);
+    const replacement: QueuedPrompt = {
+      ...current,
+      content,
+      requestId: crypto.randomUUID(),
+      turnId: undefined,
+    };
+    setQueuedPrompts((prompts) =>
+      prompts.map((prompt) => (prompt.id === promptId ? replacement : prompt)),
     );
+    submitPrompt(replacement);
   };
 
   const cancelQueuedPrompt = (promptId: number) => {
+    const conversationId = dependencies.conversationId();
+    const prompt = queuedPrompts().find(
+      (candidate) => candidate.id === promptId,
+    );
+    if (conversationId !== undefined && prompt !== undefined) {
+      if (prompt.turnId === undefined) {
+        cancelAfterTicket.add(prompt.requestId);
+      } else {
+        dependencies.transport.abort(conversationId, prompt.turnId);
+      }
+    }
     setQueuedPrompts((current) =>
-      current.filter((prompt) => prompt.id !== promptId),
+      current.filter((candidate) => candidate.id !== promptId),
     );
   };
 
@@ -335,18 +597,51 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     if (conversationId === undefined || awaitingAgentEnd()) {
       return;
     }
-    setQueuedPrompts((current) => {
-      const selected = current.find((prompt) => prompt.id === promptId);
-      return selected === undefined
-        ? current
-        : [selected, ...current.filter((prompt) => prompt.id !== promptId)];
-    });
-    if (!busy()) {
-      dispatchNextQueuedPrompt();
-      return;
+    const selected = queuedPrompts().find((prompt) => prompt.id === promptId);
+    const reordered =
+      selected === undefined
+        ? queuedPrompts()
+        : [
+            selected,
+            ...queuedPrompts().filter((prompt) => prompt.id !== promptId),
+          ];
+    if (reordered.every((prompt) => prompt.turnId !== undefined)) {
+      const replacements = reordered.map((prompt) => {
+        dependencies.transport.abort(conversationId, prompt.turnId ?? "");
+        return {
+          ...prompt,
+          requestId: crypto.randomUUID(),
+          turnId: undefined,
+        };
+      });
+      setQueuedPrompts(replacements);
+      for (const prompt of replacements) {
+        submitPrompt(prompt);
+      }
+    } else {
+      setQueuedPrompts(reordered);
+      if (
+        selected !== undefined &&
+        selected.turnId === undefined &&
+        !awaitingTickets.some(
+          (prompt) => prompt.requestId === selected.requestId,
+        )
+      ) {
+        const retry = { ...selected, retryable: false };
+        setQueuedPrompts((current) =>
+          current.map((prompt) => (prompt.id === retry.id ? retry : prompt)),
+        );
+        submitPrompt(retry);
+      }
     }
-    setAwaitingAgentEnd(true);
-    dependencies.transport.abort(conversationId);
+    const runningTurnId =
+      (runningPrompt?.conversationId === conversationId
+        ? activeTurnId
+        : undefined) ?? durableRunningTurnId();
+    if (runningTurnId !== undefined) {
+      setAwaitingAgentEnd(true);
+      dependencies.transport.abort(conversationId, runningTurnId);
+    }
   };
 
   const refreshSettledHistory = () => {
@@ -358,6 +653,27 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   };
 
   const handleFrame = (frame: ChatFrame) => {
+    if (frame.type === "connection") {
+      if (frame.status === "open") {
+        refreshSettledHistory();
+        const conversationId = dependencies.conversationId();
+        if (conversationId !== undefined) {
+          awaitingTickets.splice(0);
+          const reconnecting = [
+            ...(runningPrompt === null ? [] : [runningPrompt]),
+            ...queuedPrompts(),
+          ].filter((prompt) => prompt.conversationId === conversationId);
+          const seenRequests = new Set<string>();
+          for (const prompt of reconnecting) {
+            if (!seenRequests.has(prompt.requestId)) {
+              seenRequests.add(prompt.requestId);
+              submitPrompt(prompt);
+            }
+          }
+        }
+      }
+      return;
+    }
     if (frame.type === "invalidate") {
       const conversationId = dependencies.conversationId();
       if (frame.keys.includes("messages") && conversationId !== undefined) {
@@ -407,23 +723,124 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       }
       return;
     }
-    setTurn((current) => reduceFrame(current, frame, now()));
-    if (frame.event === "user_message") {
-      setOutboundPrompt(null);
+    if (frame.event === "turn_queued" && frame.turn_id !== undefined) {
+      const accepted = awaitingTickets.shift();
+      if (accepted !== undefined) {
+        accepted.turnId = frame.turn_id;
+        if (cancelAfterTicket.delete(accepted.requestId)) {
+          dependencies.transport.abort(accepted.conversationId, frame.turn_id);
+        }
+        if (runningPrompt?.requestId === accepted.requestId) {
+          runningPrompt = accepted;
+        }
+        setQueuedPrompts((current) =>
+          current.map((prompt) =>
+            prompt.requestId === accepted.requestId
+              ? { ...prompt, turnId: frame.turn_id }
+              : prompt,
+          ),
+        );
+        activeTurnId = frame.turn_id;
+      } else if (
+        queuedPrompts().some((prompt) => prompt.turnId === frame.turn_id) ||
+        runningPrompt?.turnId === frame.turn_id
+      ) {
+        activeTurnId = frame.turn_id;
+      }
+      if (frame.status === "running") {
+        setHydratedRunningTurnId(frame.turn_id);
+        hydratedRunningConversationId = conversationId;
+      }
+      return;
     }
+    if (frame.event === "user_message" && frame.turn_id !== undefined) {
+      let queued = queuedPrompts().find(
+        (prompt) => prompt.turnId === frame.turn_id,
+      );
+      if (queued === undefined) {
+        const accepted = awaitingTickets.shift();
+        if (accepted !== undefined) {
+          accepted.turnId = frame.turn_id;
+          queued = accepted;
+        }
+      }
+      if (queued !== undefined) {
+        setQueuedPrompts((current) =>
+          current.filter((prompt) => prompt.requestId !== queued.requestId),
+        );
+        beginPrompt(queued);
+      }
+      activeTurnId = frame.turn_id;
+      setHydratedRunningTurnId(frame.turn_id);
+      hydratedRunningConversationId = conversationId;
+      setOutboundPrompt(null);
+    } else if (
+      frame.turn_id === undefined &&
+      runningPrompt === null &&
+      awaitingTickets.length > 0 &&
+      frame.event !== "error" &&
+      frame.event !== "abort_ack" &&
+      frame.event !== "turn_ended"
+    ) {
+      // Older hosts and test transports may begin streaming before the durable
+      // ticket frames arrive. Keep that wire behavior usable without treating
+      // the provisional prompt as canonical transcript history.
+      const accepted = awaitingTickets.shift();
+      if (accepted !== undefined) {
+        setQueuedPrompts((current) =>
+          current.filter((prompt) => prompt.requestId !== accepted.requestId),
+        );
+        beginPrompt(accepted);
+        setOutboundPrompt(null);
+      }
+    }
+    const matchesKnownTurn =
+      frame.turn_id === undefined ||
+      frame.turn_id === activeTurnId ||
+      frame.turn_id === runningPrompt?.turnId ||
+      queuedPrompts().some((prompt) => prompt.turnId === frame.turn_id);
+    if (frame.event === "turn_ended" && !matchesKnownTurn) {
+      refreshSettledHistory();
+      return;
+    }
+    setTurn((current) => reduceFrame(current, frame, now()));
     if (frame.event === "abort_ack") {
       setInterrupted(true);
       spokenStream = null;
       dependencies.spokenTurn?.discard();
+      if (runningPrompt === null) {
+        const rejectedPrompt = awaitingTickets.shift();
+        if (rejectedPrompt !== undefined) {
+          cancelAfterTicket.delete(rejectedPrompt.requestId);
+          setQueuedPrompts((current) =>
+            current.filter(
+              (prompt) => prompt.requestId !== rejectedPrompt.requestId,
+            ),
+          );
+        }
+      }
     }
     if (frame.event === "error") {
       setError(frame.detail ?? "Chat error");
       spokenStream = null;
       dependencies.spokenTurn?.discard();
-      const rejected = outboundPrompt();
-      if (rejected !== null) {
-        setQueuedPrompts((current) => [rejected, ...current]);
+      if (frame.turn_id === undefined) {
+        const rejectedPrompt = awaitingTickets.shift();
+        if (rejectedPrompt !== undefined) {
+          setQueuedPrompts((current) =>
+            current.map((prompt) =>
+              prompt.requestId === rejectedPrompt.requestId
+                ? { ...prompt, retryable: true }
+                : prompt,
+            ),
+          );
+          if (runningPrompt?.requestId === rejectedPrompt.requestId) {
+            runningPrompt = null;
+            setTurn(emptyTurn());
+          }
+        }
         setOutboundPrompt(null);
+        setAwaitingAgentEnd(false);
       }
       refreshSettledHistory();
     }
@@ -441,15 +858,47 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         }
       }
     }
+    if (frame.event === "turn_ended") {
+      if (frame.status === "failed") {
+        setError(frame.failure_summary ?? "Chat turn failed");
+        dependencies.spokenTurn?.discard();
+      } else if (frame.status === "cancelled") {
+        setInterrupted(true);
+        dependencies.spokenTurn?.discard();
+      }
+      if (frame.turn_id !== undefined) {
+        setSettledTurnIds((current) =>
+          new Set(current).add(frame.turn_id ?? ""),
+        );
+        setQueuedPrompts((current) =>
+          current.filter((prompt) => prompt.turnId !== frame.turn_id),
+        );
+      }
+      spokenStream = null;
+      toolPhaseActive = false;
+      if (frame.turn_id === activeTurnId) {
+        activeTurnId = undefined;
+      }
+      if (
+        frame.turn_id === undefined ||
+        frame.turn_id === runningPrompt?.turnId
+      ) {
+        runningPrompt = null;
+      }
+      if (frame.turn_id === hydratedRunningTurnId()) {
+        setHydratedRunningTurnId(undefined);
+        hydratedRunningConversationId = undefined;
+      }
+      setOutboundPrompt(null);
+      setAwaitingAgentEnd(false);
+      refreshSettledHistory();
+    }
     if (frame.event === "agent_end") {
       const settledReplyMode = runningReplyMode;
       const stream = spokenStream;
       spokenStream = null;
       toolPhaseActive = false;
-      setOutboundPrompt(null);
-      setAwaitingAgentEnd(false);
       refreshSettledHistory();
-      dispatchNextQueuedPrompt();
       // Playback corresponds to the prompt's captured mode, not the toggle's
       // current value, and never fires for aborted or errored turns.
       if (
@@ -478,9 +927,18 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
 
   const abort = () => {
     const conversationId = dependencies.conversationId();
-    if (conversationId !== undefined && !awaitingAgentEnd()) {
+    const ownedActiveTurnId =
+      runningPrompt?.conversationId === conversationId
+        ? activeTurnId
+        : undefined;
+    const turnId = ownedActiveTurnId ?? durableRunningTurnId();
+    if (
+      conversationId !== undefined &&
+      turnId !== undefined &&
+      !awaitingAgentEnd()
+    ) {
       setAwaitingAgentEnd(true);
-      dependencies.transport.abort(conversationId);
+      dependencies.transport.abort(conversationId, turnId);
     }
   };
 
@@ -493,19 +951,24 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       setContextUsage(undefined);
     },
     contextUsage,
+    durablePendingCount,
     dismissError: () => {
       setError(undefined);
     },
     editQueuedPrompt,
     error,
+    focusedMessageId,
+    focusedTurn,
+    focusedTurnError,
     generating,
     handleFrame,
+    highestSettledSeq: readThroughSeq,
     historyIncomplete,
     historyReady,
     loadAllMessages,
     loadOlderMessages,
     loadedSkillCount,
-    queuedPrompts,
+    queuedPrompts: visibleQueuedPrompts,
     rows,
     sendPrompt,
     sendQueuedPromptNow,

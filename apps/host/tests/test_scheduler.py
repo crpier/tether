@@ -30,9 +30,12 @@ from snektest import (
 
 from tether.agent_trace_model import RunKind
 from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.conversation_store import create_conversation_schema
+from tether.conversations import ConversationService
 from tether.notification_delivery import (
     PushDeliveryNotifier,
-    TriggerDispatcher,
+    PushNotification,
+    TriggerDispatchResult,
     TriggerNotifier,
 )
 from tether.pi_errors import PiRuntimeError
@@ -47,8 +50,12 @@ from tether.structured_logging import Logger
 from tether.system_prompt import TASK_SYSTEM_PROMPT
 from tether.tool_runtime import SessionRegistry
 from tether.trigger_schedule import DailyTriggerSpec, OnceTriggerSpec
-from tether.trigger_store import ScheduledTrigger, create_trigger_schema
-from tether.triggers import TriggerService
+from tether.trigger_store import (
+    ScheduledOccurrence,
+    ScheduledTrigger,
+    create_trigger_schema,
+)
+from tether.triggers import ScheduledPromptSnapshot, TriggerService
 
 from .pi_runtime_fakes import FakePiRuntime, RecordingSpawner
 
@@ -83,20 +90,20 @@ class RecordingNotifier:
         self.delivered: list[tuple[str, str]] = []
 
     async def deliver(
-        self, *, trigger: ScheduledTrigger[Fetched], message: str
+        self, *, occurrence: ScheduledOccurrence[Fetched], message: str
     ) -> None:
         """Record one delivered message."""
-        self.delivered.append((str(trigger.id), message))
+        self.delivered.append((str(occurrence.trigger_id), message))
 
 
 class FailingNotifier:
     """A notifier that always raises, to exercise the failure path."""
 
     async def deliver(
-        self, *, trigger: ScheduledTrigger[Fetched], message: str
+        self, *, occurrence: ScheduledOccurrence[Fetched], message: str
     ) -> None:
         """Fail every delivery."""
-        _ = (trigger, message)
+        _ = (occurrence, message)
         message_text = "delivery exploded"
         raise RuntimeError(message_text)
 
@@ -110,10 +117,10 @@ class ConcurrencyProbeNotifier:
         self.delivered: int = 0
 
     async def deliver(
-        self, *, trigger: ScheduledTrigger[Fetched], message: str
+        self, *, occurrence: ScheduledOccurrence[Fetched], message: str
     ) -> None:
         """Bump a live counter, yield, then settle, recording the peak."""
-        _ = (trigger, message)
+        _ = (occurrence, message)
         self.current += 1
         self.peak = max(self.peak, self.current)
         await asyncio.sleep(0.01)
@@ -125,11 +132,11 @@ class RecordingPushSender:
     """Records Web Push messages sent for fired triggers."""
 
     def __init__(self) -> None:
-        self.sent: list[str] = []
+        self.sent: list[PushNotification] = []
 
-    async def send(self, body: str) -> None:
+    async def send(self, notification: PushNotification) -> None:
         """Record one outgoing push body."""
-        self.sent.append(body)
+        self.sent.append(notification)
 
 
 class ProfileRunner:
@@ -158,11 +165,89 @@ class StubRunner:
         return self.result
 
 
+class FailingRunner(StubRunner):
+    """Fail prompt execution stably on every call."""
+
+    async def run(self, prompt: str, model_profile: str | None) -> str:
+        self.prompts.append(prompt)
+        _ = model_profile
+        message = "model rejected prompt"
+        raise RuntimeError(message)
+
+
+class BlockingOccurrenceDispatcher:
+    """Hold recovered dispatch until a startup-boundary test releases it."""
+
+    def __init__(self) -> None:
+        self.release: asyncio.Event = asyncio.Event()
+        self.started: asyncio.Event = asyncio.Event()
+
+    async def dispatch(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+    ) -> TriggerDispatchResult:
+        _ = occurrence
+        self.started.set()
+        _ = await self.release.wait()
+        return TriggerDispatchResult()
+
+    async def deliver_prompt_push(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+        *,
+        now: datetime,
+    ) -> None:
+        _ = occurrence, now
+
+
+class FakeOccurrenceDispatcher:
+    """Resolve occurrences without bypassing Scheduler's public dispatch port."""
+
+    def __init__(
+        self,
+        *,
+        notifier: TriggerNotifier,
+        runner: StubRunner | ProfileRunner,
+        push_sender: RecordingPushSender | None = None,
+    ) -> None:
+        self.notifier = notifier
+        self.push_sender = push_sender
+        self.runner = runner
+
+    async def dispatch(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+    ) -> TriggerDispatchResult:
+        if occurrence.action_kind == "message":
+            await self.notifier.deliver(
+                occurrence=occurrence,
+                message=occurrence.payload,
+            )
+            return TriggerDispatchResult()
+        answer = await self.runner.run(
+            occurrence.payload,
+            occurrence.model_profile,
+        )
+        return TriggerDispatchResult(answer=answer)
+
+    async def deliver_prompt_push(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+        *,
+        now: datetime,
+    ) -> None:
+        _ = now
+        if self.push_sender is not None and occurrence.answer is not None:
+            await self.push_sender.send(PushNotification(body=occurrence.answer))
+
+
 @fixture
 async def scheduler_service() -> AsyncGenerator[TriggerService]:
     """A fresh, isolated trigger database for each scheduler test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
+    await create_conversation_schema(db)
     await create_trigger_schema(db)
+    _ = await ConversationService(db).fetch_main_conversation()
     yield TriggerService(database=db, tracer=noop_tracer())
     await db.close()
 
@@ -176,9 +261,9 @@ def build_scheduler(
     config: SchedulerConfig | None = None,
 ) -> Scheduler:
     """Wire a scheduler over the given collaborators."""
-    dispatcher = TriggerDispatcher(
+    dispatcher = FakeOccurrenceDispatcher(
         notifier=notifier,
-        agent_runner=runner or StubRunner(""),
+        runner=runner or StubRunner(""),
     )
     return Scheduler(
         service=service,
@@ -225,7 +310,7 @@ async def tick_fires_a_due_message_trigger_verbatim() -> None:
     claimed = await scheduler.tick()
     await scheduler.drain()
 
-    assert_eq([t.id for t in claimed], [trigger.id])
+    assert_eq([item.trigger_id for item in claimed], [trigger.id])
     assert_eq(notifier.delivered, [(str(trigger.id), "call the dentist")])
     row = await fetch_row(service, trigger.id)
     assert_is_not_none(row)
@@ -254,6 +339,7 @@ async def tick_claims_each_trigger_before_dispatch() -> None:
 async def tick_runs_an_agent_prompt_through_the_prompt_runner() -> None:
     """An agent-prompt trigger submits its payload to the chat runner."""
     service = await load_fixture(scheduler_service())
+    main = await ConversationService(service.database).fetch_main_conversation()
     _ = await service.create(
         OnceTriggerSpec(
             action_kind="prompt",
@@ -262,6 +348,9 @@ async def tick_runs_an_agent_prompt_through_the_prompt_runner() -> None:
         ),
         now=BASE,
         logger=LOGGER,
+        prompt_snapshot=ScheduledPromptSnapshot(
+            target_conversation_id=main.id,
+        ),
     )
     notifier = RecordingNotifier()
     runner = StubRunner("you have 3 meetings")
@@ -276,11 +365,87 @@ async def tick_runs_an_agent_prompt_through_the_prompt_runner() -> None:
 
 
 @test()
+async def prompt_failure_is_terminal_without_scheduler_backoff() -> None:
+    """A failed one-off prompt settles once instead of entering broad retries."""
+    service = await load_fixture(scheduler_service())
+    main = await ConversationService(service.database).fetch_main_conversation()
+    trigger = await service.create(
+        OnceTriggerSpec(
+            action_kind="prompt",
+            payload="fail once",
+            fire_at=BASE,
+        ),
+        now=BASE,
+        logger=LOGGER,
+        prompt_snapshot=ScheduledPromptSnapshot(
+            target_conversation_id=main.id,
+        ),
+    )
+    runner = FailingRunner("")
+    scheduler = build_scheduler(
+        service,
+        notifier=RecordingNotifier(),
+        clock=ManualClock(BASE),
+        runner=runner,
+    )
+
+    claimed = await scheduler.tick()
+    await scheduler.drain()
+    current = await service.fetch(trigger.id)
+    occurrence = await service.fetch_latest_occurrence(trigger.id)
+    if occurrence is None:
+        raise AssertionError("claimed occurrence disappeared")
+
+    assert_eq(claimed[0].id, occurrence.id)
+    assert_eq(occurrence.status, "failed")
+    assert_eq(current.status, "failed")
+    assert_is_none(current.next_attempt_at)
+    assert_eq(runner.prompts, ["fail once"])
+
+
+@test()
+async def recurring_prompt_failure_advances_immediately() -> None:
+    """A failed recurring prompt skips to its next firing after one submission."""
+    service = await load_fixture(scheduler_service())
+    main = await ConversationService(service.database).fetch_main_conversation()
+    trigger = await service.create(
+        DailyTriggerSpec(
+            action_kind="prompt",
+            payload="fail today",
+            timezone="UTC",
+            time_of_day="09:00",
+        ),
+        now=BASE - timedelta(hours=1),
+        logger=LOGGER,
+        prompt_snapshot=ScheduledPromptSnapshot(
+            target_conversation_id=main.id,
+        ),
+    )
+    runner = FailingRunner("")
+    scheduler = build_scheduler(
+        service,
+        notifier=RecordingNotifier(),
+        clock=ManualClock(BASE),
+        runner=runner,
+    )
+
+    _ = await scheduler.tick()
+    await scheduler.drain()
+    current = await service.fetch(trigger.id)
+
+    assert_eq(current.status, "active")
+    assert_eq(current.next_fire_at, BASE + timedelta(days=1))
+    assert_is_none(current.next_attempt_at)
+    assert_eq(runner.prompts, ["fail today"])
+
+
+@test()
 async def recurring_prompt_dispatch_uses_its_pinned_profile() -> None:
     """Dispatch passes the recurring prompt's stored profile to its runner."""
     service = await load_fixture(scheduler_service())
     runner = ProfileRunner()
-    trigger = await service.create(
+    main = await ConversationService(service.database).fetch_main_conversation()
+    _ = await service.create(
         DailyTriggerSpec(
             action_kind="prompt",
             payload="summarise my day",
@@ -289,14 +454,18 @@ async def recurring_prompt_dispatch_uses_its_pinned_profile() -> None:
         ),
         now=BASE,
         logger=LOGGER,
-        model_profile="high-effort",
+        prompt_snapshot=ScheduledPromptSnapshot(
+            model_profile="high-effort",
+            target_conversation_id=main.id,
+        ),
     )
-    dispatcher = TriggerDispatcher(
+    occurrence = (await service.claim_due(BASE + timedelta(days=1)))[0]
+    dispatcher = FakeOccurrenceDispatcher(
         notifier=RecordingNotifier(),
-        agent_runner=runner,
+        runner=runner,
     )
 
-    await dispatcher.dispatch(trigger)
+    _ = await dispatcher.dispatch(occurrence)
 
     assert_eq(runner.calls, [("summarise my day", "high-effort")])
 
@@ -305,6 +474,7 @@ async def recurring_prompt_dispatch_uses_its_pinned_profile() -> None:
 async def an_agent_prompt_answer_is_sent_over_web_push() -> None:
     """The chat answer retains closed-tab Web Push delivery."""
     service = await load_fixture(scheduler_service())
+    main = await ConversationService(service.database).fetch_main_conversation()
     _ = await service.create(
         OnceTriggerSpec(
             action_kind="prompt",
@@ -313,14 +483,17 @@ async def an_agent_prompt_answer_is_sent_over_web_push() -> None:
         ),
         now=BASE,
         logger=LOGGER,
+        prompt_snapshot=ScheduledPromptSnapshot(
+            target_conversation_id=main.id,
+        ),
     )
     push_sender = RecordingPushSender()
     scheduler = Scheduler(
         service=service,
-        dispatcher=TriggerDispatcher(
+        dispatcher=FakeOccurrenceDispatcher(
             notifier=RecordingNotifier(),
-            agent_runner=StubRunner("you have 3 meetings"),
-            prompt_push_sender=push_sender,
+            runner=StubRunner("you have 3 meetings"),
+            push_sender=push_sender,
         ),
         clock=ManualClock(BASE),
         logger=LOGGER,
@@ -329,7 +502,10 @@ async def an_agent_prompt_answer_is_sent_over_web_push() -> None:
     _ = await scheduler.tick()
     await scheduler.drain()
 
-    assert_eq(push_sender.sent, ["you have 3 meetings"])
+    assert_eq(
+        push_sender.sent,
+        [PushNotification(body="you have 3 meetings")],
+    )
 
 
 @test()
@@ -349,7 +525,7 @@ async def push_delivery_notifier_keeps_existing_delivery_and_sends_web_push() ->
     await scheduler.drain()
 
     assert_eq(browser_notifier.delivered, [(str(trigger.id), "call the dentist")])
-    assert_eq(push_sender.sent, ["call the dentist"])
+    assert_eq(push_sender.sent, [PushNotification(body="call the dentist")])
 
 
 @test()
@@ -369,11 +545,16 @@ async def tick_backs_off_a_failed_dispatch_then_retries() -> None:
     await scheduler.drain()
 
     row = await fetch_row(service, trigger.id)
+    occurrence = await service.fetch_latest_occurrence(trigger.id)
     assert_is_not_none(row)
-    assert_eq(row.attempts if row else None, 1)
+    assert_is_not_none(occurrence)
+    assert_eq(occurrence.dispatch_attempts if occurrence else None, 1)
     assert_eq(row.status if row else None, "active")
-    assert_is_none(row.claimed_at if row else None)
-    assert_eq(row.next_attempt_at if row else None, BASE + timedelta(seconds=30))
+    assert_is_not_none(row.claimed_at if row else None)
+    assert_eq(
+        occurrence.next_attempt_at if occurrence else None,
+        BASE + timedelta(seconds=30),
+    )
 
     # Before the backoff elapses, nothing is due.
     clock.set(BASE + timedelta(seconds=15))
@@ -382,7 +563,31 @@ async def tick_backs_off_a_failed_dispatch_then_retries() -> None:
     clock.set(BASE + timedelta(seconds=30))
     retried = await scheduler.tick()
     await scheduler.drain()
-    assert_eq([t.id for t in retried], [trigger.id])
+    assert_eq([item.trigger_id for item in retried], [trigger.id])
+
+
+@test()
+async def startup_repair_never_launches_or_awaits_recovered_dispatch() -> None:
+    """Durable startup repair remains bounded before request serving begins."""
+    service = await load_fixture(scheduler_service())
+    trigger = await add_due_message(service, "recover me")
+    occurrence = (await service.claim_due(trigger.next_fire_at))[0]
+    _ = await service.record_running(occurrence)
+    dispatcher = BlockingOccurrenceDispatcher()
+    scheduler = Scheduler(
+        service=service,
+        dispatcher=dispatcher,
+        clock=ManualClock(BASE),
+        logger=LOGGER,
+    )
+
+    await asyncio.wait_for(scheduler.repair(), timeout=0.2)
+
+    assert_true(not dispatcher.started.is_set())
+    await scheduler.dispatch_recovered()
+    _ = await asyncio.wait_for(dispatcher.started.wait(), timeout=0.2)
+    dispatcher.release.set()
+    await scheduler.drain()
 
 
 @test()

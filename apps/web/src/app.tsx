@@ -1,4 +1,10 @@
-import { Route, Router, useSearchParams } from "@solidjs/router";
+import {
+  Navigate,
+  Route,
+  Router,
+  useLocation,
+  useSearchParams,
+} from "@solidjs/router";
 import {
   QueryClientProvider,
   createQuery,
@@ -61,6 +67,11 @@ function parseBrowseTab(value: SearchValue): BrowseView | undefined {
     : undefined;
 }
 
+function RootChatRedirect() {
+  const location = useLocation();
+  return <Navigate href={`/chat${location.search}`} />;
+}
+
 function BrowseIndexPage() {
   const [searchParams] = useSearchParams();
   return <BrowsePage initialView={parseBrowseTab(searchParams.tab)} />;
@@ -112,8 +123,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
   onMount(() => {
     const created = props.createChatBus({
       onDisconnect() {
-        // Reconnection/backoff is handled inside the bus itself; nothing to
-        // do here beyond the status transition onStatus already reports.
+        setChatFrame({ type: "connection", status: "closed" });
       },
       onFrame(frame) {
         // Every frame is also handed to the chat page (via `chatFrame`) so it
@@ -141,6 +151,11 @@ function ConnectedApp(props: Required<AppDependencies>) {
       },
       onStatus(status) {
         setConnection(status);
+        setChatFrame({ type: "connection", status });
+        if (status === "open") {
+          invalidateNamedKey(queryClient, "conversations");
+          invalidateNamedKey(queryClient, "messages");
+        }
       },
     });
     setBus(created);
@@ -160,8 +175,9 @@ function ConnectedApp(props: Required<AppDependencies>) {
   return (
     <AppContextProvider value={value}>
       <Router root={Shell}>
-        <Route component={ChatPage} path="/" />
+        <Route component={RootChatRedirect} path="/" />
         <Route component={ChatPage} path="/chat" />
+        <Route component={ChatPage} path="/chat/:conversationId" />
         <Route component={ProposalsPage} path="/proposals" />
         <Route component={ProposalsPage} path="/proposals/queue" />
         <Route

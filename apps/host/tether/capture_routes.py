@@ -9,6 +9,8 @@ endpoint has no unconfigured/503 path.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 from snekok import Err
@@ -16,8 +18,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether.app_runtime import app_runtime
-from tether.conversation_model import MessageDraft
 from tether.conversation_routes import MessageRead
+from tether.conversation_turns import (
+    CaptureTurnRequest,
+    SilentChatFrameSink,
+)
 from tether.voice_http import (
     audio_upload_error_response,
     read_audio_upload,
@@ -50,16 +55,22 @@ async def capture_voice(request: Request) -> Response:
         return JSONResponse(
             {"detail": "no speech detected in the audio"}, status_code=422
         )
-    conversation = (
-        await app_runtime(request.app).conversation_service.list_conversations()
-    )[0]
-    message = await app_runtime(request.app).conversation_service.append_message(
-        MessageDraft(
-            content=normalised_transcript,
+    runtime = app_runtime(request.app)
+    conversation = await runtime.conversation_service.fetch_main_conversation()
+    ticket = await runtime.conversation_turns.submit(
+        CaptureTurnRequest(
             conversation_id=conversation.id,
-            role="user",
-        )
+            prompt=normalised_transcript,
+            request_id=uuid4(),
+        ),
+        SilentChatFrameSink(),
     )
+    _ = await runtime.conversation_turns.wait(ticket.turn_id)
+    captured_messages = await runtime.conversation_service.fetch_messages(
+        conversation.id,
+        turn_id=ticket.turn_id,
+    )
+    message = captured_messages[0]
     return JSONResponse(
         {
             "transcript": normalised_transcript,

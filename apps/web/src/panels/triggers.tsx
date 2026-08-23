@@ -1,15 +1,19 @@
+import { A, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 
+import { useHost } from "../app-context";
 import type {
   CreateTrigger,
+  ScheduledOccurrence,
   TriggersHost,
   Trigger,
   TriggerActionKind,
   TriggerRecurrence,
 } from "../host/triggers";
 import { ApiError } from "../host/error";
+import { conversationLabel } from "../host/chat";
 import { formatDateTime } from "../lib/format";
 import { panelClass } from "../lib/panel";
 import { queryKeys } from "../lib/query-keys";
@@ -35,6 +39,19 @@ function browserTimezone(): string {
 function formatFireTime(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
+}
+
+function occurrenceTurnHref(
+  occurrence: ScheduledOccurrence,
+): string | undefined {
+  if (occurrence.turn === null || occurrence.target_conversation_id === null) {
+    return undefined;
+  }
+  const path =
+    occurrence.target_conversation_kind === "main"
+      ? "/chat"
+      : `/chat/${occurrence.target_conversation_id}`;
+  return `${path}?turn=${occurrence.turn.id}`;
 }
 
 function reminderActionLabel(
@@ -69,6 +86,7 @@ function sameDefinition(a: Trigger, b: Trigger): boolean {
     a.model_profile === b.model_profile &&
     a.recurrence === b.recurrence &&
     a.action_kind === b.action_kind &&
+    a.target_conversation_id === b.target_conversation_id &&
     a.wall_time === b.wall_time &&
     a.timezone === b.timezone &&
     a.weekday === b.weekday &&
@@ -88,10 +106,46 @@ const WEEKDAYS = [
 
 export function TriggersPanel(props: { api: TriggersHost }) {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const chat = useHost("chat");
   const triggersQuery = createQuery(() => ({
     queryFn: () => props.api.listTriggers(),
     queryKey: queryKeys.triggers,
   }));
+  const conversationsQuery = createQuery(() => ({
+    queryFn: () => chat.listConversations(),
+    queryKey: queryKeys.conversations,
+  }));
+  const occurrenceId = () =>
+    typeof searchParams.occurrence === "string"
+      ? searchParams.occurrence
+      : undefined;
+  const occurrenceQuery = createQuery(() => ({
+    enabled: occurrenceId() !== undefined,
+    queryFn: () => props.api.fetchOccurrence(occurrenceId() ?? ""),
+    queryKey: ["trigger-occurrence", occurrenceId()],
+  }));
+  const filteredTriggers = () => {
+    const requestedTrigger =
+      typeof searchParams.trigger === "string"
+        ? searchParams.trigger
+        : undefined;
+    const requestedConversation =
+      typeof searchParams.conversation === "string"
+        ? searchParams.conversation
+        : undefined;
+    return (triggersQuery.data ?? []).filter(
+      (trigger) =>
+        (requestedTrigger === undefined || trigger.id === requestedTrigger) &&
+        (requestedConversation === undefined ||
+          trigger.target_conversation_id === requestedConversation),
+    );
+  };
+  const requestedFilterMissing = () =>
+    !triggersQuery.isPending &&
+    (typeof searchParams.trigger === "string" ||
+      typeof searchParams.conversation === "string") &&
+    filteredTriggers().length === 0;
 
   const [recurrence, setRecurrence] = createSignal<TriggerRecurrence>("once");
   const [actionKind, setActionKind] =
@@ -101,12 +155,24 @@ export function TriggersPanel(props: { api: TriggersHost }) {
   const [timeOfDay, setTimeOfDay] = createSignal("09:00");
   const [timezone, setTimezone] = createSignal(browserTimezone());
   const [weekday, setWeekday] = createSignal(0);
+  const [targetConversationId, setTargetConversationId] = createSignal("");
   const [formOpen, setFormOpen] = createSignal(false);
   const [error, setError] = createSignal<string | undefined>();
   // The trigger being edited, as observed at click time: its version is the
   // optimistic-concurrency token and its definition is the basis a 409 retry
   // is judged against. Undefined when the form is in create mode.
   const [editing, setEditing] = createSignal<Trigger | undefined>();
+
+  createEffect(() => {
+    if (targetConversationId().length === 0) {
+      const main = conversationsQuery.data?.find(
+        (conversation) => conversation.kind === "main",
+      );
+      if (main !== undefined) {
+        setTargetConversationId(main.id);
+      }
+    }
+  });
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.triggers });
@@ -124,6 +190,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
     setTimeOfDay("09:00");
     setTimezone(browserTimezone());
     setWeekday(0);
+    setTargetConversationId("");
   };
 
   const startEdit = (trigger: Trigger) => {
@@ -136,6 +203,7 @@ export function TriggersPanel(props: { api: TriggersHost }) {
     setPayload(trigger.payload);
     setRecurrence(trigger.recurrence);
     setActionKind(trigger.action_kind);
+    setTargetConversationId(trigger.target_conversation_id ?? "");
     if (trigger.recurrence === "once") {
       setFireAt(localDateTimeStamp(new Date(trigger.next_fire_at)));
     } else {
@@ -150,6 +218,10 @@ export function TriggersPanel(props: { api: TriggersHost }) {
     const rec = recurrence();
     if (payload().trim().length === 0) {
       setError("Add a reminder message");
+      return;
+    }
+    if (actionKind() === "prompt" && targetConversationId().length === 0) {
+      setError("Choose a Conversation target");
       return;
     }
     let fireAtIso: string | null = null;
@@ -170,6 +242,8 @@ export function TriggersPanel(props: { api: TriggersHost }) {
       fire_at: fireAtIso,
       payload: payload().trim(),
       recurrence: rec,
+      target_conversation_id:
+        actionKind() === "prompt" ? targetConversationId() : null,
       time_of_day: rec === "once" ? null : timeOfDay(),
       timezone: rec === "once" ? null : timezone(),
       weekday: rec === "weekly" ? weekday() : null,
@@ -367,6 +441,39 @@ export function TriggersPanel(props: { api: TriggersHost }) {
                 : "Your text is delivered verbatim as a notification when it fires."}
             </span>
           </div>
+          <Show when={actionKind() === "prompt"}>
+            <div class="grid gap-1">
+              <span
+                class={fieldLabelClass}
+                id="reminder-conversation-target-label"
+              >
+                Conversation target
+              </span>
+              <select
+                aria-labelledby="reminder-conversation-target-label"
+                class={selectClass}
+                name="target_conversation_id"
+                onChange={(event) => {
+                  setTargetConversationId(event.currentTarget.value);
+                }}
+                value={targetConversationId()}
+              >
+                <For each={conversationsQuery.data ?? []}>
+                  {(conversation) => (
+                    <option value={conversation.id}>
+                      {conversationLabel(
+                        conversation,
+                        conversationsQuery.data ?? [],
+                      )}
+                    </option>
+                  )}
+                </For>
+              </select>
+              <span class="text-muted-foreground text-xs">
+                Future firings use this Conversation and its pinned profile.
+              </span>
+            </div>
+          </Show>
           <Show when={recurrence() === "once"}>
             <TextField onChange={setFireAt} value={fireAt()}>
               <TextFieldLabel>Date and time</TextFieldLabel>
@@ -434,8 +541,78 @@ export function TriggersPanel(props: { api: TriggersHost }) {
           Reminders deliver text or run an agent prompt at a time you choose.
         </p>
       </Show>
+      <Show when={requestedFilterMissing()}>
+        <p class="text-muted-foreground mt-3 text-sm" role="status">
+          No matching reminder was found.
+        </p>
+      </Show>
+      <Show
+        when={
+          occurrenceQuery.isError &&
+          occurrenceQuery.error instanceof ApiError &&
+          occurrenceQuery.error.status === 404
+        }
+      >
+        <p class="text-muted-foreground mt-3 text-sm" role="status">
+          Scheduled occurrence was not found.
+        </p>
+      </Show>
+      <Show
+        when={
+          occurrenceQuery.isError &&
+          !(
+            occurrenceQuery.error instanceof ApiError &&
+            occurrenceQuery.error.status === 404
+          )
+        }
+      >
+        <div class="mt-3 flex items-center gap-2" role="alert">
+          <p class="text-destructive text-sm">
+            Scheduled occurrence could not be loaded.
+          </p>
+          <Button
+            aria-label="Retry occurrence"
+            onClick={() => {
+              void occurrenceQuery.refetch();
+            }}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Retry
+          </Button>
+        </div>
+      </Show>
+      <Show when={occurrenceQuery.data}>
+        {(occurrence) => (
+          <article
+            aria-label="Scheduled occurrence"
+            class="bg-muted mt-3 rounded-md border px-3 py-2 text-sm"
+          >
+            <p class="font-medium">{occurrence().payload}</p>
+            <p class="text-muted-foreground text-xs">
+              {occurrence().status} · intended{" "}
+              {formatFireTime(occurrence().intended_fire_at)}
+            </p>
+            <p class="text-xs">
+              Target: {occurrence().target_conversation_name ?? "None"}
+            </p>
+            <Show when={occurrenceTurnHref(occurrence())}>
+              {(href) => (
+                <A
+                  aria-label="Open exact scheduled turn"
+                  class="text-primary text-xs font-medium"
+                  href={href()}
+                >
+                  Open scheduled turn
+                </A>
+              )}
+            </Show>
+          </article>
+        )}
+      </Show>
       <ul class="mt-3 space-y-2">
-        <For each={triggersQuery.data ?? []}>
+        <For each={filteredTriggers()}>
           {(trigger) => (
             <li
               aria-label={`Reminder: ${trigger.payload}`}
@@ -445,6 +622,45 @@ export function TriggersPanel(props: { api: TriggersHost }) {
               <span class="text-muted-foreground text-xs">{` · ${trigger.recurrence} · ${trigger.status}`}</span>
               <Show when={trigger.status !== "completed"}>
                 <span class="text-muted-foreground text-xs">{` · next ${formatFireTime(trigger.next_fire_at)}`}</span>
+              </Show>
+              <Show when={trigger.action_kind === "prompt"}>
+                <div class="basis-full space-y-0.5 text-xs">
+                  <p>
+                    Target:{" "}
+                    {trigger.target_conversation_name ?? "Unknown Conversation"}
+                  </p>
+                  <p>
+                    Pinned profile:{" "}
+                    {trigger.model_profile ??
+                      trigger.latest_occurrence?.model_profile ??
+                      "Conversation profile at firing"}
+                  </p>
+                </div>
+              </Show>
+              <Show when={trigger.latest_occurrence}>
+                {(occurrence) => (
+                  <div class="basis-full space-y-0.5 text-xs">
+                    <p>
+                      Latest: {occurrence().status} · intended{" "}
+                      {formatFireTime(occurrence().intended_fire_at)}
+                    </p>
+                    <p>Push: {occurrence().push_status}</p>
+                    <Show when={occurrence().failure_summary}>
+                      {(failure) => <p class="text-destructive">{failure()}</p>}
+                    </Show>
+                    <Show when={occurrenceTurnHref(occurrence())}>
+                      {(href) => (
+                        <A
+                          aria-label="Open scheduled turn"
+                          class="text-primary font-medium"
+                          href={href()}
+                        >
+                          Open scheduled turn
+                        </A>
+                      )}
+                    </Show>
+                  </div>
+                )}
               </Show>
               <Button
                 aria-label={reminderActionLabel("Edit", trigger)}

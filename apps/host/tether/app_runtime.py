@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from tether.bucket_items import BucketItemService
     from tether.chat_engine import ConversationRuntimeRegistry
     from tether.chat_turn import ConversationTurnQueue
+    from tether.conversation_turns import ConversationTurns
     from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
     from tether.events import EventHub
@@ -57,6 +58,7 @@ class AppRuntime:
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
     conversation_turn_queue: ConversationTurnQueue
+    conversation_turns: ConversationTurns
     event_hub: EventHub
     health_connect_ingestion: HealthConnectIngestion
     health_connect_telemetry: HealthConnectTelemetry

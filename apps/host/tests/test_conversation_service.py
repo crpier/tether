@@ -10,9 +10,10 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid7
 
-from snekql.sqlite import Config, Database, update
+from snekql.sqlite import Config, Database, insert, update
 from snektest import (
     assert_eq,
+    assert_in,
     assert_is_none,
     assert_raises,
     assert_true,
@@ -21,9 +22,15 @@ from snektest import (
     test,
 )
 
-from tether.conversation_model import ConversationNotFoundError, MessageDraft
+from tether.conversation_model import (
+    ConversationArchiveBlockedError,
+    ConversationNotFoundError,
+    ConversationValidationError,
+    MessageDraft,
+)
 from tether.conversation_store import Message, create_conversation_schema
 from tether.conversations import ConversationService
+from tether.trigger_store import ScheduledTrigger, create_trigger_schema
 
 GAP = timedelta(minutes=5)
 
@@ -33,8 +40,250 @@ async def conversation_service() -> AsyncGenerator[ConversationService]:
     """A fresh, isolated conversation database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_conversation_schema(db)
+    await create_trigger_schema(db)
     yield ConversationService(db)
     await db.close()
+
+
+@test()
+async def first_access_creates_the_permanent_main_conversation() -> None:
+    """The singleton Main Conversation has explicit lifecycle state."""
+    service = await load_fixture(conversation_service())
+
+    conversations = await service.list_conversations()
+
+    assert_eq(len(conversations), 1)
+    assert_eq(conversations[0].kind, "main")
+    assert_eq(conversations[0].status, "active")
+    assert_eq(conversations[0].display_name, None)
+    assert_eq(conversations[0].scope_brief, None)
+
+
+@test()
+async def create_scoped_conversation_persists_its_scope() -> None:
+    """A named Scoped Conversation starts active with its first scope revision."""
+    service = await load_fixture(conversation_service())
+
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    assert_eq(conversation.kind, "scoped")
+    assert_eq(conversation.status, "active")
+    assert_eq(conversation.display_name, "Garden planning")
+    assert_eq(conversation.scope_brief, "Plan this year's vegetable garden.")
+    assert_eq(conversation.scope_revision, 1)
+
+
+@test()
+async def scoped_conversation_display_names_need_not_be_unique() -> None:
+    """Conversation UUIDs, not presentation names, preserve identity."""
+    service = await load_fixture(conversation_service())
+    first = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan the vegetable garden.",
+    )
+
+    second = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan the flower garden.",
+    )
+
+    assert_true(first.id != second.id)
+    assert_eq(first.display_name, second.display_name)
+
+
+@test()
+async def create_scoped_conversation_rejects_a_blank_display_name() -> None:
+    """Whitespace cannot stand in for a Scoped Conversation's display name."""
+    service = await load_fixture(conversation_service())
+
+    with assert_raises(ConversationValidationError):
+        _ = await service.create_scoped_conversation(
+            display_name="   ",
+            scope_brief="Plan this year's vegetable garden.",
+        )
+
+
+@test()
+async def create_scoped_conversation_rejects_a_blank_scope_brief() -> None:
+    """Whitespace cannot stand in for a Scoped Conversation's scope brief."""
+    service = await load_fixture(conversation_service())
+
+    with assert_raises(ConversationValidationError):
+        _ = await service.create_scoped_conversation(
+            display_name="Garden planning",
+            scope_brief="\n\t",
+        )
+
+
+@test()
+async def editing_scope_increments_its_revision() -> None:
+    """Each scope edit advances the revision used by later turns."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    updated = await service.update_scoped_conversation(
+        conversation.id,
+        scope_brief="Plan vegetables and irrigation.",
+    )
+
+    assert_eq(updated.scope_brief, "Plan vegetables and irrigation.")
+    assert_eq(updated.scope_revision, 2)
+    assert_eq(updated.pi_session_id, conversation.pi_session_id)
+
+
+@test()
+async def archiving_scoped_conversation_hides_it_and_rotates_its_session() -> None:
+    """Archival keeps canonical state but removes Scoped Conversation navigation."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    archived = await service.archive_conversation(conversation.id)
+
+    assert_eq(archived.status, "archived")
+    assert_true(archived.pi_session_id != conversation.pi_session_id)
+    assert_eq(
+        [listed.id for listed in await service.list_conversations()],
+        [(await service.fetch_main_conversation()).id],
+    )
+
+
+@test()
+async def archive_is_blocked_by_a_nonterminal_conversation_turn_when_present() -> None:
+    """Pending or running durable turns keep their target Conversation active."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+    await service.database.migrate(
+        {
+            "test_pending_conversation_turn": (
+                'INSERT INTO "conversation_turn" ('
+                '"id", "conversation_id", "origin", '
+                '"scope_revision_snapshot", "status") '
+                f"VALUES ('018f0000-0000-7000-8000-000000000099', "
+                f"'{conversation.id}', 'interactive', 1, 'pending')"
+            ),
+        }
+    )
+
+    with assert_raises(ConversationArchiveBlockedError):
+        _ = await service.archive_conversation(conversation.id)
+
+
+@test()
+async def archive_is_blocked_by_an_active_targeted_prompt_trigger_when_present() -> (
+    None
+):
+    """An active Scheduled prompt keeps its target Conversation available."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+    async with service.database.transaction(mode="immediate") as transaction:
+        _ = await transaction.execute(
+            insert(
+                ScheduledTrigger(
+                    recurrence="daily",
+                    action_kind="prompt",
+                    payload="plan the garden",
+                    target_conversation_id=conversation.id,
+                    timezone="UTC",
+                    wall_time="09:00",
+                    next_fire_at=datetime(2030, 1, 1, 9, tzinfo=UTC),
+                    status="active",
+                )
+            )
+        )
+
+    with assert_raises(ConversationArchiveBlockedError):
+        _ = await service.archive_conversation(conversation.id)
+
+
+@test()
+async def restoring_scoped_conversation_returns_it_to_active_navigation() -> None:
+    """A restored Scoped Conversation keeps its canonical identity and scope."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+    _ = await service.archive_conversation(conversation.id)
+
+    restored = await service.restore_conversation(conversation.id)
+
+    assert_eq(restored.status, "active")
+    assert_eq(restored.archived_at, None)
+    assert_in(restored.id, [item.id for item in await service.list_conversations()])
+
+
+@test()
+async def list_orders_scoped_conversations_by_latest_message_activity() -> None:
+    """Main stays pinned while active Scoped Conversations follow Message recency."""
+    service = await load_fixture(conversation_service())
+    _ = await service.create_scoped_conversation(
+        display_name="Older",
+        scope_brief="An older active thread.",
+    )
+    newer = await service.create_scoped_conversation(
+        display_name="Newer",
+        scope_brief="A newer active thread.",
+    )
+    _ = await service.append_message(
+        MessageDraft(content="latest", conversation_id=newer.id, role="user")
+    )
+
+    conversations = await service.list_conversations()
+
+    assert_eq(
+        [conversation.display_name for conversation in conversations],
+        [None, "Newer", "Older"],
+    )
+
+
+@test()
+async def marking_conversation_read_persists_latest_message_sequence() -> None:
+    """Read position advances to the Conversation's current Message tail."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.fetch_main_conversation()
+    _ = await service.append_message(
+        MessageDraft(content="one", conversation_id=conversation.id, role="user")
+    )
+    _ = await service.append_message(
+        MessageDraft(content="two", conversation_id=conversation.id, role="assistant")
+    )
+
+    read = await service.mark_conversation_read(conversation.id)
+
+    assert_eq(read.last_read_seq, 2)
+    assert_eq((await service.fetch_conversation(conversation.id)).last_read_seq, 2)
+
+
+@test()
+async def marking_conversation_read_accepts_an_observed_message_sequence() -> None:
+    """A client marks only the Message sequence it actually rendered."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.fetch_main_conversation()
+    _ = await service.append_message(
+        MessageDraft(content="seen", conversation_id=conversation.id, role="assistant")
+    )
+    _ = await service.append_message(
+        MessageDraft(content="raced", conversation_id=conversation.id, role="assistant")
+    )
+
+    read = await service.mark_conversation_read(conversation.id, last_read_seq=1)
+
+    assert_eq(read.last_read_seq, 1)
 
 
 @test()
@@ -92,46 +341,6 @@ async def resolve_session_keeps_pi_session_when_never_used() -> None:
     )
 
     assert_eq(resolved.pi_session_id, conversation.pi_session_id)
-
-
-@test()
-async def clear_conversation_drops_history_and_rotates_session() -> None:
-    """Clearing empties the transcript and starts a fresh pi session."""
-    service = await load_fixture(conversation_service())
-    conversation = (await service.list_conversations())[0]
-    _ = await service.append_message(
-        MessageDraft(
-            content="old topic",
-            conversation_id=conversation.id,
-            role="user",
-        )
-    )
-
-    cleared = await service.clear_conversation(conversation.id)
-
-    assert_eq(cleared.id, conversation.id)
-    assert_true(cleared.pi_session_id != conversation.pi_session_id)
-    assert_eq(await service.fetch_messages(conversation.id), [])
-
-
-@test()
-async def clear_conversation_resets_the_sequence_counter() -> None:
-    """After clearing, the next appended row starts the sequence over at 1."""
-    service = await load_fixture(conversation_service())
-    conversation = (await service.list_conversations())[0]
-    _ = await service.append_message(
-        MessageDraft(content="one", conversation_id=conversation.id, role="user")
-    )
-    _ = await service.append_message(
-        MessageDraft(content="two", conversation_id=conversation.id, role="assistant")
-    )
-
-    _ = await service.clear_conversation(conversation.id)
-    appended = await service.append_message(
-        MessageDraft(content="fresh", conversation_id=conversation.id, role="user")
-    )
-
-    assert_eq(appended.seq, 1)
 
 
 @test()

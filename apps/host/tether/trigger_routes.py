@@ -25,18 +25,27 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from tether import trigger_capabilities
+from tether.app_runtime import app_runtime
 from tether.capabilities import rest_response, translate_domain_errors
-from tether.trigger_capabilities import TRIGGER_ERRORS, TriggerRead, TriggerSpecBody
+from tether.trigger_capabilities import (
+    TRIGGER_ERRORS,
+    ScheduledOccurrenceRead,
+    TriggerRead,
+    TriggerSpecBody,
+)
 from tether.triggers import TriggerNotFoundError
 
 
 class CreateTriggerRequest(TriggerSpecBody):
     """Body for creating a Scheduled trigger."""
 
+    target_conversation_id: UUID | None = None
+
 
 class UpdateTriggerRequest(TriggerSpecBody):
-    """Body for replacing a trigger's definition at an observed version."""
+    """Body for replacing a trigger's future definition."""
 
+    target_conversation_id: UUID | None = None
     version: PositiveInt
 
 
@@ -68,8 +77,29 @@ router = APIRouter()
 @_translate_domain_errors
 async def create_trigger(request: Request, body: CreateTriggerRequest) -> Response:
     """Create a Scheduled trigger."""
-    outcome = await trigger_capabilities.create(request, body.to_spec())
+    outcome = await trigger_capabilities.create(
+        request,
+        body.to_spec(),
+        target_conversation_id=body.target_conversation_id,
+    )
     return rest_response(outcome, status_code=201)
+
+
+@router.get(
+    "/api/scheduled-occurrences/{occurrence_id}",
+    response_model=ScheduledOccurrenceRead,
+)
+@_translate_domain_errors
+async def fetch_scheduled_occurrence(
+    request: Request,
+    occurrence_id: str,
+) -> Response:
+    """Fetch one immutable firing independently of its trigger definition."""
+    outcome = await trigger_capabilities.read_occurrence(
+        request,
+        _path_trigger_id(occurrence_id),
+    )
+    return rest_response(outcome)
 
 
 @router.get("/api/triggers", response_model=list[TriggerRead])
@@ -84,8 +114,21 @@ async def update_trigger(
     request: Request, body: UpdateTriggerRequest, trigger_id: str
 ) -> Response:
     """Replace a trigger's definition, re-arming it from its next occurrence."""
+    trigger_uuid = _path_trigger_id(trigger_id)
+    current = await app_runtime(request.app).trigger_service.fetch(trigger_uuid)
+    target_conversation_id = (
+        body.target_conversation_id
+        if "target_conversation_id" in body.model_fields_set
+        else current.target_conversation_id
+        if body.action_kind == "prompt" and current.action_kind == "prompt"
+        else None
+    )
     outcome = await trigger_capabilities.update(
-        request, _path_trigger_id(trigger_id), body.to_spec(), body.version
+        request,
+        trigger_uuid,
+        body.to_spec(),
+        body.version,
+        target_conversation_id=target_conversation_id,
     )
     return rest_response(outcome)
 

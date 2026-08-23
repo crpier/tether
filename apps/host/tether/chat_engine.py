@@ -42,10 +42,11 @@ class RuntimeRegistryConfig:
 
 @dataclass(slots=True)
 class _RuntimeSlot:
-    """Live runtime plus idle bookkeeping."""
+    """Live runtime plus idle and submitted-scope bookkeeping."""
 
     last_used: float
     runtime: PiRuntime
+    scope_revision: int = 1
 
 
 class ConversationRuntimeRegistry:
@@ -88,34 +89,46 @@ class ConversationRuntimeRegistry:
         if slot is not None:
             await slot.runtime.shutdown()
 
-    async def _conversation_system_prompt(self) -> str:
-        """The persona plus the current standing Todo digest, if a provider is wired.
-
-        A failing digest provider must never block a conversation from spawning,
-        so its failure degrades to the bare persona.
-        """
+    async def _conversation_system_prompt(self, scope_brief: str | None) -> str:
+        """Compose the persona, standing Todos, and exact submitted scope."""
         if self.config.todo_digest_provider is None:
-            return compose_conversation_prompt("")
-        try:
-            # Shield the digest's DB read so it always runs to completion and
-            # returns its pooled connection, even when the turn task is cancelled
-            # mid-spawn (a browser that closes the socket right after prompting).
-            # Without the shield a cancellation landing inside the read's
-            # transaction leaks the connection and wedges DB close at shutdown.
-            digest = await asyncio.shield(self.config.todo_digest_provider())
-        except Exception:
-            digest = ""
-        return compose_conversation_prompt(digest)
+            prompt = compose_conversation_prompt("")
+        else:
+            try:
+                digest = await asyncio.shield(self.config.todo_digest_provider())
+            except Exception:
+                digest = ""
+            prompt = compose_conversation_prompt(digest)
+        if scope_brief is None:
+            return prompt
+        return f"{prompt}\n\n## Conversation scope\n{scope_brief}"
 
     async def runtime_for(self, conversation: Conversation[Fetched]) -> PiRuntime:
-        """Return the live runtime for a conversation, spawning lazily."""
+        """Return a runtime using the Conversation's current scope fields."""
+        return await self.runtime_for_snapshot(
+            conversation,
+            scope_brief=conversation.scope_brief,
+            scope_revision=conversation.scope_revision,
+        )
+
+    async def runtime_for_snapshot(
+        self,
+        conversation: Conversation[Fetched],
+        *,
+        scope_brief: str | None,
+        scope_revision: int,
+    ) -> PiRuntime:
+        """Return a runtime configured from one immutable turn scope snapshot."""
         conversation_key = str(conversation.id)
         slot = self._runtimes.get(conversation_key)
         if slot is not None and slot.runtime.process.returncode is None:
             # A live process bound to the conversation's *current* pi session is
             # reusable; one left on a rotated-out session must be torn down so
             # the next turn starts clean instead of reloading stale context.
-            if slot.runtime.session_id == str(conversation.pi_session_id):
+            if (
+                slot.runtime.session_id == str(conversation.pi_session_id)
+                and slot.scope_revision == scope_revision
+            ):
                 slot.last_used = self._now()
                 return slot.runtime
             await slot.runtime.shutdown()
@@ -130,7 +143,7 @@ class ConversationRuntimeRegistry:
                 pi_binary=self.config.pi_binary,
                 session_dir=self.config.session_root / conversation_key,
                 session_id=str(conversation.pi_session_id),
-                system_prompt=await self._conversation_system_prompt(),
+                system_prompt=await self._conversation_system_prompt(scope_brief),
                 tool_base_url=self.config.tool_base_url,
                 tool_secret=self.config.tool_secret,
             ),
@@ -152,7 +165,9 @@ class ConversationRuntimeRegistry:
                 await runtime.shutdown()
                 raise
         self._runtimes[conversation_key] = _RuntimeSlot(
-            last_used=self._now(), runtime=runtime
+            last_used=self._now(),
+            runtime=runtime,
+            scope_revision=scope_revision,
         )
         return runtime
 

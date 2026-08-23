@@ -5,15 +5,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from uuid import uuid7
 
-from fastapi import FastAPI
 from snektest import assert_eq, test
 from starlette.testclient import TestClient
 
-from tether.app_runtime import app_runtime
-from tether.chat_turn import ChatTurnDependencies
-from tether.model_selection import AgentModelConfig
-from tether.scheduler import ScheduledChatPromptRunner
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
@@ -44,40 +40,6 @@ def make_client(root: Path) -> TestClient:
     )
 
 
-def make_model_app(root: Path) -> FastAPI:
-    """Create an app whose faux provider reports the model used for each turn."""
-    return create_app(
-        config=AppConfig(
-            app_password=APP_PASSWORD,
-            database_path=root / "tether.sqlite3",
-            default_model="cheap",
-            extra_extension_paths=(
-                Path(__file__).resolve().parents[2]
-                / "agent/tests/fixtures/model-echo-faux.ts",
-            ),
-            kb_root=root / ".tether",
-            model_allowlist=(
-                AgentModelConfig(
-                    display_name="Cheap",
-                    id="cheap",
-                    model_id="tether-chat-cheap-faux",
-                    provider="faux",
-                ),
-                AgentModelConfig(
-                    display_name="Smart",
-                    id="smart",
-                    model_id="tether-chat-smart-faux",
-                    provider="faux",
-                ),
-            ),
-            scheduler_tick_seconds=60,
-            session_secret=SESSION_SECRET,
-            tool_base_url="http://127.0.0.1:9",
-        ),
-        telemetry_settings=TelemetrySettings(install_global_provider=False),
-    )
-
-
 def login(client: TestClient) -> None:
     """Authenticate the browser surface."""
     response = client.post("/api/auth/login", json={"password": APP_PASSWORD})
@@ -97,63 +59,99 @@ def wait_for_answer(
     raise AssertionError("scheduled chat turn did not settle")
 
 
-def schedule_prompt(client: TestClient, prompt: str) -> None:
-    """Create one agent-prompt trigger due on the fast scheduler."""
+def wait_for_occurrence(
+    client: TestClient,
+    trigger_id: str,
+) -> dict[str, Any]:
+    """Poll briefly until one prompt occurrence reaches durable success."""
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        trigger = next(
+            item
+            for item in client.get("/api/triggers").json()
+            if item["id"] == trigger_id
+        )
+        occurrence = trigger["latest_occurrence"]
+        if occurrence is not None and occurrence["status"] == "succeeded":
+            return trigger
+        time.sleep(0.05)
+    raise AssertionError("scheduled occurrence did not settle")
+
+
+def schedule_prompt(client: TestClient, prompt: str) -> dict[str, Any]:
+    """Create one targeted prompt occurrence due on the fast scheduler."""
+    target_id = client.get("/api/conversations").json()[0]["id"]
     created = client.post(
         "/api/triggers",
         json={
             "recurrence": "once",
             "action_kind": "prompt",
             "payload": prompt,
+            "target_conversation_id": target_id,
             "fire_at": (datetime.now(UTC) + timedelta(milliseconds=200)).isoformat(),
         },
     )
     assert_eq(created.status_code, 201)
+    return created.json()
 
 
 @test()
-def a_fired_agent_prompt_runs_as_a_user_chat_turn() -> None:
-    """The normal chat transcript contains the scheduled prompt and its answer."""
+def a_fired_agent_prompt_runs_as_a_scheduled_chat_turn() -> None:
+    """The target transcript marks the automated prompt as Scheduled context."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
 
-        schedule_prompt(client, "summarise my day")
+        trigger = schedule_prompt(client, "summarise my day")
         messages = wait_for_answer(client, conversation_id)
+        stored = wait_for_occurrence(client, trigger["id"])
 
     assert_eq(
         [(message["role"], message["content"]) for message in messages],
-        [("user", "summarise my day"), ("assistant", "script complete")],
+        [("scheduled", "summarise my day"), ("assistant", "script complete")],
+    )
+    assert_eq(stored["target_conversation_id"], conversation_id)
+    assert_eq(stored["target_conversation_name"], "Main")
+    assert_eq(stored["latest_occurrence"]["status"], "succeeded")
+    assert_eq(stored["latest_occurrence"]["turn"]["status"], "succeeded")
+    assert_eq(
+        messages[0]["turn"]["occurrence_id"],
+        stored["latest_occurrence"]["id"],
     )
 
 
 @test()
-def a_scheduled_prompt_uses_its_pinned_profile() -> None:
-    """The scheduled turn runs with its profile instead of the chat default."""
-    with TemporaryDirectory() as directory:
-        application = make_model_app(Path(directory))
-        with TestClient(application) as client:
-            login(client)
-            runtime = app_runtime(application)
-            runner = ScheduledChatPromptRunner(
-                ChatTurnDependencies(
-                    conversation_service=runtime.conversation_service,
-                    dreaming_enabled=runtime.dreaming_enabled,
-                    dreaming_service=runtime.dreaming_service,
-                    logger=runtime.logger,
-                    runtime_registry=runtime.conversation_runtime_registry,
-                    trace_recorder=runtime.trace_recorder,
-                    turn_queue=runtime.conversation_turn_queue,
-                ),
-                event_publisher=runtime.event_hub,
+def exact_occurrence_route_survives_later_recurrence_and_trigger_deletion() -> None:
+    """A Scheduled Message keeps an immutable inspectable firing identity."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        trigger = schedule_prompt(client, "summarise my day")
+        messages = wait_for_answer(client, conversation_id)
+        stored = wait_for_occurrence(client, trigger["id"])
+        occurrence_id = messages[0]["turn"]["occurrence_id"]
+        deleted = client.delete(
+            f"/api/triggers/{trigger['id']}",
+            params={"version": stored["version"]},
+        )
+        if deleted.status_code == 409:
+            current = next(
+                item
+                for item in client.get("/api/triggers").json()
+                if item["id"] == trigger["id"]
             )
-            portal = client.portal
-            if portal is None:
-                raise AssertionError("test client portal is unavailable")
+            deleted = client.delete(
+                f"/api/triggers/{trigger['id']}",
+                params={"version": current["version"]},
+            )
 
-            answer = portal.call(runner.run, "summarise my day", "smart")
+        occurrence = client.get(f"/api/scheduled-occurrences/{occurrence_id}")
 
-    assert_eq(answer, "tether-chat-smart-faux")
+    assert_eq(deleted.status_code, 200)
+    assert_eq(occurrence.status_code, 200)
+    assert_eq(occurrence.json()["id"], occurrence_id)
+    assert_eq(occurrence.json()["turn"]["id"], messages[0]["turn_id"])
+    assert_eq(occurrence.json()["target_conversation_kind"], "main")
 
 
 @test()
@@ -166,6 +164,7 @@ def a_scheduled_prompt_waits_for_an_active_chat_turn() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "interactive prompt",
                 }
@@ -183,7 +182,7 @@ def a_scheduled_prompt_waits_for_an_active_chat_turn() -> None:
         [
             ("user", "interactive prompt"),
             ("assistant", "script complete"),
-            ("user", "scheduled prompt"),
+            ("scheduled", "scheduled prompt"),
             ("assistant", "script complete"),
         ],
     )
@@ -206,7 +205,7 @@ def a_fired_agent_prompt_invalidates_connected_chat_messages() -> None:
             else:
                 raise AssertionError("scheduled chat turn did not invalidate messages")
 
-    assert_eq(frame["keys"], ["messages", "conversations"])
+    assert_eq(sorted(frame["keys"]), ["conversations", "messages"])
 
 
 @test()

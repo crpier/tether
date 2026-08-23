@@ -305,11 +305,59 @@ export interface paths {
     };
     /**
      * List Conversations
-     * @description List host-owned conversations.
+     * @description List active Conversations unless archived state is explicitly requested.
      */
     get: operations["list_conversations_api_conversations_get"];
     put?: never;
+    /**
+     * Create Conversation
+     * @description Create an active Scoped Conversation.
+     */
+    post: operations["create_conversation_api_conversations_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Fetch Conversation
+     * @description Fetch one Conversation including archived lifecycle state.
+     */
+    get: operations["fetch_conversation_api_conversations__conversation_id__get"];
+    put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update Conversation
+     * @description Edit one Scoped Conversation's name or scope brief.
+     */
+    patch: operations["update_conversation_api_conversations__conversation_id__patch"];
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/archive": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Archive Conversation
+     * @description Archive a Scoped Conversation whose dependent work has settled.
+     */
+    post: operations["archive_conversation_api_conversations__conversation_id__archive_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -370,11 +418,7 @@ export interface paths {
     get: operations["list_messages_api_conversations__conversation_id__messages_get"];
     put?: never;
     post?: never;
-    /**
-     * Clear Messages
-     * @description Clear one conversation's transcript and rotate its pi session.
-     */
-    delete: operations["clear_messages_api_conversations__conversation_id__messages_delete"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -394,6 +438,86 @@ export interface paths {
      * @description Select the model used for subsequent turns in one conversation.
      */
     post: operations["set_conversation_model_api_conversations__conversation_id__model_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/read": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Mark Conversation Read
+     * @description Advance durable read position to an observed or current Message tail.
+     */
+    post: operations["mark_conversation_read_api_conversations__conversation_id__read_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/restore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Restore Conversation
+     * @description Restore an archived Scoped Conversation.
+     */
+    post: operations["restore_conversation_api_conversations__conversation_id__restore_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/turns": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Nonterminal Turns
+     * @description List pending and running turns in durable FIFO order.
+     */
+    get: operations["list_nonterminal_turns_api_conversations__conversation_id__turns_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/turns/{turn_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Fetch Turn Detail
+     * @description Fetch one turn only through its owning Conversation.
+     */
+    get: operations["fetch_turn_detail_api_conversations__conversation_id__turns__turn_id__get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1154,6 +1278,26 @@ export interface paths {
      * @description Promote an ingested educational video into a study item under Recall.
      */
     post: operations["start_recall_api_recall_study_items_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/scheduled-occurrences/{occurrence_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Fetch Scheduled Occurrence
+     * @description Fetch one immutable firing independently of its trigger definition.
+     */
+    get: operations["fetch_scheduled_occurrence_api_scheduled_occurrences__occurrence_id__get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1933,6 +2077,8 @@ export interface components {
       /** Version */
       version: number;
     };
+    /** @enum {string} */
+    ConversationKind: "main" | "scoped";
     /**
      * ConversationRead
      * @description HTTP representation of a host-owned conversation.
@@ -1942,29 +2088,121 @@ export interface components {
      *     `ConversationService.resolve_session`) without hardcoding the gap.
      */
     ConversationRead: {
+      /** Archived At */
+      archived_at: string | null;
       /**
        * Created At
        * Format: date-time
        */
       created_at: string;
+      /** Display Name */
+      display_name: string | null;
+      /** Has Unread */
+      has_unread: boolean;
       /**
        * Id
        * Format: uuid7
        */
       id: string;
+      kind: components["schemas"]["ConversationKind"];
+      /** Last Read Seq */
+      last_read_seq: number;
       /** Latest Activity */
       latest_activity: string | null;
+      /** Latest Message Seq */
+      latest_message_seq: number;
+      /** Pending Turn Count */
+      pending_turn_count: number;
       /**
        * Pi Session Id
        * Format: uuid7
        */
       pi_session_id: string;
+      /** Running Turn Id */
+      running_turn_id: string | null;
+      /** Scope Brief */
+      scope_brief: string | null;
+      /** Scope Revision */
+      scope_revision: number;
       /** Selected Model */
       selected_model: string | null;
       /** Session Gap Seconds */
       session_gap_seconds: number;
+      status: components["schemas"]["ConversationStatus"];
       /** Title */
       title: string | null;
+    };
+    /** @enum {string} */
+    ConversationStatus: "active" | "archived";
+    /** @enum {string} */
+    ConversationTurnOrigin:
+      "capture" | "historical" | "interactive" | "scheduled";
+    /**
+     * ConversationTurnRead
+     * @description Flat durable turn state used for queue restoration and deep links.
+     */
+    ConversationTurnRead: {
+      /** Completed At */
+      completed_at: string | null;
+      /**
+       * Conversation Id
+       * Format: uuid7
+       */
+      conversation_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Failure Code */
+      failure_code: string | null;
+      /** Failure Summary */
+      failure_summary: string | null;
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      origin: components["schemas"]["ConversationTurnOrigin"];
+      /** Prompt */
+      prompt: string;
+      reply_mode: components["schemas"]["ReplyMode"];
+      /** Request Id */
+      request_id: string | null;
+      /** Started At */
+      started_at: string | null;
+      status: components["schemas"]["ConversationTurnStatus"];
+    };
+    /** @enum {string} */
+    ConversationTurnStatus:
+      "pending" | "running" | "succeeded" | "failed" | "cancelled";
+    /**
+     * ConversationTurnSummaryRead
+     * @description Compact lifecycle repeated beside each flat transcript Message.
+     */
+    ConversationTurnSummaryRead: {
+      /** Failure Code */
+      failure_code: string | null;
+      /** Failure Summary */
+      failure_summary: string | null;
+      /** Intended Fire At */
+      intended_fire_at: string | null;
+      /** Occurrence Id */
+      occurrence_id: string | null;
+      origin: components["schemas"]["ConversationTurnOrigin"];
+      status: components["schemas"]["ConversationTurnStatus"];
+      /** Trigger Id */
+      trigger_id: string | null;
+    };
+    /**
+     * CreateConversationRequest
+     * @description Body for creating an active Scoped Conversation.
+     */
+    CreateConversationRequest: {
+      /** Display Name */
+      display_name: string;
+      /** Scope Brief */
+      scope_brief: string;
     };
     /**
      * CreateGrantRequest
@@ -2017,6 +2255,8 @@ export interface components {
       /** Payload */
       payload: string;
       recurrence: components["schemas"]["TriggerRecurrence"];
+      /** Target Conversation Id */
+      target_conversation_id?: string | null;
       /** Time Of Day */
       time_of_day?: string | null;
       /** Timezone */
@@ -2788,6 +3028,14 @@ export interface components {
       password: string;
     };
     /**
+     * MarkConversationReadRequest
+     * @description Last Message sequence the client has actually rendered.
+     */
+    MarkConversationReadRequest: {
+      /** Last Read Seq */
+      last_read_seq: number;
+    };
+    /**
      * MatchEbookFilenameRequest
      * @description Body for labeling the document a filename hashes to.
      */
@@ -2892,9 +3140,14 @@ export interface components {
       tool_result: {
         [key: string]: unknown;
       } | null;
+      turn: components["schemas"]["ConversationTurnSummaryRead"] | null;
+      /** Turn Id */
+      turn_id: string | null;
+      /** Turn Message Seq */
+      turn_message_seq: number | null;
     };
     /** @enum {string} */
-    MessageRole: "user" | "assistant" | "tool" | "reasoning";
+    MessageRole: "user" | "scheduled" | "assistant" | "tool" | "reasoning";
     /**
      * ModelListRead
      * @description HTTP response containing the curated allowlist and global default.
@@ -2928,6 +3181,25 @@ export interface components {
       source_label: string | null;
       /** Trigger Id */
       trigger_id: string | null;
+    };
+    /** @enum {string} */
+    OccurrenceStatus:
+      "pending" | "running" | "succeeded" | "failed" | "cancelled";
+    /**
+     * OccurrenceTurnRead
+     * @description Linked Conversation-turn outcome shown with one occurrence.
+     */
+    OccurrenceTurnRead: {
+      /** Failure Code */
+      failure_code: string | null;
+      /** Failure Summary */
+      failure_summary: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      status: components["schemas"]["ConversationTurnStatus"];
     };
     /**
      * PanelRead
@@ -3199,6 +3471,9 @@ export interface components {
       /** Vapid Public Key */
       vapid_public_key: string;
     };
+    /** @enum {string} */
+    PushDeliveryStatus:
+      "not_applicable" | "pending" | "delivering" | "delivered" | "failed";
     /**
      * PushStatusRead
      * @description HTTP representation of the browser's push-subscription status.
@@ -3326,6 +3601,8 @@ export interface components {
       /** Revocable Grant Ids */
       revocable_grant_ids: string[];
     };
+    /** @enum {string} */
+    ReplyMode: "text" | "spoken";
     /**
      * ResolveProductObservationRequest
      * @description Observed version required to resolve Product feedback.
@@ -3333,6 +3610,53 @@ export interface components {
     ResolveProductObservationRequest: {
       /** Version */
       version: number;
+    };
+    /**
+     * ScheduledOccurrenceRead
+     * @description Inspectable execution and delivery outcome for one firing.
+     */
+    ScheduledOccurrenceRead: {
+      action_kind: components["schemas"]["TriggerActionKind"];
+      /** Answer Message Id */
+      answer_message_id: string | null;
+      /** Failure Code */
+      failure_code: string | null;
+      /** Failure Summary */
+      failure_summary: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Intended Fire At
+       * Format: date-time
+       */
+      intended_fire_at: string;
+      /** Model Profile */
+      model_profile: string | null;
+      /** Payload */
+      payload: string;
+      /** Push Attempts */
+      push_attempts: number;
+      /** Push Error */
+      push_error: string | null;
+      push_status: components["schemas"]["PushDeliveryStatus"];
+      status: components["schemas"]["OccurrenceStatus"];
+      /** Target Conversation Id */
+      target_conversation_id: string | null;
+      target_conversation_kind:
+        components["schemas"]["ConversationKind"] | null;
+      /** Target Conversation Name */
+      target_conversation_name: string | null;
+      /**
+       * Trigger Id
+       * Format: uuid
+       */
+      trigger_id: string;
+      /** Trigger Version */
+      trigger_version: number;
+      turn: components["schemas"]["OccurrenceTurnRead"] | null;
     };
     /**
      * SessionResponse
@@ -3703,7 +4027,7 @@ export interface components {
     TriggerActionKind: "message" | "prompt";
     /**
      * TriggerRead
-     * @description HTTP representation of a Scheduled trigger.
+     * @description HTTP representation of a Scheduled trigger and its latest firing.
      */
     TriggerRead: {
       action_kind: components["schemas"]["TriggerActionKind"];
@@ -3721,6 +4045,8 @@ export interface components {
       id: string;
       /** Last Error */
       last_error: string | null;
+      latest_occurrence:
+        components["schemas"]["ScheduledOccurrenceRead"] | null;
       /** Model Profile */
       model_profile: string | null;
       /** Next Attempt At */
@@ -3734,6 +4060,10 @@ export interface components {
       payload: string;
       recurrence: components["schemas"]["TriggerRecurrence"];
       status: components["schemas"]["TriggerStatus"];
+      /** Target Conversation Id */
+      target_conversation_id: string | null;
+      /** Target Conversation Name */
+      target_conversation_name: string | null;
       /** Timezone */
       timezone: string;
       /**
@@ -3787,6 +4117,16 @@ export interface components {
       endpoint: string;
     };
     /**
+     * UpdateConversationRequest
+     * @description Editable fields of a Scoped Conversation.
+     */
+    UpdateConversationRequest: {
+      /** Display Name */
+      display_name?: string | null;
+      /** Scope Brief */
+      scope_brief?: string | null;
+    };
+    /**
      * UpdatePanelRequest
      * @description Body for replacing a panel's definition at an observed version.
      */
@@ -3820,7 +4160,7 @@ export interface components {
     };
     /**
      * UpdateTriggerRequest
-     * @description Body for replacing a trigger's definition at an observed version.
+     * @description Body for replacing a trigger's future definition.
      */
     UpdateTriggerRequest: {
       action_kind: components["schemas"]["TriggerActionKind"];
@@ -3829,6 +4169,8 @@ export interface components {
       /** Payload */
       payload: string;
       recurrence: components["schemas"]["TriggerRecurrence"];
+      /** Target Conversation Id */
+      target_conversation_id?: string | null;
       /** Time Of Day */
       time_of_day?: string | null;
       /** Timezone */
@@ -4458,7 +4800,9 @@ export interface operations {
   };
   list_conversations_api_conversations_get: {
     parameters: {
-      query?: never;
+      query?: {
+        include_archived?: boolean;
+      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -4472,6 +4816,145 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ConversationRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_conversation_api_conversations_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateConversationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  fetch_conversation_api_conversations__conversation_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_conversation_api_conversations__conversation_id__patch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateConversationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  archive_conversation_api_conversations__conversation_id__archive_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
@@ -4543,6 +5026,7 @@ export interface operations {
       query?: {
         limit?: number | null;
         before_seq?: number | null;
+        turn_id?: string | null;
       };
       header?: never;
       path: {
@@ -4559,37 +5043,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["MessageRead"][];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  clear_messages_api_conversations__conversation_id__messages_delete: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        conversation_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ConversationRead"];
         };
       };
       /** @description Validation Error */
@@ -4625,6 +5078,136 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  mark_conversation_read_api_conversations__conversation_id__read_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json":
+          components["schemas"]["MarkConversationReadRequest"] | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  restore_conversation_api_conversations__conversation_id__restore_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_nonterminal_turns_api_conversations__conversation_id__turns_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationTurnRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  fetch_turn_detail_api_conversations__conversation_id__turns__turn_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+        turn_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationTurnRead"];
         };
       };
       /** @description Validation Error */
@@ -5868,6 +6451,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["StudyItemRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  fetch_scheduled_occurrence_api_scheduled_occurrences__occurrence_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        occurrence_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScheduledOccurrenceRead"];
         };
       };
       /** @description Validation Error */
