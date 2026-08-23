@@ -63,6 +63,26 @@ class RecordingPublisher:
         self.events.append(event)
 
 
+class RecordingTitler:
+    """Record auto-titling schedules instead of calling a model."""
+
+    def __init__(self) -> None:
+        self.prompts: list[UUID] = []
+        self.first_messages: list[str] = []
+        self.invoked = asyncio.Event()
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def schedule(self, *, conversation_id: UUID, first_message: str) -> None:
+        self.prompts.append(conversation_id)
+        self.first_messages.append(first_message)
+        self.invoked.set()
+
+    async def drain(self) -> None:
+        """Await any spawned titling tasks."""
+        if self._tasks:
+            _ = await asyncio.gather(*self._tasks)
+
+
 class RecordingSink:
     """Collect typed execution frames in delivery order."""
 
@@ -347,6 +367,61 @@ async def submitted_turn_settles_messages_under_one_contiguous_identity() -> Non
     assert_eq([message.turn_id for message in messages], [ticket.turn_id] * 2)
     assert_eq([message.turn_message_seq for message in messages], [1, 2])
     assert_eq([frame.turn_id for frame in sink.frames], [ticket.turn_id] * 6)
+
+
+@fixture
+async def titling_turns_fixture() -> AsyncGenerator[
+    tuple[ConversationTurns, ConversationService, RecordingTitler]
+]:
+    database = await Database.initialize(backend=Config(database=":memory:"))
+    await create_conversation_schema(database)
+    await create_trigger_schema(database)
+    service = ConversationService(
+        database,
+        model_catalog=AgentModelCatalog(default_model=None, models=()),
+    )
+    titler = RecordingTitler()
+    turns = ConversationTurns(
+        ChatTurnDependencies(
+            conversation_service=service,
+            dreaming_enabled=False,
+            dreaming_service=cast("Any", DisabledDreaming()),
+            logger=structlog.stdlib.get_logger("test"),
+            runtime_registry=cast("Any", RuntimeRegistry(SuccessfulRuntime())),
+            titler=titler,
+            trace_recorder=None,
+            turn_queue=ConversationTurnQueue(),
+        )
+    )
+    try:
+        yield turns, service, titler
+    finally:
+        await turns.shutdown()
+        await database.close()
+
+
+@test()
+async def an_untitled_conversation_is_titled_from_its_first_prompt() -> None:
+    """The first user message schedules one auto-titling run."""
+    turns, service, titler = await load_fixture(titling_turns_fixture())
+    conversation = await service.create_scoped_conversation(
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    ticket = await turns.submit(
+        InteractiveTurnRequest(
+            conversation_id=conversation.id,
+            prompt="When should I start tomato seedlings?",
+            request_id=uuid7(),
+        ),
+        RecordingSink(),
+    )
+    _ = await turns.wait(ticket.turn_id)
+    _ = await asyncio.wait_for(titler.invoked.wait(), timeout=2.0)
+    await titler.drain()
+
+    assert_eq(titler.prompts, [conversation.id])
+    assert_eq(titler.first_messages, ["When should I start tomato seedlings?"])
 
 
 @test()

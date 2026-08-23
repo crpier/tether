@@ -63,11 +63,11 @@ export class FakeChatHost implements ChatHost {
       .padStart(12, "0");
     const created: Conversation = {
       ...conversation,
-      display_name: body.display_name.trim(),
+      display_name: body.display_name?.trim() ?? null,
       id: `018f0000-0000-7000-8000-${sequence}`,
       kind: "scoped",
       scope_brief: body.scope_brief.trim(),
-      title: body.display_name.trim(),
+      title: body.display_name?.trim() ?? null,
     };
     this.storedConversations = [...this.storedConversations, created];
     return Promise.resolve(created);

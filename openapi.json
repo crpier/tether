@@ -1027,8 +1027,15 @@
         "description": "Body for creating an active Scoped Conversation.",
         "properties": {
           "display_name": {
-            "title": "Display Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           },
           "scope_brief": {
             "title": "Scope Brief",
@@ -1036,7 +1043,6 @@
           }
         },
         "required": [
-          "display_name",
           "scope_brief"
         ],
         "title": "CreateConversationRequest",

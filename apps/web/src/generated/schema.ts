@@ -2200,7 +2200,7 @@ export interface components {
      */
     CreateConversationRequest: {
       /** Display Name */
-      display_name: string;
+      display_name?: string | null;
       /** Scope Brief */
       scope_brief: string;
     };

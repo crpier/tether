@@ -115,12 +115,39 @@ describe("Conversation navigation", () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host, undefined, { path: "/chat?new=1" });
 
-    expect(await screen.findByLabelText("Conversation name")).toBeVisible();
+    expect(
+      await screen.findByLabelText("Conversation name (optional)"),
+    ).toBeVisible();
     expect(host.chat.messageCalls).toBe(0);
     expect(host.chat.markConversationReadCalls).toEqual([]);
     expect(
       screen.queryByRole("heading", { name: "Main Chat" }),
     ).not.toBeInTheDocument();
+  });
+
+  test("creates an untitled Scoped Conversation that names itself later", async () => {
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversations = [conversation];
+    renderApp(host, undefined, { path: "/chat?new=1" });
+
+    fireEvent.input(await screen.findByLabelText("Scope brief"), {
+      target: { value: "Track irrigation work." },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create conversation" }),
+    );
+
+    await waitFor(() => {
+      expect(host.chat.createConversationCalls).toEqual([
+        { scope_brief: "Track irrigation work." },
+      ]);
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toMatch(/^\/chat\/[0-9a-f-]{36}$/);
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Untitled chat" }),
+    ).toBeVisible();
   });
 
   test("creates duplicate-named Scoped Conversations and opens the UUID route", async () => {
@@ -129,9 +156,12 @@ describe("Conversation navigation", () => {
     host.chat.storedConversations = [conversation, existing];
     renderApp(host, undefined, { path: "/chat?new=1" });
 
-    fireEvent.input(await screen.findByLabelText("Conversation name"), {
-      target: { value: "Garden" },
-    });
+    fireEvent.input(
+      await screen.findByLabelText("Conversation name (optional)"),
+      {
+        target: { value: "Garden" },
+      },
+    );
     fireEvent.input(screen.getByLabelText("Scope brief"), {
       target: { value: "Track irrigation work." },
     });

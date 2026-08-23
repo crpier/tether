@@ -24,6 +24,7 @@ from tether.bucket_item_search import BucketItemSearchService
 from tether.bucket_items import BucketItemService
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
 from tether.chat_turn import ChatTurnDependencies, ConversationTurnQueue
+from tether.conversation_titling import ConversationTitler, PiTitleGenerator
 from tether.conversation_turns import ConversationTurns
 from tether.conversations import ConversationService
 from tether.dreaming import (
@@ -55,7 +56,11 @@ from tether.memory_workspace_service import (
     MemoryWorkspaceService,
     memory_workspace_root,
 )
-from tether.model_selection import AgentModelCatalog
+from tether.model_selection import (
+    AgentModelCatalog,
+    AgentModelConfig,
+    ModelNotAllowedError,
+)
 from tether.notification_delivery import (
     EventNotifier,
     PushDeliveryNotifier,
@@ -250,6 +255,53 @@ def _build_proposal_component(
             event_publisher=event_publisher,
             notification_service=notification_service,
         ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _TitlerDependencies:
+    """Collaborators required to compose first-message auto-titling."""
+
+    bootstrap: HostBootstrap
+    config: AppConfig
+    conversation_service: ConversationService
+    kb_root: Path
+    model_catalog: AgentModelCatalog
+    logger: Logger
+
+
+def _build_conversation_titler(
+    dependencies: _TitlerDependencies,
+) -> ConversationTitler | None:
+    """Wire first-message auto-titling over an ephemeral pi one-shot.
+
+    Prefers the configured title model and falls back to the allowlist
+    default; returns `None` when no model is available to title with.
+    """
+    config = dependencies.config
+    catalog = dependencies.model_catalog
+    title_model: AgentModelConfig | None = None
+    if config.conversation_title_model is not None:
+        try:
+            title_model = catalog.resolve(config.conversation_title_model)
+        except ModelNotAllowedError:
+            title_model = None
+    title_model = title_model or catalog.default_config
+    if title_model is None:
+        return None
+    runner = EphemeralPiPromptRunner(
+        ephemeral_pi_config(
+            dependencies.bootstrap,
+            config=config,
+            kb_root=dependencies.kb_root,
+            run_kind="titling",
+            model=title_model,
+        )
+    )
+    return ConversationTitler(
+        conversation_service=dependencies.conversation_service,
+        generator=PiTitleGenerator(runner),
+        logger=dependencies.logger,
     )
 
 
@@ -639,6 +691,16 @@ async def compose_core_services(
     )
     _ = resources.push_async_callback(provider_auth_service.shutdown)
     dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
+    titler = _build_conversation_titler(
+        _TitlerDependencies(
+            bootstrap=bootstrap,
+            config=config,
+            conversation_service=conversation_service,
+            kb_root=host.kb_root,
+            model_catalog=model_catalog,
+            logger=host.logger,
+        )
+    )
     conversation_turns = ConversationTurns(
         ChatTurnDependencies(
             conversation_service=conversation_service,
@@ -646,6 +708,7 @@ async def compose_core_services(
             dreaming_service=dreaming_service,
             logger=host.logger,
             runtime_registry=runtime_registry,
+            titler=titler,
             trace_recorder=bootstrap.trace_recorder,
             turn_queue=conversation_turn_queue,
         )

@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 type RunKind = Literal[
-    "conversation", "scheduled", "recall", "gmail", "gmail_purge", "dreaming"
+    "conversation",
+    "scheduled",
+    "recall",
+    "gmail",
+    "gmail_purge",
+    "dreaming",
+    "titling",
 ]
 """Host entry point that opened an agent run."""
 type Termination = Literal["completed", "error", "aborted", "timeout"]

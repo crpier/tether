@@ -57,6 +57,8 @@ class AppConfig:
     kosync_userkey: str = ""
     logging_level: str = "INFO"
     log_file: str | Path | None = None
+    conversation_title_model: str | None = "gpt-5.6-luna"
+    """Allowlist model id used to auto-title untitled chats from message one."""
     model_allowlist: Sequence[AgentModelConfig] = field(default_factory=tuple)
     pi_binary: Path | None = None
     provider_auth_backend: ProviderAuthBackend | None = None

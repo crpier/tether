@@ -972,6 +972,7 @@ class ConversationTurns:
             message = await self._claim_and_append(turn, lease_id)
             if message is None:
                 return False
+            self._schedule_titling(turn, message)
             self._publish_navigation_state_later(include_messages=True)
             await sink.send(
                 UserMessageFrame(
@@ -1060,6 +1061,19 @@ class ConversationTurns:
             )
             await self._send_terminal(await self._fetch_turn(turn.id), sink)
             return True
+
+    def _schedule_titling(
+        self,
+        turn: ConversationTurn[Fetched],
+        message: Message[Fetched],
+    ) -> None:
+        """Fire-and-forget auto-titling from the first interactive message."""
+        if turn.origin != "interactive" or self.dependencies.titler is None:
+            return
+        self.dependencies.titler.schedule(
+            conversation_id=turn.conversation_id,
+            first_message=message.content,
+        )
 
     async def _claim_and_append(
         self,

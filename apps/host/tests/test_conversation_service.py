@@ -95,15 +95,72 @@ async def scoped_conversation_display_names_need_not_be_unique() -> None:
 
 
 @test()
-async def create_scoped_conversation_rejects_a_blank_display_name() -> None:
-    """Whitespace cannot stand in for a Scoped Conversation's display name."""
+async def create_scoped_conversation_allows_an_untitled_chat() -> None:
+    """A chat can start unnamed; auto-titling fills the name in later."""
     service = await load_fixture(conversation_service())
 
-    with assert_raises(ConversationValidationError):
-        _ = await service.create_scoped_conversation(
-            display_name="   ",
-            scope_brief="Plan this year's vegetable garden.",
-        )
+    conversation = await service.create_scoped_conversation(
+        display_name=None,
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    assert_eq(conversation.kind, "scoped")
+    assert_eq(conversation.status, "active")
+    assert_is_none(conversation.display_name)
+    assert_is_none(conversation.title)
+    assert_eq(conversation.scope_brief, "Plan this year's vegetable garden.")
+
+
+@test()
+async def a_blank_display_name_creates_an_untitled_chat() -> None:
+    """Whitespace stands in for 'no name yet', not for a validation error."""
+    service = await load_fixture(conversation_service())
+
+    conversation = await service.create_scoped_conversation(
+        display_name="   ",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    assert_is_none(conversation.display_name)
+    assert_is_none(conversation.title)
+
+
+@test()
+async def set_generated_title_names_an_untitled_chat() -> None:
+    """The first generated title fills both presentation columns."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    applied = await service.set_generated_title(
+        conversation.id,
+        title="Vegetable garden planning",
+    )
+
+    assert_true(applied)
+    stored = await service.fetch_conversation(conversation.id)
+    assert_eq(stored.title, "Vegetable garden planning")
+    assert_eq(stored.display_name, "Vegetable garden planning")
+
+
+@test()
+async def set_generated_title_never_overrides_a_named_chat() -> None:
+    """Once named — by generation or by hand — the title is stable."""
+    service = await load_fixture(conversation_service())
+    conversation = await service.create_scoped_conversation(
+        display_name="Garden planning",
+        scope_brief="Plan this year's vegetable garden.",
+    )
+
+    applied = await service.set_generated_title(
+        conversation.id,
+        title="Vegetable garden planning",
+    )
+
+    assert_true(not applied)
+    stored = await service.fetch_conversation(conversation.id)
+    assert_eq(stored.title, "Garden planning")
 
 
 @test()
