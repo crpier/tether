@@ -60,13 +60,24 @@ async function mockWidgetConversation(page: Page): Promise<void> {
     await route.fulfill({
       json: [
         {
+          archived_at: null,
+          created_at: new Date().toISOString(),
+          display_name: null,
+          has_unread: false,
           id: CONVERSATION_ID,
+          kind: "main",
+          last_read_seq: 99,
+          latest_activity: new Date().toISOString(),
+          latest_message_seq: 99,
+          pending_turn_count: 0,
           pi_session_id: CONVERSATION_ID,
-          title: "Widget fixture",
+          running_turn_id: null,
+          scope_brief: null,
+          scope_revision: 1,
           selected_model: null,
           session_gap_seconds: 3600,
-          latest_activity: new Date().toISOString(),
-          created_at: new Date().toISOString(),
+          status: "active",
+          title: null,
         },
       ],
     });

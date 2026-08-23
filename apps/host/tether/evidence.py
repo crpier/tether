@@ -91,7 +91,7 @@ class EvidenceResolver:
             message: Message[Fetched] | None = await transaction.fetch_one_or_none(
                 select(Message).where(Message.id.eq(message_id))
             )
-        if message is None:
+        if message is None or message.role != "user":
             raise EvidenceNotFoundError(uri)
         return MessageEvidence(
             content=message.content,

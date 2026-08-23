@@ -17,6 +17,7 @@ from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from starlette.testclient import TestClient
 
+from tether.notification_delivery import PushNotification
 from tether.push import PushService
 from tether.push_errors import WebPushGoneFailure
 from tether.push_store import PushStore, create_push_schema
@@ -127,7 +128,9 @@ async def fake_browser_stub_subscriptions_are_not_sent() -> None:
     transport = RecordingPushTransport()
     _ = await service.subscribe("urn:tether:browser:fake", p256dh="k", auth="a")
 
-    await StoredPushSender(push_service=service, transport=transport).send("hello")
+    await StoredPushSender(push_service=service, transport=transport).send(
+        PushNotification(body="hello")
+    )
 
     assert_eq(transport.sent, [])
 
@@ -139,9 +142,21 @@ async def stored_sender_delivers_to_live_subscriptions() -> None:
     transport = RecordingPushTransport()
     _ = await service.subscribe(ENDPOINT, p256dh="k", auth="a")
 
-    await StoredPushSender(push_service=service, transport=transport).send("hello")
+    await StoredPushSender(push_service=service, transport=transport).send(
+        PushNotification(body="hello")
+    )
 
-    assert_eq(transport.sent, [(ENDPOINT, "k", "a", "hello")])
+    assert_eq(
+        transport.sent,
+        [
+            (
+                ENDPOINT,
+                "k",
+                "a",
+                '{"body":"hello","title":"Tether","url":"/"}',
+            )
+        ],
+    )
 
 
 @test()
@@ -152,7 +167,9 @@ async def stored_sender_prunes_gone_subscriptions() -> None:
     transport.gone_endpoints.add(ENDPOINT)
     _ = await service.subscribe(ENDPOINT, p256dh="k", auth="a")
 
-    await StoredPushSender(push_service=service, transport=transport).send("hello")
+    await StoredPushSender(push_service=service, transport=transport).send(
+        PushNotification(body="hello")
+    )
     status = await service.status(ENDPOINT)
 
     assert_eq(status.subscribed, False)

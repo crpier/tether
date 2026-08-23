@@ -1,4 +1,4 @@
-import { useSearchParams } from "@solidjs/router";
+import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import {
   For,
@@ -15,7 +15,15 @@ import {
 import type { JSX } from "solid-js";
 
 import { useAppContext, useHost } from "../app-context";
-import type { ChatHost, Conversation } from "../host/chat";
+import {
+  ConversationArchiveBlockedError,
+  conversationLabel,
+  type ChatHost,
+  type Conversation,
+  type ConversationTurn,
+  type UpdateConversation,
+} from "../host/chat";
+import { ApiError } from "../host/error";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
 import { createConversationMode } from "../conversation-mode";
 import { createLiveChatTurn } from "../live-chat-turn";
@@ -28,12 +36,19 @@ import type { ArtifactPointer } from "../components/widgets/artifact-widget";
 import { queryKeys } from "../lib/query-keys";
 import { formatToolResult } from "../lib/tool-result";
 import { Button } from "@/components/ui/button";
-import { TextField, TextFieldTextArea } from "@/components/ui/text-field";
+import {
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+  TextFieldTextArea,
+} from "@/components/ui/text-field";
 
 function messageLabel(role: ChatRole): string {
   switch (role) {
     case "assistant":
       return "Tether";
+    case "scheduled":
+      return "Scheduled";
     case "tool":
       return "Tool";
     case "user":
@@ -48,6 +63,8 @@ function bubbleClass(role: ChatRole): string {
       return `${base} bg-primary text-primary-foreground ml-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "assistant":
       return `${base} bg-muted mr-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
+    case "scheduled":
+      return `${base} border-amber-500/40 bg-amber-500/10 mr-auto max-w-[96%] border px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "tool":
       return `${base} text-muted-foreground mx-auto py-0.5 text-xs italic`;
   }
@@ -747,6 +764,28 @@ function MessageRow(props: {
             <strong class={bubbleLabelClass}>
               {messageLabel(message().role)}
             </strong>
+            <Show when={message().role === "scheduled" && message().turn}>
+              {(turn) => (
+                <div class="text-muted-foreground space-y-0.5 text-xs">
+                  <p>
+                    Intended {turn().intended_fire_at ?? "time unavailable"} ·{" "}
+                    {turn().status}
+                  </p>
+                  <Show when={turn().failure_summary}>
+                    {(failure) => <p class="text-destructive">{failure()}</p>}
+                  </Show>
+                  <Show when={turn().occurrence_id}>
+                    {(occurrenceId) => (
+                      <A
+                        href={`/browse/reminders?occurrence=${occurrenceId()}`}
+                      >
+                        View scheduled occurrence
+                      </A>
+                    )}
+                  </Show>
+                </div>
+              )}
+            </Show>
             <Show
               when={
                 message().role === "assistant" && props.isSpoken(message().text)
@@ -803,7 +842,9 @@ function MessageRow(props: {
 const NEAR_TOP_THRESHOLD_PX = 100;
 
 function MessageRows(props: {
+  focusRowId?: string;
   rows: TimelineRow[];
+  searchEnabled: boolean;
   working: boolean;
   startedAt: number | null;
   stopped: boolean;
@@ -845,6 +886,18 @@ function MessageRows(props: {
     matchingIds().at(activeMatch() % Math.max(matchingIds().length, 1)),
   );
   const rowElements = new Map<string, HTMLDivElement>();
+  createEffect(() => {
+    const focusRowId = props.focusRowId;
+    const element =
+      focusRowId === undefined ? undefined : rowElements.get(focusRowId);
+    if (viewport !== undefined && element !== undefined) {
+      queueMicrotask(() => {
+        if (viewport !== undefined) {
+          viewport.scrollTop = Math.max(0, element.offsetTop - 24);
+        }
+      });
+    }
+  });
   createEffect(() => {
     const matchId = activeMatchId();
     const element =
@@ -901,83 +954,87 @@ function MessageRows(props: {
 
   return (
     <div class="relative flex min-h-0 flex-1 flex-col gap-2">
-      <Show
-        fallback={
-          <Button
-            aria-label="Search transcript"
-            class="absolute top-2 right-2 z-10 shadow-sm"
-            onClick={() => {
-              setSearchOpen(true);
-              void props.onSearchOpen();
-            }}
-            size="sm"
-            type="button"
-            variant="secondary"
-          >
-            Search
-          </Button>
-        }
-        when={searchOpen()}
-      >
-        <div class="bg-card flex shrink-0 items-center gap-2 rounded-lg border p-2 shadow-sm">
-          <input
-            aria-label="Search transcript"
-            autofocus
-            class="border-input min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1 text-sm"
-            onInput={(event) => {
-              setSearchQuery(event.currentTarget.value);
-            }}
-            placeholder="Search transcript"
-            type="search"
-            value={searchQuery()}
-          />
-          <span
-            class="text-muted-foreground min-w-14 text-right text-xs"
-            role="status"
-          >
-            {matchingIds().length.toString()}{" "}
-            {matchingIds().length === 1 ? "match" : "matches"}
-          </span>
-          <Button
-            aria-label="Previous transcript match"
-            disabled={matchingIds().length < 2}
-            onClick={() => {
-              setActiveMatch(
-                (current) =>
-                  (current - 1 + matchingIds().length) % matchingIds().length,
-              );
-            }}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            ↑
-          </Button>
-          <Button
-            aria-label="Next transcript match"
-            disabled={matchingIds().length < 2}
-            onClick={() => {
-              setActiveMatch((current) => (current + 1) % matchingIds().length);
-            }}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            ↓
-          </Button>
-          <Button
-            aria-label="Close transcript search"
-            onClick={() => {
-              setSearchOpen(false);
-              setSearchQuery("");
-            }}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            ✕
-          </Button>
-        </div>
+      <Show when={props.searchEnabled}>
+        <Show
+          fallback={
+            <Button
+              aria-label="Search transcript"
+              class="absolute top-2 right-2 z-10 shadow-sm"
+              onClick={() => {
+                setSearchOpen(true);
+                void props.onSearchOpen();
+              }}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              Search
+            </Button>
+          }
+          when={searchOpen()}
+        >
+          <div class="bg-card flex shrink-0 items-center gap-2 rounded-lg border p-2 shadow-sm">
+            <input
+              aria-label="Search transcript"
+              autofocus
+              class="border-input min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1 text-sm"
+              onInput={(event) => {
+                setSearchQuery(event.currentTarget.value);
+              }}
+              placeholder="Search transcript"
+              type="search"
+              value={searchQuery()}
+            />
+            <span
+              class="text-muted-foreground min-w-14 text-right text-xs"
+              role="status"
+            >
+              {matchingIds().length.toString()}{" "}
+              {matchingIds().length === 1 ? "match" : "matches"}
+            </span>
+            <Button
+              aria-label="Previous transcript match"
+              disabled={matchingIds().length < 2}
+              onClick={() => {
+                setActiveMatch(
+                  (current) =>
+                    (current - 1 + matchingIds().length) % matchingIds().length,
+                );
+              }}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              ↑
+            </Button>
+            <Button
+              aria-label="Next transcript match"
+              disabled={matchingIds().length < 2}
+              onClick={() => {
+                setActiveMatch(
+                  (current) => (current + 1) % matchingIds().length,
+                );
+              }}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              ↓
+            </Button>
+            <Button
+              aria-label="Close transcript search"
+              onClick={() => {
+                setSearchOpen(false);
+                setSearchQuery("");
+              }}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              ✕
+            </Button>
+          </div>
+        </Show>
       </Show>
       <section
         ref={(element) => {
@@ -1067,12 +1124,423 @@ function MessageRows(props: {
   );
 }
 
+function FocusedTurnLifecycle(props: { turn: ConversationTurn }) {
+  return (
+    <article
+      aria-label="Conversation turn lifecycle"
+      class="bg-muted/40 space-y-1 rounded-lg border px-3 py-2 text-sm"
+    >
+      <p class="font-medium">
+        {props.turn.origin === "scheduled" ? "Scheduled prompt" : "Prompt"}
+      </p>
+      <p class="whitespace-pre-wrap break-words">{props.turn.prompt}</p>
+      <p class="text-muted-foreground text-xs">Status: {props.turn.status}</p>
+      <Show when={props.turn.failure_summary}>
+        {(summary) => <p class="text-destructive text-xs">{summary()}</p>}
+      </Show>
+    </article>
+  );
+}
+
+function ConversationLoadError(props: { onRetry: () => void }) {
+  return (
+    <div
+      class="bg-card m-auto max-w-md rounded-lg border p-6 shadow-sm"
+      role="alert"
+    >
+      <h1 class="text-xl font-semibold">Conversation could not be loaded</h1>
+      <p class="text-muted-foreground mt-2 text-sm">
+        Check the host connection and try again.
+      </p>
+      <Button class="mt-4" onClick={props.onRetry} type="button">
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function ConversationNotFound() {
+  return (
+    <div class="bg-card m-auto max-w-md rounded-lg border p-6 shadow-sm">
+      <h1 class="text-xl font-semibold">Conversation not found</h1>
+      <p class="text-muted-foreground mt-2 text-sm">
+        This Conversation does not exist.
+      </p>
+      <A class="text-primary mt-4 inline-block font-medium" href="/chat">
+        Main Chat
+      </A>
+    </div>
+  );
+}
+
+function ConversationCreateForm(props: {
+  api: ChatHost;
+  onCreated: (conversation: Conversation) => void;
+}) {
+  const [displayName, setDisplayName] = createSignal("");
+  const [scopeBrief, setScopeBrief] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const submit: JSX.EventHandler<HTMLFormElement, SubmitEvent> = (event) => {
+    event.preventDefault();
+    if (
+      saving() ||
+      displayName().trim().length === 0 ||
+      scopeBrief().trim().length === 0
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError(undefined);
+    void props.api
+      .createConversation({
+        display_name: displayName().trim(),
+        scope_brief: scopeBrief().trim(),
+      })
+      .then(props.onCreated)
+      .catch(() => {
+        setError("Conversation could not be created.");
+      })
+      .finally(() => {
+        setSaving(false);
+      });
+  };
+  return (
+    <form
+      class="bg-card m-auto w-full max-w-lg space-y-4 rounded-lg border p-5"
+      onSubmit={submit}
+    >
+      <div>
+        <h1 class="text-lg font-semibold">New Scoped Conversation</h1>
+        <p class="text-muted-foreground mt-1 text-sm">
+          Name the work and give Tether a durable scope brief.
+        </p>
+      </div>
+      <TextField onChange={setDisplayName} value={displayName()}>
+        <TextFieldLabel>Conversation name</TextFieldLabel>
+        <TextFieldInput autofocus />
+      </TextField>
+      <TextField onChange={setScopeBrief} value={scopeBrief()}>
+        <TextFieldLabel>Scope brief</TextFieldLabel>
+        <TextFieldTextArea rows={4} />
+      </TextField>
+      <Show when={error()}>
+        {(message) => (
+          <p class="text-destructive text-sm" role="alert">
+            {message()}
+          </p>
+        )}
+      </Show>
+      <div class="flex gap-2">
+        <Button
+          disabled={
+            saving() ||
+            displayName().trim().length === 0 ||
+            scopeBrief().trim().length === 0
+          }
+          type="submit"
+        >
+          {saving() ? "Creating…" : "Create conversation"}
+        </Button>
+        <Button as="a" href="/chat" variant="ghost">
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function ConversationPicker(props: {
+  conversations: Conversation[];
+  onClose: () => void;
+}) {
+  let dialog: HTMLDivElement | undefined;
+  const previouslyFocused = document.activeElement;
+
+  onMount(() => {
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        props.onClose();
+        return;
+      }
+      if (event.key !== "Tab") {
+        return;
+      }
+      const elements = focusable();
+      if (elements.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    queueMicrotask(() => focusable()[0]?.focus());
+    onCleanup(() => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previouslyFocused instanceof HTMLElement) {
+        previouslyFocused.focus();
+      }
+    });
+  });
+
+  return (
+    <>
+      <div class="fixed inset-0 z-40 bg-black/40" />
+      <div
+        ref={(element) => {
+          dialog = element;
+        }}
+        aria-label="Choose conversation"
+        aria-modal="true"
+        class="bg-background fixed inset-3 z-50 flex max-h-[calc(100dvh-1.5rem)] flex-col rounded-lg border p-4 shadow-xl"
+        role="dialog"
+        tabindex={-1}
+      >
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Choose conversation</h2>
+          <Button
+            aria-label="Close conversation picker"
+            onClick={props.onClose}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Close
+          </Button>
+        </div>
+        <nav class="mt-3 min-h-0 flex-1 overflow-y-auto flex flex-col gap-2">
+          <For each={props.conversations}>
+            {(candidate) => (
+              <A
+                class="rounded-md border px-3 py-2"
+                href={
+                  candidate.kind === "main" ? "/chat" : `/chat/${candidate.id}`
+                }
+                onClick={props.onClose}
+              >
+                {conversationLabel(candidate, props.conversations)}
+              </A>
+            )}
+          </For>
+        </nav>
+      </div>
+    </>
+  );
+}
+
+function ConversationHeader(props: {
+  api: ChatHost;
+  conversation: Conversation;
+  onArchived: () => void;
+  onChanged: () => void;
+}) {
+  const navigate = useNavigate();
+  const [editing, setEditing] = createSignal(false);
+  const [displayName, setDisplayName] = createSignal(
+    props.conversation.display_name ?? "",
+  );
+  const [scopeBrief, setScopeBrief] = createSignal(
+    props.conversation.scope_brief ?? "",
+  );
+  const [error, setError] = createSignal<string>();
+  const [restoring, setRestoring] = createSignal(false);
+
+  createEffect((previousId: string | undefined) => {
+    if (props.conversation.id !== previousId) {
+      setEditing(false);
+      setDisplayName(props.conversation.display_name ?? "");
+      setScopeBrief(props.conversation.scope_brief ?? "");
+      setError(undefined);
+    }
+    return props.conversation.id;
+  }, undefined);
+
+  const save = () => {
+    const body: UpdateConversation = {};
+    const nextDisplayName = displayName().trim();
+    const nextScopeBrief = scopeBrief().trim();
+    if (nextDisplayName !== props.conversation.display_name) {
+      body.display_name = nextDisplayName;
+    }
+    if (nextScopeBrief !== props.conversation.scope_brief) {
+      body.scope_brief = nextScopeBrief;
+    }
+    if (Object.keys(body).length === 0) {
+      setEditing(false);
+      return;
+    }
+    void props.api
+      .updateConversation(props.conversation.id, body)
+      .then(() => {
+        setEditing(false);
+        props.onChanged();
+      })
+      .catch(() => {
+        setError("Conversation could not be updated.");
+      });
+  };
+  const restore = () => {
+    if (restoring()) {
+      return;
+    }
+    setRestoring(true);
+    setError(undefined);
+    void props.api
+      .restoreConversation(props.conversation.id)
+      .then(props.onChanged)
+      .catch(() => {
+        setError("Conversation could not be restored.");
+      })
+      .finally(() => {
+        setRestoring(false);
+      });
+  };
+  const archive = () => {
+    setError(undefined);
+    void props.api
+      .archiveConversation(props.conversation.id)
+      .then(props.onArchived)
+      .catch((caught: unknown) => {
+        if (
+          caught instanceof ConversationArchiveBlockedError &&
+          caught.blocker === "active_prompt_trigger"
+        ) {
+          navigate(`/browse/reminders?conversation=${props.conversation.id}`);
+          return;
+        }
+        setError(
+          caught instanceof ConversationArchiveBlockedError
+            ? "Wait for this Conversation's turns to finish before archiving."
+            : "Conversation could not be archived.",
+        );
+      });
+  };
+
+  return (
+    <header class="bg-card shrink-0 rounded-lg border px-3 py-2">
+      <Show
+        fallback={
+          <div class="flex items-start gap-3">
+            <div class="min-w-0 flex-1">
+              <h2 class="truncate text-base font-semibold">
+                {props.conversation.kind === "main"
+                  ? "Main Chat"
+                  : props.conversation.display_name}
+              </h2>
+              <Show when={props.conversation.kind === "scoped"}>
+                <p class="text-muted-foreground line-clamp-2 text-xs">
+                  {props.conversation.scope_brief}
+                </p>
+              </Show>
+            </div>
+            <Show when={props.conversation.kind === "scoped"}>
+              <Show when={props.conversation.status === "active"}>
+                <Button
+                  aria-label="Edit conversation"
+                  onClick={() => setEditing(true)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Edit
+                </Button>
+              </Show>
+              <Show
+                fallback={
+                  <Button
+                    aria-label="Archive conversation"
+                    onClick={archive}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Archive
+                  </Button>
+                }
+                when={props.conversation.status === "archived"}
+              >
+                <Button
+                  aria-label="Restore conversation"
+                  disabled={restoring()}
+                  onClick={restore}
+                  size="sm"
+                  type="button"
+                >
+                  {restoring() ? "Restoring…" : "Restore"}
+                </Button>
+              </Show>
+            </Show>
+          </div>
+        }
+        when={editing()}
+      >
+        <div class="space-y-2">
+          <TextField onChange={setDisplayName} value={displayName()}>
+            <TextFieldLabel>Conversation name</TextFieldLabel>
+            <TextFieldInput />
+          </TextField>
+          <TextField onChange={setScopeBrief} value={scopeBrief()}>
+            <TextFieldLabel>Scope brief</TextFieldLabel>
+            <TextFieldTextArea rows={3} />
+          </TextField>
+          <div class="flex gap-2">
+            <Button
+              disabled={
+                displayName().trim().length === 0 ||
+                scopeBrief().trim().length === 0
+              }
+              onClick={save}
+              size="sm"
+              type="button"
+            >
+              Save conversation
+            </Button>
+            <Button
+              onClick={() => setEditing(false)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Show>
+      <Show when={error()}>
+        {(message) => (
+          <p class="text-destructive mt-2 text-xs" role="alert">
+            {message()}
+          </p>
+        )}
+      </Show>
+    </header>
+  );
+}
+
 export function ChatPage() {
   const { bus, chatFrame, connection, openEvidence } = useAppContext();
   const api = useHost("chat");
   const artifacts = useHost("artifacts");
   const productObservations = useHost("productObservations");
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const params = useParams<{ conversationId?: string }>();
   const [searchParams] = useSearchParams();
   const promptParam = searchParams.prompt;
   const starterPrompt = typeof promptParam === "string" ? promptParam : "";
@@ -1112,8 +1580,53 @@ export function ChatPage() {
     queryFn: () => api.listConversations(),
     queryKey: queryKeys.conversations,
   }));
-  const conversation = createMemo(() => conversationsQuery.data?.[0]);
+  const requestedConversationQuery = createQuery(() => ({
+    enabled: params.conversationId !== undefined,
+    queryFn: ({ queryKey }) => api.fetchConversation(String(queryKey[2])),
+    queryKey: ["conversations", "detail", params.conversationId],
+  }));
+  const creating = createMemo(
+    () => params.conversationId === undefined && searchParams.new === "1",
+  );
+  const archivedMode = createMemo(
+    () => params.conversationId === undefined && searchParams.archived === "1",
+  );
+  const auxiliaryMode = createMemo(() => creating() || archivedMode());
+  const conversation = createMemo(() =>
+    auxiliaryMode()
+      ? undefined
+      : params.conversationId === undefined
+        ? conversationsQuery.data?.find(
+            (candidate) => candidate.kind === "main",
+          )
+        : requestedConversationQuery.data,
+  );
   const conversationId = createMemo(() => conversation()?.id);
+  const turnParam = createMemo(() => {
+    const turn = searchParams.turn;
+    return typeof turn === "string" && turn.length > 0 ? turn : undefined;
+  });
+  const routeNotFound = createMemo(
+    () =>
+      params.conversationId !== undefined &&
+      requestedConversationQuery.error instanceof ApiError &&
+      requestedConversationQuery.error.status === 404,
+  );
+  const routeLoadError = createMemo(
+    () =>
+      params.conversationId !== undefined &&
+      requestedConversationQuery.isError &&
+      !routeNotFound(),
+  );
+
+  createEffect(() => {
+    const main = conversationsQuery.data?.find(
+      (candidate) => candidate.kind === "main",
+    );
+    if (main !== undefined && params.conversationId === main.id) {
+      navigate(`/chat${window.location.search}`, { replace: true });
+    }
+  });
 
   createEffect(() => {
     const currentBus = bus();
@@ -1154,15 +1667,26 @@ export function ChatPage() {
   const conversationMode = createConversationMode({
     synthesize: (text, signal) => api.synthesizeSpeech(text, signal),
   });
+  createEffect((previousId: string | undefined) => {
+    const currentId = conversationId();
+    if (previousId !== undefined && currentId !== previousId) {
+      conversationMode.stop();
+    }
+    return currentId;
+  }, undefined);
+
   const liveTurn = createLiveChatTurn({
     conversationId,
-    // Read once per queued prompt, so toggling never mutates queued or
-    // running turns.
+    durablePendingCount: () => conversation()?.pending_turn_count ?? 0,
+    durableRunningTurnId: () => conversation()?.running_turn_id ?? undefined,
+    focusTurnId: turnParam,
     // Read once per queued prompt, so toggling never mutates queued or
     // running turns.
     replyMode: () => conversationMode.replyMode(),
     history: {
+      fetchTurn: (id, turnId) => api.fetchTurn(id, turnId),
       listMessages: (id, options) => api.listMessages(id, options),
+      listNonterminalTurns: (id) => api.listNonterminalTurns(id),
       settled: () => {
         void queryClient.invalidateQueries({
           queryKey: queryKeys.conversations,
@@ -1172,11 +1696,11 @@ export function ChatPage() {
     },
     spokenTurn: conversationMode.spokenTurn,
     transport: {
-      abort: (id) => {
-        bus()?.abort(id);
+      abort: (id, turnId) => {
+        bus()?.abort(id, turnId);
       },
-      sendPrompt: (id, content, replyMode) => {
-        bus()?.sendPrompt(id, content, replyMode);
+      sendPrompt: (id, content, replyMode, requestId) => {
+        bus()?.sendPrompt(id, content, replyMode, requestId);
       },
     },
   });
@@ -1188,10 +1712,15 @@ export function ChatPage() {
     clearContextUsage,
     contextUsage,
     dismissError,
+    durablePendingCount,
     editQueuedPrompt: savePromptEdit,
     error,
+    focusedMessageId,
+    focusedTurn,
+    focusedTurnError,
     generating,
     handleFrame,
+    highestSettledSeq,
     historyIncomplete,
     historyReady,
     loadAllMessages,
@@ -1205,6 +1734,103 @@ export function ChatPage() {
     stopped,
     working,
   } = liveTurn;
+
+  const markedRead = new Map<string, number>();
+  const readInFlight = new Map<string, number>();
+  const readFailures = new Map<string, { attempts: number; seq: number }>();
+  const [readRetryRevision, setReadRetryRevision] = createSignal(0);
+  createEffect(() => {
+    readRetryRevision();
+    const current = conversation();
+    const renderedSeq = highestSettledSeq();
+    if (
+      current?.status !== "active" ||
+      !historyReady() ||
+      renderedSeq <= current.last_read_seq ||
+      renderedSeq <= (markedRead.get(current.id) ?? 0) ||
+      renderedSeq <= (readInFlight.get(current.id) ?? 0) ||
+      (readFailures.get(current.id)?.seq === renderedSeq &&
+        (readFailures.get(current.id)?.attempts ?? 0) >= 2)
+    ) {
+      return;
+    }
+    readInFlight.set(current.id, renderedSeq);
+    queueMicrotask(() => {
+      if (conversationId() !== current.id) {
+        readInFlight.delete(current.id);
+        return;
+      }
+      void api
+        .markConversationRead(current.id, renderedSeq)
+        .then(() => {
+          readFailures.delete(current.id);
+          markedRead.set(current.id, renderedSeq);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.conversations,
+          });
+        })
+        .catch(() => {
+          const previousFailure = readFailures.get(current.id);
+          const attempts =
+            previousFailure?.seq === renderedSeq
+              ? previousFailure.attempts + 1
+              : 1;
+          readFailures.set(current.id, { attempts, seq: renderedSeq });
+          if (attempts === 1) {
+            window.setTimeout(() => {
+              setReadRetryRevision((value) => value + 1);
+            }, 100);
+          }
+        })
+        .finally(() => {
+          if (readInFlight.get(current.id) === renderedSeq) {
+            readInFlight.delete(current.id);
+          }
+        });
+    });
+  });
+
+  const [pickerOpen, setPickerOpen] = createSignal(false);
+  const [archivedRestoreError, setArchivedRestoreError] =
+    createSignal<string>();
+  const [restoringArchivedId, setRestoringArchivedId] = createSignal<string>();
+  const archivedQuery = createQuery(() => ({
+    enabled: searchParams.archived === "1",
+    queryFn: () => api.listConversations({ includeArchived: true }),
+    queryKey: ["conversations", "archived"],
+  }));
+  const refreshConversations = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    void queryClient.invalidateQueries({
+      queryKey: ["conversations", "detail", params.conversationId],
+    });
+    void queryClient.refetchQueries({ queryKey: queryKeys.conversations });
+    void queryClient.refetchQueries({
+      queryKey: ["conversations", "detail", params.conversationId],
+    });
+  };
+
+  const restoreArchived = (archivedConversationId: string) => {
+    if (restoringArchivedId() !== undefined) {
+      return;
+    }
+    setRestoringArchivedId(archivedConversationId);
+    setArchivedRestoreError(undefined);
+    void api
+      .restoreConversation(archivedConversationId)
+      .then(() => {
+        void queryClient.refetchQueries({
+          queryKey: ["conversations", "archived"],
+        });
+        refreshConversations();
+      })
+      .catch(() => {
+        setArchivedRestoreError("Conversation could not be restored.");
+      })
+      .finally(() => {
+        setRestoringArchivedId(undefined);
+      });
+  };
 
   const visibleContextUsage = createMemo(() => {
     const usage = contextUsage();
@@ -1332,11 +1958,165 @@ export function ChatPage() {
             </div>
           )}
         </Show>
+        <Show when={creating()}>
+          <ConversationCreateForm
+            api={api}
+            onCreated={(created) => {
+              refreshConversations();
+              navigate(`/chat/${created.id}`);
+            }}
+          />
+        </Show>
+        <Show when={routeNotFound()}>
+          <ConversationNotFound />
+        </Show>
+        <Show when={routeLoadError()}>
+          <ConversationLoadError
+            onRetry={() => {
+              void requestedConversationQuery.refetch();
+            }}
+          />
+        </Show>
+        <Show when={searchParams.archived === "1"}>
+          <section
+            aria-label="Archived Conversations"
+            class="bg-card rounded-lg border p-4"
+          >
+            <div class="flex items-center justify-between">
+              <h2 class="font-semibold">Archived Conversations</h2>
+              <A class="text-primary text-sm" href="/chat">
+                Back to Main
+              </A>
+            </div>
+            <Show when={archivedRestoreError()}>
+              {(message) => (
+                <p class="text-destructive mt-3 text-sm" role="alert">
+                  {message()}
+                </p>
+              )}
+            </Show>
+            <ul class="mt-3 space-y-2">
+              <For
+                each={(archivedQuery.data ?? []).filter(
+                  (candidate) => candidate.status === "archived",
+                )}
+              >
+                {(archived) => (
+                  <li class="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <A
+                      class="min-w-0 flex-1 truncate"
+                      href={`/chat/${archived.id}`}
+                    >
+                      {conversationLabel(archived, archivedQuery.data ?? [])}
+                    </A>
+                    <Button
+                      aria-label={`Restore ${conversationLabel(
+                        archived,
+                        archivedQuery.data ?? [],
+                      )}`}
+                      disabled={restoringArchivedId() !== undefined}
+                      onClick={() => {
+                        restoreArchived(archived.id);
+                      }}
+                      size="sm"
+                      type="button"
+                    >
+                      {restoringArchivedId() === archived.id
+                        ? "Restoring…"
+                        : "Restore"}
+                    </Button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </section>
+        </Show>
         <Show
-          fallback={<p class="text-muted-foreground">Loading chat…</p>}
-          when={!conversationsQuery.isLoading && conversation() !== undefined}
+          fallback={
+            <Show
+              when={
+                !creating() &&
+                !routeNotFound() &&
+                !routeLoadError() &&
+                !archivedMode()
+              }
+            >
+              <p class="text-muted-foreground">Loading chat…</p>
+            </Show>
+          }
+          when={
+            !creating() &&
+            !routeNotFound() &&
+            !routeLoadError() &&
+            !archivedMode() &&
+            !conversationsQuery.isLoading &&
+            conversation() !== undefined
+          }
         >
+          <div class="flex shrink-0 items-center gap-2 lg:hidden">
+            <Button
+              aria-label="Choose conversation"
+              onClick={() => setPickerOpen(true)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Conversations
+            </Button>
+            <A class="text-primary ml-auto text-sm" href="/chat?new=1">
+              New
+            </A>
+          </div>
+          <Show when={pickerOpen()}>
+            <ConversationPicker
+              conversations={conversationsQuery.data ?? []}
+              onClose={() => setPickerOpen(false)}
+            />
+          </Show>
+          <Show when={conversation()}>
+            {(current) => (
+              <ConversationHeader
+                api={api}
+                conversation={current()}
+                onArchived={() => {
+                  refreshConversations();
+                  navigate("/chat");
+                }}
+                onChanged={refreshConversations}
+              />
+            )}
+          </Show>
+          <div class="flex shrink-0 justify-end gap-3 text-xs">
+            <A class="text-primary" href="/chat?new=1">
+              New Conversation
+            </A>
+            <A class="text-muted-foreground" href="/chat?archived=1">
+              Archived
+            </A>
+          </div>
+          <Show when={focusedTurnError()}>
+            {(turnError) => (
+              <div
+                class={
+                  turnError() === "not_found"
+                    ? "text-muted-foreground rounded-lg border px-3 py-2 text-sm"
+                    : "text-destructive rounded-lg border px-3 py-2 text-sm"
+                }
+                role="alert"
+              >
+                {turnError() === "not_found"
+                  ? "Conversation turn was not found."
+                  : "Conversation turn could not be loaded."}
+              </div>
+            )}
+          </Show>
+          <Show
+            when={focusedMessageId() === undefined ? focusedTurn() : undefined}
+          >
+            {(turn) => <FocusedTurnLifecycle turn={turn()} />}
+          </Show>
           <MessageRows
+            focusRowId={focusedMessageId()}
             historyReady={historyReady()}
             isSpoken={(text) => conversationMode.isSpoken(text)}
             onCopy={(text) => {
@@ -1372,274 +2152,291 @@ export function ChatPage() {
               api.undoGmailArchive(messageId).then(() => undefined)
             }
             rows={rows()}
+            searchEnabled={conversation()?.status === "active"}
             startedAt={startedAt()}
             stopped={stopped()}
             working={working()}
           />
-          <div
-            aria-label="Composer context"
-            class="flex shrink-0 items-center gap-2"
-            role="group"
-          >
-            <Show when={conversation()}>
-              {(currentConversation) => (
-                <ModelSelector api={api} conversation={currentConversation()} />
-              )}
-            </Show>
-            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-              <Show when={historyIncomplete() && !generating()}>
-                <p class="text-muted-foreground text-xs" role="status">
-                  Previous turn did not finish. Send a new message to recover.
-                </p>
-              </Show>
-              <Show
-                when={
-                  startsFreshSession() &&
-                  contextUsage() === undefined &&
-                  !generating() &&
-                  !historyIncomplete()
-                }
-              >
-                <p
-                  class="text-muted-foreground text-xs"
-                  title="Pi's working context resets after a few minutes idle; chat history stays."
-                >
-                  Next message starts a fresh working session
-                </p>
-              </Show>
-              <Show when={visibleContextUsage()}>
-                {(usage) => {
-                  const roundedPercent = () =>
-                    Math.round(usage().contextPercent);
-                  const severityClass = () =>
-                    usage().contextPercent >= 90
-                      ? "border-destructive/50 text-destructive"
-                      : usage().contextPercent >= 70
-                        ? "border-amber-500/50 text-amber-700 dark:text-amber-300"
-                        : "text-muted-foreground";
-                  return (
-                    <span
-                      class={`rounded-full border px-2 py-0.5 text-xs tabular-nums ${severityClass()}`}
-                      role="status"
-                      title={`${formatContextTokens(usage().contextTokens)} of ${formatContextTokens(usage().contextWindow)} tokens · ${roundedPercent().toString()}% of pi working context`}
-                    >
-                      {formatContextTokens(usage().contextTokens)} context
-                    </span>
-                  );
-                }}
-              </Show>
-            </div>
-          </div>
-          <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
-            <Show
-              when={
-                conversationMode.enabled() &&
-                generating() &&
-                conversationMode.playbackState() === "idle"
-              }
-            >
-              <p
-                aria-live="polite"
-                class="bg-muted/40 rounded-md border px-3 py-1.5 text-sm"
-                role="status"
-              >
-                Thinking…
-              </p>
-            </Show>
-            <Show when={conversationMode.playbackState() !== "idle"}>
-              <p
-                aria-live="polite"
-                class="bg-muted/40 rounded-md border px-3 py-1.5 text-sm"
-                role="status"
-              >
-                {conversationMode.playbackState() === "error"
-                  ? "Speech playback failed."
-                  : "Speaking reply…"}
-              </p>
-            </Show>
-            <Show when={queuedPrompts().length > 0}>
-              <section
-                aria-label="Queued messages"
-                aria-live="polite"
-                class="bg-muted/40 space-y-2 rounded-lg border p-3"
-              >
-                <p class="text-muted-foreground text-xs font-medium">
-                  Queued messages
-                </p>
-                <For each={queuedPrompts()}>
-                  {(prompt, index) => (
-                    <article
-                      aria-label={`Queued message ${(index() + 1).toString()}`}
-                      class="bg-background space-y-2 rounded-md border px-3 py-2"
-                    >
-                      <Show
-                        fallback={
-                          <>
-                            <p class="whitespace-pre-wrap break-words text-sm">
-                              {prompt.content}
-                            </p>
-                            <div class="flex flex-wrap gap-2">
-                              <Button
-                                onClick={() => {
-                                  beginEditingQueuedPrompt(prompt);
-                                }}
-                                size="sm"
-                                type="button"
-                                variant="outline"
-                              >
-                                Edit
-                              </Button>
-                              <Button
-                                disabled={awaitingAgentEnd()}
-                                onClick={() => {
-                                  sendQueuedPromptNow(prompt.id);
-                                }}
-                                size="sm"
-                                type="button"
-                              >
-                                Send now
-                              </Button>
-                              <Button
-                                onClick={() => {
-                                  cancelQueuedPrompt(prompt.id);
-                                }}
-                                size="sm"
-                                type="button"
-                                variant="outline"
-                              >
-                                Cancel message
-                              </Button>
-                            </div>
-                          </>
-                        }
-                        when={editingPromptId() === prompt.id}
-                      >
-                        <label
-                          class="sr-only"
-                          for={`queued-prompt-${prompt.id.toString()}`}
-                        >
-                          Edit queued message {(index() + 1).toString()}
-                        </label>
-                        <textarea
-                          class="border-input min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-                          id={`queued-prompt-${prompt.id.toString()}`}
-                          onInput={(event) => {
-                            setEditingPromptContent(event.currentTarget.value);
-                          }}
-                          value={editingPromptContent()}
-                        />
-                        <div class="flex flex-wrap gap-2">
-                          <Button
-                            disabled={
-                              editingPromptContent().trim().length === 0
-                            }
-                            onClick={() => {
-                              saveQueuedPrompt(prompt.id);
-                            }}
-                            size="sm"
-                            type="button"
-                          >
-                            Save changes
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              setEditingPromptId(null);
-                              setEditingPromptContent("");
-                            }}
-                            size="sm"
-                            type="button"
-                            variant="outline"
-                          >
-                            Keep unchanged
-                          </Button>
-                        </div>
-                      </Show>
-                    </article>
-                  )}
-                </For>
-              </section>
-            </Show>
+          <Show when={conversation()?.status === "active"}>
             <div
-              aria-label="Message composer"
-              class="bg-card flex items-end gap-1 rounded-xl border p-1 shadow-sm"
+              aria-label="Composer context"
+              class="flex shrink-0 items-center gap-2"
               role="group"
             >
-              <TextField
-                class="min-w-0 flex-1 gap-0"
-                onChange={setDraft}
-                value={draft()}
-              >
-                <TextFieldTextArea
-                  aria-label="Message"
-                  class="min-h-11 resize-none border-0 px-2 py-2 shadow-none focus-visible:ring-0"
-                  onInput={(event) => {
-                    fitChatInputToContent(event.currentTarget);
-                  }}
-                  onKeyDown={onMessageKeyDown}
-                  placeholder={
-                    conversationMode.enabled()
-                      ? "Reply spoken…"
-                      : "Message Tether…"
+              <Show when={conversation()}>
+                {(currentConversation) => (
+                  <ModelSelector
+                    api={api}
+                    conversation={currentConversation()}
+                  />
+                )}
+              </Show>
+              <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <Show when={historyIncomplete() && !generating()}>
+                  <p class="text-muted-foreground text-xs" role="status">
+                    Previous turn did not finish. Send a new message to recover.
+                  </p>
+                </Show>
+                <Show
+                  when={
+                    startsFreshSession() &&
+                    contextUsage() === undefined &&
+                    !generating() &&
+                    !historyIncomplete()
                   }
-                  ref={(element) => {
-                    messageInput = element;
-                    queueMicrotask(() => {
-                      fitChatInputToContent(element);
-                      if (starterPrompt.length > 0) {
-                        element.focus();
-                      }
-                    });
-                  }}
-                  rows={1}
-                />
-              </TextField>
-              <div class="flex shrink-0 items-center gap-1">
-                <VoiceComposerControls
-                  active={() => conversationMode.enabled()}
-                  autoStartSignal={() => conversationMode.voiceAutoStart()}
-                  onEndConversation={() => {
-                    conversationMode.stop();
-                  }}
-                  onRecordingStart={() => conversationMode.onRecordingStart()}
-                  onRecordingStop={() => {
-                    conversationMode.onRecordingStop();
-                  }}
-                  onStartConversation={() => {
-                    conversationMode.start();
-                  }}
-                  onTranscript={handleVoiceTranscript}
-                  recordingCancelSignal={() =>
-                    conversationMode.recordingCancelSignal()
-                  }
-                  transcribe={(blob) => api.transcribeAudio(blob)}
-                />
-                <Button
-                  aria-label={busy() ? "Queue message" : "Send"}
-                  class="rounded-full"
-                  disabled={!canSend()}
-                  size="icon-sm"
-                  title={busy() ? "Queue message" : "Send"}
-                  type="submit"
                 >
-                  <span aria-hidden="true">↑</span>
-                </Button>
-                <Show when={generating()}>
-                  <Button
-                    aria-label="Stop"
-                    class="rounded-full"
-                    disabled={awaitingAgentEnd()}
-                    onClick={abort}
-                    size="icon-sm"
-                    title="Stop"
-                    type="button"
-                    variant="outline"
+                  <p
+                    class="text-muted-foreground text-xs"
+                    title="Pi's working context resets after a few minutes idle; chat history stays."
                   >
-                    <span aria-hidden="true">■</span>
-                  </Button>
+                    Next message starts a fresh working session
+                  </p>
+                </Show>
+                <Show when={visibleContextUsage()}>
+                  {(usage) => {
+                    const roundedPercent = () =>
+                      Math.round(usage().contextPercent);
+                    const severityClass = () =>
+                      usage().contextPercent >= 90
+                        ? "border-destructive/50 text-destructive"
+                        : usage().contextPercent >= 70
+                          ? "border-amber-500/50 text-amber-700 dark:text-amber-300"
+                          : "text-muted-foreground";
+                    return (
+                      <span
+                        class={`rounded-full border px-2 py-0.5 text-xs tabular-nums ${severityClass()}`}
+                        role="status"
+                        title={`${formatContextTokens(usage().contextTokens)} of ${formatContextTokens(usage().contextWindow)} tokens · ${roundedPercent().toString()}% of pi working context`}
+                      >
+                        {formatContextTokens(usage().contextTokens)} context
+                      </span>
+                    );
+                  }}
                 </Show>
               </div>
             </div>
-          </form>
+            <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
+              <Show
+                when={
+                  conversationMode.enabled() &&
+                  generating() &&
+                  conversationMode.playbackState() === "idle"
+                }
+              >
+                <p
+                  aria-live="polite"
+                  class="bg-muted/40 rounded-md border px-3 py-1.5 text-sm"
+                  role="status"
+                >
+                  Thinking…
+                </p>
+              </Show>
+              <Show when={conversationMode.playbackState() !== "idle"}>
+                <p
+                  aria-live="polite"
+                  class="bg-muted/40 rounded-md border px-3 py-1.5 text-sm"
+                  role="status"
+                >
+                  {conversationMode.playbackState() === "error"
+                    ? "Speech playback failed."
+                    : "Speaking reply…"}
+                </p>
+              </Show>
+              <Show when={durablePendingCount() > queuedPrompts().length}>
+                <p class="text-muted-foreground text-xs" role="status">
+                  {durablePendingCount().toString()} messages queued
+                </p>
+              </Show>
+              <Show when={queuedPrompts().length > 0}>
+                <section
+                  aria-label="Queued messages"
+                  aria-live="polite"
+                  class="bg-muted/40 space-y-2 rounded-lg border p-3"
+                >
+                  <p class="text-muted-foreground text-xs font-medium">
+                    Queued messages
+                  </p>
+                  <For each={queuedPrompts()}>
+                    {(prompt, index) => (
+                      <article
+                        aria-label={`Queued message ${(index() + 1).toString()}`}
+                        class="bg-background space-y-2 rounded-md border px-3 py-2"
+                      >
+                        <Show
+                          fallback={
+                            <>
+                              <p class="whitespace-pre-wrap break-words text-sm">
+                                {prompt.content}
+                              </p>
+                              <div class="flex flex-wrap gap-2">
+                                <Button
+                                  onClick={() => {
+                                    beginEditingQueuedPrompt(prompt);
+                                  }}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  disabled={
+                                    awaitingAgentEnd() ||
+                                    (prompt.turnId === undefined &&
+                                      prompt.retryable !== true)
+                                  }
+                                  onClick={() => {
+                                    sendQueuedPromptNow(prompt.id);
+                                  }}
+                                  size="sm"
+                                  type="button"
+                                >
+                                  Send now
+                                </Button>
+                                <Button
+                                  onClick={() => {
+                                    cancelQueuedPrompt(prompt.id);
+                                  }}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  Cancel message
+                                </Button>
+                              </div>
+                            </>
+                          }
+                          when={editingPromptId() === prompt.id}
+                        >
+                          <label
+                            class="sr-only"
+                            for={`queued-prompt-${prompt.id.toString()}`}
+                          >
+                            Edit queued message {(index() + 1).toString()}
+                          </label>
+                          <textarea
+                            class="border-input min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                            id={`queued-prompt-${prompt.id.toString()}`}
+                            onInput={(event) => {
+                              setEditingPromptContent(
+                                event.currentTarget.value,
+                              );
+                            }}
+                            value={editingPromptContent()}
+                          />
+                          <div class="flex flex-wrap gap-2">
+                            <Button
+                              disabled={
+                                editingPromptContent().trim().length === 0
+                              }
+                              onClick={() => {
+                                saveQueuedPrompt(prompt.id);
+                              }}
+                              size="sm"
+                              type="button"
+                            >
+                              Save changes
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                setEditingPromptId(null);
+                                setEditingPromptContent("");
+                              }}
+                              size="sm"
+                              type="button"
+                              variant="outline"
+                            >
+                              Keep unchanged
+                            </Button>
+                          </div>
+                        </Show>
+                      </article>
+                    )}
+                  </For>
+                </section>
+              </Show>
+              <div
+                aria-label="Message composer"
+                class="bg-card flex items-end gap-1 rounded-xl border p-1 shadow-sm"
+                role="group"
+              >
+                <TextField
+                  class="min-w-0 flex-1 gap-0"
+                  onChange={setDraft}
+                  value={draft()}
+                >
+                  <TextFieldTextArea
+                    aria-label="Message"
+                    class="min-h-11 resize-none border-0 px-2 py-2 shadow-none focus-visible:ring-0"
+                    onInput={(event) => {
+                      fitChatInputToContent(event.currentTarget);
+                    }}
+                    onKeyDown={onMessageKeyDown}
+                    placeholder={
+                      conversationMode.enabled()
+                        ? "Reply spoken…"
+                        : "Message Tether…"
+                    }
+                    ref={(element) => {
+                      messageInput = element;
+                      queueMicrotask(() => {
+                        fitChatInputToContent(element);
+                        if (starterPrompt.length > 0) {
+                          element.focus();
+                        }
+                      });
+                    }}
+                    rows={1}
+                  />
+                </TextField>
+                <div class="flex shrink-0 items-center gap-1">
+                  <VoiceComposerControls
+                    active={() => conversationMode.enabled()}
+                    autoStartSignal={() => conversationMode.voiceAutoStart()}
+                    onEndConversation={() => {
+                      conversationMode.stop();
+                    }}
+                    onRecordingStart={() => conversationMode.onRecordingStart()}
+                    onRecordingStop={() => {
+                      conversationMode.onRecordingStop();
+                    }}
+                    onStartConversation={() => {
+                      conversationMode.start();
+                    }}
+                    onTranscript={handleVoiceTranscript}
+                    recordingCancelSignal={() =>
+                      conversationMode.recordingCancelSignal()
+                    }
+                    transcribe={(blob) => api.transcribeAudio(blob)}
+                  />
+                  <Button
+                    aria-label={busy() ? "Queue message" : "Send"}
+                    class="rounded-full"
+                    disabled={!canSend()}
+                    size="icon-sm"
+                    title={busy() ? "Queue message" : "Send"}
+                    type="submit"
+                  >
+                    <span aria-hidden="true">↑</span>
+                  </Button>
+                  <Show when={generating()}>
+                    <Button
+                      aria-label="Stop"
+                      class="rounded-full"
+                      disabled={awaitingAgentEnd()}
+                      onClick={abort}
+                      size="icon-sm"
+                      title="Stop"
+                      type="button"
+                      variant="outline"
+                    >
+                      <span aria-hidden="true">■</span>
+                    </Button>
+                  </Show>
+                </div>
+              </div>
+            </form>
+          </Show>
         </Show>
       </div>
       <ArtifactOverlay

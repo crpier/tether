@@ -11,22 +11,22 @@ from pydantic import BaseModel, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
-from tether.chat_frames import AbortAckFrame, InvalidateFrame, NotifyFrame, ReplyMode
-from tether.chat_turn import (
-    ChatPromptSpec,
-    ChatTurnDependencies,
-    ConversationTurnQueue,
-    run_chat_prompt,
-    send_chat_error,
-    send_session_status,
+from tether.chat_frames import AbortAckFrame, ErrorFrame, InvalidateFrame, NotifyFrame
+from tether.chat_prompt import ReplyMode
+from tether.chat_turn import send_session_status
+from tether.conversation_model import ConversationNotFoundError
+from tether.conversation_turns import (
+    BrowserChatFrameSink,
+    CancelTurnRequest,
+    ConversationTurnConflictError,
+    ConversationTurnNotFoundError,
+    ConversationTurns,
+    InteractiveTurnRequest,
 )
-from tether.conversations import ConversationService
-from tether.dreaming import DreamingService
 from tether.events import EventHub, HubEvent, NotifyEvent
-from tether.structured_logging import Logger
+from tether.pi_errors import PiRuntimeError
 
 _POLICY_VIOLATION = 1008
 
@@ -46,21 +46,17 @@ class InboundFrame(BaseModel):
         | None
     ) = None
     reply_mode: ReplyMode | None = None
-    """Turn-level presentation mode; omitted values default to text."""
+    request_id: UUID | None = None
+    turn_id: UUID | None = None
 
 
 class _ChatRuntime(Protocol):
-    """Chat dependencies available while the host serves WebSockets."""
+    """Chat modules available while the host serves WebSockets."""
 
     conversation_runtime_registry: ConversationRuntimeRegistry
-    conversation_service: ConversationService
-    conversation_turn_queue: ConversationTurnQueue
-    dreaming_service: DreamingService
-    dreaming_enabled: bool
+    conversation_turns: ConversationTurns
     event_hub: EventHub
-    logger: Logger
     session_secret: str
-    trace_recorder: AgentTraceRecorder
 
 
 def _runtime(websocket: WebSocket) -> _ChatRuntime:
@@ -68,69 +64,117 @@ def _runtime(websocket: WebSocket) -> _ChatRuntime:
     return cast("_ChatRuntime", websocket.app.state.runtime)
 
 
-def _turn_dependencies(websocket: WebSocket) -> ChatTurnDependencies:
-    """Project the host runtime onto the explicit chat-turn dependency bundle."""
-    runtime = _runtime(websocket)
-    return ChatTurnDependencies(
-        conversation_service=runtime.conversation_service,
-        dreaming_service=runtime.dreaming_service,
-        dreaming_enabled=runtime.dreaming_enabled,
-        runtime_registry=runtime.conversation_runtime_registry,
-        trace_recorder=runtime.trace_recorder,
-        turn_queue=runtime.conversation_turn_queue,
-        logger=runtime.logger,
+async def _send_input_error(
+    sink: BrowserChatFrameSink,
+    *,
+    detail: str,
+    conversation_id: UUID | None = None,
+    turn_id: UUID | None = None,
+) -> None:
+    """Send one stable browser input error through the typed adapter."""
+    await sink.send(
+        ErrorFrame(
+            conversation_id=conversation_id,
+            detail=detail,
+            turn_id=turn_id,
+        )
     )
+
+
+async def _handle_prompt(
+    websocket: WebSocket,
+    sink: BrowserChatFrameSink,
+    frame: InboundFrame,
+) -> None:
+    """Validate and translate one browser prompt submission."""
+    if frame.content is None:
+        await _send_input_error(
+            sink,
+            conversation_id=frame.conversation_id,
+            detail="prompt content is required",
+        )
+        return
+    if frame.request_id is None:
+        await _send_input_error(
+            sink,
+            conversation_id=frame.conversation_id,
+            detail="prompt request_id is required",
+        )
+        return
+    try:
+        _ = await _runtime(websocket).conversation_turns.submit(
+            InteractiveTurnRequest(
+                conversation_id=frame.conversation_id,
+                prompt=frame.content,
+                reply_mode=frame.reply_mode or "text",
+                request_id=frame.request_id,
+            ),
+            sink,
+        )
+    except ConversationTurnConflictError:
+        await _send_input_error(
+            sink,
+            conversation_id=frame.conversation_id,
+            detail="request_id conflicts with an existing turn",
+        )
+    except ConversationNotFoundError:
+        await _send_input_error(
+            sink,
+            conversation_id=frame.conversation_id,
+            detail="conversation is unknown or archived",
+        )
+    except PiRuntimeError:
+        await _send_input_error(
+            sink,
+            conversation_id=frame.conversation_id,
+            detail="conversation turn execution is unavailable",
+        )
 
 
 async def _handle_frame(
     websocket: WebSocket,
+    sink: BrowserChatFrameSink,
     frame: InboundFrame,
-    running_generations: dict[UUID, asyncio.Task[str]],
 ) -> None:
-    """Dispatch one validated browser event without blocking the socket reader."""
+    """Dispatch one browser event without giving the socket execution ownership."""
     match frame.type:
         case "prompt":
-            if frame.content is None:
-                await send_chat_error(
-                    websocket,
-                    conversation_id=frame.conversation_id,
-                    detail="prompt content is required",
-                )
-                return
-            running = running_generations.get(frame.conversation_id)
-            if running is not None and not running.done():
-                await send_chat_error(
-                    websocket,
-                    conversation_id=frame.conversation_id,
-                    detail="generation already running",
-                )
-                return
-            running_generations[frame.conversation_id] = asyncio.create_task(
-                run_chat_prompt(
-                    websocket,
-                    _turn_dependencies(websocket),
-                    ChatPromptSpec(
-                        conversation_id=frame.conversation_id,
-                        content=frame.content,
-                        reply_mode=frame.reply_mode or "text",
-                    ),
-                )
-            )
+            await _handle_prompt(websocket, sink, frame)
         case "abort":
-            runtime = _runtime(websocket).conversation_runtime_registry.current_for(
-                frame.conversation_id
-            )
-            if runtime is not None:
-                _ = await runtime.client.request("abort")
-            await websocket.send_json(
-                AbortAckFrame(conversation_id=frame.conversation_id).wire()
+            if frame.turn_id is None:
+                await _send_input_error(
+                    sink,
+                    conversation_id=frame.conversation_id,
+                    detail="abort turn_id is required",
+                )
+                return
+            try:
+                _ = await _runtime(websocket).conversation_turns.cancel(
+                    CancelTurnRequest(
+                        conversation_id=frame.conversation_id,
+                        turn_id=frame.turn_id,
+                    )
+                )
+            except ConversationTurnNotFoundError:
+                await _send_input_error(
+                    sink,
+                    conversation_id=frame.conversation_id,
+                    detail="conversation turn not found",
+                    turn_id=frame.turn_id,
+                )
+                return
+            await sink.send(
+                AbortAckFrame(
+                    conversation_id=frame.conversation_id,
+                    turn_id=frame.turn_id,
+                )
             )
         case "session_status":
             runtime = _runtime(websocket).conversation_runtime_registry.current_for(
                 frame.conversation_id
             )
             if runtime is not None:
-                await send_session_status(websocket, runtime, frame.conversation_id)
+                await send_session_status(sink, runtime, frame.conversation_id)
 
 
 async def _event_pump(
@@ -162,32 +206,28 @@ async def websocket_bus(websocket: WebSocket) -> None:
         await websocket.close(code=_POLICY_VIOLATION)
         return
     await websocket.accept()
+    sink = BrowserChatFrameSink(websocket)
     subscription = _runtime(websocket).event_hub.subscribe()
     event_task = asyncio.create_task(_event_pump(websocket, subscription))
-    running_generations: dict[UUID, asyncio.Task[str]] = {}
     try:
         while True:
             try:
                 frame = InboundFrame.model_validate(await websocket.receive_json())
             except ValidationError as error:
-                await send_chat_error(
-                    websocket,
+                await _send_input_error(
+                    sink,
                     detail=error.errors(include_url=False)[0]["msg"],
                 )
                 continue
-            await _handle_frame(websocket, frame, running_generations)
+            await _handle_frame(websocket, sink, frame)
     except WebSocketDisconnect:
         return
     finally:
+        sink.detach()
         _runtime(websocket).event_hub.unsubscribe(subscription)
         _ = event_task.cancel()
-        for task in running_generations.values():
-            _ = task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await event_task
-        for task in running_generations.values():
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
 
 
 websocket_routes: list[WebSocketRoute] = [WebSocketRoute("/ws", websocket_bus)]

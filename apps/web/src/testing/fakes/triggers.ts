@@ -1,5 +1,6 @@
 import type {
   CreateTrigger,
+  ScheduledOccurrence,
   Trigger,
   TriggersHost,
   UpdateTrigger,
@@ -15,10 +16,28 @@ export class FakeTriggersHost implements TriggersHost {
   serverTriggerEdits: Record<string, Partial<Trigger>> = {};
   updateTriggerRejections: ApiError[] = [];
   deleteTriggerRejections: ApiError[] = [];
+  fetchOccurrenceRejections: ApiError[] = [];
+  storedOccurrences: ScheduledOccurrence[];
   storedTriggers: Trigger[];
 
   constructor(triggers: Trigger[] = []) {
     this.storedTriggers = triggers;
+    this.storedOccurrences = triggers.flatMap((stored) =>
+      stored.latest_occurrence === null ? [] : [stored.latest_occurrence],
+    );
+  }
+
+  fetchOccurrence(occurrenceId: string) {
+    const forced = this.fetchOccurrenceRejections.shift();
+    if (forced !== undefined) {
+      return Promise.reject(forced);
+    }
+    const occurrence = this.storedOccurrences.find(
+      (candidate) => candidate.id === occurrenceId,
+    );
+    return occurrence === undefined
+      ? Promise.reject(new ApiError(404))
+      : Promise.resolve(occurrence);
   }
 
   listTriggers() {
@@ -34,6 +53,7 @@ export class FakeTriggersHost implements TriggersHost {
         .padStart(2, "0")}`,
       payload: body.payload,
       recurrence: body.recurrence,
+      target_conversation_id: body.target_conversation_id ?? null,
     });
     this.storedTriggers = [...this.storedTriggers, created];
     return Promise.resolve(created);
@@ -72,6 +92,7 @@ export class FakeTriggersHost implements TriggersHost {
       action_kind: body.action_kind,
       payload: body.payload,
       recurrence: body.recurrence,
+      target_conversation_id: body.target_conversation_id ?? null,
       timezone: body.timezone ?? "UTC",
       version: body.version + 1,
       wall_time: body.time_of_day ?? null,

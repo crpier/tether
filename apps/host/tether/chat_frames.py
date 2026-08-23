@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from tether.chat_prompt import ReplyMode
+from tether.conversation_model import ConversationTurnStatus
 
 
 class _WireFrame(BaseModel):
@@ -31,10 +32,17 @@ class _WireFrame(BaseModel):
 
 
 class _ConversationFrame(_WireFrame):
-    """Base for turn-path frames the browser folds into the live timeline."""
+    """Base for frames optionally correlated to one durable execution."""
 
     type: Literal["chat"] = "chat"
     conversation_id: UUID
+    turn_id: UUID | None = None
+
+    def wire(self) -> dict[str, Any]:
+        """Omit `turn_id` only for status frames outside an execution."""
+        return self.model_dump(
+            mode="json", exclude={"turn_id"} if self.turn_id is None else set()
+        )
 
 
 class UserMessageFrame(_ConversationFrame):
@@ -104,6 +112,22 @@ class ToolEndFrame(_ConversationFrame):
     tool_result: dict[str, Any]
 
 
+class TurnQueuedFrame(_ConversationFrame):
+    """A durable ticket accepted at submission or duplicate attachment."""
+
+    event: Literal["turn_queued"] = "turn_queued"
+    status: ConversationTurnStatus
+
+
+class TurnEndedFrame(_ConversationFrame):
+    """The durable terminal lifecycle result for one Conversation turn."""
+
+    event: Literal["turn_ended"] = "turn_ended"
+    failure_code: str | None = None
+    failure_summary: str | None = None
+    status: ConversationTurnStatus
+
+
 class AgentEndFrame(_ConversationFrame):
     """pi finished the whole turn; the terminal frame of a turn stream.
 
@@ -135,6 +159,7 @@ class ErrorFrame(_WireFrame):
     event: Literal["error"] = "error"
     detail: str
     conversation_id: UUID | None = None
+    turn_id: UUID | None = None
 
     def wire(self) -> dict[str, Any]:
         # Omit the conversation tag entirely when absent, rather than sending a
@@ -149,6 +174,23 @@ class NotifyFrame(_WireFrame):
     trigger_id: str
     title: str | None
     body: str
+
+
+type ChatFrame = (
+    AbortAckFrame
+    | AgentEndFrame
+    | ErrorFrame
+    | MessageEndFrame
+    | MessageStartFrame
+    | SessionStatusFrame
+    | SkillStatusFrame
+    | StreamUpdateFrame
+    | ToolEndFrame
+    | ToolStartFrame
+    | TurnEndedFrame
+    | TurnQueuedFrame
+    | UserMessageFrame
+)
 
 
 class InvalidateFrame(_WireFrame):

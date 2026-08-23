@@ -5,4 +5,8 @@ class PiRuntimeError(Exception):
     """Failure while speaking to or managing a pi RPC subprocess."""
 
 
-__all__ = ["PiRuntimeError"]
+class PiPreacceptTransientError(PiRuntimeError):
+    """Known transient transport failure proven to precede prompt acceptance."""
+
+
+__all__ = ["PiPreacceptTransientError", "PiRuntimeError"]

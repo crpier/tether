@@ -24,6 +24,7 @@ from tether.bucket_item_search import BucketItemSearchService
 from tether.bucket_items import BucketItemService
 from tether.chat_engine import ConversationRuntimeRegistry, RuntimeRegistryConfig
 from tether.chat_turn import ChatTurnDependencies, ConversationTurnQueue
+from tether.conversation_turns import ConversationTurns
 from tether.conversations import ConversationService
 from tether.dreaming import (
     ConversationWindowDreamingExecutor,
@@ -59,6 +60,7 @@ from tether.notification_delivery import (
     EventNotifier,
     PushDeliveryNotifier,
     PushSender,
+    ScheduledExecutionDependencies,
     TriggerDispatcher,
     TriggerNotifier,
 )
@@ -83,7 +85,6 @@ from tether.recall_generation import PiStudyItemGenerator, StudyItemGenerator
 from tether.recall_grading import AnswerGrader, PiAnswerGrader
 from tether.scheduler import (
     EphemeralPiPromptRunner,
-    ScheduledChatPromptRunner,
     Scheduler,
     SchedulerConfig,
     SystemClock,
@@ -115,6 +116,7 @@ class _SchedulerDependencies:
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
     conversation_turn_queue: ConversationTurnQueue
+    conversation_turns: ConversationTurns
     database: Database
     dreaming_enabled: bool
     dreaming_service: DreamingService
@@ -132,6 +134,16 @@ class _SchedulerComponent:
     scheduler: Scheduler
 
 
+async def _shutdown_scheduled_execution(
+    scheduler: Scheduler,
+    conversation_turns: ConversationTurns,
+) -> None:
+    """Stop intake, settle turn owners, then bound scheduler waiter shutdown."""
+    scheduler.stop_intake()
+    await conversation_turns.shutdown()
+    await scheduler.shutdown()
+
+
 def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponent:
     """Wire the Scheduled-trigger scheduler over its dispatch collaborators.
 
@@ -142,18 +154,6 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     """
     notification_service = NotificationService(
         store=NotificationStore(dependencies.database),
-        event_publisher=dependencies.event_hub,
-    )
-    prompt_runner = ScheduledChatPromptRunner(
-        ChatTurnDependencies(
-            conversation_service=dependencies.conversation_service,
-            dreaming_enabled=dependencies.dreaming_enabled,
-            dreaming_service=dependencies.dreaming_service,
-            logger=dependencies.logger,
-            runtime_registry=dependencies.conversation_runtime_registry,
-            trace_recorder=dependencies.bootstrap.trace_recorder,
-            turn_queue=dependencies.conversation_turn_queue,
-        ),
         event_publisher=dependencies.event_hub,
     )
     notifier: TriggerNotifier = EventNotifier(
@@ -179,8 +179,13 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     scheduler = Scheduler(
         service=dependencies.trigger_service,
         dispatcher=TriggerDispatcher(
+            dependencies=ScheduledExecutionDependencies(
+                conversation_service=dependencies.conversation_service,
+                conversation_turns=dependencies.conversation_turns,
+                trigger_service=dependencies.trigger_service,
+            ),
             notifier=notifier,
-            agent_runner=prompt_runner,
+            event_publisher=dependencies.event_hub,
             prompt_push_sender=prompt_push_sender,
         ),
         clock=SystemClock(),
@@ -505,6 +510,7 @@ class CoreServices:
     conversation_runtime_registry: ConversationRuntimeRegistry
     conversation_service: ConversationService
     conversation_turn_queue: ConversationTurnQueue
+    conversation_turns: ConversationTurns
     event_hub: EventHub
     kosync_auth: KosyncAuth
     kosync_service: KosyncService
@@ -518,6 +524,7 @@ class CoreServices:
     provider_auth_service: ProviderAuthService
     push_service: PushService
     recall_service: RecallService
+    scheduler: Scheduler
     search_provider: SearchProvider | None
     todo_service: TodoService
     triage_service: TriageService
@@ -600,6 +607,7 @@ async def compose_core_services(
     )
     conversation_service = ConversationService(
         database=host.database,
+        event_publisher=event_hub,
         model_catalog=model_catalog,
     )
     todo_service, todo_digest_provider = await _build_todo_service(
@@ -630,12 +638,30 @@ async def compose_core_services(
         runtime_registry=runtime_registry,
     )
     _ = resources.push_async_callback(provider_auth_service.shutdown)
+    dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
+    conversation_turns = ConversationTurns(
+        ChatTurnDependencies(
+            conversation_service=conversation_service,
+            dreaming_enabled=config.dreaming_enabled,
+            dreaming_service=dreaming_service,
+            logger=host.logger,
+            runtime_registry=runtime_registry,
+            trace_recorder=bootstrap.trace_recorder,
+            turn_queue=conversation_turn_queue,
+        )
+    )
     trigger_service = TriggerService(
         database=host.database,
+        conversation_turns=conversation_turns,
         event_publisher=event_hub,
+        model_catalog=model_catalog,
         tracer=host.telemetry.tracer,
     )
-    dreaming_service = DreamingService(host.database, tracer=host.telemetry.tracer)
+    await trigger_service.migrate_legacy_targets(
+        (await conversation_service.fetch_main_conversation()).id
+    )
+    _ = await trigger_service.repair_occurrences(now=datetime.now(UTC))
+    _ = await conversation_turns.repair(datetime.now(UTC))
     health_distillation_service = HealthDistillationService(
         host.database, host.telemetry_database
     )
@@ -651,6 +677,7 @@ async def compose_core_services(
             conversation_runtime_registry=runtime_registry,
             conversation_service=conversation_service,
             conversation_turn_queue=conversation_turn_queue,
+            conversation_turns=conversation_turns,
             database=host.database,
             dreaming_enabled=config.dreaming_enabled,
             dreaming_service=dreaming_service,
@@ -660,7 +687,12 @@ async def compose_core_services(
             trigger_service=trigger_service,
         )
     )
-    _ = resources.push_async_callback(scheduler_component.scheduler.shutdown)
+    _ = resources.push_async_callback(
+        _shutdown_scheduled_execution,
+        scheduler_component.scheduler,
+        conversation_turns,
+    )
+    await scheduler_component.scheduler.repair()
     proposal_component = _build_proposal_component(
         config=config,
         database=host.database,
@@ -670,10 +702,7 @@ async def compose_core_services(
     product_observation_service = ProductObservationService(
         host.database, event_publisher=event_hub
     )
-    background_tasks = [
-        asyncio.create_task(runtime_registry.reap_idle_forever()),
-        asyncio.create_task(scheduler_component.scheduler.run_forever()),
-    ]
+    background_tasks = [asyncio.create_task(runtime_registry.reap_idle_forever())]
     # PR #558 left the post-sync trigger open. This cursor-based sweep
     # materializes deterministic episode summaries after syncs.
     background_tasks.append(
@@ -767,6 +796,7 @@ async def compose_core_services(
         conversation_runtime_registry=runtime_registry,
         conversation_service=conversation_service,
         conversation_turn_queue=conversation_turn_queue,
+        conversation_turns=conversation_turns,
         event_hub=event_hub,
         kosync_auth=presentation.kosync_auth,
         kosync_service=presentation.kosync_service,
@@ -780,6 +810,7 @@ async def compose_core_services(
         provider_auth_service=provider_auth_service,
         push_service=push_service,
         recall_service=recall_service,
+        scheduler=scheduler_component.scheduler,
         search_provider=search_provider,
         todo_service=todo_service,
         triage_service=triage_service,

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, cast
-from uuid import UUID
 
 from pydantic import BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.routing import Route
 
+from tether.active_user_evidence import (
+    ActiveUserEvidenceError,
+    resolve_active_user_evidence,
+)
 from tether.capabilities import bind_params
 from tether.capability_contracts import CapabilityOutcome
 from tether.structured_logging import Logger
@@ -16,6 +19,7 @@ from tether.tool_runtime import ToolSpec
 
 if TYPE_CHECKING:
     from tether.agent_trace_recorder import AgentTraceRecorder
+    from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
 
 
@@ -33,6 +37,7 @@ class QueueMemoryAssimilationParams(BaseModel):
 class _MemoryToolRuntime(Protocol):
     """Memory read and orchestration dependencies required by foreground tools."""
 
+    conversation_service: ConversationService
     dreaming_service: DreamingService
     logger: Logger
     memory_workspace_service: Any
@@ -47,10 +52,15 @@ def _runtime(request: Request) -> _MemoryToolRuntime:
 async def _queue_memory_assimilation(request: Request) -> CapabilityOutcome:
     """Mark this Conversation for immediate assimilation after its turn settles."""
     runtime = _runtime(request)
-    run = runtime.trace_recorder.current_run(request.state.session_id)
-    if run is None or run.conversation_id is None:
+    try:
+        source = await resolve_active_user_evidence(
+            conversation_service=runtime.conversation_service,
+            trace_recorder=runtime.trace_recorder,
+            session_id=request.state.session_id,
+        )
+    except ActiveUserEvidenceError:
         return CapabilityOutcome(result={"queued": False})
-    runtime.dreaming_service.request_immediate_assimilation(UUID(run.conversation_id))
+    runtime.dreaming_service.request_immediate_assimilation(source.conversation_id)
     return CapabilityOutcome(result={"queued": True})
 
 

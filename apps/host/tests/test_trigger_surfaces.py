@@ -29,6 +29,11 @@ def create_trigger(client: TestClient, **body: Any) -> dict[str, Any]:
     return response.json()
 
 
+def main_conversation_id(client: TestClient) -> str:
+    """Return the explicit Main target used by HTTP prompt requests."""
+    return str(client.get("/api/conversations").json()[0]["id"])
+
+
 @test()
 def post_creates_a_once_message_trigger() -> None:
     """`POST /api/triggers` creates an active once trigger at the given instant."""
@@ -59,6 +64,7 @@ def post_creates_a_daily_prompt_trigger() -> None:
             recurrence="daily",
             action_kind="prompt",
             payload="summarise my day",
+            target_conversation_id=main_conversation_id(client),
             timezone="UTC",
             time_of_day="09:00",
         )
@@ -95,6 +101,7 @@ def recurring_prompt_snapshots_the_selected_chat_profile() -> None:
             recurrence="daily",
             action_kind="prompt",
             payload="summarise my day",
+            target_conversation_id=main_conversation_id(client),
             timezone="UTC",
             time_of_day="09:00",
         )
@@ -224,6 +231,7 @@ def updating_to_a_recurring_prompt_snapshots_the_selected_chat_profile() -> None
                 "recurrence": "daily",
                 "action_kind": "prompt",
                 "payload": "summarise my day",
+                "target_conversation_id": main_conversation_id(client),
                 "timezone": "UTC",
                 "time_of_day": "09:00",
                 "version": created["version"],

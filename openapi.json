@@ -647,18 +647,60 @@
         "title": "CompleteRequest",
         "type": "object"
       },
+      "ConversationKind": {
+        "enum": [
+          "main",
+          "scoped"
+        ],
+        "type": "string"
+      },
       "ConversationRead": {
         "description": "HTTP representation of a host-owned conversation.\n\n`session_gap_seconds` and `latest_activity` let the frontend compute\nwhether the *next* message will land on a fresh pi session (see\n`ConversationService.resolve_session`) without hardcoding the gap.",
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "has_unread": {
+            "title": "Has Unread",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid7",
             "title": "Id",
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConversationKind"
+          },
+          "last_read_seq": {
+            "minimum": 0.0,
+            "title": "Last Read Seq",
+            "type": "integer"
           },
           "latest_activity": {
             "anyOf": [
@@ -672,10 +714,48 @@
             ],
             "title": "Latest Activity"
           },
+          "latest_message_seq": {
+            "minimum": 0.0,
+            "title": "Latest Message Seq",
+            "type": "integer"
+          },
+          "pending_turn_count": {
+            "minimum": 0.0,
+            "title": "Pending Turn Count",
+            "type": "integer"
+          },
           "pi_session_id": {
             "format": "uuid7",
             "title": "Pi Session Id",
             "type": "string"
+          },
+          "running_turn_id": {
+            "anyOf": [
+              {
+                "format": "uuid7",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Turn Id"
+          },
+          "scope_brief": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Brief"
+          },
+          "scope_revision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Scope Revision",
+            "type": "integer"
           },
           "selected_model": {
             "anyOf": [
@@ -692,6 +772,9 @@
             "title": "Session Gap Seconds",
             "type": "integer"
           },
+          "status": {
+            "$ref": "#/components/schemas/ConversationStatus"
+          },
           "title": {
             "anyOf": [
               {
@@ -705,15 +788,258 @@
           }
         },
         "required": [
+          "archived_at",
           "created_at",
+          "display_name",
           "id",
+          "has_unread",
+          "kind",
+          "last_read_seq",
           "latest_activity",
+          "latest_message_seq",
+          "pending_turn_count",
           "pi_session_id",
+          "running_turn_id",
+          "scope_brief",
+          "scope_revision",
           "selected_model",
           "session_gap_seconds",
+          "status",
           "title"
         ],
         "title": "ConversationRead",
+        "type": "object"
+      },
+      "ConversationStatus": {
+        "enum": [
+          "active",
+          "archived"
+        ],
+        "type": "string"
+      },
+      "ConversationTurnOrigin": {
+        "enum": [
+          "capture",
+          "historical",
+          "interactive",
+          "scheduled"
+        ],
+        "type": "string"
+      },
+      "ConversationTurnRead": {
+        "description": "Flat durable turn state used for queue restoration and deep links.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "conversation_id": {
+            "format": "uuid7",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Summary"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ConversationTurnOrigin"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "reply_mode": {
+            "$ref": "#/components/schemas/ReplyMode"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversationTurnStatus"
+          }
+        },
+        "required": [
+          "completed_at",
+          "conversation_id",
+          "created_at",
+          "failure_code",
+          "failure_summary",
+          "id",
+          "origin",
+          "prompt",
+          "reply_mode",
+          "request_id",
+          "started_at",
+          "status"
+        ],
+        "title": "ConversationTurnRead",
+        "type": "object"
+      },
+      "ConversationTurnStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "ConversationTurnSummaryRead": {
+        "description": "Compact lifecycle repeated beside each flat transcript Message.",
+        "properties": {
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Summary"
+          },
+          "intended_fire_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intended Fire At"
+          },
+          "occurrence_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ConversationTurnOrigin"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversationTurnStatus"
+          },
+          "trigger_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Id"
+          }
+        },
+        "required": [
+          "failure_code",
+          "failure_summary",
+          "intended_fire_at",
+          "occurrence_id",
+          "origin",
+          "trigger_id",
+          "status"
+        ],
+        "title": "ConversationTurnSummaryRead",
+        "type": "object"
+      },
+      "CreateConversationRequest": {
+        "description": "Body for creating an active Scoped Conversation.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "scope_brief": {
+            "title": "Scope Brief",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name",
+          "scope_brief"
+        ],
+        "title": "CreateConversationRequest",
         "type": "object"
       },
       "CreateGrantRequest": {
@@ -838,6 +1164,18 @@
           },
           "recurrence": {
             "$ref": "#/components/schemas/TriggerRecurrence"
+          },
+          "target_conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Conversation Id"
           },
           "time_of_day": {
             "anyOf": [
@@ -2951,6 +3289,21 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "MarkConversationReadRequest": {
+        "description": "Last Message sequence the client has actually rendered.",
+        "properties": {
+          "last_read_seq": {
+            "minimum": 0.0,
+            "title": "Last Read Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "last_read_seq"
+        ],
+        "title": "MarkConversationReadRequest",
+        "type": "object"
+      },
       "MatchEbookFilenameRequest": {
         "description": "Body for labeling the document a filename hashes to.",
         "properties": {
@@ -3150,6 +3503,40 @@
               }
             ],
             "title": "Tool Result"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationTurnSummaryRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "format": "uuid7",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          },
+          "turn_message_seq": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Message Seq"
           }
         },
         "required": [
@@ -3162,7 +3549,10 @@
           "seq",
           "tool_args",
           "tool_name",
-          "tool_result"
+          "tool_result",
+          "turn",
+          "turn_id",
+          "turn_message_seq"
         ],
         "title": "MessageRead",
         "type": "object"
@@ -3170,6 +3560,7 @@
       "MessageRole": {
         "enum": [
           "user",
+          "scheduled",
           "assistant",
           "tool",
           "reasoning"
@@ -3265,6 +3656,59 @@
           "created_at"
         ],
         "title": "NotificationRead",
+        "type": "object"
+      },
+      "OccurrenceStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "OccurrenceTurnRead": {
+        "description": "Linked Conversation-turn outcome shown with one occurrence.",
+        "properties": {
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Summary"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversationTurnStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "failure_code",
+          "failure_summary"
+        ],
+        "title": "OccurrenceTurnRead",
         "type": "object"
       },
       "PanelRead": {
@@ -3908,6 +4352,16 @@
         "title": "PushConfigRead",
         "type": "object"
       },
+      "PushDeliveryStatus": {
+        "enum": [
+          "not_applicable",
+          "pending",
+          "delivering",
+          "delivered",
+          "failed"
+        ],
+        "type": "string"
+      },
       "PushStatusRead": {
         "description": "HTTP representation of the browser's push-subscription status.",
         "properties": {
@@ -4178,6 +4632,13 @@
         "title": "RejectionRead",
         "type": "object"
       },
+      "ReplyMode": {
+        "enum": [
+          "text",
+          "spoken"
+        ],
+        "type": "string"
+      },
       "ResolveProductObservationRequest": {
         "description": "Observed version required to resolve Product feedback.",
         "properties": {
@@ -4191,6 +4652,169 @@
           "version"
         ],
         "title": "ResolveProductObservationRequest",
+        "type": "object"
+      },
+      "ScheduledOccurrenceRead": {
+        "description": "Inspectable execution and delivery outcome for one firing.",
+        "properties": {
+          "action_kind": {
+            "$ref": "#/components/schemas/TriggerActionKind"
+          },
+          "answer_message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Message Id"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Summary"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intended_fire_at": {
+            "format": "date-time",
+            "title": "Intended Fire At",
+            "type": "string"
+          },
+          "model_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Profile"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "push_attempts": {
+            "title": "Push Attempts",
+            "type": "integer"
+          },
+          "push_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Push Error"
+          },
+          "push_status": {
+            "$ref": "#/components/schemas/PushDeliveryStatus"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OccurrenceStatus"
+          },
+          "target_conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Conversation Id"
+          },
+          "target_conversation_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_conversation_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Conversation Name"
+          },
+          "trigger_id": {
+            "format": "uuid",
+            "title": "Trigger Id",
+            "type": "string"
+          },
+          "trigger_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Trigger Version",
+            "type": "integer"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OccurrenceTurnRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "intended_fire_at",
+          "trigger_id",
+          "trigger_version",
+          "action_kind",
+          "payload",
+          "target_conversation_id",
+          "target_conversation_kind",
+          "target_conversation_name",
+          "model_profile",
+          "status",
+          "failure_code",
+          "failure_summary",
+          "answer_message_id",
+          "push_status",
+          "push_attempts",
+          "push_error",
+          "turn"
+        ],
+        "title": "ScheduledOccurrenceRead",
         "type": "object"
       },
       "SessionResponse": {
@@ -4974,7 +5598,7 @@
         "type": "string"
       },
       "TriggerRead": {
-        "description": "HTTP representation of a Scheduled trigger.",
+        "description": "HTTP representation of a Scheduled trigger and its latest firing.",
         "properties": {
           "action_kind": {
             "$ref": "#/components/schemas/TriggerActionKind"
@@ -5003,6 +5627,16 @@
               }
             ],
             "title": "Last Error"
+          },
+          "latest_occurrence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledOccurrenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "model_profile": {
             "anyOf": [
@@ -5041,6 +5675,29 @@
           },
           "status": {
             "$ref": "#/components/schemas/TriggerStatus"
+          },
+          "target_conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Conversation Id"
+          },
+          "target_conversation_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Conversation Name"
           },
           "timezone": {
             "title": "Timezone",
@@ -5085,6 +5742,9 @@
           "action_kind",
           "payload",
           "model_profile",
+          "target_conversation_id",
+          "target_conversation_name",
+          "latest_occurrence",
           "timezone",
           "wall_time",
           "weekday",
@@ -5171,6 +5831,35 @@
         "title": "UnsubscribeRequest",
         "type": "object"
       },
+      "UpdateConversationRequest": {
+        "description": "Editable fields of a Scoped Conversation.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "scope_brief": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Brief"
+          }
+        },
+        "title": "UpdateConversationRequest",
+        "type": "object"
+      },
       "UpdatePanelRequest": {
         "description": "Body for replacing a panel's definition at an observed version.",
         "properties": {
@@ -5251,7 +5940,7 @@
         "type": "object"
       },
       "UpdateTriggerRequest": {
-        "description": "Body for replacing a trigger's definition at an observed version.",
+        "description": "Body for replacing a trigger's future definition.",
         "properties": {
           "action_kind": {
             "$ref": "#/components/schemas/TriggerActionKind"
@@ -5274,6 +5963,18 @@
           },
           "recurrence": {
             "$ref": "#/components/schemas/TriggerRecurrence"
+          },
+          "target_conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Conversation Id"
           },
           "time_of_day": {
             "anyOf": [
@@ -6239,8 +6940,20 @@
     },
     "/api/conversations": {
       "get": {
-        "description": "List host-owned conversations.",
+        "description": "List active Conversations unless archived state is explicitly requested.",
         "operationId": "list_conversations_api_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -6255,9 +6968,184 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List Conversations"
+      },
+      "post": {
+        "description": "Create an active Scoped Conversation.",
+        "operationId": "create_conversation_api_conversations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Conversation"
+      }
+    },
+    "/api/conversations/{conversation_id}": {
+      "get": {
+        "description": "Fetch one Conversation including archived lifecycle state.",
+        "operationId": "fetch_conversation_api_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fetch Conversation"
+      },
+      "patch": {
+        "description": "Edit one Scoped Conversation's name or scope brief.",
+        "operationId": "update_conversation_api_conversations__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Conversation"
+      }
+    },
+    "/api/conversations/{conversation_id}/archive": {
+      "post": {
+        "description": "Archive a Scoped Conversation whose dependent work has settled.",
+        "operationId": "archive_conversation_api_conversations__conversation_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Conversation"
       }
     },
     "/api/conversations/{conversation_id}/dream-now": {
@@ -6343,44 +7231,6 @@
       }
     },
     "/api/conversations/{conversation_id}/messages": {
-      "delete": {
-        "description": "Clear one conversation's transcript and rotate its pi session.",
-        "operationId": "clear_messages_api_conversations__conversation_id__messages_delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConversationRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Clear Messages"
-      },
       "get": {
         "description": "List settled transcript rows for one conversation.",
         "operationId": "list_messages_api_conversations__conversation_id__messages_get",
@@ -6426,6 +7276,23 @@
                 }
               ],
               "title": "Before Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "turn_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid7",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Turn Id"
             }
           }
         ],
@@ -6506,6 +7373,196 @@
           }
         },
         "summary": "Set Conversation Model"
+      }
+    },
+    "/api/conversations/{conversation_id}/read": {
+      "post": {
+        "description": "Advance durable read position to an observed or current Message tail.",
+        "operationId": "mark_conversation_read_api_conversations__conversation_id__read_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MarkConversationReadRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Conversation Read"
+      }
+    },
+    "/api/conversations/{conversation_id}/restore": {
+      "post": {
+        "description": "Restore an archived Scoped Conversation.",
+        "operationId": "restore_conversation_api_conversations__conversation_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Conversation"
+      }
+    },
+    "/api/conversations/{conversation_id}/turns": {
+      "get": {
+        "description": "List pending and running turns in durable FIFO order.",
+        "operationId": "list_nonterminal_turns_api_conversations__conversation_id__turns_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationTurnRead"
+                  },
+                  "title": "Response List Nonterminal Turns Api Conversations  Conversation Id  Turns Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Nonterminal Turns"
+      }
+    },
+    "/api/conversations/{conversation_id}/turns/{turn_id}": {
+      "get": {
+        "description": "Fetch one turn only through its owning Conversation.",
+        "operationId": "fetch_turn_detail_api_conversations__conversation_id__turns__turn_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationTurnRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fetch Turn Detail"
       }
     },
     "/api/dream-now": {
@@ -8028,6 +9085,46 @@
           }
         },
         "summary": "Start Recall"
+      }
+    },
+    "/api/scheduled-occurrences/{occurrence_id}": {
+      "get": {
+        "description": "Fetch one immutable firing independently of its trigger definition.",
+        "operationId": "fetch_scheduled_occurrence_api_scheduled_occurrences__occurrence_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledOccurrenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fetch Scheduled Occurrence"
       }
     },
     "/api/stt/transcriptions": {

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -32,9 +32,8 @@ from snekql.sqlite import Fetched
 from tether.agent_run import record_run
 from tether.agent_trace_model import RunKind
 from tether.agent_trace_recorder import AgentTraceRecorder
-from tether.chat_turn import ChatPromptSpec, ChatTurnDependencies, run_chat_prompt
-from tether.events import EventPublisher, InvalidateEvent
 from tether.model_selection import AgentModelConfig
+from tether.notification_delivery import TriggerDispatchResult
 from tether.pi_errors import PiRuntimeError
 from tether.pi_process import PiSpawner, PiSpawnRequest, spawn_pi_runtime
 from tether.pi_runtime import PiRuntime
@@ -42,7 +41,7 @@ from tether.pi_turn_events import MessageSettled, ModelTurnStarted
 from tether.structured_logging import Logger
 from tether.system_prompt import system_prompt_for
 from tether.tool_runtime import SessionRegistry
-from tether.trigger_store import ScheduledTrigger
+from tether.trigger_store import ScheduledOccurrence
 from tether.triggers import DEFAULT_BACKOFF_BASE, DEFAULT_MAX_ATTEMPTS, TriggerService
 
 
@@ -63,11 +62,19 @@ class SystemClock:
 
 
 class TriggerDispatchPort(Protocol):
-    """Dispatch one claimed Scheduled trigger to its delivery pipeline."""
+    """Execute an occurrence and independently deliver a stored prompt answer."""
 
-    async def dispatch(self, trigger: ScheduledTrigger[Fetched]) -> None:
-        """Resolve and deliver one trigger, propagating delivery defects."""
-        ...
+    async def dispatch(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+    ) -> TriggerDispatchResult: ...
+
+    async def deliver_prompt_push(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+        *,
+        now: datetime,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,52 +169,6 @@ class EphemeralPiPromptRunner:
         return final_text
 
 
-class _BackgroundChatSink:
-    """Discard streaming frames while a scheduled turn settles durably."""
-
-    async def send_json(self, data: Any) -> None:
-        """Drop one transient frame; the transcript is refreshed after the turn."""
-        _ = data
-
-
-class ScheduledChatPromptRunner:
-    """Run a scheduled prompt through the default Conversation.
-
-    The canonical transcript receives the same user and agent rows as an
-    interactive prompt. Connected browsers reload the settled transcript once
-    the unattended turn ends.
-    """
-
-    def __init__(
-        self,
-        dependencies: ChatTurnDependencies,
-        *,
-        event_publisher: EventPublisher,
-    ) -> None:
-        self.dependencies: ChatTurnDependencies = dependencies
-        self.event_publisher: EventPublisher = event_publisher
-
-    async def run(self, prompt: str, model_profile: str | None) -> str:
-        """Submit `prompt` to the default chat with its pinned profile."""
-        conversation = (
-            await self.dependencies.conversation_service.list_conversations()
-        )[0]
-        try:
-            return await run_chat_prompt(
-                _BackgroundChatSink(),
-                self.dependencies,
-                ChatPromptSpec(
-                    conversation_id=conversation.id,
-                    content=prompt,
-                    model_profile=model_profile,
-                ),
-            )
-        finally:
-            await self.event_publisher.publish(
-                InvalidateEvent(keys=["messages", "conversations"])
-            )
-
-
 @dataclass(frozen=True, slots=True)
 class SchedulerConfig:
     """Tunables for the scheduler loop."""
@@ -238,53 +199,108 @@ class Scheduler:
         self.config: SchedulerConfig = config or SchedulerConfig()
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.concurrency)
         self._inflight: set[asyncio.Task[None]] = set()
+        self._stop_event: asyncio.Event = asyncio.Event()
+        self._stopping: bool = False
 
-    async def tick(self) -> list[ScheduledTrigger[Fetched]]:
+    async def tick(self) -> list[ScheduledOccurrence[Fetched]]:
         """Claim every due trigger and launch a dispatch task for each.
 
         Returns the claimed triggers so a controlled-clock test can assert what a
         single tick picked up. Dispatch runs in the background behind the
         concurrency semaphore; await `drain` to settle the launched tasks.
         """
+        if self._stopping:
+            return []
         now = self.clock.now()
         claimed = await self.service.claim_due(now, limit=self.config.claim_limit)
-        for trigger in claimed:
-            task = asyncio.create_task(self._dispatch(trigger))
-            self._inflight.add(task)
-            task.add_done_callback(self._inflight.discard)
+        for occurrence in claimed:
+            self._launch(self._dispatch(occurrence))
+        for occurrence in await self.service.claim_due_push_occurrences(now):
+            self._launch(self._deliver_push(occurrence))
         return claimed
 
-    async def _dispatch(self, trigger: ScheduledTrigger[Fetched]) -> None:
-        """Dispatch one claimed trigger, settling its outcome to the service."""
+    async def repair(self) -> None:
+        """Repair durable scheduler state without launching dispatch work."""
+        await self.service.release_interrupted_pushes()
+        _ = await self.service.repair_occurrences(now=self.clock.now())
+
+    async def dispatch_recovered(self) -> None:
+        """Launch recovered work after request-serving dependencies are ready."""
+        for occurrence in await self.service.list_recoverable_occurrences():
+            self._launch(self._dispatch(occurrence))
+        for occurrence in await self.service.claim_due_push_occurrences(
+            self.clock.now()
+        ):
+            self._launch(self._deliver_push(occurrence))
+
+    def _launch(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.create_task(coroutine)
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+
+    async def _dispatch(self, occurrence: ScheduledOccurrence[Fetched]) -> None:
+        """Settle one occurrence once; prompt failures never broad-retry."""
         async with self._semaphore:
+            occurrence = await self.service.record_running(occurrence)
+            if occurrence.status in {"succeeded", "failed", "cancelled"}:
+                return
             try:
-                await self.dispatcher.dispatch(trigger)
+                result = await self.dispatcher.dispatch(occurrence)
             except Exception as error:
                 self.logger.warning(
-                    "Scheduled trigger dispatch failed",
-                    trigger_id=str(trigger.id),
+                    "Scheduled occurrence dispatch failed",
+                    occurrence_id=str(occurrence.id),
+                    trigger_id=str(occurrence.trigger_id),
                     error=str(error),
                 )
                 _ = await self.service.record_failure(
-                    trigger,
+                    occurrence,
                     now=self.clock.now(),
                     error=str(error),
                     max_attempts=self.config.max_attempts,
                     backoff_base=self.config.backoff_base,
                 )
-            else:
-                self.logger.info(
-                    "Scheduled trigger fired",
-                    trigger_id=str(trigger.id),
-                    action_kind=trigger.action_kind,
-                )
-                _ = await self.service.record_success(trigger, now=self.clock.now())
+                return
+            settled = await self.service.record_success(
+                occurrence,
+                now=self.clock.now(),
+                answer=result.answer,
+                answer_message_id=result.answer_message_id,
+            )
+            self.logger.info(
+                "Scheduled occurrence fired",
+                occurrence_id=str(occurrence.id),
+                trigger_id=str(occurrence.trigger_id),
+                action_kind=occurrence.action_kind,
+            )
+            if settled.action_kind == "prompt":
+                push_occurrence = await self.service.claim_prompt_push(settled.id)
+                if push_occurrence is not None:
+                    await self.dispatcher.deliver_prompt_push(
+                        push_occurrence,
+                        now=self.clock.now(),
+                    )
+
+    async def _deliver_push(
+        self,
+        occurrence: ScheduledOccurrence[Fetched],
+    ) -> None:
+        async with self._semaphore:
+            await self.dispatcher.deliver_prompt_push(
+                occurrence,
+                now=self.clock.now(),
+            )
 
     async def drain(self) -> None:
         """Await every in-flight dispatch task (for tests and shutdown)."""
         while self._inflight:
             pending = list(self._inflight)
             _ = await asyncio.gather(*pending, return_exceptions=True)
+
+    def stop_intake(self) -> None:
+        """Prevent ticks and reconciliation from launching more dispatch work."""
+        self._stopping = True
+        self._stop_event.set()
 
     async def run_forever(self) -> None:
         """Run ticks on the configured interval until cancelled.
@@ -293,8 +309,14 @@ class Scheduler:
         starts and stops quickly never fires a tick whose DB work would race the
         shutdown that closes the connection pool.
         """
-        while True:
-            await asyncio.sleep(self.config.tick_seconds)
+        while not self._stopping:
+            with contextlib.suppress(TimeoutError):
+                _ = await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self.config.tick_seconds,
+                )
+            if self._stopping:
+                return
             try:
                 _ = await self.tick()
             except asyncio.CancelledError:
@@ -302,7 +324,14 @@ class Scheduler:
             except Exception as error:
                 self.logger.warning("Scheduler tick failed", error=str(error))
 
-    async def shutdown(self) -> None:
-        """Stop accepting work and wait for in-flight dispatches to settle."""
-        with contextlib.suppress(Exception):
-            await self.drain()
+    async def shutdown(self, *, drain_seconds: float = 1.0) -> None:
+        """Bound waiter drain so a stuck dispatcher cannot deadlock host exit."""
+        self.stop_intake()
+        if not self._inflight:
+            return
+        _, pending = await asyncio.wait(self._inflight, timeout=drain_seconds)
+        for task in pending:
+            _ = task.cancel()
+        for task in pending:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

@@ -1,12 +1,22 @@
 self.addEventListener("push", (event) => {
-  let body = "";
+  let notification = { body: "", title: "Tether", url: "/" };
   if (event.data) {
-    body = event.data.text();
+    try {
+      notification = { ...notification, ...event.data.json() };
+    } catch {
+      notification.body = event.data.text();
+    }
   }
   event.waitUntil(
-    self.registration.showNotification("Tether", {
-      body,
+    self.registration.showNotification(notification.title, {
+      body: notification.body,
+      data: { url: notification.url },
       tag: "tether-trigger",
     }),
   );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.openWindow(event.notification.data?.url ?? "/"));
 });

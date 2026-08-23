@@ -11,6 +11,7 @@ import {
 import type { JSX } from "solid-js";
 
 import { useHost } from "./app-context";
+import { conversationLabel } from "./host/chat";
 import { cx } from "./lib/cva";
 import { queryKeys } from "./lib/query-keys";
 
@@ -115,12 +116,83 @@ function NavBadge(props: { count: number }) {
 function useNavItems(): NavItem[] {
   const { inboxCount, proposalsCount } = useBadgeCounts();
   return [
-    { label: "Chat", path: "/" },
+    { label: "Chat", path: "/chat" },
     { badge: proposalsCount, label: "Proposals", path: "/proposals" },
     { badge: inboxCount, label: "Inbox", path: "/inbox" },
     { label: "Browse", path: "/browse" },
     { label: "Settings", path: "/settings" },
   ];
+}
+
+function ConversationNavigation() {
+  const chat = useHost("chat");
+  const conversationsQuery = createQuery(() => ({
+    queryFn: () => chat.listConversations(),
+    queryKey: queryKeys.conversations,
+  }));
+
+  return (
+    <section
+      aria-label="Conversations"
+      class="mt-4 flex min-h-0 flex-1 flex-col px-2"
+    >
+      <div class="text-sidebar-foreground/60 mb-1 flex items-center px-2 text-[11px] font-semibold uppercase tracking-wide">
+        <span>Conversations</span>
+        <A
+          aria-label="Create Conversation"
+          class="ml-auto text-base"
+          href="/chat?new=1"
+        >
+          +
+        </A>
+      </div>
+      <div class="min-h-0 space-y-1 overflow-y-auto">
+        <For each={conversationsQuery.data ?? []}>
+          {(conversation) => (
+            <A
+              aria-label={conversationLabel(
+                conversation,
+                conversationsQuery.data ?? [],
+              )}
+              class="text-sidebar-foreground/80 hover:bg-sidebar-accent flex min-h-9 items-center gap-2 rounded-md px-2 text-sm"
+              href={
+                conversation.kind === "main"
+                  ? "/chat"
+                  : `/chat/${conversation.id}`
+              }
+            >
+              <span class="min-w-0 flex-1 truncate">
+                {conversationLabel(conversation, conversationsQuery.data ?? [])}
+              </span>
+              <Show when={conversation.has_unread}>
+                <span
+                  aria-label="Unread conversation"
+                  class="bg-sidebar-primary size-2 rounded-full"
+                />
+              </Show>
+              <Show
+                when={
+                  conversation.pending_turn_count > 0 ||
+                  conversation.running_turn_id !== null
+                }
+              >
+                <span
+                  aria-label="Working conversation"
+                  class="border-sidebar-primary inline-block size-3 animate-spin rounded-full border-2 border-t-transparent"
+                />
+              </Show>
+            </A>
+          )}
+        </For>
+      </div>
+      <A
+        class="text-sidebar-foreground/60 mt-2 px-2 py-2 text-xs"
+        href="/chat?archived=1"
+      >
+        Archived Conversations
+      </A>
+    </section>
+  );
 }
 
 function DesktopSidebar(props: { items: NavItem[] }) {
@@ -152,7 +224,12 @@ function DesktopSidebar(props: { items: NavItem[] }) {
       <nav aria-label="Main navigation" class="flex flex-col gap-1 px-2">
         <For each={props.items}>
           {(item) => {
-            const active = createMemo(() => location.pathname === item.path);
+            const active = createMemo(() =>
+              item.path === "/chat"
+                ? location.pathname === "/" ||
+                  location.pathname.startsWith("/chat")
+                : location.pathname === item.path,
+            );
             const badgeCount = createMemo(() => item.badge?.() ?? 0);
             const navLabel = createMemo(() =>
               badgeCount() > 0
@@ -197,6 +274,9 @@ function DesktopSidebar(props: { items: NavItem[] }) {
           }}
         </For>
       </nav>
+      <Show when={!collapsed()}>
+        <ConversationNavigation />
+      </Show>
     </aside>
   );
 }
@@ -210,7 +290,12 @@ function MobileBottomTabs(props: { items: NavItem[] }) {
     >
       <For each={props.items}>
         {(item) => {
-          const active = createMemo(() => location.pathname === item.path);
+          const active = createMemo(() =>
+            item.path === "/chat"
+              ? location.pathname === "/" ||
+                location.pathname.startsWith("/chat")
+              : location.pathname === item.path,
+          );
           const badgeCount = createMemo(() => item.badge?.() ?? 0);
           const navLabel = createMemo(() =>
             badgeCount() > 0

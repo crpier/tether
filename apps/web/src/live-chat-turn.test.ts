@@ -1,7 +1,7 @@
-import { createRoot } from "solid-js";
+import { createRoot, createSignal } from "solid-js";
 import { describe, expect, test, vi } from "vitest";
 
-import type { Message } from "./host/chat";
+import type { ConversationTurn, Message } from "./host/chat";
 import type { ChatFrame } from "./chat-bus";
 import { createLiveChatTurn } from "./live-chat-turn";
 
@@ -9,6 +9,26 @@ function chat(
   partial: Partial<Extract<ChatFrame, { type: "chat" }>>,
 ): ChatFrame {
   return { conversation_id: "conversation-1", type: "chat", ...partial };
+}
+
+function durableTurn(
+  overrides: Partial<ConversationTurn> = {},
+): ConversationTurn {
+  return {
+    completed_at: null,
+    conversation_id: "conversation-1",
+    created_at: "2026-01-01T00:00:00Z",
+    failure_code: null,
+    failure_summary: null,
+    id: "turn-1",
+    origin: "interactive",
+    prompt: "queued prompt",
+    reply_mode: "text",
+    request_id: "request-1",
+    started_at: null,
+    status: "pending",
+    ...overrides,
+  };
 }
 
 function message(content: string, seq: number): Message {
@@ -23,6 +43,9 @@ function message(content: string, seq: number): Message {
     tool_args: null,
     tool_name: null,
     tool_result: null,
+    turn: null,
+    turn_id: null,
+    turn_message_seq: null,
   };
 }
 
@@ -153,6 +176,7 @@ describe("live chat turn", () => {
       });
 
       turn.sendPrompt("investigate");
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
       for (const frame of [
         chat({ event: "message_start" }),
         chat({ event: "thinking_delta", delta: "pondering" }),
@@ -300,14 +324,168 @@ describe("live chat turn", () => {
       });
 
       expect(turn.error()).toBe("provider unavailable");
-      expect(turn.queuedPrompts()).toEqual([
-        { content: "keep me", id: 1, replyMode: "text" },
+      expect(turn.queuedPrompts()).toMatchObject([
+        { content: "keep me", id: 1, replyMode: "text", retryable: true },
       ]);
       dispose();
     });
   });
 
-  test("a chosen queued prompt waits for agent_end after abort acknowledgement", () => {
+  test("reconnect reattaches the same durable request and refreshes history", () => {
+    createRoot((dispose) => {
+      const sent: { content: string; requestId: string }[] = [];
+      const listMessages = vi.fn(() => Promise.resolve<Message[]>([]));
+      const settled = vi.fn();
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages,
+          settled,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: (_conversationId, content, _replyMode, requestId) => {
+            sent.push({ content, requestId });
+          },
+        },
+      });
+      turn.sendPrompt("survive reconnect");
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+
+      turn.handleFrame({ type: "connection", status: "closed" });
+      turn.handleFrame({ type: "connection", status: "open" });
+
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual(sent[0]);
+      expect(settled).toHaveBeenCalledOnce();
+      expect(listMessages).toHaveBeenCalled();
+      expect(turn.busy()).toBe(true);
+      dispose();
+    });
+  });
+
+  test("submits every follow-up to the durable FIFO immediately", () => {
+    createRoot((dispose) => {
+      const sent: string[] = [];
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: (_conversationId, content) => sent.push(content),
+        },
+      });
+
+      turn.sendPrompt("first");
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+      turn.sendPrompt("durable follow-up");
+
+      expect(sent).toEqual(["first", "durable follow-up"]);
+      expect(turn.queuedPrompts()).toMatchObject([
+        { content: "durable follow-up" },
+      ]);
+      dispose();
+    });
+  });
+
+  test("turn deep-link pagination expands from the latest page through its gap", async () => {
+    let dispose: () => void = () => undefined;
+    const calls: { beforeSeq?: number; turnId?: string }[] = [];
+    const all = Array.from({ length: 60 }, (_, index) =>
+      message(`message ${String(index + 1)}`, index + 1),
+    );
+    const turn = createRoot((rootDispose) => {
+      dispose = rootDispose;
+      return createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        focusTurnId: () => "focused-turn",
+        history: {
+          listMessages: (_conversationId, options) => {
+            calls.push(options);
+            if (options.turnId !== undefined) {
+              return Promise.resolve([message("focused", 5)]);
+            }
+            const before = options.beforeSeq ?? Number.POSITIVE_INFINITY;
+            const page = all.filter((item) => item.seq < before);
+            return Promise.resolve(page.slice(-30));
+          },
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+    });
+
+    await vi.waitFor(() => expect(turn.rows()).toHaveLength(31));
+    expect(turn.loadOlderMessages()).toBe(true);
+    await vi.waitFor(() => {
+      expect(calls).toContainEqual({ beforeSeq: 31, limit: 30 });
+      expect(turn.rows()).toHaveLength(60);
+    });
+    dispose();
+  });
+
+  test("a focused old turn does not mark the separately rendered latest page read", async () => {
+    let dispose: () => void = () => undefined;
+    const latest = Array.from({ length: 30 }, (_, index) =>
+      message(`latest ${String(index + 31)}`, index + 31),
+    );
+    const turn = createRoot((rootDispose) => {
+      dispose = rootDispose;
+      return createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        focusTurnId: () => "focused-turn",
+        history: {
+          listMessages: (_conversationId, options) =>
+            Promise.resolve(
+              options.turnId === undefined ? latest : [message("focused", 5)],
+            ),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+    });
+
+    await vi.waitFor(() => expect(turn.historyReady()).toBe(true));
+    expect(turn.highestSettledSeq()).toBe(5);
+    dispose();
+  });
+
+  test("durable running state restores working and Stop targets its turn", () => {
+    createRoot((dispose) => {
+      const aborted: string[] = [];
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        durablePendingCount: () => 2,
+        durableRunningTurnId: () => "durable-running-turn",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: (_conversationId, turnId) => aborted.push(turnId),
+          sendPrompt: () => undefined,
+        },
+      });
+
+      expect(turn.generating()).toBe(true);
+      expect(turn.working()).toBe(true);
+      expect(turn.durablePendingCount()).toBe(2);
+      turn.abort();
+      expect(aborted).toEqual(["durable-running-turn"]);
+      dispose();
+    });
+  });
+
+  test("a chosen queued prompt waits for durable turn settlement", () => {
     createRoot((dispose) => {
       const sent: (
         | {
@@ -316,7 +494,7 @@ describe("live chat turn", () => {
             replyMode: "spoken" | "text";
             type: "prompt";
           }
-        | { conversationId: string; type: "abort" }
+        | { conversationId: string; turnId: string; type: "abort" }
       )[] = [];
       const turn = createLiveChatTurn({
         conversationId: () => "conversation-1",
@@ -326,8 +504,8 @@ describe("live chat turn", () => {
         },
         now: () => 100,
         transport: {
-          abort: (conversationId) => {
-            sent.push({ conversationId, type: "abort" });
+          abort: (conversationId, turnId) => {
+            sent.push({ conversationId, turnId, type: "abort" });
           },
           sendPrompt: (conversationId, content, replyMode) => {
             sent.push({ content, conversationId, replyMode, type: "prompt" });
@@ -336,6 +514,7 @@ describe("live chat turn", () => {
       });
 
       turn.sendPrompt("active");
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
       turn.sendPrompt("chosen");
       const chosen = turn.queuedPrompts()[0];
       turn.sendQueuedPromptNow(chosen.id);
@@ -348,22 +527,26 @@ describe("live chat turn", () => {
           replyMode: "text",
           type: "prompt",
         },
-        { conversationId: "conversation-1", type: "abort" },
+        {
+          content: "chosen",
+          conversationId: "conversation-1",
+          replyMode: "text",
+          type: "prompt",
+        },
+        { conversationId: "conversation-1", turnId: "turn-1", type: "abort" },
       ]);
 
       turn.handleFrame(chat({ event: "agent_end" }));
+      turn.handleFrame(
+        chat({ event: "turn_ended", status: "cancelled", turn_id: "turn-1" }),
+      );
 
-      expect(sent.at(-1)).toEqual({
-        content: "chosen",
-        conversationId: "conversation-1",
-        replyMode: "text",
-        type: "prompt",
-      });
+      expect(sent.filter((entry) => entry.type === "prompt")).toHaveLength(2);
       dispose();
     });
   });
 
-  test("queued prompts capture the reply mode at enqueue and keep it", () => {
+  test("editing a durable queued prompt cancels and replaces it with its captured reply mode", () => {
     createRoot((dispose) => {
       const sent: {
         content: string;
@@ -371,6 +554,7 @@ describe("live chat turn", () => {
         replyMode: "spoken" | "text";
         type: "prompt";
       }[] = [];
+      const aborted: string[] = [];
       const replyMode = vi.fn<() => "spoken" | "text">(() => "spoken");
       const turn = createLiveChatTurn({
         conversationId: () => "conversation-1",
@@ -380,7 +564,7 @@ describe("live chat turn", () => {
         },
         replyMode,
         transport: {
-          abort: () => undefined,
+          abort: (_conversationId, turnId) => aborted.push(turnId),
           sendPrompt: (conversationId, content, mode) => {
             sent.push({
               content,
@@ -394,18 +578,28 @@ describe("live chat turn", () => {
 
       turn.sendPrompt("first");
       turn.sendPrompt("second");
-      expect(turn.queuedPrompts()).toEqual([
-        { content: "second", id: 2, replyMode: "spoken" },
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "running", turn_id: "turn-1" }),
+      );
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "pending", turn_id: "turn-2" }),
+      );
+      expect(turn.queuedPrompts()).toMatchObject([
+        { content: "second", id: 2, replyMode: "spoken", turnId: "turn-2" },
       ]);
 
-      // The toggle flips while the first turn runs; queued modes stay captured.
       replyMode.mockReturnValue("text");
       turn.editQueuedPrompt(2, "second edited");
-      expect(turn.queuedPrompts()).toEqual([
+      expect(turn.queuedPrompts()).toMatchObject([
         { content: "second edited", id: 2, replyMode: "spoken" },
       ]);
+      expect(aborted).toEqual(["turn-2"]);
 
       turn.handleFrame(chat({ event: "agent_end", final_text: "answer one" }));
+      turn.handleFrame(
+        chat({ event: "turn_ended", status: "succeeded", turn_id: "turn-1" }),
+      );
 
       expect(sent.at(-1)).toEqual({
         content: "second edited",
@@ -436,12 +630,21 @@ describe("live chat turn", () => {
       });
 
       turn.sendPrompt("text question");
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-text" }));
       turn.handleFrame(chat({ event: "agent_end", final_text: "text answer" }));
+      turn.handleFrame(
+        chat({
+          event: "turn_ended",
+          status: "succeeded",
+          turn_id: "turn-text",
+        }),
+      );
       expect(spoken.settled).toEqual([]);
       expect(spoken.discarded).toBe(0);
 
       replyMode.mockReturnValue("spoken");
       turn.sendPrompt("spoken question");
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-spoken" }));
       for (const frame of [
         chat({ event: "message_start" }),
         chat({ event: "text_delta", delta: "partial" }),
@@ -601,6 +804,184 @@ describe("live chat turn", () => {
       expect(spoken.restarted).toBe(2);
       dispose();
     });
+  });
+
+  test("a provisional prompt stays queued outside the canonical transcript", () => {
+    createRoot((dispose) => {
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("not accepted yet");
+
+      expect(turn.rows()).toEqual([]);
+      expect(turn.queuedPrompts()).toMatchObject([
+        { content: "not accepted yet" },
+      ]);
+
+      turn.handleFrame(chat({ detail: "rejected", event: "error" }));
+
+      expect(turn.rows()).toEqual([]);
+      expect(turn.queuedPrompts()).toMatchObject([
+        { content: "not accepted yet", retryable: true },
+      ]);
+      dispose();
+    });
+  });
+
+  test("Conversation navigation cannot resubmit or abort the prior runtime", () => {
+    createRoot((dispose) => {
+      const [conversationId, setConversationId] =
+        createSignal("conversation-1");
+      const sent: string[] = [];
+      const aborted: { conversationId: string; turnId: string }[] = [];
+      const turn = createLiveChatTurn({
+        conversationId,
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: (id, turnId) => aborted.push({ conversationId: id, turnId }),
+          sendPrompt: (id, content) => sent.push(`${id}:${content}`),
+        },
+      });
+      turn.sendPrompt("belongs to A");
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "running", turn_id: "turn-a" }),
+      );
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-a" }));
+
+      setConversationId("conversation-2");
+      turn.handleFrame({ status: "open", type: "connection" });
+      turn.abort();
+
+      expect(sent).toEqual(["conversation-1:belongs to A"]);
+      expect(aborted).toEqual([]);
+      expect(turn.queuedPrompts()).toEqual([]);
+      expect(turn.rows()).toEqual([]);
+      dispose();
+    });
+  });
+
+  test("reconnect terminal duplicate settles its matching request", () => {
+    createRoot((dispose) => {
+      const sent: string[] = [];
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        durableRunningTurnId: () => "turn-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: (_id, _content, _mode, requestId) => sent.push(requestId),
+        },
+      });
+      turn.sendPrompt("survive reconnect");
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "running", turn_id: "turn-1" }),
+      );
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+
+      turn.handleFrame({ status: "open", type: "connection" });
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "failed", turn_id: "turn-1" }),
+      );
+      turn.handleFrame(
+        chat({
+          event: "turn_ended",
+          failure_summary: "settled while disconnected",
+          status: "failed",
+          turn_id: "turn-1",
+        }),
+      );
+
+      expect(sent[1]).toBe(sent[0]);
+      expect(turn.error()).toBe("settled while disconnected");
+      expect(turn.busy()).toBe(false);
+      dispose();
+    });
+  });
+
+  test("pending duplicate resumes when its canonical user Message arrives", () => {
+    createRoot((dispose) => {
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+      turn.sendPrompt("pending through reconnect");
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "pending", turn_id: "turn-1" }),
+      );
+
+      turn.handleFrame({ status: "open", type: "connection" });
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "pending", turn_id: "turn-1" }),
+      );
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+
+      expect(turn.rows()).toMatchObject([
+        { kind: "message", role: "user", text: "pending through reconnect" },
+      ]);
+      expect(turn.generating()).toBe(true);
+      expect(turn.queuedPrompts()).toEqual([]);
+      dispose();
+    });
+  });
+
+  test("durable pending turns hydrate editable queue controls", async () => {
+    let dispose: () => void = () => undefined;
+    const turn = createRoot((rootDispose) => {
+      dispose = rootDispose;
+      return createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        durablePendingCount: () => 1,
+        history: {
+          listMessages: () => Promise.resolve([]),
+          listNonterminalTurns: () =>
+            Promise.resolve([
+              durableTurn({
+                id: "durable-pending",
+                prompt: "restored after refresh",
+                reply_mode: "spoken",
+              }),
+            ]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(turn.queuedPrompts()).toMatchObject([
+        {
+          content: "restored after refresh",
+          replyMode: "spoken",
+          turnId: "durable-pending",
+        },
+      ]);
+    });
+    dispose();
   });
 
   test("tool-only turns settle flagged so nonsense markers are never spoken", () => {

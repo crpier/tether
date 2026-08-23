@@ -52,6 +52,13 @@ test("chat session controls and message actions work together", async ({
         status: 200,
       }),
   );
+  await page.route(`**/api/conversations/${conversationId}/read`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      json: { id: conversationId, last_read_seq: 2 },
+      status: 200,
+    }),
+  );
   await page.route("**/api/product-observations", async (route) => {
     if (route.request().method() !== "POST") {
       await route.continue();

@@ -7,9 +7,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid7
 
-from snekql.sqlite import update
+from snekql.sqlite import insert, update
 from snektest import (
     assert_eq,
     assert_in,
@@ -27,10 +27,9 @@ from tether import server
 from tether.app_runtime import app_runtime
 from tether.chat_prompt import local_timezone_name, prompt_with_time_context
 from tether.conversation_model import MessageDraft
-from tether.conversation_store import Message
+from tether.conversation_store import ConversationTurn, Message
 from tether.conversations import ConversationService
 from tether.model_selection import AgentModelConfig
-from tether.pi_errors import PiRuntimeError
 from tether.pi_runtime import ContextUsage
 from tether.pi_turn_events import (
     AgentEnded,
@@ -248,9 +247,11 @@ def make_client(root: Path) -> TestClient:
 
 def _set_runtime_registry(client: TestClient, registry: object) -> None:
     """Replace the live process registry for controlled WebSocket tests."""
+    runtime = app_runtime(cast("Starlette", client.app))
+    object.__setattr__(runtime, "conversation_runtime_registry", registry)
     object.__setattr__(
-        app_runtime(cast("Starlette", client.app)),
-        "conversation_runtime_registry",
+        runtime.conversation_turns.dependencies,
+        "runtime_registry",
         registry,
     )
 
@@ -349,6 +350,14 @@ def login(client: TestClient) -> None:
     assert_eq(response.status_code, 204)
 
 
+def receive_event(websocket: Any, event: str) -> dict[str, Any]:
+    """Receive frames through the requested chat event."""
+    while True:
+        frame = cast("dict[str, Any]", websocket.receive_json())
+        if frame.get("event") == event:
+            return frame
+
+
 def prompt_until_agent_end(
     client: TestClient,
     *,
@@ -360,6 +369,7 @@ def prompt_until_agent_end(
         websocket.send_json(
             {
                 "type": "prompt",
+                "request_id": str(uuid7()),
                 "conversation_id": conversation_id,
                 "content": content,
             }
@@ -415,6 +425,236 @@ def conversations_route_creates_default_conversation() -> None:
     assert_len(conversations, 1)
     assert_eq(conversations[0]["title"], None)
     assert_eq(conversations[0]["selected_model"], None)
+    assert_eq(conversations[0]["kind"], "main")
+    assert_eq(conversations[0]["status"], "active")
+    assert_eq(conversations[0]["display_name"], None)
+    assert_eq(conversations[0]["scope_brief"], None)
+    assert_eq(conversations[0]["scope_revision"], 1)
+    assert_eq(conversations[0]["last_read_seq"], 0)
+    assert_eq(conversations[0]["latest_message_seq"], 0)
+    assert_eq(conversations[0]["pending_turn_count"], 0)
+    assert_eq(conversations[0]["running_turn_id"], None)
+    assert_eq(conversations[0]["has_unread"], False)
+    assert_eq(conversations[0]["archived_at"], None)
+
+
+@test()
+def authenticated_user_can_create_a_scoped_conversation() -> None:
+    """`POST /api/conversations` creates a named active Scoped Conversation."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+
+        response = client.post(
+            "/api/conversations",
+            json={
+                "display_name": "Garden planning",
+                "scope_brief": "Plan this year's vegetable garden.",
+            },
+        )
+
+    assert_eq(response.status_code, 201)
+    assert_eq(response.json()["kind"], "scoped")
+    assert_eq(response.json()["display_name"], "Garden planning")
+    assert_eq(
+        response.json()["scope_brief"],
+        "Plan this year's vegetable garden.",
+    )
+
+
+@test()
+def authenticated_user_can_fetch_one_conversation() -> None:
+    """`GET /api/conversations/{id}` returns archived or active lifecycle state."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        created = client.post(
+            "/api/conversations",
+            json={
+                "display_name": "Garden planning",
+                "scope_brief": "Plan this year's vegetable garden.",
+            },
+        ).json()
+
+        response = client.get(f"/api/conversations/{created['id']}")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["id"], created["id"])
+    assert_eq(response.json()["display_name"], "Garden planning")
+
+
+@test()
+def authenticated_user_can_update_scoped_conversation() -> None:
+    """`PATCH /api/conversations/{id}` edits scope through its durable revision."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        created = client.post(
+            "/api/conversations",
+            json={
+                "display_name": "Garden planning",
+                "scope_brief": "Plan this year's vegetable garden.",
+            },
+        ).json()
+
+        response = client.patch(
+            f"/api/conversations/{created['id']}",
+            json={"scope_brief": "Plan vegetables and irrigation."},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["scope_brief"], "Plan vegetables and irrigation.")
+    assert_eq(response.json()["scope_revision"], 2)
+
+
+@test()
+def rename_only_and_no_op_updates_preserve_scope_revision() -> None:
+    """Only an actual scope-brief change rotates submitted scope state."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        created = client.post(
+            "/api/conversations",
+            json={"display_name": "Garden", "scope_brief": "Plan vegetables."},
+        ).json()
+
+        renamed = client.patch(
+            f"/api/conversations/{created['id']}",
+            json={"display_name": "Back garden"},
+        ).json()
+        unchanged = client.patch(
+            f"/api/conversations/{created['id']}",
+            json={"scope_brief": "Plan vegetables."},
+        ).json()
+
+    assert_eq(renamed["scope_revision"], 1)
+    assert_eq(unchanged["scope_revision"], 1)
+
+
+@test()
+def authenticated_user_can_archive_a_scoped_conversation() -> None:
+    """Archival discards the warm runtime and hides the Conversation by default."""
+    registry = FakeRuntimeRegistry(FakeRuntime([]))
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, registry)
+        login(client)
+        created = client.post(
+            "/api/conversations",
+            json={
+                "display_name": "Garden planning",
+                "scope_brief": "Plan this year's vegetable garden.",
+            },
+        ).json()
+
+        response = client.post(f"/api/conversations/{created['id']}/archive")
+        ordinary = client.get("/api/conversations").json()
+        with_archived = client.get(
+            "/api/conversations", params={"include_archived": "true"}
+        ).json()
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["status"], "archived")
+    assert_not_in(created["id"], [item["id"] for item in ordinary])
+    assert_in(created["id"], [item["id"] for item in with_archived])
+    assert_eq([str(item) for item in registry.discarded], [created["id"]])
+
+
+@test()
+def authenticated_user_can_restore_an_archived_conversation() -> None:
+    """`POST /restore` returns an archived Scoped Conversation to active state."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        created = client.post(
+            "/api/conversations",
+            json={
+                "display_name": "Garden planning",
+                "scope_brief": "Plan this year's vegetable garden.",
+            },
+        ).json()
+        _ = client.post(f"/api/conversations/{created['id']}/archive")
+
+        response = client.post(f"/api/conversations/{created['id']}/restore")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["status"], "active")
+    assert_eq(response.json()["archived_at"], None)
+
+
+@test()
+def authenticated_user_can_mark_a_conversation_read() -> None:
+    """`POST /read` advances durable read position to the current transcript tail."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
+        for content in ("seen", "raced"):
+            _ = portal.call(
+                service.append_message,
+                MessageDraft(
+                    content=content,
+                    conversation_id=UUID(conversation_id),
+                    role="assistant",
+                ),
+            )
+
+        response = client.post(
+            f"/api/conversations/{conversation_id}/read",
+            json={"last_read_seq": 1},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["last_read_seq"], 1)
+
+
+@test()
+def conversations_route_derives_unread_and_working_state() -> None:
+    """Conversation read models derive navigation state from durable rows."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
+        _ = portal.call(
+            service.append_message,
+            MessageDraft(
+                content="unread answer",
+                conversation_id=UUID(conversation_id),
+                role="assistant",
+            ),
+        )
+
+        async def add_work() -> UUID:
+            async with service.database.transaction(mode="immediate") as transaction:
+                running = await transaction.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=UUID(conversation_id),
+                            origin="interactive",
+                            scope_revision_snapshot=1,
+                            status="running",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+                _ = await transaction.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=UUID(conversation_id),
+                            origin="interactive",
+                            scope_revision_snapshot=1,
+                            status="pending",
+                            turn_seq=2,
+                        )
+                    )
+                )
+                return running.id
+
+        running_id = portal.call(add_work)
+        response = client.get("/api/conversations").json()[0]
+
+    assert_eq(response["latest_message_seq"], 1)
+    assert_eq(response["has_unread"], True)
+    assert_eq(response["pending_turn_count"], 1)
+    assert_eq(response["running_turn_id"], str(running_id))
 
 
 @test()
@@ -439,11 +679,12 @@ def latest_activity_reflects_the_most_recent_turn() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "hello",
                 }
             )
-            _ = websocket.receive_json()
+            _ = receive_event(websocket, "user_message")
 
         conversation = client.get("/api/conversations").json()[0]
 
@@ -465,10 +706,9 @@ def configured_default_model_is_stored_on_new_conversations() -> None:
 
 
 @test()
-def setting_model_persists_and_updates_live_runtime() -> None:
-    """Changing the model stores the selection and applies it via the registry."""
-    fake_runtime = FakeRuntime([])
-    registry = FakeRuntimeRegistry(fake_runtime)
+def setting_model_persists_without_touching_the_live_runtime() -> None:
+    """Model selection is durable profile state applied only on later execution."""
+    registry = FakeRuntimeRegistry(FakeRuntime([]))
     with (
         TemporaryDirectory() as directory,
         make_model_client(Path(directory)) as client,
@@ -481,49 +721,10 @@ def setting_model_persists_and_updates_live_runtime() -> None:
             f"/api/conversations/{conversation_id}/model",
             json={"selected_model": "smart"},
         )
-        stored = client.get("/api/conversations").json()[0]
 
     assert_eq(response.status_code, 200)
     assert_eq(response.json()["selected_model"], "smart")
-    assert_eq(stored["selected_model"], "smart")
-    assert_len(registry.applied_models, 1)
-    applied_conversation_id, applied_model = registry.applied_models[0]
-    assert_eq(str(applied_conversation_id), conversation_id)
-    assert_eq(applied_model.provider, "faux")
-    assert_eq(applied_model.model_id, "tether-chat-smart-faux")
-
-
-class RejectingRuntimeRegistry(FakeRuntimeRegistry):
-    """Registry double whose live runtime rejects a model switch."""
-
-    async def set_model(self, conversation_id: object, model: AgentModelConfig) -> None:
-        """Reject the switch the way a live pi does when set_model fails."""
-        _ = (conversation_id, model)
-        message = "pi rejected set_model"
-        raise PiRuntimeError(message)
-
-
-@test()
-def setting_model_returns_502_when_pi_rejects_the_switch() -> None:
-    """A live runtime rejecting `set_model` surfaces as a 502."""
-    registry = RejectingRuntimeRegistry(FakeRuntime([]))
-    with (
-        TemporaryDirectory() as directory,
-        make_model_client(Path(directory)) as client,
-    ):
-        _set_runtime_registry(client, registry)
-        login(client)
-        conversation_id = client.get("/api/conversations").json()[0]["id"]
-
-        response = client.post(
-            f"/api/conversations/{conversation_id}/model",
-            json={"selected_model": "smart"},
-        )
-        stored = client.get("/api/conversations").json()[0]
-
-    assert_eq(response.status_code, 502)
-    # The selection is still persisted; only the live-runtime push failed.
-    assert_eq(stored["selected_model"], "smart")
+    assert_eq(registry.applied_models, [])
 
 
 @test()
@@ -538,6 +739,153 @@ def messages_route_returns_empty_default_transcript() -> None:
 
     assert_eq(response.status_code, 200)
     assert_eq(response.json(), [])
+
+
+@test()
+def authenticated_user_can_list_nonterminal_conversation_turns() -> None:
+    """`GET /turns` returns queued controls without transcript Messages."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
+        request_id = uuid7()
+
+        async def add_pending_turn() -> UUID:
+            async with service.database.transaction(mode="immediate") as transaction:
+                pending = await transaction.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=UUID(conversation_id),
+                            origin="interactive",
+                            prompt_snapshot="queued after refresh",
+                            reply_mode="spoken",
+                            request_id=request_id,
+                            scope_revision_snapshot=1,
+                            status="pending",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+                _ = await transaction.execute(
+                    insert(
+                        ConversationTurn(
+                            completed_at=datetime.now(UTC),
+                            conversation_id=UUID(conversation_id),
+                            origin="interactive",
+                            prompt_snapshot="already done",
+                            reply_mode="text",
+                            scope_revision_snapshot=1,
+                            status="succeeded",
+                            turn_seq=2,
+                        )
+                    )
+                )
+                return pending.id
+
+        turn_id = portal.call(add_pending_turn)
+        response = client.get(f"/api/conversations/{conversation_id}/turns")
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        response.json(),
+        [
+            {
+                "completed_at": None,
+                "conversation_id": conversation_id,
+                "created_at": response.json()[0]["created_at"],
+                "failure_code": None,
+                "failure_summary": None,
+                "id": str(turn_id),
+                "origin": "interactive",
+                "prompt": "queued after refresh",
+                "reply_mode": "spoken",
+                "request_id": str(request_id),
+                "started_at": None,
+                "status": "pending",
+            }
+        ],
+    )
+
+
+@test()
+def authenticated_user_can_fetch_a_message_free_terminal_turn() -> None:
+    """`GET /turns/{id}` exposes prompt and lifecycle without Messages."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
+
+        async def add_cancelled_turn() -> UUID:
+            async with service.database.transaction(mode="immediate") as transaction:
+                turn = await transaction.execute(
+                    insert(
+                        ConversationTurn(
+                            completed_at=datetime.now(UTC),
+                            conversation_id=UUID(conversation_id),
+                            origin="scheduled",
+                            prompt_snapshot="cancelled before execution",
+                            reply_mode="text",
+                            scope_revision_snapshot=1,
+                            status="cancelled",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+                return turn.id
+
+        turn_id = portal.call(add_cancelled_turn)
+        response = client.get(f"/api/conversations/{conversation_id}/turns/{turn_id}")
+        messages = client.get(
+            f"/api/conversations/{conversation_id}/messages",
+            params={"turn_id": str(turn_id)},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["prompt"], "cancelled before execution")
+    assert_eq(response.json()["status"], "cancelled")
+    assert_eq(response.json()["origin"], "scheduled")
+    assert_eq(messages.json(), [])
+
+
+@test()
+def conversation_turn_detail_is_scoped_to_its_conversation() -> None:
+    """A turn UUID cannot be read through another Conversation route."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        main_id = client.get("/api/conversations").json()[0]["id"]
+        scoped_id = client.post(
+            "/api/conversations",
+            json={"display_name": "Other", "scope_brief": "Other work."},
+        ).json()["id"]
+        portal = client.portal
+        assert portal is not None
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
+
+        async def add_turn() -> UUID:
+            async with service.database.transaction(mode="immediate") as transaction:
+                turn = await transaction.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=UUID(main_id),
+                            origin="interactive",
+                            prompt_snapshot="private to Main",
+                            reply_mode="text",
+                            scope_revision_snapshot=1,
+                            status="pending",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+                return turn.id
+
+        turn_id = portal.call(add_turn)
+        response = client.get(f"/api/conversations/{scoped_id}/turns/{turn_id}")
+
+    assert_eq(response.status_code, 404)
 
 
 @test()
@@ -622,11 +970,12 @@ def websocket_prompt_persists_user_message() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello from ws",
                 }
             )
-            _ = websocket.receive_json()
+            _ = receive_event(websocket, "user_message")
 
         response = client.get(f"/api/conversations/{conversation_id}/messages")
 
@@ -678,6 +1027,7 @@ def websocket_prompt_sends_time_context_to_pi_not_history() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "remind me in 3 minutes",
                 }
@@ -723,6 +1073,7 @@ def websocket_prompt_with_spoken_mode_sends_guidance_and_keeps_history_clean() -
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "what is tether",
                     "reply_mode": "spoken",
@@ -750,6 +1101,8 @@ def websocket_prompt_with_spoken_mode_sends_guidance_and_keeps_history_clean() -
         [message["content"] for message in response.json()],
         ["what is tether", "Tether is a local agent."],
     )
+    turn_id = assert_isinstance(agent_end.pop("turn_id", None), str)
+    _ = UUID(turn_id)
     assert_eq(
         agent_end,
         {
@@ -777,6 +1130,7 @@ def websocket_prompt_defaults_reply_mode_to_text() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "plain question",
                 }
@@ -795,6 +1149,8 @@ def websocket_prompt_defaults_reply_mode_to_text() -> None:
     assert_len(prompt_fields, 1)
     pi_message = cast("str", prompt_fields[0]["message"])
     assert_not_in("text-to-speech", pi_message)
+    turn_id = assert_isinstance(agent_end.pop("turn_id", None), str)
+    _ = UUID(turn_id)
     assert_eq(
         agent_end,
         {
@@ -821,6 +1177,7 @@ def websocket_prompt_rejects_unknown_reply_mode() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "hello",
                     "reply_mode": "whisper",
@@ -909,6 +1266,7 @@ def websocket_prompt_streams_and_persists_assistant_message() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello from pi",
                 }
@@ -967,6 +1325,7 @@ def local_dependency_profile_returns_deterministic_chat_without_credentials() ->
                     websocket.send_json(
                         {
                             "type": "prompt",
+                            "request_id": str(uuid7()),
                             "conversation_id": conversation_id,
                             "content": content,
                         }
@@ -1022,8 +1381,8 @@ def websocket_prompt_rotates_pi_session_after_a_cold_gap() -> None:
 
 
 @test()
-def websocket_prompt_failure_reports_pi_detail() -> None:
-    """A failed pi prompt surfaces the provider-specific detail to the browser."""
+def websocket_prompt_failure_reports_stable_detail() -> None:
+    """A failed pi prompt keeps raw provider diagnostics out of the browser."""
     runtime = FailingPromptRuntime()
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         _set_runtime_registry(client, FakeRuntimeRegistry(runtime))
@@ -1034,15 +1393,15 @@ def websocket_prompt_failure_reports_pi_detail() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello",
                 }
             )
-            _ = websocket.receive_json()
-            frame = websocket.receive_json()
+            frame = receive_event(websocket, "error")
 
     assert_eq(frame["event"], "error")
-    assert_eq(frame["detail"], "prompt failed: No API key for openai-codex/gpt-5.5")
+    assert_eq(frame["detail"], "Agent could not accept the prompt.")
 
 
 @test()
@@ -1068,16 +1427,15 @@ def websocket_reports_settled_provider_error_to_browser() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello",
                 }
             )
-            _ = websocket.receive_json()
-            _ = websocket.receive_json()
-            frame = websocket.receive_json()
+            frame = receive_event(websocket, "error")
 
     assert_eq(frame["event"], "error")
-    assert_eq(frame["detail"], "Provided authentication token is expired.")
+    assert_eq(frame["detail"], "The model failed while generating a response.")
 
 
 @test()
@@ -1103,6 +1461,7 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Stream please",
                 }
@@ -1120,6 +1479,7 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
     assert_eq(
         [frame.get("event") for frame in frames],
         [
+            "turn_queued",
             "user_message",
             "message_start",
             "text_delta",
@@ -1145,6 +1505,7 @@ def websocket_drains_stale_events_before_prompt() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello",
                 }
@@ -1168,15 +1529,15 @@ def websocket_reports_agent_timeout_to_browser() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello",
                 }
             )
-            _ = websocket.receive_json()
-            frame = websocket.receive_json()
+            frame = receive_event(websocket, "error")
 
     assert_eq(frame["event"], "error")
-    assert_in("timed out", frame["detail"])
+    assert_eq(frame["detail"], "Agent stopped responding during generation.")
 
 
 @test()
@@ -1205,6 +1566,7 @@ def websocket_persists_reasoning_as_its_own_row_before_the_answer() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Think then answer",
                 }
@@ -1292,44 +1654,45 @@ def websocket_bucket_write_publishes_invalidation() -> None:
 
 
 @test()
-def websocket_rejects_overlapping_prompts() -> None:
-    """One conversation never runs two agent generations concurrently."""
+def websocket_queues_overlapping_prompts_in_fifo_order() -> None:
+    """A second prompt waits durably instead of being rejected."""
     fake_runtime = BlockingRuntime()
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        app = assert_isinstance(client.app, Starlette)
-        object.__setattr__(
-            app_runtime(app),
-            "conversation_runtime_registry",
-            FakeRuntimeRegistry(fake_runtime),
-        )
+        _ = assert_isinstance(client.app, Starlette)
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
         login(client)
         conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_json(
-                {
-                    "type": "prompt",
-                    "conversation_id": conversation_id,
-                    "content": "First",
-                }
-            )
-            _ = websocket.receive_json()
-            websocket.send_json(
-                {
-                    "type": "prompt",
-                    "conversation_id": conversation_id,
-                    "content": "Overlapping",
-                }
-            )
+            for content in ("First", "Overlapping"):
+                websocket.send_json(
+                    {
+                        "type": "prompt",
+                        "request_id": str(uuid7()),
+                        "conversation_id": conversation_id,
+                        "content": content,
+                    }
+                )
+            first_user = receive_event(websocket, "user_message")
+            portal.call(fake_runtime.events.put, AgentEnded())
             frame = websocket.receive_json()
+            while frame.get("event") != "user_message":
+                frame = websocket.receive_json()
+            portal.call(fake_runtime.events.put, AgentEnded())
+            while websocket.receive_json().get("event") != "agent_end":
+                pass
 
-    assert_eq(frame["event"], "error")
-    assert_eq(frame["detail"], "generation already running")
+    assert_eq(first_user["event"], "user_message")
+    assert_eq(frame["event"], "user_message")
+    assert_true(first_user["turn_id"] != frame["turn_id"])
+    assert_eq(fake_runtime.client.commands, ["prompt", "prompt"])
 
 
 @test()
-def websocket_abort_forwards_to_current_runtime() -> None:
-    """Inbound `abort` asks the current pi runtime to stop generation."""
+def websocket_abort_requires_a_turn_id() -> None:
+    """Conversation-wide aborts are rejected before touching a pi runtime."""
     fake_runtime = FakeRuntime([])
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
@@ -1340,8 +1703,9 @@ def websocket_abort_forwards_to_current_runtime() -> None:
             websocket.send_json({"type": "abort", "conversation_id": conversation_id})
             frame = websocket.receive_json()
 
-    assert_eq(frame["event"], "abort_ack")
-    assert_eq(fake_runtime.client.commands, ["abort"])
+    assert_eq(frame["event"], "error")
+    assert_eq(frame["detail"], "abort turn_id is required")
+    assert_eq(fake_runtime.client.commands, [])
 
 
 @test()
@@ -1357,13 +1721,20 @@ def websocket_abort_is_processed_while_generation_is_running() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Wait for abort",
                 }
             )
-            first_frame = websocket.receive_json()
-            websocket.send_json({"type": "abort", "conversation_id": conversation_id})
-            abort_frame = websocket.receive_json()
+            first_frame = receive_event(websocket, "user_message")
+            websocket.send_json(
+                {
+                    "type": "abort",
+                    "conversation_id": conversation_id,
+                    "turn_id": first_frame["turn_id"],
+                }
+            )
+            abort_frame = receive_event(websocket, "abort_ack")
 
     assert_eq(first_frame["event"], "user_message")
     assert_eq(abort_frame["event"], "abort_ack")
@@ -1387,6 +1758,7 @@ def websocket_reports_only_the_confirmed_loaded_skill_count() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello",
                 }
@@ -1399,6 +1771,9 @@ def websocket_reports_only_the_confirmed_loaded_skill_count() -> None:
                     break
 
     status = next(frame for frame in frames if frame.get("event") == "skill_status")
+    turn_id = status.pop("turn_id", None)
+    assert_true(isinstance(turn_id, str))
+    _ = UUID(turn_id)
     assert_eq(
         status,
         {
@@ -1468,6 +1843,7 @@ def websocket_reports_context_usage_before_the_turn_closes() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Hello",
                 }
@@ -1479,8 +1855,14 @@ def websocket_reports_context_usage_before_the_turn_closes() -> None:
                 if frame.get("event") == "agent_end":
                     break
 
+    status_frames = [
+        frame for frame in frames if frame.get("event") == "session_status"
+    ]
+    turn_id = status_frames[0].pop("turn_id", None)
+    assert_true(isinstance(turn_id, str))
+    _ = UUID(turn_id)
     assert_eq(
-        [frame for frame in frames if frame.get("event") == "session_status"],
+        status_frames,
         [
             {
                 "type": "chat",
@@ -1522,6 +1904,7 @@ def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Grill my plan",
                 }
@@ -1535,7 +1918,16 @@ def websocket_hides_skill_reads_from_live_and_persisted_transcripts() -> None:
 
         messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
 
-    assert_eq(frame_events, ["user_message", "session_status", "agent_end"])
+    assert_eq(
+        frame_events,
+        [
+            "turn_queued",
+            "user_message",
+            "session_status",
+            "error",
+            "agent_end",
+        ],
+    )
     assert_eq([message["role"] for message in messages], ["user"])
 
 
@@ -1566,6 +1958,7 @@ def websocket_marks_tool_only_turns_without_a_final_answer() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "look at all the walks these past week",
                 }
@@ -1613,6 +2006,7 @@ def websocket_flags_tool_only_agent_end_frames() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "look at all the walks these past week",
                 }
@@ -1651,6 +2045,7 @@ def websocket_persists_tool_call_rows() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Use a tool",
                 }
@@ -1696,6 +2091,7 @@ def websocket_tool_frames_carry_args_and_result() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Use a tool",
                 }
@@ -1743,6 +2139,7 @@ def websocket_compacts_oversized_tool_results_before_chat_completion() -> None:
             websocket.send_json(
                 {
                     "type": "prompt",
+                    "request_id": str(uuid7()),
                     "conversation_id": conversation_id,
                     "content": "Summarize my health",
                 }
@@ -1762,36 +2159,28 @@ def websocket_compacts_oversized_tool_results_before_chat_completion() -> None:
 
 
 @test()
-def clearing_a_conversation_empties_the_transcript() -> None:
-    """DELETE on the messages route drops history and rotates the pi session."""
-    fake_runtime = FakeRuntime(
-        [
-            MessageSettled(reasoning="", text="hello there"),
-            AgentEnded(),
-        ]
-    )
-    registry = FakeRuntimeRegistry(fake_runtime)
+def transcript_has_no_clear_endpoint() -> None:
+    """Conversation lifecycle cannot delete canonical Message Evidence."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
-        _set_runtime_registry(client, registry)
         login(client)
-        conversation = client.get("/api/conversations").json()[0]
-        conversation_id = conversation["id"]
-        prompt_until_agent_end(
-            client, conversation_id=conversation_id, content="Say hi"
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
+        service = app_runtime(cast("Starlette", client.app)).conversation_service
+        _ = portal.call(
+            service.append_message,
+            MessageDraft(
+                content="retain me",
+                conversation_id=UUID(conversation_id),
+                role="user",
+            ),
         )
-        before = client.get(f"/api/conversations/{conversation_id}/messages").json()
-        assert_true(len(before) > 0)
 
         response = client.delete(f"/api/conversations/{conversation_id}/messages")
+        transcript = client.get(f"/api/conversations/{conversation_id}/messages").json()
 
-        assert_eq(response.status_code, 200)
-        cleared = response.json()
-        assert_eq(cleared["id"], conversation_id)
-        assert_true(cleared["pi_session_id"] != conversation["pi_session_id"])
-        after = client.get(f"/api/conversations/{conversation_id}/messages").json()
-        assert_eq(after, [])
-    assert_len(registry.discarded, 1)
-    assert_eq(str(registry.discarded[0]), conversation_id)
+    assert_eq(response.status_code, 405)
+    assert_eq([message["content"] for message in transcript], ["retain me"])
 
 
 @test()
@@ -1900,11 +2289,130 @@ def messages_route_without_params_still_returns_full_history() -> None:
 
 
 @test()
-def clearing_a_missing_conversation_returns_404() -> None:
-    """A DELETE for an unknown conversation id is a clean 404."""
+def messages_route_can_filter_one_turn_and_repeats_its_lifecycle() -> None:
+    """Flat Message JSON carries a compact repeated turn summary and filter."""
+    fake_runtime = FakeRuntime(
+        [MessageSettled(reasoning="", text="answer"), AgentEnded()]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "request_id": str(uuid7()),
+                    "conversation_id": conversation_id,
+                    "content": "question",
+                }
+            )
+            frame = websocket.receive_json()
+            turn_id = frame["turn_id"]
+            while frame.get("event") != "agent_end":
+                frame = websocket.receive_json()
+
+        response = client.get(
+            f"/api/conversations/{conversation_id}/messages",
+            params={"turn_id": turn_id},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(
+        [message["content"] for message in response.json()], ["question", "answer"]
+    )
+    assert_eq([message["turn_id"] for message in response.json()], [turn_id, turn_id])
+    assert_eq(
+        [message["turn"] for message in response.json()],
+        [
+            {
+                "failure_code": None,
+                "failure_summary": None,
+                "intended_fire_at": None,
+                "occurrence_id": None,
+                "origin": "interactive",
+                "status": "succeeded",
+                "trigger_id": None,
+            }
+        ]
+        * 2,
+    )
+
+
+@test()
+def websocket_translates_unknown_and_archived_conversation_submissions() -> None:
+    """Unavailable Conversation targets return public errors without closing WS."""
     with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
         login(client)
-        response = client.delete(
-            "/api/conversations/00000000-0000-0000-0000-000000000000/messages"
+        created = client.post(
+            "/api/conversations",
+            json={"display_name": "Old", "scope_brief": "Archived work"},
+        ).json()
+        _ = client.post(f"/api/conversations/{created['id']}/archive")
+        with client.websocket_connect("/ws") as websocket:
+            details: list[str] = []
+            for conversation_id in (str(uuid7()), created["id"]):
+                websocket.send_json(
+                    {
+                        "type": "prompt",
+                        "request_id": str(uuid7()),
+                        "conversation_id": conversation_id,
+                        "content": "unavailable",
+                    }
+                )
+                details.append(receive_event(websocket, "error")["detail"])
+
+    assert_eq(
+        details,
+        ["conversation is unknown or archived", "conversation is unknown or archived"],
+    )
+
+
+@test()
+def websocket_translates_turn_shutdown_without_closing_the_socket() -> None:
+    """A stopped turn module reports availability through the chat contract."""
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        portal = client.portal
+        assert portal is not None
+        portal.call(
+            app_runtime(cast("Starlette", client.app)).conversation_turns.shutdown
         )
-        assert_eq(response.status_code, 404)
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "request_id": str(uuid7()),
+                    "conversation_id": conversation_id,
+                    "content": "too late",
+                }
+            )
+            frame = receive_event(websocket, "error")
+
+    assert_eq(frame["detail"], "conversation turn execution is unavailable")
+
+
+@test()
+def websocket_prompt_requires_a_browser_request_id() -> None:
+    """A prompt without its idempotency UUID is rejected before persistence."""
+    fake_runtime = FakeRuntime([AgentEnded()])
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "prompt",
+                    "conversation_id": conversation_id,
+                    "content": "missing identity",
+                }
+            )
+            frame = websocket.receive_json()
+        messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
+
+    assert_eq(frame["event"], "error")
+    assert_eq(frame["detail"], "prompt request_id is required")
+    assert_eq(messages, [])
+    assert_eq(fake_runtime.client.commands, [])

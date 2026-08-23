@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from tether.app_runtime import AppRuntime, install_app_runtime
 from tether.evidence import EvidenceResolver
@@ -33,9 +37,29 @@ from tether.ingestion_composition import (
     compose_ingestion,
 )
 from tether.search_projection.embeddings import Embedder
-from tether.service_composition import compose_core_services
+from tether.service_composition import CoreServices, compose_core_services
 from tether.telemetry_model import TelemetrySettings
 from tether.transcripts.contracts import AsyncClosable
+
+
+class ServingReadyMiddleware:
+    """Signal when the composed ASGI app receives its first live request."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app: ASGIApp = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        application = scope.get("app")
+        if scope["type"] in {"http", "websocket"} and isinstance(application, FastAPI):
+            serving_ready = getattr(application.state, "serving_ready", None)
+            if isinstance(serving_ready, asyncio.Event):
+                serving_ready.set()
+        await self.app(scope, receive, send)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +77,7 @@ async def _compose_app_runtime(
     dependencies: _RuntimeDependencies,
     *,
     resources: contextlib.AsyncExitStack,
-) -> None:
+) -> CoreServices:
     """Build and install the complete request-serving dependency graph."""
     host = await acquire_host_resources(
         config=dependencies.config,
@@ -116,6 +140,7 @@ async def _compose_app_runtime(
             conversation_runtime_registry=core.conversation_runtime_registry,
             conversation_service=core.conversation_service,
             conversation_turn_queue=core.conversation_turn_queue,
+            conversation_turns=core.conversation_turns,
             event_hub=core.event_hub,
             evidence_resolver=EvidenceResolver(
                 host.database,
@@ -162,6 +187,75 @@ async def _compose_app_runtime(
             youtube_service=youtube.service,
         ),
     )
+    return core
+
+
+async def _dispatch_when_tool_http_is_ready(
+    core: CoreServices,
+    *,
+    serving_ready: asyncio.Event,
+    tool_base_url: str,
+) -> None:
+    """Keep recovered pi work behind the host's serving socket readiness."""
+    parsed_url = urlsplit(tool_base_url)
+    host = parsed_url.hostname or "127.0.0.1"
+    with contextlib.suppress(ValueError):
+        if ip_address(host).is_unspecified:
+            host = "127.0.0.1"
+    port = parsed_url.port or (443 if parsed_url.scheme == "https" else 80)
+
+    async def wait_for_socket() -> None:
+        while True:
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=0.2,
+                )
+            except TimeoutError, OSError:
+                await asyncio.sleep(0.05)
+                continue
+            _ = reader
+            writer.close()
+            await writer.wait_closed()
+            return
+
+    readiness_tasks = {
+        asyncio.create_task(serving_ready.wait()),
+        asyncio.create_task(wait_for_socket()),
+    }
+    try:
+        _ = await asyncio.wait(
+            readiness_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        for task in readiness_tasks:
+            if not task.done():
+                _ = task.cancel()
+        for task in readiness_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+    _ = await core.conversation_turns.dispatch_recovered()
+    await core.scheduler.dispatch_recovered()
+    await core.scheduler.run_forever()
+
+
+async def _stop_recovered_dispatch(
+    core: CoreServices,
+    task: asyncio.Task[None],
+) -> None:
+    """Stop readiness and scheduler loops before database resources unwind."""
+    core.scheduler.stop_intake()
+    if task.done():
+        if not task.cancelled():
+            _ = task.exception()
+        return
+    try:
+        _ = await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+    except TimeoutError:
+        _ = task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def app_lifespan(
@@ -177,13 +271,15 @@ def app_lifespan(
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         """Compose the runtime, serve requests, then unwind resources in order."""
         async with contextlib.AsyncExitStack() as resources:
+            serving_ready = asyncio.Event()
+            app.state.serving_ready = serving_ready
             for configured_resource in (
                 config.gmail_transport,
                 config.transcript_provider,
             ):
                 if isinstance(configured_resource, AsyncClosable):
                     _ = resources.push_async_callback(configured_resource.aclose)
-            await _compose_app_runtime(
+            core = await _compose_app_runtime(
                 app,
                 _RuntimeDependencies(
                     bootstrap=bootstrap,
@@ -192,6 +288,18 @@ def app_lifespan(
                     telemetry_settings=telemetry_settings,
                 ),
                 resources=resources,
+            )
+            recovered_dispatch = asyncio.create_task(
+                _dispatch_when_tool_http_is_ready(
+                    core,
+                    serving_ready=serving_ready,
+                    tool_base_url=config.tool_base_url,
+                )
+            )
+            _ = resources.push_async_callback(
+                _stop_recovered_dispatch,
+                core,
+                recovered_dispatch,
             )
             yield
 

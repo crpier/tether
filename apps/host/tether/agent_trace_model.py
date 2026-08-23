@@ -13,6 +13,15 @@ type Termination = Literal["completed", "error", "aborted", "timeout"]
 """Reason an agent run stopped."""
 
 
+@dataclass(frozen=True, slots=True)
+class RunCorrelation:
+    """Durable Conversation identity attached to one trace run."""
+
+    conversation_id: str | None = None
+    origin: str | None = None
+    turn_id: str | None = None
+
+
 def _empty_tool_calls() -> list[ToolCallTrace]:
     """Create an independently owned tool-call collection for one run."""
     return []
@@ -58,7 +67,9 @@ class RunTrace:
     kind: RunKind
     started_at: float
     conversation_id: str | None = None
+    origin: str | None = None
     prompt: str | None = None
+    turn_id: str | None = None
     ended_at: float | None = None
     termination: Termination | None = None
     error: str | None = None
@@ -84,6 +95,8 @@ class RunTrace:
             "session_id": self.session_id,
             "kind": self.kind,
             "conversation_id": self.conversation_id,
+            "turn_id": self.turn_id,
+            "origin": self.origin,
             "prompt": self.prompt,
             "started_at": self.started_at,
             "ended_at": self.ended_at,

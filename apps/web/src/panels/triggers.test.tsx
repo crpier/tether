@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { ApiError } from "../host/error";
 import {
   FakeHost,
+  conversation,
   input,
   navigateTo,
   renderApp,
@@ -717,6 +718,253 @@ describe("Triggers panel", () => {
     ).not.toBeInTheDocument();
     expect(host.triggers.updateTriggerCalls).toHaveLength(0);
     expect(host.triggers.createTriggerCalls).toHaveLength(0);
+  });
+
+  test("prompt reminders require an active Conversation target while fixed messages have none", async () => {
+    const target = {
+      ...conversation,
+      display_name: "Garden",
+      id: "018f0000-0000-7000-8000-000000000311",
+      kind: "scoped" as const,
+      scope_brief: "Plan the garden.",
+      title: "Garden",
+    };
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversations = [conversation, target];
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add reminder" }),
+    );
+
+    expect(
+      screen.queryByRole("combobox", { name: "Conversation target" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Action" }), {
+      target: { value: "prompt" },
+    });
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Conversation target" }),
+      {
+        target: { value: target.id },
+      },
+    );
+    fireEvent.input(input(screen.getByLabelText("Reminder")), {
+      target: { value: "plan next week" },
+    });
+    fireEvent.input(input(screen.getByLabelText("Date and time")), {
+      target: { value: "2099-01-01T15:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add reminder" }));
+
+    await waitFor(() => {
+      expect(
+        host.triggers.createTriggerCalls.at(-1)?.target_conversation_id,
+      ).toBe(target.id);
+    });
+  });
+
+  test("shows prompt target, pinned profile, occurrence outcome, push state, and turn link", async () => {
+    const conversationId = "018f0000-0000-7000-8000-000000000312";
+    const turnId = "018f0000-0000-7000-8000-000000000313";
+    const host = new FakeHost({
+      authenticated: true,
+      triggers: [
+        trigger({
+          action_kind: "prompt",
+          latest_occurrence: {
+            action_kind: "prompt",
+            answer_message_id: null,
+            failure_code: null,
+            failure_summary: null,
+            id: "018f0000-0000-7000-8000-000000000314",
+            intended_fire_at: "2026-01-02T09:00:00Z",
+            model_profile: "gpt-5.6-luna",
+            payload: "plan next week",
+            push_attempts: 1,
+            push_error: null,
+            push_status: "delivered",
+            status: "succeeded",
+            target_conversation_id: conversationId,
+            target_conversation_kind: "scoped",
+            target_conversation_name: "Garden",
+            trigger_id: "018f0000-0000-7000-8000-0000000000aa",
+            trigger_version: 1,
+            turn: {
+              failure_code: null,
+              failure_summary: null,
+              id: turnId,
+              status: "succeeded",
+            },
+          },
+          model_profile: "gpt-5.6-luna",
+          payload: "plan next week",
+          target_conversation_id: conversationId,
+          target_conversation_name: "Garden",
+        }),
+      ],
+    });
+    renderApp(host);
+    await navigateTo("Browse");
+    fireEvent.click(await screen.findByRole("tab", { name: "Reminders" }));
+
+    const row = await screen.findByLabelText("Reminder: plan next week");
+    expect(row).toHaveTextContent("Garden");
+    expect(row).toHaveTextContent("Pinned profile: gpt-5.6-luna");
+    expect(row).toHaveTextContent("Latest: succeeded");
+    expect(row).toHaveTextContent("Push: delivered");
+    expect(
+      within(row).getByRole("link", { name: "Open scheduled turn" }),
+    ).toHaveAttribute("href", `/chat/${conversationId}?turn=${turnId}`);
+  });
+
+  test("occurrence links use immutable target kind even when a Scoped name is Main", async () => {
+    const conversationId = "018f0000-0000-7000-8000-000000000315";
+    const host = new FakeHost({
+      authenticated: true,
+      triggers: [
+        trigger({
+          action_kind: "prompt",
+          latest_occurrence: {
+            action_kind: "prompt",
+            answer_message_id: null,
+            failure_code: null,
+            failure_summary: null,
+            id: "018f0000-0000-7000-8000-000000000316",
+            intended_fire_at: "2026-01-02T09:00:00Z",
+            model_profile: null,
+            payload: "check Main-named scope",
+            push_attempts: 0,
+            push_error: null,
+            push_status: "pending",
+            status: "succeeded",
+            target_conversation_id: conversationId,
+            target_conversation_kind: "scoped",
+            target_conversation_name: "Main",
+            trigger_id: "018f0000-0000-7000-8000-0000000000aa",
+            trigger_version: 1,
+            turn: {
+              failure_code: null,
+              failure_summary: null,
+              id: "018f0000-0000-7000-8000-000000000317",
+              status: "succeeded",
+            },
+          },
+          target_conversation_id: "018f0000-0000-7000-8000-000000000999",
+          target_conversation_name: "Changed target",
+        }),
+      ],
+    });
+    renderApp(host, undefined, { path: "/browse/reminders" });
+
+    expect(
+      await screen.findByRole("link", { name: "Open scheduled turn" }),
+    ).toHaveAttribute(
+      "href",
+      `/chat/${conversationId}?turn=018f0000-0000-7000-8000-000000000317`,
+    );
+  });
+
+  test("an exact occurrence query remains inspectable without its trigger", async () => {
+    const occurrence = trigger({
+      action_kind: "prompt",
+      latest_occurrence: {
+        action_kind: "prompt",
+        answer_message_id: null,
+        failure_code: null,
+        failure_summary: null,
+        id: "018f0000-0000-7000-8000-000000000318",
+        intended_fire_at: "2026-01-02T09:00:00Z",
+        model_profile: null,
+        payload: "deleted reminder occurrence",
+        push_attempts: 0,
+        push_error: null,
+        push_status: "delivered",
+        status: "succeeded",
+        target_conversation_id: conversation.id,
+        target_conversation_kind: "main",
+        target_conversation_name: "Main",
+        trigger_id: "018f0000-0000-7000-8000-000000000319",
+        trigger_version: 1,
+        turn: {
+          failure_code: null,
+          failure_summary: null,
+          id: "018f0000-0000-7000-8000-000000000320",
+          status: "succeeded",
+        },
+      },
+    }).latest_occurrence;
+    if (occurrence === null) {
+      throw new Error("expected occurrence fixture");
+    }
+    const host = new FakeHost({ authenticated: true });
+    host.triggers.storedOccurrences = [occurrence];
+    renderApp(host, undefined, {
+      path: `/browse/reminders?occurrence=${occurrence.id}`,
+    });
+
+    const card = await screen.findByRole("article", {
+      name: "Scheduled occurrence",
+    });
+    expect(card).toHaveTextContent("deleted reminder occurrence");
+    expect(
+      within(card).getByRole("link", { name: "Open exact scheduled turn" }),
+    ).toHaveAttribute("href", `/chat?turn=${occurrence.turn?.id ?? ""}`);
+  });
+
+  test("distinguishes a missing occurrence from a retryable load failure", async () => {
+    const missingHost = new FakeHost({ authenticated: true });
+    renderApp(missingHost, undefined, {
+      path: "/browse/reminders?occurrence=missing",
+    });
+    expect(
+      await screen.findByText("Scheduled occurrence was not found."),
+    ).toBeVisible();
+    cleanup();
+
+    const failingHost = new FakeHost({ authenticated: true });
+    failingHost.triggers.fetchOccurrenceRejections = [new ApiError(503)];
+    renderApp(failingHost, undefined, {
+      path: "/browse/reminders?occurrence=unavailable",
+    });
+    expect(
+      await screen.findByText("Scheduled occurrence could not be loaded."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Retry occurrence" }),
+    ).toBeVisible();
+  });
+
+  test("trigger and Conversation query parameters focus matching reminders and announce absence", async () => {
+    const targetId = "018f0000-0000-7000-8000-000000000321";
+    const host = new FakeHost({
+      authenticated: true,
+      triggers: [
+        trigger({ id: "trigger-a", payload: "other" }),
+        trigger({
+          action_kind: "prompt",
+          id: "trigger-b",
+          payload: "focused",
+          target_conversation_id: targetId,
+        }),
+      ],
+    });
+    renderApp(host, undefined, {
+      path: `/browse/reminders?conversation=${targetId}`,
+    });
+
+    expect(await screen.findByLabelText("Reminder: focused")).toBeVisible();
+    expect(screen.queryByLabelText("Reminder: other")).not.toBeInTheDocument();
+
+    cleanup();
+    const missingHost = new FakeHost({ authenticated: true });
+    renderApp(missingHost, undefined, {
+      path: "/browse/reminders?trigger=missing",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "No matching reminder was found",
+    );
   });
 
   test("the reminder action help text distinguishes the two kinds", async () => {

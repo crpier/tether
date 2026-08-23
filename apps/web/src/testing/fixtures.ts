@@ -20,12 +20,23 @@ import type {
 } from "../host";
 
 export const conversation: Conversation = {
+  archived_at: null,
   created_at: "2026-01-01T00:00:00Z",
+  display_name: null,
+  has_unread: false,
   id: "018f0000-0000-7000-8000-000000000001",
+  kind: "main",
+  last_read_seq: 0,
   latest_activity: null,
+  latest_message_seq: 0,
+  pending_turn_count: 0,
   pi_session_id: "018f0000-0000-7000-8000-000000000002",
+  running_turn_id: null,
+  scope_brief: null,
+  scope_revision: 1,
   selected_model: "gpt-5.6-luna",
   session_gap_seconds: 300,
+  status: "active",
   title: null,
 };
 
@@ -101,6 +112,9 @@ export function message(overrides: Partial<Message>): Message {
     tool_args: null,
     tool_name: null,
     tool_result: null,
+    turn: null,
+    turn_id: null,
+    turn_message_seq: null,
     ...overrides,
   };
 }
@@ -145,12 +159,15 @@ export function trigger(overrides: Partial<Trigger>): Trigger {
     created_at: "2026-01-01T00:00:00Z",
     id: "018f0000-0000-7000-8000-0000000000aa",
     last_error: null,
+    latest_occurrence: null,
     model_profile: null,
     next_attempt_at: null,
     next_fire_at: "2099-01-01T15:00:00Z",
     payload: "call the dentist",
     recurrence: "once",
     status: "active",
+    target_conversation_id: null,
+    target_conversation_name: null,
     timezone: "UTC",
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,

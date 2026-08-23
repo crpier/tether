@@ -33,6 +33,7 @@ export function createBusHarness(): {
     content?: string;
     conversationId: string;
     replyMode?: "spoken" | "text";
+    turnId?: string;
     type: "abort" | "prompt";
   }[];
   statusRequests: string[];
@@ -43,12 +44,13 @@ export function createBusHarness(): {
     content?: string;
     conversationId: string;
     replyMode?: "spoken" | "text";
+    turnId?: string;
     type: "abort" | "prompt";
   }[] = [];
   const statusRequests: string[] = [];
   const bus: ChatBus = {
-    abort(conversationId) {
-      sent.push({ conversationId, type: "abort" });
+    abort(conversationId, turnId) {
+      sent.push({ conversationId, turnId, type: "abort" });
     },
     close() {
       closed = true;
@@ -79,8 +81,8 @@ export function createBusHarness(): {
 // The app is a routed 5-page shell (#250): tests running with vitest's
 // `isolate: false` share one jsdom `window.history` across every test file in
 // the worker, so a route left over from a previous test would otherwise leak
-// into the next render. Reset to the root path (pure chat, the home page)
-// before every render unless the caller wants to land somewhere else.
+// into the next render. Reset to canonical Chat before every render unless
+// the caller wants to land somewhere else.
 // The shell hides the inactive responsive nav from accessibility; jsdom has no
 // layout, so it falls back to the desktop sidebar unless tests mock
 // matchMedia.
@@ -103,7 +105,8 @@ export function renderApp(
   bus = createBusHarness(),
   options: { path?: string } = {},
 ) {
-  window.history.pushState({}, "", options.path ?? "/");
+  window.history.pushState({}, "", options.path ?? "/chat");
+  window.dispatchEvent(new PopStateEvent("popstate"));
   render(() => <App createChatBus={bus.createChatBus} host={host} />);
   return bus;
 }

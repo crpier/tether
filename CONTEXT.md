@@ -23,7 +23,7 @@ Canonical durable source material that may support a Claim, such as a user Messa
 _Avoid_: Memory, summary, inference
 
 **Dreaming**:
-The automatic behavior that assimilates settled Evidence and maintains current Memory without a per-item approval inbox. It is incremental, bounded, evidence-linked, correctable, and inspectable.
+The automatic behavior that assimilates settled Evidence and maintains current Memory without a per-item approval inbox. A terminal interactive Conversation turn queues assimilation whenever it appended a user Message, even if agent execution failed or was cancelled; a scheduled turn alone does not. Dreaming is incremental, bounded, evidence-linked, correctable, and inspectable.
 _Avoid_: reflection, review, extraction
 
 **Dream run**:
@@ -35,12 +35,24 @@ A user instruction that selected retained Evidence must not produce or recreate 
 _Avoid_: dismissal, soft delete, ignore
 
 **Conversation**:
-A durable Tether-owned chat thread and its canonical ordered Messages. It may span many disposable pi sessions, which are execution segments rather than conversational authority.
+A durable Tether-owned chat thread and its canonical ordered Messages. It may span many disposable pi sessions, which are execution segments rather than conversational authority, and retains its own model profile across those sessions. A pi session is rotated after uncertain or interrupted accepted execution so its context cannot outrun canonical Messages. User Messages in every Conversation are global conversational Evidence; Conversation organization never limits Dreaming, Memory, or tools.
 _Avoid_: pi session, chat session
 
+**Main Conversation**:
+The one permanent, untitled Conversation used for general chat and as the default target when no other Conversation is selected. Its identity is explicit rather than inferred from title or creation order, and it cannot be renamed or deleted.
+_Avoid_: default chat, first Conversation, general thread
+
+**Scoped Conversation**:
+A Conversation with an editable display name and one durable scope brief that guides its prompt, Memory relevance, and output without restricting Memory or tools. The display name is presentation only. Scope revisions are snapshotted when a Conversation turn is submitted, so running and already-pending turns retain their prior scope while later submissions use the edit. It is active or archived; archiving hides it from ordinary navigation without deleting its Messages or Evidence, and it may later be restored. Archival is blocked while the Conversation has a pending or running turn, or while an active prompt Scheduled trigger targets it. Successful archival discards and rotates its pi session, so restored execution begins fresh while retaining canonical state. Names need not be unique because Conversation identity remains its UUID.
+_Avoid_: side chat, workspace, restricted Conversation
+
+**Conversation turn**:
+One durable execution accepted from an idempotent interactive request, a serialized Voice capture, or a Scheduled occurrence. Turns use a durable per-Conversation enqueue sequence and serialize in FIFO order within one Conversation, while different Conversations may execute concurrently. A pending turn retains its prompt and model snapshot outside the transcript; only when it reaches the FIFO head does it append its initiating user Message or Scheduled Message, followed contiguously by its reasoning, tool, and assistant Messages. Cancellation before execution therefore retains a cancelled turn record without manufacturing a transcript Message. A Conversation turn records execution origin, model profile, and lifecycle: pending, running, succeeded, failed, or cancelled. Partial reasoning and tool Messages remain part of a failed turn because they may document side effects. A submitted turn snapshots the concrete provider, model, and thinking configuration, not only a profile ID, so restart or configuration changes cannot alter it. A scheduled Conversation turn retains Provenance to its Scheduled trigger and intended firing time across safe retries. Only an explicitly transient failure known to precede pi acceptance retries automatically, at most twice; unknown, permanent, exhausted, and post-acceptance failures are terminal. Durable failure state contains a typed code, phase, stable human summary, and trace run ID, while raw diagnostics remain in traces and logs. Cancellation targets one Conversation turn, never the Conversation or pi runtime globally. Host shutdown briefly drains running turns, marks unresolved accepted work failed, and leaves pending turns for startup reconciliation without rerunning uncertain execution.
+_Avoid_: pi turn, agent run, Message
+
 **Message**:
-One canonical ordered transcript entry within a Conversation, including its speaker or execution role. User Messages are conversational Evidence; assistant, reasoning, and tool Messages are context only unless they contain separately verified Evidence.
-_Avoid_: pi message, session entry, turn
+One canonical ordered transcript entry within a Conversation turn, including its speaker or execution role. User Messages are conversational Evidence. Scheduled Messages record a Scheduled occurrence and expose its intended firing time, trigger reference, lifecycle, and stable failure state, but are context only because recurrence does not create fresh user Evidence. Because pi RPC accepts prompts only as user-role input, Tether wraps scheduled prompt content with host-owned context instructions before execution while preserving the canonical Scheduled Message unchanged. A Scheduled Message cannot authorize Product observation capture, email-to-Evidence promotion, or another capability requiring fresh active-turn user Evidence, though scheduled turns retain ordinary tools. Assistant, reasoning, and tool Messages are also context only unless they contain separately verified Evidence.
+_Avoid_: pi message, session entry, Conversation turn
 
 **Recall**:
 A spaced learning workflow in which the human practices distilled material through scheduled prompts. It measures learning progress and does not gate whether content enters Memory.
@@ -127,8 +139,12 @@ A saved query over the Commons, rendered through Widgets — a panel assembled f
 _Avoid_: dashboard, view, report
 
 **Scheduled trigger**:
-A time-triggered action the human sets up: it fires once or on a recurrence (daily/weekly), and its action is either to deliver a fixed message or to run a prompt through the agent and deliver the result. A recurring prompt captures the chat effort profile selected when the trigger is saved and keeps that profile across later firings. The push half of the capture → resurface loop (a plain reminder is the fixed-message case).
+A time-triggered definition the human sets up: it fires once or on a recurrence (daily/weekly), and its action is either to deliver a fixed message or to run a prompt through the agent and deliver the result. A prompt trigger targets the Main Conversation or one active Scoped Conversation. A recurring prompt captures the chat effort profile selected when the trigger is saved and keeps that profile across later firings. Edits and retargeting affect future Scheduled occurrences only. Deleting a trigger cancels pending occurrences and prevents future ones, but running and succeeded occurrences finish from their immutable snapshots. The push half of the capture → resurface loop (a plain reminder is the fixed-message case).
 _Avoid_: scheduled prompt task, reminder, cron job, alert
+
+**Scheduled occurrence**:
+One durable, immutable firing of a Scheduled trigger. It snapshots the trigger version, intended firing time, action, payload, target Conversation, and model profile. A prompt occurrence links exactly one scheduled Conversation turn, whose Scheduled Message is context rather than fresh user Evidence. Turn success settles agent execution and advances recurrence independently of Web Push; push retries reuse the durable assistant Message and never rerun the turn. Deleting a trigger cancels a pending occurrence and turn, while an already-running or succeeded occurrence completes from its snapshot. The human can inspect an occurrence's outcome and follow its linked Conversation turn from the Scheduled trigger surface.
+_Avoid_: dispatch attempt, scheduler job, trigger run
 
 **Bucket item**:
 An intention to act on something later. It lives in an active state and then moves to a terminal state — completed or deleted — where it is retained permanently as history (so dedup can warn you when you try to re-add something you have already dealt with). It is not Memory. It is of exactly one item type, which determines its structure, and records why it was saved (its intent context). The test that distinguishes it from Memory: a Bucket item can be *finished*.
@@ -179,7 +195,7 @@ Speech recorded in the web chat client and transcribed to text, entering the Con
 _Avoid_: voice memo, dictation, voice command
 
 **Voice capture**:
-Recorded audio a Capture client uploads straight to the host, outside of chat. It becomes a Message and therefore canonical conversational Evidence, the same as Voice input.
+Recorded audio a Capture client uploads straight to the host, outside of chat. It becomes the initiating Message of a durable capture Conversation turn and therefore canonical conversational Evidence, the same as Voice input. The capture turn waits in the target Conversation's FIFO and settles without running the agent.
 _Avoid_: voice memo, audio capture, voice note
 
 ## Cooking
