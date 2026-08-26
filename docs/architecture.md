@@ -1,9 +1,8 @@
 # Architecture overview
 
-This document describes the target architecture from
-[ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md). The implementation
-is complete locally. Production cutover is a future, explicitly approved
-operation.
+This document describes the production architecture from
+[ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md). Production cut over
+to this architecture on 2026-08-26.
 
 ## Shape
 

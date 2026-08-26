@@ -44,8 +44,9 @@
 ## Production deployment
 
 - Canonical runbook: [`docs/deployment.md`](./docs/deployment.md).
-- The Open WebUI migration remains local. Production cutover is a future,
-  explicitly approved maintenance operation.
+- The Open WebUI production cutover completed on 2026-08-26. The initial
+  cutover revision was `9ca9e34`; deploy later changes only from merged,
+  validated `main`.
 - Live tailnet target: `tether@tether`. Deploy only merged, validated `main`.
 - The host remains on local `8000` behind existing Funnel HTTPS 443. Open WebUI
   uses local `3000` behind Funnel HTTPS 8443.

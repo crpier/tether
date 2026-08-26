@@ -1,8 +1,7 @@
 # Developing Tether
 
-This guide describes development against the target Open WebUI architecture.
-The migration remains local until the migration PR passes its full gate, is
-merged with explicit approval, and a separate production cutover is approved.
+This guide describes development against the production Open WebUI
+architecture. Production cut over to this architecture on 2026-08-26.
 
 ## What runs locally
 
