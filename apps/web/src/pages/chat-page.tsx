@@ -1,4 +1,16 @@
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
+import {
+  Message as KitnMessage,
+  MessageActions as KitnMessageActions,
+  MessageContent as KitnMessageContent,
+  PromptInput,
+  PromptInputActions,
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+  Textarea as KitnTextarea,
+  Tool as KitnTool,
+} from "@kitn.ai/ui/solid";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import {
   For,
@@ -26,6 +38,8 @@ import {
 import { ApiError } from "../host/error";
 import { isPinned, restoredScrollTop } from "../chat-scroll";
 import { createConversationMode } from "../conversation-mode";
+import { projectTimelineRows } from "../kitn-chat-projection";
+import type { KitnTimelineItem } from "../kitn-chat-projection";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
 import { willStartFreshSession } from "../session-freshness";
@@ -210,9 +224,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
 }
 
 type ToolRow = Extract<TimelineRow, { kind: "tool" }>;
-type DisplayRow =
-  | Exclude<TimelineRow, { kind: "tool" }>
-  | { kind: "tool-group"; id: string; tools: ToolRow[] };
+type DisplayRow = KitnTimelineItem;
 
 const TOOL_LABELS: Partial<
   Record<string, { done: string; running: string; receipt?: boolean }>
@@ -341,34 +353,16 @@ const TOOL_LABELS: Partial<
   web_search: { done: "Searched the web", running: "Searching the web…" },
 };
 
-function groupedTimelineRows(rows: TimelineRow[]): DisplayRow[] {
-  const grouped: DisplayRow[] = [];
-  for (const row of rows) {
-    const previous = grouped.at(-1);
-    if (row.kind === "tool" && previous?.kind === "tool-group") {
-      previous.tools.push(row);
-      continue;
-    }
-    if (row.kind === "tool") {
-      grouped.push({
-        id: `tool-group-${row.id}`,
-        kind: "tool-group",
-        tools: [row],
-      });
-      continue;
-    }
-    grouped.push(row);
-  }
-  return grouped;
-}
-
 function displayRowText(row: DisplayRow): string {
-  if (row.kind === "message" || row.kind === "reasoning") {
-    return row.text;
+  if (row.kind === "message") {
+    return row.message.text;
+  }
+  if (row.kind === "reasoning") {
+    return row.reasoning.text;
   }
   return row.tools
     .map(
-      (tool) =>
+      ({ row: tool }) =>
         `${toolText(tool)} ${formatToolDetail(tool.args)} ${formatToolResult(tool.result)}`,
     )
     .join(" ");
@@ -552,7 +546,7 @@ function MessageActions(props: {
   };
 
   return (
-    <div class="mt-2 text-xs">
+    <KitnMessageActions class="mt-2 flex-col items-start text-xs">
       <div class="flex gap-3 opacity-70 focus-within:opacity-100 hover:opacity-100">
         <button
           aria-label="Copy message"
@@ -639,7 +633,7 @@ function MessageActions(props: {
           Feedback recorded.
         </p>
       </Show>
-    </div>
+    </KitnMessageActions>
   );
 }
 
@@ -660,179 +654,163 @@ function MessageRow(props: {
   return (
     <Switch>
       <Match when={props.row.kind === "tool-group" && props.row}>
-        {(group) => (
-          <article
-            aria-label="Tool activity"
-            class={`text-muted-foreground mr-auto max-w-[96%] space-y-2 rounded-lg border px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some((tool) => TOOL_LABELS[tool.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
-          >
-            <For each={group().tools}>
-              {(tool) => {
-                const args = () => formatToolDetail(tool.args);
-                const result = () => formatToolResult(tool.result);
-                return (
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <Show
-                        fallback={<span aria-hidden="true">✓</span>}
-                        when={tool.status === "running"}
-                      >
-                        <span
-                          aria-hidden="true"
-                          class="border-muted-foreground/40 border-t-muted-foreground inline-block size-3 animate-spin rounded-full border-2"
-                        />
-                      </Show>
-                      <strong class={bubbleLabelClass}>{toolText(tool)}</strong>
-                      <Show when={undoableArchiveMessageId(tool)}>
-                        {(messageId) => (
-                          <UndoArchiveButton
-                            messageId={messageId()}
-                            onUndo={props.onUndoArchive}
+        {(group) => {
+          const toolIds = createMemo(() =>
+            group().tools.map((tool) => tool.row.id),
+          );
+          return (
+            <article
+              aria-label="Tool activity"
+              class={`text-muted-foreground mr-auto max-w-[96%] space-y-2 rounded-lg border px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some(({ row }) => TOOL_LABELS[row.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
+            >
+              <For each={toolIds()}>
+                {(_id, index) => (
+                  <Show when={group().tools[index()]}>
+                    {(projectedTool) => {
+                      const tool = () => projectedTool().row;
+                      return (
+                        <div>
+                          <KitnTool
+                            class="bg-transparent"
+                            defaultOpen={tool().status === "running"}
+                            toolPart={{
+                              ...projectedTool().toolPart,
+                              type: toolText(tool()),
+                            }}
                           />
-                        )}
-                      </Show>
-                    </div>
-                    <Show when={args().length > 0}>
-                      <details class="mt-1.5">
-                        <summary class="cursor-pointer select-none opacity-80">
-                          arguments
-                        </summary>
-                        <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
-                          {args()}
-                        </pre>
-                      </details>
-                    </Show>
-                    <Show when={result().length > 0}>
-                      <details class="mt-1.5">
-                        <summary class="cursor-pointer select-none opacity-80">
-                          result
-                        </summary>
-                        <pre class="bg-background/40 mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded px-2 py-1 font-mono text-[11px]">
-                          {result()}
-                        </pre>
-                      </details>
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
-          </article>
-        )}
+                          <Show when={undoableArchiveMessageId(tool())}>
+                            {(messageId) => (
+                              <div class="mt-1 flex justify-end">
+                                <UndoArchiveButton
+                                  messageId={messageId()}
+                                  onUndo={props.onUndoArchive}
+                                />
+                              </div>
+                            )}
+                          </Show>
+                        </div>
+                      );
+                    }}
+                  </Show>
+                )}
+              </For>
+            </article>
+          );
+        }}
       </Match>
       <Match when={props.row.kind === "reasoning" && props.row}>
-        {(reasoning) => {
-          // Expanded while the turn runs; auto-compacts to a toggle once it is
-          // done. Tracking `done` (not `streaming`) keeps the trace open while
-          // the answer streams, and lets the user re-expand a finished trace.
-          const [open, setOpen] = createSignal(!reasoning().done);
-          createEffect(() => {
-            setOpen(!reasoning().done);
-          });
+        {(projectedReasoning) => {
+          const reasoning = () => projectedReasoning().reasoning;
           return (
             <article
               aria-label={`Tether reasoning for transcript item ${props.transcriptItemNumber.toString()}`}
               class="bg-muted/50 text-muted-foreground mr-auto max-w-[96%] rounded-lg px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%]"
             >
-              <button
-                type="button"
-                aria-expanded={open()}
-                aria-label={`Thinking details for transcript item ${props.transcriptItemNumber.toString()}`}
-                class="flex w-full items-center gap-1 text-left"
-                onClick={() => {
-                  setOpen((value) => !value);
-                }}
+              <Reasoning
+                defaultOpen={!reasoning().done}
+                isStreaming={!reasoning().done}
               >
-                <span aria-hidden="true" class="text-[0.6rem]">
-                  {open() ? "▾" : "▸"}
-                </span>
-                <strong class={bubbleLabelClass}>Thinking</strong>
-              </button>
-              <Show when={open()}>
-                <p class="mt-1 whitespace-pre-wrap break-words">
-                  {reasoning().text}
-                </p>
-              </Show>
+                <ReasoningTrigger
+                  aria-label={`Thinking details for transcript item ${props.transcriptItemNumber.toString()}`}
+                  class="w-full text-left"
+                >
+                  <strong class={bubbleLabelClass}>Thinking</strong>
+                </ReasoningTrigger>
+                <ReasoningContent>
+                  <p class="mt-1 whitespace-pre-wrap break-words">
+                    {reasoning().text}
+                  </p>
+                </ReasoningContent>
+              </Reasoning>
             </article>
           );
         }}
       </Match>
       <Match when={props.row.kind === "message" && props.row}>
-        {(message) => (
-          <article
-            aria-label={`${messageLabel(message().role)} message`}
-            class={bubbleClass(message().role)}
-          >
-            <strong class={bubbleLabelClass}>
-              {messageLabel(message().role)}
-            </strong>
-            <Show when={message().role === "scheduled" && message().turn}>
-              {(turn) => (
-                <div class="text-muted-foreground space-y-0.5 text-xs">
-                  <p>
-                    Intended {turn().intended_fire_at ?? "time unavailable"} ·{" "}
-                    {turn().status}
-                  </p>
-                  <Show when={turn().failure_summary}>
-                    {(failure) => <p class="text-destructive">{failure()}</p>}
-                  </Show>
-                  <Show when={turn().occurrence_id}>
-                    {(occurrenceId) => (
-                      <A
-                        href={`/browse/reminders?occurrence=${occurrenceId()}`}
-                      >
-                        View scheduled occurrence
-                      </A>
-                    )}
-                  </Show>
-                </div>
-              )}
-            </Show>
-            <Show
-              when={
-                message().role === "assistant" && props.isSpoken(message().text)
-              }
+        {(projectedMessage) => {
+          const message = () => projectedMessage().message;
+          return (
+            <KitnMessage
+              aria-label={projectedMessage().ariaLabel}
+              class={bubbleClass(message().role)}
+              data-message-id={projectedMessage().id}
+              role={projectedMessage().role}
             >
-              <span
-                aria-label="Spoken reply"
-                class="ml-1 align-middle text-xs"
-                title="This reply was spoken aloud"
-              >
-                🔊
-              </span>
-            </Show>
-            <Show
-              fallback={
-                <p class="whitespace-pre-wrap break-words">
-                  {message().role === "tool"
-                    ? `used ${message().toolName ?? message().text}`
-                    : message().text}
-                </p>
-              }
-              when={message().role === "assistant"}
-            >
-              <MessageContent
-                onOpenArtifact={props.onOpenArtifact}
-                onOpenEvidence={props.onOpenEvidence}
-                streaming={message().streaming}
-                text={message().text}
-              />
-            </Show>
-            <Show when={!message().streaming && message().role !== "tool"}>
-              <MessageActions
-                canRecordFeedback={
-                  message().role === "user" && !message().id.startsWith("live-")
+              <strong class={bubbleLabelClass}>
+                {messageLabel(message().role)}
+              </strong>
+              <Show when={message().role === "scheduled" && message().turn}>
+                {(turn) => (
+                  <div class="text-muted-foreground space-y-0.5 text-xs">
+                    <p>
+                      Intended {turn().intended_fire_at ?? "time unavailable"} ·{" "}
+                      {turn().status}
+                    </p>
+                    <Show when={turn().failure_summary}>
+                      {(failure) => <p class="text-destructive">{failure()}</p>}
+                    </Show>
+                    <Show when={turn().occurrence_id}>
+                      {(occurrenceId) => (
+                        <A
+                          href={`/browse/reminders?occurrence=${occurrenceId()}`}
+                        >
+                          View scheduled occurrence
+                        </A>
+                      )}
+                    </Show>
+                  </div>
+                )}
+              </Show>
+              <Show
+                when={
+                  message().role === "assistant" &&
+                  props.isSpoken(message().text)
                 }
-                messageId={message().id}
-                onCopy={() => {
-                  props.onCopy(message().text);
-                }}
-                onQuote={() => {
-                  props.onQuote(message().text);
-                }}
-                onRecordFeedback={props.onRecordFeedback}
-              />
-            </Show>
-          </article>
-        )}
+              >
+                <span
+                  aria-label="Spoken reply"
+                  class="ml-1 align-middle text-xs"
+                  title="This reply was spoken aloud"
+                >
+                  🔊
+                </span>
+              </Show>
+              <Show
+                fallback={
+                  <KitnMessageContent class="p-0">
+                    {message().role === "tool"
+                      ? `used ${message().toolName ?? message().text}`
+                      : message().text}
+                  </KitnMessageContent>
+                }
+                when={message().role === "assistant"}
+              >
+                <MessageContent
+                  onOpenArtifact={props.onOpenArtifact}
+                  onOpenEvidence={props.onOpenEvidence}
+                  streaming={message().streaming}
+                  text={message().text}
+                />
+              </Show>
+              <Show when={!message().streaming && message().role !== "tool"}>
+                <MessageActions
+                  canRecordFeedback={
+                    message().role === "user" &&
+                    !message().id.startsWith("live-")
+                  }
+                  messageId={message().id}
+                  onCopy={() => {
+                    props.onCopy(message().text);
+                  }}
+                  onQuote={() => {
+                    props.onQuote(message().text);
+                  }}
+                  onRecordFeedback={props.onRecordFeedback}
+                />
+              </Show>
+            </KitnMessage>
+          );
+        }}
       </Match>
     </Switch>
   );
@@ -872,7 +850,8 @@ function MessageRows(props: {
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activeMatch, setActiveMatch] = createSignal(0);
-  const displayRows = createMemo(() => groupedTimelineRows(props.rows));
+  const displayRows = createMemo(() => projectTimelineRows(props.rows));
+  const displayRowIds = createMemo(() => displayRows().map((row) => row.id));
   const matchingIds = createMemo(() => {
     const query = searchQuery().trim().toLocaleLowerCase();
     if (query.length === 0) {
@@ -1058,36 +1037,40 @@ function MessageRows(props: {
           }
         }}
       >
-        <For each={displayRows()}>
-          {(row, index) => {
-            const matches = () => matchingIds().includes(row.id);
-            const active = () => matches() && activeMatchId() === row.id;
-            return (
-              <div
-                ref={(element) => {
-                  rowElements.set(row.id, element);
-                }}
-                class={
-                  active() ? "rounded-lg ring-2 ring-primary/60" : undefined
-                }
-                data-search-match={
-                  active() ? "active" : matches() ? "match" : undefined
-                }
-              >
-                <MessageRow
-                  isSpoken={props.isSpoken}
-                  onCopy={props.onCopy}
-                  onOpenArtifact={props.onOpenArtifact}
-                  onOpenEvidence={props.onOpenEvidence}
-                  onQuote={props.onQuote}
-                  onRecordFeedback={props.onRecordFeedback}
-                  onUndoArchive={props.onUndoArchive}
-                  row={row}
-                  transcriptItemNumber={index() + 1}
-                />
-              </div>
-            );
-          }}
+        <For each={displayRowIds()}>
+          {(_id, index) => (
+            <Show when={displayRows()[index()]}>
+              {(row) => {
+                const matches = () => matchingIds().includes(row().id);
+                const active = () => matches() && activeMatchId() === row().id;
+                return (
+                  <div
+                    ref={(element) => {
+                      rowElements.set(row().id, element);
+                    }}
+                    class={
+                      active() ? "rounded-lg ring-2 ring-primary/60" : undefined
+                    }
+                    data-search-match={
+                      active() ? "active" : matches() ? "match" : undefined
+                    }
+                  >
+                    <MessageRow
+                      isSpoken={props.isSpoken}
+                      onCopy={props.onCopy}
+                      onOpenArtifact={props.onOpenArtifact}
+                      onOpenEvidence={props.onOpenEvidence}
+                      onQuote={props.onQuote}
+                      onRecordFeedback={props.onRecordFeedback}
+                      onUndoArchive={props.onUndoArchive}
+                      row={row()}
+                      transcriptItemNumber={index() + 1}
+                    />
+                  </div>
+                );
+              }}
+            </Show>
+          )}
         </For>
         <Show when={props.working && props.startedAt !== null}>
           <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
@@ -2307,41 +2290,38 @@ export function ChatPage() {
                   </For>
                 </section>
               </Show>
-              <div
+              <PromptInput
                 aria-label="Message composer"
                 class="bg-card flex items-end gap-1 rounded-xl border p-1 shadow-sm"
                 role="group"
               >
-                <TextField
-                  class="min-w-0 flex-1 gap-0"
-                  onChange={setDraft}
+                <KitnTextarea
+                  aria-label="Message"
+                  autoResize={false}
+                  class="min-h-11 min-w-0 flex-1 resize-none border-0 px-2 py-2 shadow-none focus-visible:ring-0"
+                  onInput={(event) => {
+                    setDraft(event.currentTarget.value);
+                    fitChatInputToContent(event.currentTarget);
+                  }}
+                  onKeyDown={onMessageKeyDown}
+                  placeholder={
+                    conversationMode.enabled()
+                      ? "Reply spoken…"
+                      : "Message Tether…"
+                  }
+                  ref={(element) => {
+                    messageInput = element;
+                    queueMicrotask(() => {
+                      fitChatInputToContent(element);
+                      if (starterPrompt.length > 0) {
+                        element.focus();
+                      }
+                    });
+                  }}
+                  rows={1}
                   value={draft()}
-                >
-                  <TextFieldTextArea
-                    aria-label="Message"
-                    class="min-h-11 resize-none border-0 px-2 py-2 shadow-none focus-visible:ring-0"
-                    onInput={(event) => {
-                      fitChatInputToContent(event.currentTarget);
-                    }}
-                    onKeyDown={onMessageKeyDown}
-                    placeholder={
-                      conversationMode.enabled()
-                        ? "Reply spoken…"
-                        : "Message Tether…"
-                    }
-                    ref={(element) => {
-                      messageInput = element;
-                      queueMicrotask(() => {
-                        fitChatInputToContent(element);
-                        if (starterPrompt.length > 0) {
-                          element.focus();
-                        }
-                      });
-                    }}
-                    rows={1}
-                  />
-                </TextField>
-                <div class="flex shrink-0 items-center gap-1">
+                />
+                <PromptInputActions class="shrink-0 gap-1">
                   <VoiceComposerControls
                     active={() => conversationMode.enabled()}
                     autoStartSignal={() => conversationMode.voiceAutoStart()}
@@ -2385,8 +2365,8 @@ export function ChatPage() {
                       <span aria-hidden="true">■</span>
                     </Button>
                   </Show>
-                </div>
-              </div>
+                </PromptInputActions>
+              </PromptInput>
             </form>
           </Show>
         </Show>

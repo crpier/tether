@@ -42,6 +42,7 @@
     "vitest": "^4.0.0"
   },
   "dependencies": {
+    "@kitn.ai/ui": "0.26.0",
     "@kobalte/core": "^0.13.11",
     "@shikijs/langs": "^4.4.3",
     "@shikijs/themes": "^4.4.3",
@@ -53,7 +54,7 @@
     "mermaid": "^11.16.0",
     "openapi-fetch": "^0.17.0",
     "shiki": "^4.4.3",
-    "solid-js": "^1.9.5",
+    "solid-js": "1.9.15",
     "tailwind-merge": "^3.6.0",
     "vega-embed": "^7.1.0"
   }

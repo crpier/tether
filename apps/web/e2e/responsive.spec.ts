@@ -101,10 +101,12 @@ async function serveLargeProposalSurfaces(page: Page) {
   );
 }
 
-async function serveLongChat(page: Page) {
-  const messages = Array.from({ length: 30 }, (_, index) =>
+async function serveLongChat(
+  page: Page,
+  messages = Array.from({ length: 30 }, (_, index) =>
     longMessage(index + 1, index % 2 === 0 ? "user" : "assistant"),
-  );
+  ),
+) {
   await page.route("**/api/conversations", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -215,6 +217,28 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   expect(modelSelector.width).toBeLessThanOrEqual(256);
   expect(modelSelector.y).toBeGreaterThan(chat.y);
   expect(modelSelector.y).toBeLessThan(PHONE.height);
+});
+
+test("phone chat contains wide code and tables without page overflow", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await serveLongChat(page, [
+    {
+      ...longMessage(1, "assistant"),
+      content: `\`\`\`text\n${"wide-code-".repeat(40)}\n\`\`\`\n\n| Value |\n| --- |\n| ${"wide-table-".repeat(40)} |`,
+    },
+  ]);
+  await login();
+
+  await expect(page.locator("pre")).toBeVisible();
+  await expect(page.locator("table")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("phone Conversation picker is modal and Escape restores its trigger", async ({
@@ -398,7 +422,7 @@ for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
 
     const transcriptBox = await boundingBox(transcript);
     const userBubble = await boundingBox(
-      transcript.locator('article[aria-label="You message"]').last(),
+      transcript.getByRole("article", { name: "You message" }).last(),
     );
     expect(userBubble.width).toBeGreaterThan(transcriptBox.width * 0.85);
 

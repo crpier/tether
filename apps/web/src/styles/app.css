@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 @import "tw-animate-css";
+@import "@kitn.ai/ui/theme.css";
+@source "../../node_modules/@kitn.ai/ui/src/components/message.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/prompt-input.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/reasoning.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/tool.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/textarea.tsx";
 
 @custom-variant dark (&:is([data-kb-theme="dark"] *));
 
