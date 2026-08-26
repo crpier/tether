@@ -207,6 +207,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         toolArgs: message.tool_args,
         toolResult: message.tool_result,
         turn: message.turn,
+        turnId: message.turn_id,
       })),
   );
   const rows = createMemo<TimelineRow[]>(
@@ -218,6 +219,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
           activeTurnConversationId() === dependencies.conversationId()
             ? turn()
             : emptyTurn(),
+          activeTurnConversationId() === dependencies.conversationId()
+            ? activeTurnId
+            : undefined,
         ),
       ),
     [],

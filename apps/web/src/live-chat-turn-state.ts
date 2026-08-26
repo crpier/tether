@@ -19,6 +19,7 @@ export interface StoredMessage {
   toolArgs?: unknown;
   toolResult?: unknown;
   turn?: Message["turn"];
+  turnId?: string | null;
 }
 
 export type TimelineRow =
@@ -270,6 +271,7 @@ export function reduceFrame(
 export function deriveRows(
   stored: readonly StoredMessage[],
   turn: LiveTurn,
+  activeTurnId?: string,
 ): TimelineRow[] {
   const rows: TimelineRow[] = stored.map((message) => {
     if (message.role === "reasoning") {
@@ -306,7 +308,13 @@ export function deriveRows(
       turn: message.turn,
     };
   });
-  if (turn.userText !== null) {
+  const activeUserIsStored = stored.some(
+    (message) =>
+      message.role === "user" &&
+      activeTurnId !== undefined &&
+      message.turnId === activeTurnId,
+  );
+  if (turn.userText !== null && !activeUserIsStored) {
     rows.push({
       kind: "message",
       id: "live-user",
