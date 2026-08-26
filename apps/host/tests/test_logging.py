@@ -39,6 +39,7 @@ from tether.logging_processors import (
     _process_positional_args,
     _reorder_fields,
 )
+from tether.model_selection import AgentModelCatalog, ModelSelectionConfigError
 from tether.request_logging import (
     ContextLoggerMiddleware,
     get_bound_request_logger,
@@ -517,15 +518,16 @@ def configure_logging_surfaces_uvicorn_startup_failures() -> None:
         uvicorn_error.info("Application startup complete.")
         assert_eq(stream.getvalue(), "")
 
-        # The startup-failure path uvicorn takes: ERROR + exc_info.
+        # The startup-failure path uvicorn takes: ERROR + exc_info, with the
+        # genuine misconfiguration exception the host lifespan raises.
         try:
-            raise RuntimeError("invalid host configuration")  # noqa: TRY301
-        except RuntimeError:
+            AgentModelCatalog(default_model="default", models=())
+        except ModelSelectionConfigError:
             uvicorn_error.error("Exception in 'lifespan' protocol\n", exc_info=True)
 
     record = json_log_for_event(stream, "Exception in 'lifespan' protocol\n")
     assert_eq(record["level"], "error")
-    assert_in("invalid host configuration", str(record["exception"]))
+    assert_in("default model is not present in the allowlist", str(record["exception"]))
 
 
 @test()

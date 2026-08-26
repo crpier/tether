@@ -1,8 +1,3 @@
----
-status: superseded
-superseded_by: 0030-open-webui-owns-assistant-runtime
----
-
 # Scheduled prompts share Conversation execution without becoming user Evidence
 
 A prompt Scheduled trigger targets one Conversation, runs through that Conversation's warm pi runtime, uses its Conversation prompt, and serializes with its interactive turns. This preserves scoped working context and one ordered transcript per Conversation, refining ADR-0002's earlier example of scheduled work using an ephemeral task process and extending ADR-0023's host-owned Conversation semantics.

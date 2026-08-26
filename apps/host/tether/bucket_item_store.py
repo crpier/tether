@@ -93,11 +93,11 @@ def _optional_index_text(value: str | int | None) -> list[str]:
 
 
 def bucket_item_index_text(item: BucketItem[Fetched]) -> str:
-    """The searchable projection of a Bucket item: title plus relevant text.
+    """The searchable projection of a Bucket item: title + type-relevant text.
 
     Mirrors `_describe_item`'s derivation of `title`/`dedup_key` from the
     already-validated payload, but composes the fuller text a hybrid search
-    query should match against: the title plus whichever secondary
+    index should match against — the title plus whichever secondary
     item-type field carries additional identifying text (an author, a
     location, a season), not the raw JSON payload."""
     parts = [item.title]
@@ -125,8 +125,9 @@ def bucket_item_index_text(item: BucketItem[Fetched]) -> str:
 async def create_bucket_item_schema(database: Database) -> None:
     """Create the Bucket item table and its index on an initialized database.
 
-    The table carries a `(item_type, dedup_key)` index, so scaffolding emits two
-    statements (table, then index);
+    Applied as its own migrations after the Memory schema's, mirroring the
+    Memory spine's `create_memory_schema`. The table carries a `(item_type,
+    dedup_key)` index, so scaffolding emits two statements (table, then index);
     a snekql migration body runs exactly one statement, so each becomes its own
     ordered migration. The caller owns `Database.initialize` and hands the live
     database here before serving requests.

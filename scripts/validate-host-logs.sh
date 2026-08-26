@@ -28,14 +28,17 @@ base_url="http://127.0.0.1:$port"
 log_level="${TETHER_LOGGING_LEVEL:-INFO}"
 
 echo "Starting Tether host on $base_url with TETHER_LOGGING_LEVEL=$log_level"
-TETHER_DATABASE_PATH="$runtime_dir/tether.sqlite3" \
-TETHER_TELEMETRY_DATABASE_PATH="$runtime_dir/telemetry.sqlite3" \
-TETHER_API_TOKEN=log-smoke-capture-token \
-TETHER_OPEN_WEBUI_TOKEN=log-smoke-open-webui-token \
+TETHER_DEPENDENCY_PROFILE=local \
+TETHER_LOCAL_DATA_ROOT="$runtime_dir/local" \
+TETHER_APP_PASSWORD=log-smoke-password \
+TETHER_SESSION_SECRET=log-smoke-session-secret \
+TETHER_STT_API_KEY=local \
+TETHER_TTS_API_KEY=local \
 TETHER_LOGGING_LEVEL="$log_level" \
 TETHER_HOST=127.0.0.1 \
 TETHER_PORT="$port" \
 TETHER_RELOAD=false \
+PI_CODING_AGENT_DIR="$runtime_dir/pi-agent" \
 uv --project apps/host run python -m tether >"$log_file" 2>&1 &
 server_pid="$!"
 
@@ -43,31 +46,28 @@ python - "$base_url" "$log_file" <<'PY'
 import json
 import sys
 import time
+from http.cookiejar import CookieJar
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 base_url = sys.argv[1]
 log_file = sys.argv[2]
+opener = build_opener(HTTPCookieProcessor(CookieJar()))
 
 
-def request(
-    method: str,
-    path: str,
-    body: dict[str, object] | None = None,
-    *,
-    authorized: bool = False,
-) -> object:
+def request(method: str, path: str, body: dict[str, object] | None = None) -> object:
     encoded = None if body is None else json.dumps(body).encode()
     headers = {"content-type": "application/json"} if body is not None else {}
-    if authorized:
-        headers["authorization"] = "Bearer log-smoke-open-webui-token"
-    with urlopen(Request(f"{base_url}{path}", data=encoded, headers=headers, method=method), timeout=5) as response:
+    with opener.open(
+        Request(f"{base_url}{path}", data=encoded, headers=headers, method=method),
+        timeout=5,
+    ) as response:
         raw = response.read().decode()
         return None if not raw else json.loads(raw)
 
 for _ in range(100):
     try:
-        request("GET", "/health")
+        request("GET", "/openapi.json")
         break
     except URLError:
         time.sleep(0.1)
@@ -77,25 +77,18 @@ else:
     raise SystemExit(1)
 
 print("\nRequests:")
-print("GET /health")
-print(request("GET", "/health"))
-print("GET /tools/openapi.json")
-schema = request("GET", "/tools/openapi.json", authorized=True)
-assert isinstance(schema, dict)
-paths = schema.get("paths")
-assert isinstance(paths, dict)
-print({"operation_count": len(paths)})
-print("POST /tools/create_todo")
-print(
-    request(
-        "POST",
-        "/tools/create_todo",
-        {"action": "Verify structured host logs"},
-        authorized=True,
-    )
-)
-print("POST /tools/list_todos")
-print(request("POST", "/tools/list_todos", {}, authorized=True))
+print("POST /api/auth/login")
+print(request("POST", "/api/auth/login", {"password": "log-smoke-password"}))
+print("POST /api/conversations")
+conversation = request("POST", "/api/conversations", {})
+print(conversation)
+assert isinstance(conversation, dict)
+print("GET /api/conversations")
+print(request("GET", "/api/conversations"))
+print("GET /api/memory-topics")
+print(request("GET", "/api/memory-topics"))
+print("GET /api/todos")
+print(request("GET", "/api/todos"))
 PY
 
 echo ""

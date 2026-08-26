@@ -1,10 +1,45 @@
 # syntax=docker/dockerfile:1.7
+#
+# Single-image Tether host. The host process spawns `pi` (the agent) as an
+# in-process Node subprocess and runs fastembed/ONNX in-process, so one container
+# carries Python (uv) + Node + the agent's installed deps + the built SPA. The
+# repo layout (apps/host, apps/agent, apps/web) is preserved in the image because
+# the host resolves the agent and the SPA by walking up from its own package
+# directory (`pi_runtime._repo_root()` → parents[3]).
 
+# ---- Stage: build the SPA --------------------------------------------------
+FROM node:25-bookworm-slim AS web-build
+RUN npm install -g pnpm@10.33.4
+WORKDIR /app/apps/web
+COPY apps/web/package.json apps/web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY apps/web/ ./
+RUN pnpm build
+
+# ---- Stage: install the agent (pi) Node deps ------------------------------
+FROM node:25-bookworm-slim AS agent-deps
+RUN npm install -g pnpm@10.33.4
+WORKDIR /app/apps/agent
+COPY apps/agent/package.json apps/agent/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY apps/agent/ ./
+# Fail the image build if a release omits any allowlisted product skill or its
+# progressively disclosed reference material.
+RUN test -f skills/grilling/SKILL.md \
+    && test -f skills/writing-great-skills/SKILL.md \
+    && test -f skills/writing-great-skills/GLOSSARY.md
+
+# ---- Stage: runtime --------------------------------------------------------
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS runtime
 
+# The host launches `pi` via `node`; copy the Node runtime in (no npm/pnpm needed
+# at runtime — pi is invoked through its installed bin shim). `libatomic1` is the
+# one shared lib the Node binary needs beyond the slim base; `ca-certificates`
+# lets pi reach the LLM provider over HTTPS.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends libatomic1 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=node:25-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 
 ENV UV_PROJECT_ENVIRONMENT=/app/apps/host/.venv \
     UV_COMPILE_BYTECODE=1 \
@@ -12,20 +47,30 @@ ENV UV_PROJECT_ENVIRONMENT=/app/apps/host/.venv \
     PATH=/app/apps/host/.venv/bin:$PATH
 WORKDIR /app/apps/host
 
-# Resolve locked third-party dependencies before copying frequently changed source.
+# Resolve Python deps from the lockfile first so the layer caches across source
+# edits. `--no-dev` skips the dev group (pyright/ruff/snektest); snekok is held
+# back until its source is copied with the host below.
 COPY apps/host/pyproject.toml apps/host/uv.lock ./
 COPY packages/snekok/pyproject.toml packages/snekok/README.md /app/packages/snekok/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --no-install-package snekok
+    uv sync --frozen --no-dev --group youtube --no-install-project --no-install-package snekok
 
-COPY apps/host/README.md ./README.md
-COPY apps/host/tether/ ./tether/
+# Lay out the apps and local Python package in the layout the editable installs
+# + `_repo_root()` expect, then install the host and snekok (editable, so imports
+# resolve to their source directories and agent/SPA paths resolve from /app).
+COPY apps/host/ /app/apps/host/
 COPY packages/snekok/src/ /app/packages/snekok/src/
+COPY --from=agent-deps /app/apps/agent/ /app/apps/agent/
+COPY --from=web-build /app/apps/web/dist/ /app/apps/web/dist/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --group youtube
 
+# Production defaults; secrets and HTTPS-dependent toggles come from the
+# environment / compose (.env). Paths point at the mounted volumes.
 ENV TETHER_HOST=0.0.0.0 \
-    TETHER_PORT=8000
+    TETHER_PORT=8000 \
+    TETHER_WEB_DIST=/app/apps/web/dist \
+    FASTEMBED_CACHE_PATH=/cache/fastembed
 
 EXPOSE 8000
 CMD ["python", "-m", "tether"]

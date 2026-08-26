@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static placeholder shown in the tile picker before the tile is ever
+     rendered on-device. Mirrors the launcher icon shape/colors; no dynamic
+     content since a preview can't run TileService code. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#1E2A38"
+        android:pathData="M0,0 h108 v108 h-108 z" />
+    <path
+        android:fillColor="#7FB3D5"
+        android:pathData="M54,30 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0" />
+    <path
+        android:fillColor="#7FB3D5"
+        android:pathData="M52,38 h4 v34 h-4 z" />
+    <path
+        android:fillColor="#7FB3D5"
+        android:pathData="M40,72 h28 v4 h-28 z" />
+</vector>

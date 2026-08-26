@@ -1,200 +1,192 @@
 # Deploying Tether
 
-This is the production runbook for the architecture in
-[ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md). Production cut over
-to Open WebUI on 2026-08-26 at initial revision `9ca9e34`.
+Tether runs as a **single `docker compose` service** (`host`). The image carries
+everything the host needs at runtime: Python (uv) for the host process, Node for
+the `pi` agent subprocess, the agent's installed deps, and the built SPA. The
+host serves the SPA, the REST `/api`, and the `/ws` WebSocket on one port.
 
-## Deployment shape
+The same `compose.yaml` runs **locally over HTTP** and **on a VM behind public
+Tailscale Funnel HTTPS** — only the environment differs. SSH remains available
+only through the tailnet.
 
-Compose runs two services:
+> **Developing, not deploying?** Don't iterate through `docker compose
+> up --build` — it rebuilds the whole image on every change. Use the native
+> host + web loop (`just dev`) instead; see [development.md](./development.md).
+> The local-run section below is for verifying the *production image* end to end.
 
-- `host` is the headless Python capability host on loopback port `8000`.
-- `open-webui` is stock Open WebUI on loopback port `3000`.
+## What's in the image
 
-Tailscale runs on the VM outside Compose and terminates public HTTPS:
+- Built from the repo root `Dockerfile` (three stages: build the SPA, install the
+  agent's Node deps, assemble the runtime).
+- The repo layout (`apps/host`, `apps/agent`, `apps/web`) is preserved at `/app`
+  because the host resolves the agent binary and SPA by walking up from its own
+  installed package directory.
+- `snekql` comes from PyPI; no editable/sibling source is needed to build.
 
-- Existing HTTPS 443 proxies to host port `8000`. Android Health Connect and
-  its bearer-authenticated sync keep this origin.
-- HTTPS 8443 proxies to Open WebUI port `3000`.
+## Local run (verify the whole stack on your machine)
 
-The Open WebUI service uses this exact official image:
+This builds and boots the production image — use it to confirm a deploy works,
+not to iterate. For the fast dev loop use `just dev` ([development.md](./development.md)).
 
-```text
-ghcr.io/open-webui/open-webui:v0.11.1@sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16
+1. Copy the env template and fill it in:
+   ```sh
+   cp .env.example .env
+   # set TETHER_APP_PASSWORD, TETHER_SESSION_SECRET, and the model allowlist
+   ```
+   Generate strong secrets:
+   ```sh
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+   Leave `TETHER_SECURE_COOKIES=false` locally (no HTTPS).
+2. Build and start:
+   ```sh
+   docker compose up -d --build
+   ```
+3. Open <http://localhost:8000>, log in with `TETHER_APP_PASSWORD`, then open
+   **Settings → Model provider** and select **Connect ChatGPT**. Follow the
+   device-code link before using chat.
+
+The published port binds to `127.0.0.1` only. If `8000` is taken on your machine
+(e.g. a `just host` dev process), override the host-side port:
+```sh
+TETHER_HOST_PORT=8001 docker compose up -d --build
 ```
 
-Do not replace the digest with `main`, `latest`, or a floating release tag.
-Changing it requires release-note review and a repeat of the integration smoke.
+State lives on two named docker volumes, so `docker compose up` / redeploys never
+touch your data:
 
-The host has the `data` volume. Open WebUI has the separate `open-webui-data`
-volume mounted at `/app/backend/data`. It has no Docker socket, host filesystem,
-Tether data volume, Pi credential mount, or Ollama service.
+- `data` → `/data`: the independent SQLite sources of truth (`tether.sqlite3`
+  and `telemetry.sqlite3`) and the derived markdown workspace (`/data/kb/memory`).
+  Compose sets `TETHER_TELEMETRY_DATABASE_PATH=/data/telemetry.sqlite3` explicitly.
+- `model-cache` → `/cache`: the fastembed ONNX model download.
 
-## Local deployment check
+`docker compose down` keeps the volumes; `down -v` deletes them.
 
-Use this path to verify the production images, not for each Python edit.
+## Deploy to the VM
+
+This repo builds the image **locally** (x86 → x86, same arch as the VM), pushes
+it to GHCR, then `ssh`es to the VM and pulls it — wrapped in `just deploy`. There
+is no CI; `main` staying green (the validation gate) is what stands in for it.
+
+### Live production and routine releases
+
+The live VM's tailnet host alias is `tether`; SSH as `tether@tether`. After a PR
+is merged, deploy a clean, validated `main` from the laptop:
 
 ```sh
-just bootstrap
+git switch main
+git pull --ff-only
+# Run the validation gate from AGENTS.md before publishing.
+TETHER_DEPLOY_HOST=tether@tether just deploy
 ```
 
-Generate a different value for each required secret and set:
-
-```dotenv
-TETHER_API_TOKEN=<Android Health Connect token>
-TETHER_OPEN_WEBUI_TOKEN=<Open WebUI tool token>
-WEBUI_SECRET_KEY=<Open WebUI session secret>
-WEBUI_URL=http://127.0.0.1:3000
-OPENAI_API_BASE_URLS=<OpenAI-compatible API base URL>
-OPENAI_API_KEYS=<matching provider API key>
-```
-
-Then build and start both services:
+`just deploy` updates the image only. If the release changes `compose.yaml` or
+anything under `deploy/`, first update the VM checkout:
 
 ```sh
-docker compose config --quiet
-just app-start
-docker compose ps
-curl --fail http://127.0.0.1:8000/health
-curl --fail http://127.0.0.1:3000/health
+ssh tether@tether 'cd /srv/tether && git pull --ff-only'
 ```
 
-Open <http://127.0.0.1:3000> and complete
-[the one-time setup](#one-time-open-webui-setup). `docker compose down` keeps
-all volumes. `docker compose down -v` deletes local Tether and Open WebUI data.
+A rollback leaves `TETHER_IMAGE_TAG` pinned in the VM's `.env`. Remove that line
+before a forward release; ordinary `just deploy` does not remove it. GHCR login
+and package-public bootstrap are covered under [First deploy](#3-first-deploy).
 
-## Required secrets and provider
+### Return from the Open WebUI trial
 
-1Password is the source of truth for production secrets. Copy
-`deploy/.env.example` to `/srv/tether/.env`, set mode `0600`, and fill it by
-hand. Never commit the rendered file.
+ADR 0031 restored this deployment after the Open WebUI trial. Perform this once,
+after the restoration PR is merged and validated:
 
-Generate these independently:
+1. Confirm restic still contains the validated `tether-open-webui` snapshot with
+   `open-webui-data.tar`. Record its snapshot ID. Future old-stack retention is
+   scoped to the `tether` tag and must not remove it.
+2. Stop the backup timer for the transition. Stop Open WebUI using the current VM
+   checkout, then remove only its HTTPS 8443 Funnel listener:
 
-- `TETHER_API_TOKEN` authenticates Android Health Connect at the host origin.
-- `TETHER_OPEN_WEBUI_TOKEN` authenticates Open WebUI schema fetches and tool
-  calls inside the Compose network.
-- `WEBUI_SECRET_KEY` signs Open WebUI sessions.
+   ```sh
+   ssh tether@tether 'sudo systemctl stop tether-backup.timer'
+   ssh tether@tether 'cd /srv/tether && docker compose stop open-webui'
+   ssh tether@tether 'sudo tailscale funnel --bg --https=8443 3000 off'
+   ```
 
-`TETHER_OPEN_WEBUI_TOKEN` must not equal `TETHER_API_TOKEN`. The browser must
-never receive either token from the Tether host.
+   Keep the HTTPS 443 listener, `open-webui-data` volume, and post-migration
+   restic snapshot. Never use `docker compose down -v` or `tailscale funnel
+   reset` here.
+3. Confirm `/srv/tether/pi-agent/auth.json` still exists with its previous owner
+   and `0700` directory permissions. Restore the legacy application password,
+   session secret, model settings, and integration credentials in `.env` from
+   1Password or the locked pre-migration backup. Keep `TETHER_API_TOKEN`
+   unchanged so Android Health Connect retains its independent credential.
+4. Pull the merged `main` on the VM before starting the restored Compose file,
+   and remove any image pin:
 
-Set the production Open WebUI origin:
+   ```sh
+   ssh tether@tether 'cd /srv/tether && git switch main && git pull --ff-only && sed -i "/^TETHER_IMAGE_TAG=/d" .env'
+   ```
 
-```dotenv
-WEBUI_URL=https://<host>.<tailnet>.ts.net:8443
-```
+5. From a clean, validated local `main`, build and deploy the restored stack:
 
-Open WebUI also needs an API credential for a supported model provider. Pi's
-ChatGPT/Codex subscription login does not work with Open WebUI. Before cutover,
-choose one API-backed model with reliable native function calling and record
-its expected pricing. Store its credential in production `.env` through the
-supported `OPENAI_API_BASE_URLS` and `OPENAI_API_KEYS` inputs, never in source
-control or runtime-only Admin UI configuration.
+   ```sh
+   TETHER_DEPLOY_HOST=tether@tether just deploy
+   ```
 
-## Open WebUI safety settings
+6. Verify HTTPS 443 login, chat streaming, tools, Dreaming, voice, and Android
+   Health Connect sync. Restart the backup timer, run one backup, and inspect its
+   log before considering the rollback complete.
 
-Compose starts the pinned release with:
+Open WebUI conversations and native memories remain available only in the
+preserved archive. Tether does not import them. Domain mutations made through
+Open WebUI remain in the live Tether databases and may appear in the restored UI.
 
-```dotenv
-ENABLE_SIGNUP=false
-ENABLE_PERSISTENT_CONFIG=false
-ENABLE_AUTOMATIONS=false
-ENABLE_CODE_EXECUTION=false
-ENABLE_CODE_INTERPRETER=false
-ENABLE_COMMUNITY_SHARING=false
-ENABLE_OLLAMA_API=false
-ENABLE_TOOL_PERMISSIONS=true
-ENABLE_MEMORIES=true
-ENABLE_WEB_SEARCH=false
-USER_PERMISSIONS_CHAT_SHARE=false
-USER_PERMISSIONS_CHAT_TEMPORARY=false
-```
+### 1. Provision the box (HITL)
 
-Persistent configuration stays disabled so values restored from the Open WebUI
-database or changed through an admin endpoint cannot override these
-environment-owned defaults after restart. An authenticated admin can still
-change them in memory until the next restart; do not use the Admin UI to enable
-excluded features. The model provider, Tether tool server, native memory, and
-optional voice settings are supplied through supported environment inputs so
-they survive every restart without making database configuration authoritative.
+- Prefer a Hetzner **CX43** (8 shared vCPU / 16 GB / 160 GB) for generous
+  headroom. If cost-optimized capacity is unavailable, **CPX22** (2 vCPU / 4 GB /
+  80 GB, x86) is the field-tested minimum for the current single-user workload;
+  monitor memory/swap and resize if needed. Use Falkenstein and Debian 13. Paste
+  `deploy/cloud-init.yaml` into Hetzner's "Cloud config" field at creation,
+  after filling in its two placeholders:
+  - `CHANGEME_SSH_PUBLIC_KEY` — your SSH public key (password auth is disabled;
+    key-only from first boot).
+  - `CHANGEME_TAILSCALE_AUTHKEY` — a one-shot Tailscale pre-auth key
+    ([admin console → Keys](https://login.tailscale.com/admin/settings/keys)):
+    reusable=false, ephemeral=false (the node must persist across reboots).
+  cloud-init installs Docker (official repo) + the compose plugin, Tailscale,
+  a 2 GB swapfile, unattended-upgrades (security-only, no auto-reboot), and
+  creates `/srv/tether` (owned by the `tether` user) + `/srv/tether/pi-agent`.
+  The file doubles as the disaster-recovery runbook — see
+  [Total-loss recovery](#total-loss-recovery). Attach a Hetzner firewall with
+  inbound TCP 22 restricted to the provisioning laptop's current `/32`; leave
+  outbound unrestricted. Once tailnet SSH survives a reboot, remove that rule
+  so the firewall has no public inbound rules.
+- In the Tailscale Machines page, name the node `tether`; this becomes the
+  stable SSH/MagicDNS alias. In the
+  [tailnet admin console](https://login.tailscale.com/admin/dns), enable
+  **MagicDNS** and **HTTPS Certificates**.
+- SSH in as `tether@<box-ip>` (or the tailnet name once Tailscale is up) and
+  expose the loopback-bound host at the machine's public `*.ts.net` HTTPS name:
+  ```sh
+  sudo tailscale funnel --bg 8000
+  sudo tailscale funnel status
+  ```
+  The first command may open Tailscale's approval page to add the required
+  `funnel` node attribute. Funnel terminates browser-trusted HTTPS and proxies
+  to `127.0.0.1:8000`; no domain, certbot, or public-IP firewall rule is needed.
+  It exposes this HTTPS service only. Tailnet SSH remains private, and the
+  Hetzner firewall must continue to have no public inbound rules. Funnel is
+  currently beta and bandwidth-limited, acceptable for Tether's single-user web
+  traffic and telemetry sync. Revoke the one-shot auth key and delete any local
+  rendered cloud-init copy after provisioning succeeds.
 
-Do not enable arbitrary code execution, terminal access, external MCP servers,
-community Functions or filters, Ollama, or Automations during the first
-release. Keep community sharing disabled. Stock Open WebUI `v0.11.1` requires
-its plugin subsystem for OpenAPI tool servers too, so do not set
-`ENABLE_PLUGINS=false`; instead, keep the admin private and do not install local
-Tools or Functions. Tool permissions and approvals are experimental. They pause
-interactive chat tool calls but do not protect Automations.
+### 2. Assemble secrets on the box
 
-## One-time Open WebUI setup
+1Password is the source of truth for every secret below — write them there
+first, then copy onto the VM (never the other way around).
 
-Complete this privately before publishing the HTTPS 8443 Funnel listener. From
-the operator workstation, open an SSH tunnel to the VM's loopback listener and
-then browse to <http://127.0.0.1:3000>:
+Cloud-init pre-creates `/srv/tether/pi-agent`, so `git clone ... .` would reject
+the nonempty destination. Initialize the checkout around that directory:
 
 ```sh
-ssh -N -L 3000:127.0.0.1:3000 tether@tether
-```
-
-Use this same private tunnel for later admin recovery. Keep the
-`open-webui-data` volume afterward; it preserves the setup.
-
-1. Set `OPENAI_API_BASE_URLS` and `OPENAI_API_KEYS` in production `.env`. Set the
-   `AUDIO_STT_*` and `AUDIO_TTS_*` values there before the voice acceptance gate.
-2. Start Open WebUI locally and create the first account.
-3. Confirm the first account is an admin and a second signup is rejected.
-4. Confirm the environment-owned OpenAI-compatible provider is available. In
-   Workspace Models, configure the selected provider base model and grant read
-   access to signed-in users; a shared Workspace Model cannot bypass its base
-   model's access control.
-5. Confirm the environment-owned OpenAPI tool server has these exact values:
-
-   | Setting        | Value                                   |
-   | -------------- | --------------------------------------- |
-   | URL            | `http://host:8000`                      |
-   | Spec path      | `tools/openapi.json`                    |
-   | Authentication | Bearer                                  |
-   | Key            | the dedicated `TETHER_OPEN_WEBUI_TOKEN` |
-   | ID             | `tether`                                |
-
-6. Create one Workspace Model named `Tether` and grant read access to signed-in
-   users.
-7. Paste the checked-in
-   [`deploy/open-webui/tether-system-prompt.md`](../deploy/open-webui/tether-system-prompt.md)
-   as its system prompt.
-8. Attach only the `tether` tool server to that model and enable native function
-   calling.
-9. From this private admin session, add a second account with the `user` role for
-   daily browser and phone use. Store both independent passwords in 1Password.
-10. Sign out of the admin account and sign in as the daily user. Do not use the
-    admin account through the published Funnel listener.
-11. Set the daily user's tool approval mode to `ask`. During the trial, accept
-    confirmation for read tools as well as mutations.
-12. Confirm native memory is enabled. Confirm the environment-owned voice
-    transcription and TTS configuration for the production acceptance gate.
-13. Keep built-in web search disabled for the first release. Do not expose the
-    former Tether Tavily tool.
-14. Confirm temporary chats and public sharing are unavailable to the daily user.
-15. Reconfirm that Automations, code execution, the code interpreter, Ollama,
-    and external MCP servers are disabled, and that no local Tools or Functions
-    are installed.
-
-Do not bootstrap Open WebUI by writing its private database or calling
-undocumented admin routes. Do not configure provider, tool-server, or voice
-globals through the Admin UI because those runtime-only changes reset on restart.
-
-## VM provisioning
-
-The existing production VM and HTTPS 443 Funnel listener remain in place. For a
-new VM, use `deploy/cloud-init.yaml`, a persistent Tailscale node, Docker with
-the Compose plugin, restic, and an x86 host with enough memory for both
-containers. Keep SSH private to the tailnet and leave the public firewall with
-no inbound rules.
-
-Initialize `/srv/tether` without deleting a preserved Pi directory:
-
-```sh
+ssh tether@<box>
 cd /srv/tether
 git init -b main
 git remote add origin https://github.com/crpier/tether.git
@@ -208,201 +200,320 @@ chmod 600 .env restic.env
 $EDITOR .env restic.env
 ```
 
-Keep `/srv/tether/pi-agent` intact through the migration trial. The new stack
-does not mount or use it, but full rollback needs its old credentials and mode.
+Fill in `.env` (see the template's comments for detail on each var):
+`TETHER_APP_PASSWORD`, `TETHER_SESSION_SECRET`, `TETHER_API_TOKEN`,
+`TETHER_STT_API_KEY`, `TETHER_TTS_API_KEY`, `TETHER_DEFAULT_MODEL` /
+`TETHER_MODEL_ALLOWLIST`. Set `TETHER_TTS_VOICE` and `TETHER_TTS_SPEED` when
+production should differ from the `alloy` / 1.0 speech defaults; speed must be
+between 0.25 and 4.0.
+Generate `TETHER_API_TOKEN` independently and enter the same value in the
+phone/watch capture settings; it is the static bearer credential for those
+non-browser clients. Because Funnel makes HTTPS internet-accessible, these
+three auth values—not tailnet membership—are the application security boundary.
+Generate long, independent random values and keep them in 1Password. The bearer
+token currently authenticates any `/api/*` route, not only telemetry ingestion;
+rotate it if the phone or token is compromised. Leave `TETHER_SECURE_COOKIES=true`
+(the template's default) because production is always reached over HTTPS.
 
-## Historical migration cutover
+Do not copy a workstation's rotating pi credentials onto the VM. The server is
+the sole credential authority: after the first deploy, log into Tether, open
+**Settings → Model provider**, select **Connect ChatGPT**, open the displayed
+OpenAI link, and enter the one-time device code. The container runs pi's own
+OAuth implementation and writes `/srv/tether/pi-agent/auth.json` through the
+`/pi-agent` mount; no token reaches browser storage or an API response.
 
-Cutover completed on 2026-08-26. These steps are retained as the audit record;
-do not repeat them against the live deployment.
+Pi refreshes the server credential automatically before model requests. Opening
+Settings also performs a refresh-aware health check; if refresh becomes
+unrecoverable, the same **Reconnect ChatGPT** flow replaces the credential and
+restarts live conversation runtimes. `pi-agent/auth.json` is durable across
+deploys but is not currently in the backup set; web reauthorization or a
+separately secured server-side backup is the recovery path.
 
-1. Confirm the complete migration gate passes on the merged commit.
-2. Record the merge SHA and preserve the locked pre-migration Git revision,
-   image, and `/srv/tether/pi-agent` directory.
-3. Run the final old-stack backup and verify that restic lists it with the
-   legacy `tether` tag. Post-migration retention excludes that tag.
-4. Pull the VM checkout because `compose.yaml` and `deploy/` change.
-5. Deploy the new host image and pinned Open WebUI image with a fresh
-   `open-webui-data` volume.
-6. Complete the private one-time Open WebUI setup.
-7. Run any explicitly approved linked-Todo cleanup after reviewing its report.
-8. Publish Open WebUI on HTTPS 8443 without changing the existing 443 listener:
+For Gmail support, keep the token directories on the `data` volume for durability,
+matching `compose.yaml`:
+- `TETHER_GMAIL_CLIENT_SECRET_PATH=/data/gmail/client-secret.json`
+- `TETHER_GMAIL_TOKEN_PATH=/data/gmail/token.json`
 
-   ```sh
-   sudo tailscale funnel --bg --https=8443 3000
-   sudo tailscale funnel status
-   ```
-
-9. Confirm signup remains closed.
-10. Run the production acceptance checks below.
-11. Begin the trial. Do not run the old Pi chat stack in parallel.
-
-Do not import old Tether chats, mirror Open WebUI transcripts, or copy Open
-WebUI state into Tether.
-
-## Production acceptance gates
-
-Local implementation and the standalone smoke do not satisfy these gates. The
-2026-08-26 migration passed all of them against production. Use the same gates
-for changes that could affect this deployment shape:
-
-- Open WebUI login works on desktop and a physical phone at HTTPS 8443.
-- Signup is disabled and only the private admin plus daily user accounts exist.
-- The published browser and phone sessions use the daily `user` role account;
-  the private admin account is reserved for setup and recovery.
-- The actual selected provider and model stream chat and perform native function
-  calls with Tether's schema.
-- Interactive approval pauses, survives refresh, and resumes the same tool call.
-- Todo create and list, Bucket capture and search, and current Health analysis
-  work through Tether tools.
-- Open WebUI voice transcription and TTS both work from a physical phone over
-  Funnel HTTPS 8443.
-- Conversations survive browser refresh and an Open WebUI container restart.
-- The daily-user browser receives HTTP 401 from admin configuration endpoints
-  and does not receive `TETHER_OPEN_WEBUI_TOKEN` during chat or tool calls.
-- An invalid token cannot read `/tools/openapi.json` or call a tool.
-- Open WebUI cannot reach the Docker socket, Tether volume, Pi directory, or
-  host filesystem.
-- Host and Open WebUI logs contain no secrets, prompts, request bodies, or
-  health values.
-- Android Capture completes a real Health Connect sync at the unchanged HTTPS
-  443 origin with `TETHER_API_TOKEN`.
-- The full restore drill recovers both Tether SQLite databases, `.env`, the
-  complete Open WebUI volume, admin access, provider configuration, tool-server
-  configuration, and a persisted conversation.
-- The user explicitly approves production cutover after reviewing these results.
-
-## Funnel operations
-
-The existing HTTPS 443 listener belongs to the host and must survive both
-cutover and rollback. Add only the Open WebUI listener with:
-
+To enable raw Gmail tools, ensure both Gmail paths in `.env` are set, then authorize on the VM:
 ```sh
-sudo tailscale funnel --bg --https=8443 3000
+# After editing .env under /srv/tether and confirming .env lists:
+# TETHER_GMAIL_CLIENT_SECRET_PATH=/data/gmail/client-secret.json
+# TETHER_GMAIL_TOKEN_PATH=/data/gmail/token.json
+ssh tether@<box> 'cd /srv/tether && just gmail-auth'
+```
+Background triage is opt-in and independent:
+```sh
+TETHER_GMAIL_SYNC_ENABLED=false  # leave off for tools-only access
+# set true for background proposal flow once the token is in place
 ```
 
-Remove only that listener by repeating its flags and target before `off`:
+Fill in `restic.env` — see [Backups](#backups) below.
+
+### 3. First deploy
+
+From your laptop (not the VM):
 
 ```sh
-sudo tailscale funnel --bg --https=8443 3000 off
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io -u <github-user> --password-stdin
+TETHER_DEPLOY_HOST=tether@<box> just deploy
 ```
 
-Do not use `tailscale funnel reset`; it would also remove the retained 443
-listener. Check `sudo tailscale funnel status` after either command.
+`just deploy` builds the image, tags it `:<git-sha>` and `:latest`, pushes both
+to `ghcr.io/crpier/tether`, then `ssh`es in and runs `docker compose pull &&
+docker compose up -d`. A newly created GHCR package defaults private: after the
+first successful push, change the `tether` package visibility to public before
+the VM's anonymous pull. Images contain code, not runtime secrets.
 
-## Routine updates after cutover
+- `restart: unless-stopped` plus Docker-enabled-at-boot (cloud-init) keeps the
+  host running across reboots and crashes.
+- Open `https://<box>.<tailnet>.ts.net`, log in, and use **Settings → Model
+  provider → Connect ChatGPT** before the first chat turn. The SPA shell,
+  `/docs`, and `/openapi.json` are publicly reachable; `/api/*` data routes use
+  the signed session cookie or bearer token, and `/ws` requires the signed
+  session cookie.
 
-Deploy only clean, validated, merged `main`. If a release changes
-`compose.yaml` or `deploy/`, update the VM checkout before restarting services:
+If this is a fresh box (not yet holding real data), see
+[Migrating from local](#migrating-from-local) next.
 
-```sh
-ssh tether@tether 'cd /srv/tether && git pull --ff-only'
-```
+### 4. Verify public HTTPS and private SSH
 
-The existing deployment command publishes the host image and runs Compose:
-
-```sh
-TETHER_DEPLOY_HOST=tether@tether just deploy
-```
-
-Open WebUI remains pinned by `compose.yaml`; Compose pulls the exact digest.
-Routine updates preserve `data` and `open-webui-data`.
-
-## Full migration rollback
-
-This is an operational rollback, not a mode in the new application. An image pin
-alone is insufficient because the old host needs its old Compose definition and
-Pi credentials.
-
-1. Stop Open WebUI and remove only its Funnel listener:
-
-   ```sh
-   cd /srv/tether
-   docker compose stop open-webui
-   sudo tailscale funnel --bg --https=8443 3000 off
-   ```
-
-2. Preserve `open-webui-data`. Do not delete the volume.
-3. Check out the recorded pre-migration VM Git revision so the old
-   `compose.yaml`, deploy files, and image definition return.
-4. Pin `TETHER_IMAGE_TAG` to the recorded pre-migration image tag.
-5. Confirm `/srv/tether/pi-agent` still contains the old credentials, owner, and
-   `0700` permissions.
-6. Run `docker compose pull && docker compose up -d`.
-7. Verify the old HTTPS login, chat, tools, and Android Health Connect sync.
-8. Restore the pre-migration database only if the live database is corrupt.
-   Ordinary rollback should reuse it because the migration makes additive
-   schema changes and leaves old tables inert.
-
-The locked rollback point is Git commit and image tag `c956fff`, with image
-digest
-`sha256:9c684b0ac3bb1863ff56eeb48dbcbf0bab4d523fd836948bda108ba7f39d238c`.
-Retain that image and the old Pi directory for the entire trial.
-
-Domain mutations made through Open WebUI tools may appear in the restored old
-UI. Open WebUI chats and native memories will not. This is accepted.
-
-## Android Health Connect
-
-Android Capture continues to use the host's existing HTTPS 443 origin and
-`TETHER_API_TOKEN`. Do not point it at Open WebUI or port 8443. Test the
-authenticated seam without exposing health values:
+Test from a phone with Tailscale disconnected. The origin is unchanged when
+switching from Serve to Funnel, so an already configured capture app needs no
+URL migration:
 
 ```sh
-origin=https://<host>.<tailnet>.ts.net
+origin=https://<box>.<tailnet>.ts.net
+curl -i "$origin/api/memories?state=loose"  # expect HTTP 401
+# Authenticated Health Connect seam: expect HTTP 200.
 curl -i -H "Authorization: Bearer $TETHER_API_TOKEN" \
   "$origin/api/telemetry/health-connect/sync-state?installation_id=funnel-smoke&record_types=steps"
 ```
 
-Expect HTTP 200, then run a real sync from the physical Android app. The active
-wire contract is [`health-connect-wire-v3.md`](./health-connect-wire-v3.md).
+Then trigger Health Connect sync and confirm its success in the Android app.
+Verify the ingress and SSH independently:
+
+```sh
+ssh tether@tether 'sudo tailscale funnel status'
+ssh tether@tether true
+```
+
+The Funnel status must say `Funnel on`; SSH must work over the tailnet. Do not
+add a public TCP 22 firewall rule. To make HTTPS tailnet-private again without
+changing its origin or the Compose service:
+
+```sh
+ssh tether@tether 'sudo tailscale serve --bg 8000'
+```
+
+The most recently configured mode owns HTTPS port 443; confirm rollback with
+`sudo tailscale serve status` (`tailnet only`).
+
+## Update flow
+
+Use [Live production and routine releases](#live-production-and-routine-releases).
+The deploy rebuilds and pushes `:<git-sha>` + `:latest`, then runs `pull && up
+-d` on the VM. The `data`/`model-cache` volumes are untouched. Verify HTTPS
+login/chat after every release.
+
+## Rollback
+
+```sh
+TETHER_DEPLOY_HOST=tether@<box> just deploy-rollback <previous-short-sha>
+```
+Pins `TETHER_IMAGE_TAG=<sha>` in the VM's `.env` (that tag must already exist on
+GHCR — `just deploy` always leaves the prior sha there) and re-runs `pull && up
+-d`. The `data` volume is untouched, so the source of truth survives. To resume
+tracking `latest`, remove the `TETHER_IMAGE_TAG` line from the VM's `.env` and
+redeploy. Do this explicitly: ordinary `just deploy` currently does not clear
+the rollback pin.
+
+## Migrating from local
+
+Move local dev data onto the VM's durable volumes once, before treating the VM
+as the live instance. **Never run two live instances at once** — the YouTube/
+Gmail sync workers and scheduled triggers both write, and two writers racing
+against the same upstream state (or double-firing a trigger) is a correctness
+bug, not just wasted API quota. Stop `just dev` for good once the VM is live.
+
+Local `kb_root` is `.tether/`, not `.tether/kb`; its top-level UUID-named
+Markdown files are the KB. Do not copy the whole directory: it also contains
+the live DB, OAuth files, logs, sessions, and disposable indexes.
+
+On the laptop, with local dev stopped:
+
+```sh
+rm -rf /tmp/tether-kb-migrate
+rm -f /tmp/tether-migrate.sqlite3
+sqlite3 .tether/tether.sqlite3 \
+  "VACUUM INTO '/tmp/tether-migrate.sqlite3'"
+mkdir -m 700 /tmp/tether-kb-migrate
+sqlite3 .tether/tether.sqlite3 \
+  "select id from memory where tethered_at is not null and deleted_at is null" |
+while read -r id; do
+  cp ".tether/${id}.md" /tmp/tether-kb-migrate/
+done
+sqlite3 /tmp/tether-migrate.sqlite3 "pragma integrity_check;"  # expect: ok
+
+scp /tmp/tether-migrate.sqlite3 tether@<box>:/tmp/
+scp -r /tmp/tether-kb-migrate tether@<box>:/tmp/
+```
+
+Stop the app and use a helper container to validate and atomically swap the
+volume contents. Keeping the old files until browser verification makes the
+cutover reversible:
+
+```sh
+ssh tether@<box>
+cd /srv/tether
+docker compose stop host
+docker compose run --rm --no-deps \
+  --entrypoint sh \
+  -v /tmp/tether-migrate.sqlite3:/import/tether.sqlite3:ro \
+  -v /tmp/tether-kb-migrate:/import/kb:ro \
+  host -c '
+    set -eu
+    cp /import/tether.sqlite3 /data/tether.sqlite3.migrate
+    python3 -c "import sqlite3; assert sqlite3.connect(\"/data/tether.sqlite3.migrate\").execute(\"pragma integrity_check\").fetchone() == (\"ok\",)"
+    rm -rf /data/kb.migrate
+    mkdir /data/kb.migrate
+    cp -a /import/kb/. /data/kb.migrate/
+    rm -f /data/tether.sqlite3.pre-migration
+    mv /data/tether.sqlite3 /data/tether.sqlite3.pre-migration
+    mv /data/tether.sqlite3.migrate /data/tether.sqlite3
+    rm -rf /data/kb.pre-migration
+    mv /data/kb /data/kb.pre-migration
+    mv /data/kb.migrate /data/kb
+  '
+docker compose start host
+```
+
+After counts and browser-visible data match, remove the `*.pre-migration`
+volume files and local/remote `/tmp` staging files.
+
+Then follow [YouTube ingestion](#youtube-ingestion) below to move the OAuth
+token over, and demote local dev: keep using `just dev` for iteration, but
+understand its DB/KB are now a stale fork — don't expect it to reflect what the
+VM sees, and never point it at any real ingestion sync while the VM is live.
+
+## YouTube ingestion
+
+Optional. Authorization is managed from Settings and stored on the durable data
+volume (`/data/youtube/token.json`). Missing or revoked credentials leave the host
+running and expose **Connect YouTube** or **Reconnect YouTube** in the UI.
+
+1. Set the canonical Funnel origin in the production `.env` so OAuth callbacks
+   retain HTTPS through the internal HTTP proxy:
+   `TETHER_PUBLIC_ORIGIN=https://<your-tether-origin>`.
+2. In Google Cloud, create an OAuth client of type **Web application**. Register
+   this exact authorized redirect URI:
+   `https://<your-tether-origin>/api/youtube-auth/callback`.
+3. Publish the OAuth consent app to **Production**. Testing-mode refresh tokens
+   can expire after seven days.
+4. Install the downloaded client JSON into the volume:
+   ```sh
+   docker compose exec -T host mkdir -p /data/youtube
+   docker compose cp youtube-client-secret.json host:/data/youtube/client-secret.json
+   ```
+5. Open **Settings → YouTube → Connect YouTube**, follow Google consent, and
+   return to Settings.
+
+The callback atomically installs the token and immediately runs a likes sync;
+no host restart is required. The legacy `just youtube-auth` and
+`just youtube-token-install` recipes remain available for native/CLI recovery.
+
+## KOReader ebook progress (kosync)
+
+Optional. Tether can *be* the KOReader sync server: KOReader devices push
+reading progress straight at the host, and a book crossing ~98% mints a single
+"Finished reading …" memory. Off by default; enable it by setting all three:
+
+```sh
+TETHER_KOSYNC_ENABLED=true
+TETHER_KOSYNC_USERNAME=<any username you pick>
+TETHER_KOSYNC_USERKEY=<md5 of the password you'll enter in KOReader>
+```
+
+`TETHER_KOSYNC_USERKEY` is the **MD5 of the password**, not the password —
+KOReader hashes it client-side and Tether compares the hash verbatim
+(`printf %s 'yourpassword' | md5sum`). With any of the three unset the `/kosync`
+routes are not mounted (404) and the rest of Tether is unaffected.
+
+On each device, in KOReader: **Tools → Progress sync → Custom sync server** and
+point it at your host's base URL with the `/kosync` path (e.g.
+`https://tether.example/kosync`), then register/login with the username and
+password above. Critically, set **Progress sync → Document matching method →
+Filename**: Tether maps a book by `md5(basename)`, and KOReader's default binary
+partial-MD5 cannot be mapped back to a title. Use `label_ebook` (or ask the
+assistant, which can `list_unlabeled_ebooks`) to attach titles to hashes.
 
 ## Backups
 
-The VM's systemd timer runs `deploy/backup.sh` outside Compose and sends one
-client-side encrypted restic backup to Backblaze B2. Each run contains:
+Nightly `restic` → Backblaze B2, client-side encrypted, run by a systemd timer
+**on the VM host, outside compose** (so it's independent of the app container's
+lifecycle). The script uses Python's SQLite driver inside the container to make
+independent, consistent `VACUUM INTO` snapshots of `/data/tether.sqlite3` and
+`/data/telemetry.sqlite3`, then backs up both snapshots, the KB's top-level
+Markdown and retained pi sessions, and `.env` in one restic run. Rebuildable
+Lance indexes are excluded instead of being copied through the VM's bounded
+`/tmp` tmpfs. Failure to snapshot or copy either database fails the whole run;
+a partial source-of-truth backup is never reported as successful.
+Retention: `--keep-daily 7 --keep-weekly 4 --prune`. Every run pings
+healthchecks.io — success, and `/fail` on any error via a shell trap — so a
+run that fails *or silently stops happening* (VM down, timer disabled) alerts.
 
-- consistent `VACUUM INTO` snapshots of `tether.sqlite3` and
-  `telemetry.sqlite3`
-- a complete `open-webui-data.tar` archive of the Open WebUI volume
-- production `.env`
+Current coverage is intentionally explicit:
 
-The script resolves the Open WebUI volume, stops only `open-webui` before either
-SQLite snapshot, mounts its volume read-only in a short-lived container, and
-restarts the service after the archive. This prevents an assistant tool mutation
-from spanning mismatched conversation and domain snapshots. EXIT and error traps
-restart Open WebUI if a later command fails. It no longer backs up Pi sessions.
-Keep `/srv/tether/pi-agent` separately until the migration trial is accepted
-because full rollback still needs it.
+- Included: both SQLite sources of truth (`tether.sqlite3` and
+  `telemetry.sqlite3`), curated memories under `/data/kb/memory/**/*.md`,
+  `/data/kb/pi-sessions`, and production `.env`. Hidden/editor paths and
+  symlinks inside the Memory workspace are excluded.
+- Excluded as rebuildable: `/data/kb/index`, `/data/kb/transcript-index`, and
+  `/data/kb/bucket-item-index`.
+- Also excluded: `/srv/tether/pi-agent`, `/data/youtube`, and other
+  OAuth/ingestion state outside `/data/kb`.
+  Reauthorize those providers or protect them separately until coverage grows.
+- `restic.env` is restored from 1Password, not from the restic repository.
 
-Post-migration backups use the `tether-open-webui` tag. Restic filters that tag
-and groups by stable host and tag values, rather than each random staging path,
-before retaining seven daily and four weekly snapshots. The old-stack `tether`
-snapshot is therefore outside ordinary retention and must remain locked through
-the migration trial. healthchecks.io receives start, success, and failure pings.
-
-### One-time backup setup
+### One-time setup (on the VM)
 
 ```sh
+# restic + the deploy/ scripts arrive with the repo checkout at /srv/tether
 cp deploy/restic.env.example /srv/tether/restic.env
 chmod 600 /srv/tether/restic.env
-$EDITOR /srv/tether/restic.env
+$EDITOR /srv/tether/restic.env    # RESTIC_REPOSITORY, RESTIC_PASSWORD, B2 keys, healthchecks URL
+```
+
+Fill in, from 1Password (create these there first — restic's passphrase must
+**never live only on the VM**, or a lost VM makes the B2 backup unrecoverable):
+
+- `RESTIC_REPOSITORY` — `b2:<bucket>:restic`, a B2 bucket dedicated to Tether backups.
+- `B2_ACCOUNT_ID` / `B2_ACCOUNT_KEY` — a B2 application key scoped to that bucket.
+- `RESTIC_PASSWORD` — the repo encryption passphrase (generate once, store in 1Password).
+- `HEALTHCHECKS_PING_URL` — a [healthchecks.io](https://healthchecks.io) check's ping URL; set its expected period to ~1 day + grace.
+
+Initialize the restic repo once (idempotent to re-run, but only needed the
+first time):
+```sh
 set -a; source /srv/tether/restic.env; set +a
 restic init
+```
+
+Install and enable the timer:
+```sh
 sudo cp deploy/tether-backup.service deploy/tether-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now tether-backup.timer
-sudo systemctl start tether-backup.service
-journalctl -u tether-backup.service -e
+sudo systemctl start tether-backup.service   # optional: run once now to verify
+journalctl -u tether-backup.service -e       # check the run
 ```
 
-Store `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, B2 credentials, and the
-healthchecks.io URL in 1Password before copying them to the VM.
+### Restore drill (do this before you need it)
 
-### Restore drill
-
-Restore into scratch space first and locate files rather than assuming restic's
-temporary root name:
+Because `backup.sh` passes its absolute temporary work directory to restic, a
+restore retains a random `tmp/tmp.*` prefix. Locate the DB rather than assuming
+a flat target path. Debian has Python 3 but the cloud-init package set does not
+install the `sqlite3` CLI:
 
 ```sh
 set -a; source /srv/tether/restic.env; set +a
@@ -411,53 +522,106 @@ rm -rf /tmp/tether-restore
 restic restore latest --target /tmp/tether-restore
 tether_db=$(find /tmp/tether-restore -type f -name tether.sqlite3 -print -quit)
 telemetry_db=$(find /tmp/tether-restore -type f -name telemetry.sqlite3 -print -quit)
-open_webui_archive=$(find /tmp/tether-restore -type f \
-  -name open-webui-data.tar -print -quit)
-environment_file=$(find /tmp/tether-restore -type f -name env -print -quit)
-test -n "$tether_db"
-test -n "$telemetry_db"
-test -n "$open_webui_archive"
-test -n "$environment_file"
+test -n "$tether_db" && test -n "$telemetry_db"
+for db in "$tether_db" "$telemetry_db"; do
+  python3 - "$db" <<'PY'
+import sqlite3
+import sys
+
+result = sqlite3.connect(sys.argv[1]).execute("pragma integrity_check").fetchone()
+print(f"{sys.argv[1]}: {result[0]}")
+assert result == ("ok",)
+PY
+done
+root=$(dirname "$tether_db")
+test "$(dirname "$telemetry_db")" = "$root"
+test -f "$root/env"
+find "$root/kb" -maxdepth 1 -type f -name '*.md' -print
 ```
 
-Run `pragma integrity_check` on both SQLite snapshots. Restore them with the host
-stopped, using a helper container to stage each file before replacing the live
-copy.
+For a scratch restore into the live volume, stop the host, stage and recheck
+both files, then swap both sources of truth together. Keep the old copies until
+HTTPS login/chat and Health Connect current-row counts are verified:
 
-Restore Open WebUI only with its service stopped. Preserve the current volume
-before clearing it, then extract the complete archive into the fresh target
-volume. Start Open WebUI and verify:
+```sh
+cd /srv/tether
+docker compose stop host
+docker compose run --rm --no-deps --entrypoint sh \
+  -v "$root:/restore:ro" host -c '
+    set -eu
+    for name in tether telemetry; do
+      cp "/restore/${name}.sqlite3" "/data/${name}.sqlite3.restore"
+      python3 -c "import sqlite3; assert sqlite3.connect(\"/data/${name}.sqlite3.restore\").execute(\"pragma integrity_check\").fetchone() == (\"ok\",)"
+      rm -f "/data/${name}.sqlite3.pre-restore"
+      mv "/data/${name}.sqlite3" "/data/${name}.sqlite3.pre-restore"
+      mv "/data/${name}.sqlite3.restore" "/data/${name}.sqlite3"
+    done
+  '
+docker compose start host
+# Verify HTTPS login/chat and Health Connect current-row counts before deleting
+# /data/*.pre-restore through a helper container.
+```
 
-- admin login
-- provider and default-model configuration
-- the `tether` tool-server configuration
-- the Tether Workspace Model and checked-in prompt
-- one restored conversation and native memory
-
-A backup is not accepted until this drill succeeds in a fresh Compose project.
+Also verify the dead-man's-switch: temporarily shorten the healthchecks.io
+period/grace, reset it with a success ping, disable the timer, and confirm a
+missed-ping alert. Restore the 1-day period/2-hour grace, send a success ping,
+and re-enable the timer. If restic reports a stale lock after an interrupted
+drill, first verify no restic process is active, then run `restic unlock`.
 
 ### Total-loss recovery
 
-Recovery requires the repository, 1Password secrets, and restic data. Restore
-the two Tether databases, production environment, and the full Open WebUI volume
-before starting both services.
+If the VM is gone entirely: 1Password (secrets) + this repo (cloud-init +
+compose + Dockerfile) + the B2 bucket (data) is everything needed to rebuild.
 
-During the migration trial, total-loss recovery of the old stack additionally
-requires the recorded old Git revision and image plus a protected copy of
-`/srv/tether/pi-agent`. The Open WebUI backup alone cannot restore the Pi stack.
+1. Rent a fresh x86 CX43 or CPX22, paste `deploy/cloud-init.yaml` (filled in) —
+   see [Provision the box](#1-provision-the-box-hitl).
+2. Assemble `.env` and `restic.env` from 1Password — see
+   [Assemble secrets on the box](#2-assemble-secrets-on-the-box) and the
+   restore-drill commands above.
+3. Restore latest to a scratch directory, locate both databases despite the
+   random restored root, and integrity-check each as shown in the drill. Copy
+   that root's `tether.sqlite3`, `telemetry.sqlite3`, `kb`, and `env` into the
+   named volume/checkout using the stopped helper-container pattern in
+   [Migrating from local](#migrating-from-local). Restore `restic.env` from
+   1Password.
+4. Reauthorize pi from Tether Settings and restore any enabled ingestion OAuth
+   state; those are outside the current backup set.
+5. Deploy from the laptop to bring the app up, verify data, then enable
+   `tether-backup.timer`.
 
-## Logs and resource checks
+## Resource monitoring
 
-Both containers log to Docker:
+The single container includes Python, Node/pi, and FastEmbed, so its cgroup is
+the whole app runtime:
 
 ```sh
-docker compose logs -f host
-docker compose logs -f open-webui
-docker stats --no-stream
-free -h
-sudo journalctl -k --grep="out of memory\|oom-kill"
+ssh tether@tether 'docker stats --no-stream tether-host-1; free -h'
+ssh tether@tether 'sudo journalctl -k --grep="out of memory\|oom-kill"'
 ```
 
-The host logs structured requests, tool outcomes, and ingestion work. Open
-WebUI logs assistant activity. Neither log may contain bearer credentials,
-provider keys, prompts, request bodies, or health values.
+On CPX22, resize if Tether sustains roughly 3 GiB, swap use keeps growing, or
+OOM events appear. Short CPU spikes around 100% are one vCPU and are expected
+while rebuilding derived indexes.
+
+## Logs
+
+The container emits structured JSON to stdout (captured by Docker). Render it
+readable and optionally follow a single chat turn end to end by its `run_id`:
+
+```sh
+just logs              # all host logs, pretty-printed (needs jq)
+just logs <run_id>     # only the lines servicing that turn
+```
+
+`run_id` is stamped on every host log line driving a chat prompt. Raw access is
+`docker compose logs -f host`.
+
+## Notes
+
+- **Closed-tab web push (VAPID)** is out of scope here (issue #77). On this
+  deploy a fired Scheduled trigger is delivered over the **open** WebSocket — it
+  reaches you when a tab is open. The `*.ts.net` HTTPS origin is the secure origin
+  that future push work needs.
+- **No CI.** `just deploy` is a manual, laptop-initiated push; the validation
+  gate (`AGENTS.md`/`CLAUDE.md`) is what keeps `main` deployable. CI is a
+  documented follow-up, not in scope here.

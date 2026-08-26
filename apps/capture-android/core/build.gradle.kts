@@ -12,7 +12,8 @@ kotlin {
 }
 
 dependencies {
-    // Public Health Connect HTTP construction accepts an OkHttp client.
+    // `api` so consumers (app, wear) get OkHttp request/response types on their
+    // own compile classpath without redeclaring the dependency.
     api("com.squareup.okhttp3:okhttp:4.12.0")
     // Android provides a real org.json implementation at runtime (only its unit
     // test stubs throw); compileOnly here mirrors that — never packaged, and

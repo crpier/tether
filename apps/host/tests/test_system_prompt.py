@@ -1,0 +1,139 @@
+"""Tether system prompt selection per agent run kind."""
+
+from typing import get_args
+
+from snektest import assert_eq, assert_in, test
+
+from tether.agent_trace_model import RunKind
+from tether.system_prompt import (
+    CONVERSATION_SYSTEM_PROMPT,
+    TASK_SYSTEM_PROMPT,
+    system_prompt_for,
+)
+
+
+@test()
+async def conversation_runs_get_the_full_persona_prompt() -> None:
+    """The interactive chat run kind maps to the full conversation prompt."""
+    assert_eq(system_prompt_for("conversation"), CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def scheduled_runs_get_the_short_task_prompt() -> None:
+    """Scheduled-trigger runs map to the shorter unattended-task prompt."""
+    assert_eq(system_prompt_for("scheduled"), TASK_SYSTEM_PROMPT)
+
+
+@test()
+async def recall_runs_get_the_short_task_prompt() -> None:
+    """Recall model steps map to the shorter unattended-task prompt."""
+    assert_eq(system_prompt_for("recall"), TASK_SYSTEM_PROMPT)
+
+
+@test()
+async def every_run_kind_resolves_to_a_tether_prompt() -> None:
+    """No RunKind member falls through system_prompt_for unmapped."""
+    for kind in get_args(RunKind.__value__):
+        assert_in("Tether", system_prompt_for(kind))
+
+
+@test()
+async def both_prompts_state_the_tether_identity() -> None:
+    """Every run kind's prompt names the Tether persona."""
+    for prompt in (CONVERSATION_SYSTEM_PROMPT, TASK_SYSTEM_PROMPT):
+        assert_in("Tether", prompt)
+
+
+@test()
+async def both_prompts_keep_recall_independent_from_memory() -> None:
+    """Every foreground prompt rejects Recall-based Memory promotion."""
+    for prompt in (CONVERSATION_SYSTEM_PROMPT, TASK_SYSTEM_PROMPT):
+        assert_in("Recall", prompt)
+        assert_in("never promote", prompt)
+
+
+@test()
+async def explicit_remembering_queues_dreaming_instead_of_editing_memory() -> None:
+    """Remember requests and corrections enter through post-turn Dreaming."""
+    assert_in("`queue_memory_assimilation`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("does not mutate Memory", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_records_only_explicit_product_feedback() -> None:
+    """Product observations require an explicit request, never inference."""
+    assert_in("record_product_observation", CONVERSATION_SYSTEM_PROMPT)
+    assert_in(
+        "Never infer or automatically record feedback", CONVERSATION_SYSTEM_PROMPT
+    )
+
+
+@test()
+async def the_conversation_prompt_covers_capture_discipline() -> None:
+    """The full prompt treats intent context as optional, never a blocker."""
+    assert_in("Intent context", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("without delaying the save", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_attributes_dedup_to_the_add_tools() -> None:
+    """Duplicate flagging belongs to the `add_*` tools, not search."""
+    assert_in("`add_*`", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_covers_the_memory_tool_belt() -> None:
+    """The full prompt names read-only Search and immediate assimilation."""
+    assert_in("`search`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`queue_memory_assimilation`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("triage_report", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def health_questions_prefer_deterministic_insights_over_raw_joins() -> None:
+    """Chat uses episode-aware Health reads before raw telemetry records."""
+    assert_in("`analyze_health_connect`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("local times", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("not clinical conclusions", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_speaks_recall_vocabulary() -> None:
+    """The full prompt uses the recall-prompt vocabulary."""
+    assert_in("spaced practice", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_names_the_widget_vocabulary() -> None:
+    """The full prompt tells the agent about the closed Widget vocabulary
+    (ADR 0011): GFM tables, mermaid fences, vega-lite fences, nothing else."""
+    assert_in("```mermaid```", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("```vega-lite```", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("table", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_names_the_artifact_tools_and_fence_contract() -> None:
+    """The full prompt tells the agent to link a created artifact with an
+    `artifact` fence, and names the tools that author/read one."""
+    assert_in("`create_artifact`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`update_artifact`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("`list_artifact_events`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("```artifact```", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_conversation_prompt_forbids_reading_artifact_html_back() -> None:
+    """The prompt states the agent never reads an artifact's HTML/DOM back —
+    only its event log, matching ADR 0011's talk-back boundary."""
+    assert_in("never returns to you", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
+async def the_task_prompt_does_not_mention_widgets() -> None:
+    """Unattended runs return plain text, not chat turns, so the widget
+    vocabulary guidance is conversation-only."""
+    assert_in("mermaid", CONVERSATION_SYSTEM_PROMPT)
+    assert not any(
+        "mermaid" in line.lower() for line in TASK_SYSTEM_PROMPT.splitlines()
+    )

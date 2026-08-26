@@ -1,6 +1,5 @@
 ---
-status: superseded
-superseded_by: 0030-open-webui-owns-assistant-runtime
+status: accepted
 ---
 
 # Delete everywhere physically removes all retained backups

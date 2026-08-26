@@ -1,7 +1,10 @@
-"""The Bucket item domain's Open WebUI capability descriptor.
+"""The Bucket item domain's capability descriptor.
 
-This module owns the read models, domain error map, and one execute function per
-capability. Add is one shared execute; the per-type tool spellings
+The pieces the REST routes (`tether.bucket_routes`) and the internal tools
+(`tether.bucket_tools`) both need live here once: the Read models, the
+detached-reference builder, the domain→code map (`BUCKET_ERRORS`), and one
+execute function per capability — the service call plus its Read-model
+rendering. Add is one shared execute; the per-type tool spellings
 (`add_movie`, `add_place`, `add_book`, `add_travel`) project their flat
 fields onto it.
 """
@@ -54,15 +57,18 @@ def _search_service(request: Request) -> BucketItemSearchService:
 
 
 BUCKET_ERRORS: tuple[ErrorRule, ...] = (
-    ErrorRule((BucketItemNotFoundError,), "not_found"),
-    ErrorRule((BucketItemConflictError,), "conflict"),
-    ErrorRule((EmptyBucketSearchQueryError,), "invalid_input"),
+    ErrorRule(
+        (BucketItemNotFoundError,), "not_found", 404, detail="bucket item not found"
+    ),
+    ErrorRule((BucketItemConflictError,), "conflict", 409),
+    ErrorRule((EmptyBucketSearchQueryError,), "invalid_input", 400),
     ErrorRule(
         (InvalidItemDataError, EmptyIntentContextError, NotPurchaseItemError),
         "invalid_input",
+        422,
     ),
 )
-"""Expected Bucket item failures translated at the Open WebUI boundary."""
+"""The Bucket item domain→code map both surfaces translate failures through."""
 
 
 class BucketItemRead(BaseModel):
@@ -271,6 +277,15 @@ async def add_purchase(
     """Add a `purchase` Bucket item with the context available so far."""
     data: dict[str, Any] = purchase.model_dump(mode="json")
     return await add(request, "purchase", data, intent_context)
+
+
+async def browse(request: Request, state: BucketItemState) -> CapabilityOutcome:
+    """List Bucket items in a lifecycle state (active list / retained history)."""
+    items = await _search_service(request).browse_by_state(
+        state,
+        logger=get_request_logger(request),
+    )
+    return _many(items)
 
 
 async def search(request: Request, q: str, limit: int = 50) -> CapabilityOutcome:

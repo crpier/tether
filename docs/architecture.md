@@ -1,188 +1,93 @@
 # Architecture overview
 
-This document describes the production architecture from
-[ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md). Production cut over
-to this architecture on 2026-08-26.
+A map of Tether's stack and the load-bearing decisions, with pointers to the ADRs that record the hard-to-reverse ones. This is a map, not a spec — it says *what* and *why*, not *how* in detail.
 
 ## Shape
 
-```text
-Browser / phone
-      |
-      | HTTPS :8443
-      v
-stock Open WebUI v0.11.1
-  - accounts and browser sessions
-  - conversations and model execution
-  - native tool calls and interactive approvals
-  - files, voice, memory, and optional web search
-      |
-      | Docker network
-      | Bearer TETHER_OPEN_WEBUI_TOKEN
-      v
-Tether Python host :8000
-  - allowlisted OpenAPI tools
-  - Health Connect capture routes
-  - Health Connect episode summaries
-  - SQLite domain state
-      ^
-      |
-      | HTTPS :443
-      | Bearer TETHER_API_TOKEN
-      |
-Android Health Connect capture
+```
+SolidJS UI ──HTTP/WS──▶ Python host ──spawns──▶ pi (RPC subprocess, JSONL/stdio)
+    (built SPA)            │ owns state            │ runs generated TS tool shims
+                           │ + logic               │ (pi.registerTool)
+                           ▼                        │ tool.execute() ──┐
+                        SQLite (snekql)             │  closed tool world │
+                           ▲                        ▼                   │
+                           └─────── loopback internal tool API ◀────────┘
+                                    (per-process secret + session id)
+
+  embeddings: in-host (FastEmbed/ONNX)   |   canonical Memory Markdown + SQLite mutation history
 ```
 
-Tailscale Funnel terminates HTTPS outside Compose. The existing host remains on
-local port `8000` and the existing public HTTPS 443 origin so Health Connect
-does not move. Open WebUI binds local port `3000` and uses a separate Funnel
-listener on HTTPS 8443.
+One deploy container: the **host + Node/pi co-resident** (so the host can spawn pi subprocesses), with the built Solid SPA served by the Python host alongside `/api` and `/ws`. Tailscale runs on the VM and terminates private HTTPS outside Compose. Named volumes hold durable data and the embedding-model cache. Dev runs everything natively.
 
-## Ownership
+## Components
 
-Open WebUI owns the generic assistant. This includes login, browser sessions,
-the canonical chat transcript, model and provider configuration, inference,
-tool-call continuation, interactive approvals, files, voice, native memory,
-and optional built-in web search. Tether does not copy or synchronize Open
-WebUI conversations.
+**Python host** — the spine. Owns Evidence, Dreaming policy/history, typed vertical state, Search, scheduling, and the internal tool API. Built on **FastAPI**, fully async. **WebSocket** serves chat; plain **REST** serves current Memory Topics, exact `tether://` Evidence resolution, Dream history, triage, and typed verticals. There is no Memory CRUD or Review queue. Targets Python ≥3.14.
 
-Tether is a headless Python capability host. It owns typed domain state and
-deterministic integrations that remain useful without the old assistant:
+**pi (agent runtime)** — earendil-works/pi in RPC mode, driven as a host-spawned subprocess. "One agent" is a *definition* (one tool belt, prompt, extensions), realized as multiple processes: one long-lived for foreground chat, ephemeral ones for background work. pi runs with built-in tools disabled — a **closed tool world** whose only surface is Tether's tools. See ADR 0002, ADR 0005.
 
-- Health Connect ingestion, projections, episode summaries, and read tools
-- Bucket items and deterministic triage
-- Todos
-- SQLite data, structured logs, telemetry, and backups
+**Tools** — every capability is a pi extension (`pi.registerTool`) whose `execute` is a thin TS shim that calls back into the host over the loopback internal tool API. All logic stays in Python; the shim only marshals `{params, session id, secret}`. Tool param schemas have a single source of truth — the host's Pydantic models — from which the shims are generated. See ADR 0005.
 
-The OpenAPI document exposes exactly 17 operations:
+**Data layer** — **SQLite owns canonical Evidence, typed vertical state, Dream runs/cursors, suppressions, and complete Memory mutation/history records**, accessed through snekql. Current Memory is the recorded, Dreaming-authored Markdown workspace; there is no `Memory` row, trust state, facet table, or Todo→Memory link. Source integrations retain their own Evidence: Messages, Gmail records, Readwise highlights, reading progress, Health summaries, and other typed records.
 
-- Bucket: `add_movie`, `add_place`, `add_book`, `add_travel`, `add_purchase`,
-  `complete_bucket_item`, `search_bucket_items`, `set_purchase_decision`,
-  `set_bucket_item_intent`, and `triage_report`
-- Todo: `create_todo`, `list_todos`, and `set_todo_status`
-- Health Connect: `analyze_health_connect`, `health_connect_inventory`,
-  `query_health_connect`, and `summarize_health_connect`
+**Health observations.** Health Connect keeps append-only raw Telemetry and current typed projections in `telemetry.sqlite3`. Its insight module turns bounded current records into deterministic sleep episodes, local sleep days, stage composition, efficiency, sleep-aligned heart rate, comparable seven-day windows, and personal baselines. Chat receives those compact observations, completeness counts, and exact Evidence URIs instead of joining raw sensor records. Dreaming receives the same distinction between computed measurements and interpretation, requires at least three comparable episodes for a pattern, and cannot make clinical claims. Tether does not invent an opaque health score.
 
-Bucket search reads SQLite deterministically.
+**Search** — current Memory Search scans validated Topic files through the workspace service, ranks direct lexical title/body matches, and always reconciles bytes against recorded Dreaming state first. This small-corpus path guarantees that a fresh Dream mutation affects the next action without waiting for an index. Bucket-item and YouTube semantic Search retain their independent rebuildable LanceDB projections and local FastEmbed embeddings; they do not confer Memory authority.
 
-The host does not own a chat UI, chat transcript, browser authentication, model
-selection, model allowlist, STT, TTS, assistant scheduling, writable assistant
-memory, or an agent runtime.
+**Scheduler** — in-process, a ~30s tick polling SQLite for due work; firing a trigger spawns an ephemeral pi process. Durability/retries/backpressure live in the loop and SQLite state (no Redis). Due rows are marked `claimed` before dispatch; each job is an `asyncio` task gated behind a concurrency cap (backpressure); failures get `next_attempt_at` backoff (retries). The push half of capture → resurface.
 
-## Open WebUI deployment
+**Time** — backend stores UTC for every timestamp; the browser supplies the offset to convert one-shot times at capture. Recurrence *rules* additionally store wall-clock time + IANA TZ, and each tick materializes the next fire as UTC (so daily/weekly survives DST).
 
-Compose runs the official image without modifications:
+**Frontend** — SolidJS SPA, built into the single production image and served by the Python host. Server state lives in `@tanstack/solid-query` (cache + invalidation), fed by the generated REST client. The single WebSocket is a *tagged event bus* (`{type: chat | invalidate | notify}`), not just chat: the host pushes dumb cache-invalidation signals from its mutation choke point, so background agent mutations (new Candidates, fired triggers) surface live without polling. The **chat transcript is host-owned SQLite data**, not pi's session (ADR 0005) — the host assembles settled messages from pi's RPC delta stream and persists them; the UI rehydrates history from REST and the WS carries only live deltas, so chat survives mobile refresh and pi restarts.
 
-```text
-ghcr.io/open-webui/open-webui:v0.11.1@sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16
-```
+**Conversation import** — imported user messages become canonical conversational Evidence. They feed the same bounded Dreaming assimilation path as live Messages; imports do not create provisional Memory rows or a separate Memory Candidate lifecycle.
 
-The image has its own `open-webui-data` volume. It does not mount the Docker
-socket, Tether data, host files, or credentials. Tether does not fork Open
-WebUI, rebuild its frontend, inject JavaScript, or add custom routes.
+**Codegen** — Pydantic models are the single source of truth, feeding three consumers: the OpenAPI doc → TS API client (Solid), the tool JSON-Schemas → pi tool shims, and runtime validation (host). A `just` recipe orchestrates the cross-language pipeline (Python emits schemas → Node generators run). Generated code is committed; CI drift-checks that re-running codegen produces no diff.
 
-Environment-enforced configuration disables persistent configuration,
-Automations, code execution, the code interpreter, and Ollama. Disabling
-persistent configuration prevents restored or admin-modified database values
-from overriding those defaults after restart. An authenticated admin can still
-change in-memory values until the next restart, so the operator must not enable
-the excluded features. Provider, Tether tool-server, native-memory, and optional
-voice defaults come from supported environment inputs instead of global Admin UI
-configuration. Tool permissions remain enabled. Open WebUI `v0.11.1` tool
-permissions and approvals are experimental. Interactive approvals do not
-protect Automations, so Automations remain disabled.
+**Memory workspace** — canonical, recursively organized Markdown under `/data/kb/memory` (ADR 0021). Dreaming is its sole writer (ADR 0026). Topic files require YAML frontmatter and exact Evidence citations; meaningful paths are current identities. The web app resolves cited Messages and exact historical Health Connect episode versions through one Evidence inspector. It collapses each Topic's complete provenance set until requested. SQLite records complete versions/tombstones and authorized mutations. Reads and startup reconciliation restore unauthorized edits/deletions, remove unknown valid files, and preserve exact recoverable pre-acknowledgement Dream mutations. Obsidian and Neovim are read-only inspection clients; corrections enter as Messages and queue Dreaming.
 
-The first account is a private setup-and-recovery administrator. Regular browser
-and phone sessions use a separate `user` role account. Open WebUI's admin tool
-configuration endpoint can return server credentials to an administrator, so
-the admin account is not the daily chat identity and is used only before the
-public Funnel listener is enabled or through private maintenance access.
+## Observability
 
-Open WebUI requires an API credential for a supported model provider. Pi's
-ChatGPT/Codex subscription authentication is not compatible with Open WebUI.
-The migration starts with one default model that supports native function
-calling reliably.
+Three needs, two sinks. **Logs** (agent introspection + system health): **structlog** structured JSON to stdout, captured by Docker — no aggregator yet. Every line servicing a turn carries the **pi session id + turn id** as correlation key, so background (ephemeral-pi) turns are reconstructable after the fact. pi's stdout is the RPC channel, so the host emits the agent's behavior *on its behalf*, rebuilt from pi's RPC events (`tool_execution_start/update/end`) and tool callbacks; pi's **stderr** is folded into the host log stream. **Audit** is *derived*, not a spine: per-table `created_at` + lifecycle history columns + provenance answer "what happened to X" per entity — no event-log table.
 
-## Tool boundary
+## Operations
 
-Open WebUI connects to `http://host:8000` on the Compose network and reads
-`tools/openapi.json`. The host exposes the schema at `/tools/openapi.json` and
-selected operations at `/tools/<operation>`.
-
-Both schema discovery and tool calls require:
-
-```http
-Authorization: Bearer <TETHER_OPEN_WEBUI_TOKEN>
-```
-
-`TETHER_OPEN_WEBUI_TOKEN` is a dedicated server-to-server credential. It must
-not equal `TETHER_API_TOKEN`, which remains the Android Health Connect bearer
-credential. The browser receives neither token from Tether.
-
-Tool handlers reuse the retained Pydantic parameter models and domain services.
-The route adapter validates inputs, returns the existing tool envelope, bounds
-results, and logs operation name, duration, and success without request bodies,
-prompts, or health values. There is no `session_id`, Pi secret, Tether
-conversation, agent trace, MCP gateway, Pipe, or model endpoint in this path.
-
-## Data and storage
-
-Tether keeps its main and telemetry SQLite databases. Old assistant tables stay
-in place but are inert. The migration does not destructively rewrite them,
-which lets the old release use the existing databases during rollback.
-
-Open WebUI keeps its own SQLite-backed state in `open-webui-data`. This volume
-contains accounts, configuration, conversations, native memory, and tool-server
-setup. The normal backup stops Open WebUI before either Tether SQLite snapshot,
-keeps it stopped through the complete volume archive, and then restarts it
-before sending the coherent backup set and production environment file to
-restic.
+**Backup/restore** runs outside Compose as a host systemd timer. It creates independent consistent `VACUUM INTO` snapshots of `tether.sqlite3` and `telemetry.sqlite3`, then sends both snapshots, `/data/kb/memory`, `/data/kb/pi-sessions`, and the production `.env` through one restic client-side-encrypted backup to Backblaze B2. Restic retains seven daily and four weekly snapshots; healthchecks.io supplies the dead-man's-switch. SQLite remains the source of truth. Provider credentials under `/srv/tether/pi-agent` and OAuth files outside `/data/kb` are not currently covered and must be reauthorized or protected separately. See [deployment.md](./deployment.md#backups) for the exact restore drill and current coverage.
 
 ## Security
 
-There are three independent boundaries:
+Two separate auth domains:
+- **Human → app**: defense in depth — Tailscale network isolation *plus* a single-password app login that mints a signed httpOnly session cookie (checked on REST and the WS handshake). The session layer is decoupled from the identity method, so OAuth can replace the password later. No multi-user model.
+- **pi process → host**: the loopback internal tool API, authorized by a per-process secret injected at spawn; identity is the pi session id. Not reachable from the public surface.
 
-- Open WebUI authenticates people and owns its browser sessions on HTTPS 8443.
-- The daily Open WebUI account has the `user` role and cannot read admin
-  configuration endpoints containing server credentials.
-- Open WebUI authenticates to Tether tools with `TETHER_OPEN_WEBUI_TOKEN` over
-  the Compose network.
-- Android Health Connect authenticates to the host with `TETHER_API_TOKEN` on
-  the existing HTTPS 443 origin.
+## Models & cost
 
-Generate the two bearer tokens independently. Do not expose the tool schema or
-operations without the Open WebUI token. Health checks are the only
-unauthenticated host exception.
+Cloud LLMs only (no local models), provider-agnostic via pi, not locked to frontier. "Self-hosted" refers to the application's deployment, not the model provider. Design for model portability: the host validates every tool input and tolerates malformed tool calls, so a weaker model can be less smart but never corrupt state.
 
-## Operations and rollback
+## Decision records
 
-The two containers have separate durable volumes and health checks. Structured
-host logs go to stdout. Open WebUI supplies its own activity views and logs for
-assistant execution; Tether has no chat-run trace.
+- **0001** — memories are provisional until Review (superseded by 0021).
+- **0002** — one agent *definition* with a tool belt; concurrency via multiple pi processes, not sub-agents.
+- **0003** — SQLite is the source of truth and Markdown derived (superseded for Memory by 0021).
+- **0004** — Review and Recall tether Memory (superseded by 0021).
+- **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host (refined by 0022/0023).
+- **0006** — search is recomputed at the moment of use, never cached across actions.
+- **0007** — knowledge-base filenames are opaque Memory UUIDs (superseded by 0021).
+- **0008** — custom Starlette route contract layer (superseded by 0020).
+- **0009** — hybrid Search is an embedded LanceDB projection, not FTS5 + sqlite-vec (refined by 0021).
+- **0010** — provenance classes govern Memory trust (superseded by 0021).
+- **0012** — raw Telemetry remains typed Evidence outside Memory (refined by 0021).
+- **0020** — FastAPI owns REST validation, routing, and OpenAPI generation.
+- **0021** — Memory is a canonical agent-curated Markdown workspace.
+- **0022** — Dreaming mutates Memory through confined native-shaped pi file tools.
+- **0023** — Tether Conversations own history and receive fresh Memory projections independently of pi sessions.
+- **0024** — Delete everywhere physically prunes all retained backups.
+- **0026** — Dreaming is the sole writer of current Memory.
+- **0027** — Provider-backed text-to-speech is a required host dependency.
+- **0028** — Scheduled prompts use the same Conversation execution path as chat.
+- **0029** — Conversation scope organizes work without becoming Memory authority.
+- **0030** — Open WebUI owns the assistant runtime (superseded by 0031).
+- **0031** — Tether owns the assistant runtime again after the Open WebUI trial failed daily-use evaluation.
 
-A normal post-cutover update preserves both volumes. A full migration rollback
-requires all of the following:
+## Build order
 
-- the recorded pre-migration Git revision
-- the recorded pre-migration host image
-- the old `/srv/tether/pi-agent` credential directory
-- a pre-migration database backup if the live database cannot be reused
-
-Stopping Open WebUI alone is not a full rollback because the old Compose file,
-image, and Pi credentials are also required.
-
-## Decisions
-
-- [ADR 0013](./adr/0013-health-telemetry-separate-store.md) keeps raw Health
-  telemetry in its separate SQLite store.
-- [ADR 0019](./adr/0019-todo-vertical.md) records the retained Todo model.
-- [ADR 0020](./adr/0020-fastapi-rest-contract.md) keeps FastAPI responsible for
-  HTTP routing and validation.
-- [ADR 0025](./adr/0025-one-interface-per-integration.md) keeps one domain
-  interface per external integration.
-- [ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md) replaces the Pi
-  runtime and Tether SPA with stock Open WebUI.
-
-Older ADRs remain as history. Their frontmatter records when ADR 0030
-supersedes an earlier assistant, conversation, memory, scheduling, or voice
-decision.
+Spine first (Evidence → Dreaming-maintained Memory → resurface, plus scheduler and chat), verticals later. Re-grill each vertical as it is built.
