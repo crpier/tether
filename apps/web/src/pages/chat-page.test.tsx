@@ -191,6 +191,32 @@ describe("Chat view", () => {
     expect(title.closest("header")).toBeNull();
   });
 
+  test("renders generic chat rows and composer through Kitn", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({ content: "hello", id: "user-host-id", role: "user", seq: 1 }),
+        message({
+          content: "hi there",
+          id: "assistant-host-id",
+          role: "assistant",
+          seq: 2,
+        }),
+      ],
+    });
+    renderApp(host);
+
+    const user = await screen.findByLabelText("You message");
+    const assistant = screen.getByLabelText("Tether message");
+    const composer = screen.getByRole("group", { name: "Message composer" });
+
+    expect(user).toHaveAttribute("data-role", "user");
+    expect(user).toHaveAttribute("data-message-id", "user-host-id");
+    expect(assistant).toHaveAttribute("data-role", "assistant");
+    expect(assistant).toHaveAttribute("data-message-id", "assistant-host-id");
+    expect(composer).toHaveAttribute("data-prompt-input");
+  });
+
   test("does not expose a destructive transcript reset", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
@@ -328,13 +354,9 @@ describe("Chat view", () => {
     expect(screen.getByText("Used capture")).toBeInTheDocument();
     expect(screen.getByText("Captured that preference.")).toBeInTheDocument();
 
-    // Settled tool rows must stay expandable (same disclosure as a live tool
-    // call), with the persisted arguments/result available behind it — this
-    // is the regression this test guards against: history used to collapse
-    // to a bare "used capture" line with no way to inspect the call.
-    fireEvent.click(screen.getByText("arguments"));
-    expect(screen.getByText(/"content": "aisle seats"/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText("result"));
+    // Settled tool rows keep Kitn's disclosure with persisted input and output.
+    fireEvent.click(screen.getByRole("button", { name: /Used capture/ }));
+    expect(screen.getByText("aisle seats")).toBeInTheDocument();
     expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
   });
 
@@ -438,6 +460,38 @@ describe("Chat view", () => {
     });
 
     expect(await screen.findByText("Hi there")).toBeInTheDocument();
+  });
+
+  test("preserves the live Kitn message identity while text streams", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+
+    fireEvent.input(textarea(await screen.findByLabelText("Message")), {
+      target: { value: "stream this" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "message_start",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "first ",
+      event: "text_delta",
+      type: "chat",
+    });
+
+    const liveMessage = await screen.findByLabelText("Tether message");
+    bus.emit({
+      conversation_id: conversation.id,
+      delta: "second",
+      event: "text_delta",
+      type: "chat",
+    });
+
+    expect(screen.getByLabelText("Tether message")).toBe(liveMessage);
+    expect(liveMessage).toHaveTextContent("first second");
   });
 
   test("copies a transcript message", async () => {
@@ -700,7 +754,7 @@ describe("Chat view", () => {
       tool_name: "search",
       type: "chat",
     });
-    expect(await screen.findByText(/"needle"/)).toBeInTheDocument();
+    expect(await screen.findByText("needle")).toBeInTheDocument();
 
     bus.emit({
       conversation_id: conversation.id,
@@ -710,7 +764,7 @@ describe("Chat view", () => {
       tool_result: { kind: "collection" },
       type: "chat",
     });
-    expect(await screen.findByText(/"collection"/)).toBeInTheDocument();
+    expect(await screen.findByText(/"kind": "collection"/)).toBeInTheDocument();
   });
 
   test("shows a working indicator until the first token arrives", async () => {

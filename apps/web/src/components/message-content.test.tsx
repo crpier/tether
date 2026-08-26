@@ -306,7 +306,9 @@ describe("MessageContent", () => {
 
     const { container } = render(() => <MessageContent text={text} />);
 
-    expect(container.querySelector("table")).not.toBeNull();
+    expect(container.querySelector("table")?.parentElement).toHaveClass(
+      "overflow-x-auto",
+    );
     expect(container.querySelectorAll("th")).toHaveLength(2);
     expect(container.querySelectorAll("td")).toHaveLength(2);
   });

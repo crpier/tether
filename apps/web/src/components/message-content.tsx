@@ -44,7 +44,7 @@ function plainCodeClass(language: string | null): string {
     : `${blockCodeClass} language-${language}`;
 }
 const blockquoteClass = "border-l-2 border-current/30 pl-3 opacity-80";
-const tableClass = "my-2 w-full border-collapse";
+const tableClass = "w-full min-w-max border-collapse";
 const tableCellClass = "border border-current/20 px-2 py-1";
 const tableHeaderClass = `${tableCellClass} text-left`;
 const headingClass = "mt-2 mb-1 font-semibold";
@@ -572,24 +572,26 @@ function BlockToken(props: {
       );
     case "table":
       return (
-        <table class={tableClass}>
-          <thead>
-            <tr>
-              <For each={token.header}>
-                {(cell) => <TableCell cell={cell} />}
+        <div class="my-2 max-w-full overflow-x-auto">
+          <table class={tableClass}>
+            <thead>
+              <tr>
+                <For each={token.header}>
+                  {(cell) => <TableCell cell={cell} />}
+                </For>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={token.rows}>
+                {(row) => (
+                  <tr>
+                    <For each={row}>{(cell) => <TableCell cell={cell} />}</For>
+                  </tr>
+                )}
               </For>
-            </tr>
-          </thead>
-          <tbody>
-            <For each={token.rows}>
-              {(row) => (
-                <tr>
-                  <For each={row}>{(cell) => <TableCell cell={cell} />}</For>
-                </tr>
-              )}
-            </For>
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       );
     case "text":
       return token.tokens === undefined ? (
