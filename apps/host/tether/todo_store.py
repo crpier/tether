@@ -67,8 +67,7 @@ async def create_todo_schema(database: Database) -> None:
         "013_create_index_ix_todo_status": (
             'CREATE INDEX "ix_todo_status" ON "todo" ("status")'
         ),
-        # Frozen historical link table, immediately removed by the #507
-        # destructive cutover below on fresh and upgraded databases alike.
+        # Frozen historical link table retained for rollback compatibility.
         "013_create_todo_memory": (
             'CREATE TABLE "todo_memory" ('
             '"id" TEXT PRIMARY KEY NOT NULL, "todo_id" TEXT NOT NULL, '
@@ -80,6 +79,7 @@ async def create_todo_schema(database: Database) -> None:
         "013_create_index_ix_todo_memory_todo_id": (
             'CREATE INDEX "ix_todo_memory_todo_id" ON "todo_memory" ("todo_id")'
         ),
-        "026_drop_todo_memory": 'DROP TABLE "todo_memory"',
+        # Keep the historical name without destructively removing old tables.
+        "026_drop_todo_memory": "SELECT 1",
     }
     await database.migrate(migrations)

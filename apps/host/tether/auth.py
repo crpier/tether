@@ -1,5 +1,6 @@
-"""Middleware ownership for cookie and bearer authenticated API requests."""
+"""Independent path-specific bearer authentication middleware."""
 
+import hmac
 from collections.abc import Awaitable, Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -7,57 +8,55 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-from tether.auth_sessions import (
-    SESSION_COOKIE,
-    authenticate_bearer_token,
-    set_session_cookie,
-    verify_session_cookie,
-)
+
+def _authorized(request: Request, token: str) -> bool:
+    """Compare one bearer credential without accepting an empty configuration."""
+    scheme, _, offered = request.headers.get("Authorization", "").partition(" ")
+    return (
+        bool(token)
+        and scheme.casefold() == "bearer"
+        and hmac.compare_digest(offered, token)
+    )
 
 
-class AppSessionMiddleware(BaseHTTPMiddleware):
-    """Require valid app authentication for browser-facing REST routes."""
+class CaptureAuthMiddleware(BaseHTTPMiddleware):
+    """Protect only Android Health Connect ingestion with its bearer token."""
 
-    def __init__(
-        self,
-        app: ASGIApp,
-        *,
-        secure: bool,
-        session_secret: str,
-        api_token: str = "",
-    ) -> None:
+    def __init__(self, app: ASGIApp, *, token: str) -> None:
         super().__init__(app)
-        self.api_token: str = api_token
-        self.secure: bool = secure
-        self.session_secret: str = session_secret
+        self.token: str = token
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        """Gate `/api/*` except auth routes, accepting bearer or cookie auth."""
-        if not request.url.path.startswith("/api/") or request.url.path.startswith(
-            "/api/auth/"
-        ):
+        """Reject unauthorized requests under the retained capture prefix."""
+        if not request.url.path.startswith("/api/telemetry/health-connect/"):
             return await call_next(request)
-        bearer_principal = authenticate_bearer_token(
-            request.headers.get("Authorization", ""), self.api_token
-        )
-        if bearer_principal is not None:
-            request.state.principal = bearer_principal
-            return await call_next(request)
-        principal = verify_session_cookie(
-            request.cookies.get(SESSION_COOKIE, ""), self.session_secret
-        )
-        if principal is None:
+        if not _authorized(request, self.token):
             return JSONResponse({"detail": "authentication required"}, status_code=401)
-        request.state.principal = principal
-        response = await call_next(request)
-        set_session_cookie(
-            response,
-            principal,
-            self.session_secret,
-            secure=self.secure,
-        )
-        return response
+        return await call_next(request)
+
+
+class OpenWebUIToolAuthMiddleware(BaseHTTPMiddleware):
+    """Protect Open WebUI discovery and operations with its bearer token."""
+
+    def __init__(self, app: ASGIApp, *, token: str) -> None:
+        super().__init__(app)
+        self.token: str = token
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Reject unauthorized requests under the tool-server prefix."""
+        if not request.url.path.startswith("/tools/"):
+            return await call_next(request)
+        if not _authorized(request, self.token):
+            return JSONResponse({"detail": "authentication required"}, status_code=401)
+        return await call_next(request)
+
+
+__all__ = ["CaptureAuthMiddleware", "OpenWebUIToolAuthMiddleware"]

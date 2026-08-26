@@ -1,3 +1,8 @@
+---
+status: superseded
+superseded_by: 0030-open-webui-owns-assistant-runtime
+---
+
 # Conversation scope organizes work, not truth
 
 Tether has one permanent untitled Main Conversation and any number of named Scoped Conversations. A Scoped Conversation has a presentation-only display name and one durable scope brief added to the normal Conversation prompt, but it uses the same persona, tools, global Memory projection, Todo digest, and Evidence rules as Main. Scope organizes work and navigation; it is not a security, tool, or Memory partition.

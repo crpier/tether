@@ -1,100 +1,90 @@
-"""Behavior tests for Bucket Item Search over canonical SQLite state."""
+"""Behavior tests for deterministic Bucket item search."""
 
 from collections.abc import AsyncGenerator
 
 import structlog
 from opentelemetry import trace
-from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
+from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_raises, fixture, load_fixture, test
 
-from tether.bucket_item_index import BucketItemCandidate
 from tether.bucket_item_search import (
     BucketItemSearchService,
     EmptyBucketSearchQueryError,
 )
-from tether.bucket_item_store import BucketItem, create_bucket_item_schema
+from tether.bucket_item_store import create_bucket_item_schema
+from tether.bucket_items import BucketItemService
 from tether.structured_logging import Logger
 
 LOGGER: Logger = structlog.stdlib.get_logger("test.bucket_item_search")
 
 
-class CandidateSource:
-    """Deterministic candidate source whose ranking is supplied by the test."""
-
-    def __init__(self) -> None:
-        self.candidates_to_return: list[BucketItemCandidate] = []
-
-    async def candidates(
-        self, query: str, *, limit: int, logger: Logger
-    ) -> list[BucketItemCandidate]:
-        """Return the configured candidates in rank order."""
-        _ = query, logger
-        return self.candidates_to_return[:limit]
-
-
 @fixture
-async def bucket_item_search() -> AsyncGenerator[
-    tuple[Database, BucketItemSearchService, CandidateSource]
+async def search_services() -> AsyncGenerator[
+    tuple[BucketItemService, BucketItemSearchService]
 ]:
-    """Build Search over a real canonical store and deterministic candidates."""
-    database = await Database.initialize(backend=Config(database=":memory:"))
+    """Create retained Bucket services over one canonical in-memory database."""
+    database = await Database.initialize(Config(database=":memory:"))
     await create_bucket_item_schema(database)
-    source = CandidateSource()
-    service = BucketItemSearchService(
-        database=database,
-        searcher=source,
-        tracer=trace.NoOpTracerProvider().get_tracer("test.bucket_item_search"),
+    tracer = trace.NoOpTracerProvider().get_tracer("test.bucket_item_search")
+    yield (
+        BucketItemService(database=database, tracer=tracer),
+        BucketItemSearchService(database=database, tracer=tracer),
     )
-    yield database, service, source
     await database.close()
 
 
 @test()
-async def search_rehydrates_candidates_and_excludes_terminal_items() -> None:
-    """Search trusts SQLite lifecycle state rather than stale index candidates."""
-    database, service, source = await load_fixture(bucket_item_search())
-    async with database.transaction(mode="immediate") as transaction:
-        active = await transaction.execute(
-            insert(
-                BucketItem(
-                    data={"title": "Dune"},
-                    dedup_key="dune",
-                    intent_context="recommended",
-                    item_type="movie",
-                    title="Dune",
-                )
-            ).returning()
-        )
-        completed = await transaction.execute(
-            insert(
-                BucketItem(
-                    data={"title": "Dune Messiah"},
-                    dedup_key="dune messiah",
-                    intent_context="continue series",
-                    item_type="movie",
-                    title="Dune Messiah",
-                )
-            ).returning()
-        )
-        _ = await transaction.execute(
-            update(BucketItem)
-            .set(BucketItem.completed_at.to(CurrentTimestamp))
-            .where(BucketItem.id.eq(completed.id))
-        )
-    source.candidates_to_return = [
-        BucketItemCandidate(id=completed.id, score=1.0),
-        BucketItemCandidate(id=active.id, score=0.5),
-    ]
+async def search_matches_all_terms_case_insensitively() -> None:
+    """Search projects typed payload fields and intent into normalized text."""
+    bucket_items, search = await load_fixture(search_services())
+    _ = await bucket_items.add(
+        "book",
+        {"title": "The Dispossessed", "author": "Ursula Le Guin"},
+        "Science fiction reading list",
+        logger=LOGGER,
+    )
+    _ = await bucket_items.add(
+        "book",
+        {"title": "Dune", "author": "Frank Herbert"},
+        "Science fiction reading list",
+        logger=LOGGER,
+    )
 
-    items = await service.search("Dune", logger=LOGGER)
+    matches = await search.search("URSULA fiction", logger=LOGGER)
 
-    assert_eq([item.id for item in items], [active.id])
+    assert_eq([item.title for item in matches], ["The Dispossessed"])
 
 
 @test()
-async def search_rejects_a_blank_query_before_calling_the_index() -> None:
-    """Blank Search input remains an expected domain failure."""
-    _, service, _ = await load_fixture(bucket_item_search())
+async def search_excludes_terminal_items() -> None:
+    """Completed items remain canonical history but disappear from active search."""
+    bucket_items, search = await load_fixture(search_services())
+    added = await bucket_items.add("movie", {"title": "Arrival"}, None, logger=LOGGER)
+    _ = await bucket_items.complete(added.item, logger=LOGGER)
+
+    matches = await search.search("Arrival", logger=LOGGER)
+
+    assert_eq(matches, [])
+
+
+@test()
+async def search_caps_results_at_fifty() -> None:
+    """The service enforces its output cap even below the schema boundary."""
+    bucket_items, search = await load_fixture(search_services())
+    for index in range(51):
+        _ = await bucket_items.add(
+            "movie", {"title": f"Shared title {index}"}, None, logger=LOGGER
+        )
+
+    matches = await search.search("shared", limit=51, logger=LOGGER)
+
+    assert_eq(len(matches), 50)
+
+
+@test()
+async def search_rejects_a_blank_query() -> None:
+    """Whitespace cannot become an accidental browse-all operation."""
+    _, search = await load_fixture(search_services())
 
     with assert_raises(EmptyBucketSearchQueryError):
-        _ = await service.search("   ", logger=LOGGER)
+        _ = await search.search("   ", logger=LOGGER)

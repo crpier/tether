@@ -15,9 +15,8 @@ from starlette.testclient import TestClient
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
-APP_PASSWORD = "test-app-password"
 API_TOKEN = "test-api-token"
-SESSION_SECRET = "test-session-secret"
+OPEN_WEBUI_TOKEN = "test-open-webui-token"
 SYNC_STATE_PATH = "/api/telemetry/health-connect/sync-state"
 BASELINE_PATH = f"{SYNC_STATE_PATH}/baselines"
 BATCH_PATH = "/api/telemetry/health-connect/batches"
@@ -69,11 +68,9 @@ def health_connect_client(
     app = create_app(
         config=AppConfig(
             api_token=API_TOKEN,
-            app_password=APP_PASSWORD,
             database_path=root / "tether.sqlite3",
-            kb_root=root / ".tether",
             log_file=root / "host.log" if capture_logs else None,
-            session_secret=SESSION_SECRET,
+            open_webui_token=OPEN_WEBUI_TOKEN,
             telemetry_database_path=root / "telemetry.sqlite3",
         ),
         telemetry_settings=TelemetrySettings(install_global_provider=False),

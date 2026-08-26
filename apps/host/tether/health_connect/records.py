@@ -39,7 +39,7 @@ from tether.health_connect.telemetry_values import (
 )
 
 _TOOL_NESTED_LIMIT = 50
-"""Maximum nested samples/details returned by one agent tool call."""
+"""Maximum nested samples or details returned by one tool call."""
 
 _HEALTH_RECORD_DATA_LIMIT_BYTES = 4 * 1_024
 """Maximum reflected data retained for one queried Health Connect record."""
@@ -49,7 +49,7 @@ _TYPED_NESTED_DATA_LIMIT_BYTES = 32 * 1_024
 
 
 def _bounded_record_result(record: HealthConnectRecordRead) -> dict[str, Any]:
-    """Keep raw reflected data from injecting unbounded agent context."""
+    """Keep raw reflected data from producing an unbounded tool response."""
     record_result = record.model_dump(mode="json")
     record_data = cast("dict[str, object]", record_result["data"])
     data_size_bytes = len(

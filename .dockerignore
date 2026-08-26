@@ -18,5 +18,5 @@ data
 .git
 .env
 .playwright-mcp
-apps/web/test-results
-apps/web/playwright-report
+tests/open-webui/test-results
+tests/open-webui/playwright-report

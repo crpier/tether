@@ -1,306 +1,129 @@
-"""Application lifespan and final typed runtime assembly."""
-
-from __future__ import annotations
+"""Lifespan composition for the headless deterministic capability host."""
 
 import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
-from ipaddress import ip_address
-from urllib.parse import urlsplit
+from pathlib import Path
+from typing import Literal
 
+from anyio import Path as AsyncPath
 from fastapi import FastAPI
-from starlette.types import ASGIApp, Receive, Scope, Send
+from snekql.sqlite import Config, Database
 
 from tether.app_runtime import AppRuntime, install_app_runtime
-from tether.evidence import EvidenceResolver
-from tether.gmail import (
-    GoogleGmailAuthService,
-    HttpGmailTransport,
-    ReauthorizableGmailClient,
-)
+from tether.bucket_item_search import BucketItemSearchService
+from tether.bucket_items import BucketItemService
 from tether.health_connect import (
-    HealthConnectEvidenceResolver,
     HealthConnectIngestion,
     HealthConnectTelemetry,
+    HealthEpisodeSummarizer,
     create_health_connect_schema,
 )
 from tether.host_config import AppConfig
-from tether.host_resources import (
-    HostBootstrap,
-    acquire_host_resources,
-)
 from tether.host_schema import create_host_schema
-from tether.ingestion_composition import (
-    IngestionDependencies,
-    compose_ingestion,
-)
-from tether.search_projection.embeddings import Embedder
-from tether.service_composition import CoreServices, compose_core_services
+from tether.logging_config import QUIET_LOGGERS, configure_logging
+from tether.telemetry_config import configure_telemetry
 from tether.telemetry_model import TelemetrySettings
-from tether.transcripts.contracts import AsyncClosable
+from tether.todos import TodoService
+from tether.triage import TriageService
+
+HOST_QUIET_LOGGERS = (*QUIET_LOGGERS, "aiosqlite", "snekql", "httpcore2")
+"""Dependency loggers whose debug chatter obscures host operations."""
+
+type DatabasePath = Path | Literal[":memory:"]
 
 
-class ServingReadyMiddleware:
-    """Signal when the composed ASGI app receives its first live request."""
-
-    def __init__(self, app: ASGIApp) -> None:
-        self.app: ASGIApp = app
-
-    async def __call__(
-        self,
-        scope: Scope,
-        receive: Receive,
-        send: Send,
-    ) -> None:
-        application = scope.get("app")
-        if scope["type"] in {"http", "websocket"} and isinstance(application, FastAPI):
-            serving_ready = getattr(application.state, "serving_ready", None)
-            if isinstance(serving_ready, asyncio.Event):
-                serving_ready.set()
-        await self.app(scope, receive, send)
+def _database_config(path: str | Path) -> DatabasePath:
+    """Preserve SQLite's in-memory sentinel while normalizing file paths."""
+    if str(path) == ":memory:":
+        return ":memory:"
+    return Path(path)
 
 
-@dataclass(frozen=True, slots=True)
-class _RuntimeDependencies:
-    """Configuration and process dependencies for final runtime assembly."""
-
-    bootstrap: HostBootstrap
-    config: AppConfig
-    embedder: Embedder | None
-    telemetry_settings: TelemetrySettings
+async def _prepare_parent(path: DatabasePath) -> None:
+    """Create a file-backed database's parent without touching in-memory stores."""
+    if path != ":memory:":
+        await AsyncPath(Path(path).parent).mkdir(parents=True, exist_ok=True)
 
 
-async def _compose_app_runtime(
-    app: FastAPI,
-    dependencies: _RuntimeDependencies,
-    *,
-    resources: contextlib.AsyncExitStack,
-) -> CoreServices:
-    """Build and install the complete request-serving dependency graph."""
-    host = await acquire_host_resources(
-        config=dependencies.config,
-        resources=resources,
-        telemetry_settings=dependencies.telemetry_settings,
-    )
-    await create_host_schema(host.database)
-    await create_health_connect_schema(host.telemetry_database)
-    core = await compose_core_services(
-        bootstrap=dependencies.bootstrap,
-        config=dependencies.config,
-        embedder=dependencies.embedder,
-        host=host,
-        resources=resources,
-    )
-    ingestion_resources = await resources.enter_async_context(
-        contextlib.AsyncExitStack()
-    )
-    _ = resources.push_async_callback(host.ingestion_lifecycle.stop)
-    gmail_client = ReauthorizableGmailClient()
-    if dependencies.config.gmail_transport is not None:
-        gmail_client.connect(dependencies.config.gmail_transport)
-
-    async def _activate_gmail_client() -> None:
-        if dependencies.config.gmail_oauth_config is None:
-            return
-        gmail_client.connect(HttpGmailTransport(dependencies.config.gmail_oauth_config))
-
-    gmail_auth_service = GoogleGmailAuthService(
-        dependencies.config.gmail_auth_backend,
-        on_authorized=_activate_gmail_client,
-    )
-    youtube = await compose_ingestion(
-        IngestionDependencies(
-            bootstrap=dependencies.bootstrap,
-            config=dependencies.config,
-            database=host.database,
-            event_hub=core.event_hub,
-            ingestion_lifecycle=host.ingestion_lifecycle,
-            kb_root=host.kb_root,
-            logger=host.logger,
-            model_catalog=core.model_catalog,
-            proposal_service=core.proposal_service,
-            todo_service=core.todo_service,
-            tracer=host.telemetry.tracer,
-            trigger_service=core.trigger_service,
-            youtube_search=core.youtube_search,
-            gmail_client=gmail_client,
-            gmail_auth_service=gmail_auth_service,
-        ),
-        resources=ingestion_resources,
-    )
-    install_app_runtime(
-        app,
-        AppRuntime(
-            app_password=dependencies.config.app_password,
-            artifact_service=core.artifact_service,
-            bucket_item_search_service=core.bucket_item_search_service,
-            bucket_item_service=core.bucket_item_service,
-            conversation_runtime_registry=core.conversation_runtime_registry,
-            conversation_service=core.conversation_service,
-            conversation_turn_queue=core.conversation_turn_queue,
-            conversation_turns=core.conversation_turns,
-            event_hub=core.event_hub,
-            evidence_resolver=EvidenceResolver(
-                host.database,
-                HealthConnectEvidenceResolver(host.telemetry_database),
-            ),
-            health_connect_ingestion=HealthConnectIngestion(host.telemetry_database),
-            health_connect_telemetry=HealthConnectTelemetry.from_database(
-                host.telemetry_database
-            ),
-            health_distillation_service=core.health_distillation_service,
-            ingestion_lifecycle=host.ingestion_lifecycle,
-            kosync_auth=core.kosync_auth,
-            kosync_service=core.kosync_service,
-            logger=host.logger,
-            memory_workspace_service=core.memory_workspace_service,
-            model_catalog=core.model_catalog,
-            notification_service=core.notification_service,
-            panel_service=core.panel_service,
-            product_observation_service=core.product_observation_service,
-            proposal_autonomy_service=core.proposal_autonomy_service,
-            proposal_service=core.proposal_service,
-            provider_auth_service=core.provider_auth_service,
-            public_origin=dependencies.config.public_origin,
-            gmail_client=gmail_client,
-            gmail_auth_service=gmail_auth_service,
-            push_service=core.push_service,
-            dreaming_enabled=dependencies.config.dreaming_enabled,
-            recall_service=core.recall_service,
-            search_provider=core.search_provider,
-            secure_cookies=dependencies.config.secure_cookies,
-            session_registry=dependencies.bootstrap.session_registry,
-            dreaming_service=core.dreaming_service,
-            session_secret=dependencies.config.session_secret,
-            stt_client=dependencies.bootstrap.stt_client,
-            telemetry=host.telemetry,
-            todo_service=core.todo_service,
-            tts_client=dependencies.bootstrap.tts_client,
-            tool_secret=dependencies.bootstrap.tool_secret,
-            trace_recorder=dependencies.bootstrap.trace_recorder,
-            triage_service=core.triage_service,
-            trigger_service=core.trigger_service,
-            vapid_public_key=dependencies.config.vapid_public_key,
-            youtube_auth_service=youtube.auth_service,
-            youtube_service=youtube.service,
-        ),
-    )
-    return core
-
-
-async def _dispatch_when_tool_http_is_ready(
-    core: CoreServices,
-    *,
-    serving_ready: asyncio.Event,
-    tool_base_url: str,
-) -> None:
-    """Keep recovered pi work behind the host's serving socket readiness."""
-    parsed_url = urlsplit(tool_base_url)
-    host = parsed_url.hostname or "127.0.0.1"
-    with contextlib.suppress(ValueError):
-        if ip_address(host).is_unspecified:
-            host = "127.0.0.1"
-    port = parsed_url.port or (443 if parsed_url.scheme == "https" else 80)
-
-    async def wait_for_socket() -> None:
-        while True:
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(host, port),
-                    timeout=0.2,
-                )
-            except TimeoutError, OSError:
-                await asyncio.sleep(0.05)
-                continue
-            _ = reader
-            writer.close()
-            await writer.wait_closed()
-            return
-
-    readiness_tasks = {
-        asyncio.create_task(serving_ready.wait()),
-        asyncio.create_task(wait_for_socket()),
-    }
-    try:
-        _ = await asyncio.wait(
-            readiness_tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    finally:
-        for task in readiness_tasks:
-            if not task.done():
-                _ = task.cancel()
-        for task in readiness_tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-    _ = await core.conversation_turns.dispatch_recovered()
-    await core.scheduler.dispatch_recovered()
-    await core.scheduler.run_forever()
-
-
-async def _stop_recovered_dispatch(
-    core: CoreServices,
-    task: asyncio.Task[None],
-) -> None:
-    """Stop readiness and scheduler loops before database resources unwind."""
-    core.scheduler.stop_intake()
-    if task.done():
-        if not task.cancelled():
-            _ = task.exception()
-        return
-    try:
-        _ = await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-    except TimeoutError:
+async def _stop_tasks(tasks: tuple[asyncio.Task[None], ...]) -> None:
+    """Cancel deterministic workers before their databases unwind."""
+    for task in tasks:
         _ = task.cancel()
+    for task in tasks:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
 
 def app_lifespan(
-    *,
-    bootstrap: HostBootstrap,
-    config: AppConfig,
-    telemetry_settings: TelemetrySettings,
-    embedder: Embedder | None = None,
+    *, config: AppConfig, telemetry_settings: TelemetrySettings
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None, bool | None]]:
-    """Create the application lifespan over one explicitly owned resource graph."""
+    """Create a lifespan owning databases, retained services, and one worker."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        """Compose the runtime, serve requests, then unwind resources in order."""
+        """Acquire the complete runtime and unwind it in reverse order."""
+        main_path = _database_config(config.database_path)
+        if config.telemetry_database_path is not None:
+            telemetry_path = _database_config(config.telemetry_database_path)
+        elif main_path == ":memory:":
+            telemetry_path = ":memory:"
+        else:
+            telemetry_path = main_path.parent / "telemetry.sqlite3"
+        await _prepare_parent(main_path)
+        await _prepare_parent(telemetry_path)
+        logger = configure_logging(
+            config.logging_level,
+            log_file=config.log_file,
+            quiet_loggers=HOST_QUIET_LOGGERS,
+        )
+        telemetry = configure_telemetry(telemetry_settings)
         async with contextlib.AsyncExitStack() as resources:
-            serving_ready = asyncio.Event()
-            app.state.serving_ready = serving_ready
-            for configured_resource in (
-                config.gmail_transport,
-                config.transcript_provider,
-            ):
-                if isinstance(configured_resource, AsyncClosable):
-                    _ = resources.push_async_callback(configured_resource.aclose)
-            core = await _compose_app_runtime(
-                app,
-                _RuntimeDependencies(
-                    bootstrap=bootstrap,
-                    config=config,
-                    embedder=embedder,
-                    telemetry_settings=telemetry_settings,
+            _ = resources.callback(telemetry.shutdown)
+            database = await resources.enter_async_context(
+                await Database.initialize(Config(database=main_path))
+            )
+            telemetry_database = await resources.enter_async_context(
+                await Database.initialize(Config(database=telemetry_path))
+            )
+            await create_host_schema(database)
+            await create_health_connect_schema(telemetry_database)
+            tasks = (
+                asyncio.create_task(
+                    HealthEpisodeSummarizer(telemetry_database).sweep_forever(
+                        interval_seconds=config.health_episode_sweep_seconds,
+                        logger=logger,
+                    ),
+                    name="health-episode-sweep",
                 ),
-                resources=resources,
             )
-            recovered_dispatch = asyncio.create_task(
-                _dispatch_when_tool_http_is_ready(
-                    core,
-                    serving_ready=serving_ready,
-                    tool_base_url=config.tool_base_url,
-                )
-            )
-            _ = resources.push_async_callback(
-                _stop_recovered_dispatch,
-                core,
-                recovered_dispatch,
+            _ = resources.push_async_callback(_stop_tasks, tasks)
+            install_app_runtime(
+                app,
+                AppRuntime(
+                    bucket_item_search_service=BucketItemSearchService(
+                        database=database, tracer=telemetry.tracer
+                    ),
+                    bucket_item_service=BucketItemService(
+                        database=database, tracer=telemetry.tracer
+                    ),
+                    health_connect_ingestion=HealthConnectIngestion(telemetry_database),
+                    health_connect_telemetry=HealthConnectTelemetry.from_database(
+                        telemetry_database
+                    ),
+                    logger=logger,
+                    tasks=tasks,
+                    telemetry=telemetry,
+                    todo_service=TodoService(
+                        database=database, tracer=telemetry.tracer
+                    ),
+                    triage_service=TriageService(database=database),
+                ),
             )
             yield
 
     return lifespan
+
+
+__all__ = ["HOST_QUIET_LOGGERS", "app_lifespan"]

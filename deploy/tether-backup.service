@@ -1,5 +1,5 @@
 [Unit]
-Description=Tether nightly backup (restic -> Backblaze B2)
+Description=Tether and Open WebUI nightly backup (restic -> Backblaze B2)
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service

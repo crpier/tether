@@ -1,110 +1,43 @@
-"""Typed services available for the lifetime of one host application."""
+"""Typed retained services available during one host lifetime."""
 
-from __future__ import annotations
-
+import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from starlette.applications import Starlette
 
-if TYPE_CHECKING:
-    from tether.agent_trace_recorder import AgentTraceRecorder
-    from tether.artifacts import ArtifactService
-    from tether.bucket_item_search import BucketItemSearchService
-    from tether.bucket_items import BucketItemService
-    from tether.chat_engine import ConversationRuntimeRegistry
-    from tether.chat_turn import ConversationTurnQueue
-    from tether.conversation_turns import ConversationTurns
-    from tether.conversations import ConversationService
-    from tether.dreaming import DreamingService
-    from tether.events import EventHub
-    from tether.evidence import EvidenceResolver
-    from tether.gmail import GmailClient, GoogleGmailAuthService
-    from tether.health_connect import HealthConnectIngestion, HealthConnectTelemetry
-    from tether.health_distillation import HealthDistillationService
-    from tether.ingestion_lifecycle import IngestionLifecycle
-    from tether.kosync import KosyncService
-    from tether.kosync_routes import KosyncAuth
-    from tether.memory_workspace_service import MemoryWorkspaceService
-    from tether.model_selection import AgentModelCatalog
-    from tether.notifications import NotificationService
-    from tether.panels import PanelService
-    from tether.product_observations import ProductObservationService
-    from tether.proposal_autonomy import ProposalAutonomyService
-    from tether.proposals import ProposalService
-    from tether.provider_auth import ProviderAuthService
-    from tether.push import PushService
-    from tether.recall import RecallService
-    from tether.structured_logging import Logger
-    from tether.stt import SttClient
-    from tether.telemetry_model import Telemetry
-    from tether.todos import TodoService
-    from tether.tool_runtime import SessionRegistry
-    from tether.triage import TriageService
-    from tether.triggers import TriggerService
-    from tether.tts import TtsClient
-    from tether.web_search import SearchProvider
-    from tether.youtube import YouTubeAuthService, YouTubeService
+from tether.bucket_item_search import BucketItemSearchService
+from tether.bucket_items import BucketItemService
+from tether.health_connect import HealthConnectIngestion, HealthConnectTelemetry
+from tether.structured_logging import Logger
+from tether.telemetry_model import Telemetry
+from tether.todos import TodoService
+from tether.triage import TriageService
 
 
 @dataclass(frozen=True, slots=True)
 class AppRuntime:
-    """Complete typed dependency graph exposed while the app accepts requests."""
+    """Complete dependency graph of the headless deterministic host."""
 
-    app_password: str
-    artifact_service: ArtifactService
     bucket_item_search_service: BucketItemSearchService
     bucket_item_service: BucketItemService
-    conversation_runtime_registry: ConversationRuntimeRegistry
-    conversation_service: ConversationService
-    conversation_turn_queue: ConversationTurnQueue
-    conversation_turns: ConversationTurns
-    event_hub: EventHub
     health_connect_ingestion: HealthConnectIngestion
     health_connect_telemetry: HealthConnectTelemetry
-    health_distillation_service: HealthDistillationService | None
-    ingestion_lifecycle: IngestionLifecycle
-    kosync_auth: KosyncAuth
-    gmail_client: GmailClient | None
-    gmail_auth_service: GoogleGmailAuthService | None
-    kosync_service: KosyncService
     logger: Logger
-    memory_workspace_service: MemoryWorkspaceService
-    model_catalog: AgentModelCatalog
-    dreaming_service: DreamingService
-    evidence_resolver: EvidenceResolver
-    notification_service: NotificationService
-    panel_service: PanelService
-    product_observation_service: ProductObservationService
-    proposal_autonomy_service: ProposalAutonomyService
-    proposal_service: ProposalService
-    provider_auth_service: ProviderAuthService
-    public_origin: str
-    push_service: PushService
-    dreaming_enabled: bool
-    recall_service: RecallService
-    search_provider: SearchProvider | None
-    secure_cookies: bool
-    session_registry: SessionRegistry
-    session_secret: str
-    stt_client: SttClient
+    tasks: tuple[asyncio.Task[None], ...]
     telemetry: Telemetry
-    tts_client: TtsClient
     todo_service: TodoService
-    tool_secret: str
-    trace_recorder: AgentTraceRecorder
     triage_service: TriageService
-    trigger_service: TriggerService
-    vapid_public_key: str
-    youtube_auth_service: YouTubeAuthService
-    youtube_service: YouTubeService
 
 
 def install_app_runtime(app: Starlette, runtime: AppRuntime) -> None:
-    """Install the complete runtime as the application's only service graph."""
+    """Install the runtime before request-serving begins."""
     app.state.runtime = runtime
 
 
 def app_runtime(app: Starlette) -> AppRuntime:
-    """Return the initialized typed runtime for one application."""
+    """Return the initialized runtime for an application."""
     return cast("AppRuntime", app.state.runtime)
+
+
+__all__ = ["AppRuntime", "app_runtime", "install_app_runtime"]

@@ -5,53 +5,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel
-
 from tether.bucket_item_store import BucketItemProvenance
-
-
-class CacheMeta(BaseModel):
-    """Whether a result was served from the local cache or fetched live.
-
-    >>> CacheMeta(hit=False, source="live").source
-    'live'
-    """
-
-    hit: bool
-    source: Literal["live", "cache"]
-
-
-class QuotaMeta(BaseModel):
-    """The day's quota budget snapshot a guarded call reports.
-
-    >>> QuotaMeta(limit=100, used=3, remaining=97).remaining
-    97
-    """
-
-    limit: int
-    used: int
-    remaining: int
-
 
 type ToolErrorCode = Literal[
     "invalid_input",
     "not_found",
     "conflict",
-    "quota_exceeded",
-    "upstream_error",
-    "transcript_needs_review",
-    "transcript_unavailable",
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class ErrorRule:
-    """Presentation mapping for one family of expected domain exceptions."""
+    """Tool error code for one family of expected domain exceptions."""
 
     exceptions: tuple[type[Exception], ...]
     code: ToolErrorCode
-    status: int
-    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +28,6 @@ class CapabilityOutcome:
 
     result: Any
     provenance: BucketItemProvenance | None = None
-    quota: QuotaMeta | None = None
-    cache: CacheMeta | None = None
 
 
 def catchable_exceptions(rules: tuple[ErrorRule, ...]) -> tuple[type[Exception], ...]:

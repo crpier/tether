@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2023",
+    "types": ["node"]
+  },
+  "include": ["eslint.config.js", "playwright.config.ts", "specs/**/*.ts"]
+}

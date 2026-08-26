@@ -1,4 +1,4 @@
-"""Agent-facing Health Connect inventory, summary, and record read models."""
+"""Health Connect inventory, summary, and bounded record read models."""
 
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ class HealthConnectStepsSummary(BaseModel):
 
 
 class HealthConnectSummaryRead(BaseModel):
-    """Bounded aggregate Health Connect metrics intended for agent overviews."""
+    """Bounded aggregate Health Connect metrics intended for tool overviews."""
 
     after: AwareDatetime
     before: AwareDatetime
