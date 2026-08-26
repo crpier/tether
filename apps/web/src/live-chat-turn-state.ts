@@ -77,6 +77,7 @@ type LiveRow =
 
 export interface LiveTurn {
   generating: boolean;
+  turnId: string | null;
   stopped: boolean;
   startedAt: number | null;
   endedAt: number | null;
@@ -90,6 +91,7 @@ export interface LiveTurn {
 export function emptyTurn(): LiveTurn {
   return {
     generating: false,
+    turnId: null,
     stopped: false,
     startedAt: null,
     endedAt: null,
@@ -104,10 +106,15 @@ export function emptyTurn(): LiveTurn {
 // Begin a fresh turn from a user prompt: optimistic user bubble plus a clean
 // slate for streamed segments. Errors and the "stopped" flag reset so a retry
 // after a failure does not inherit the previous turn's banners.
-export function startTurn(text: string, now: number): LiveTurn {
+export function startTurn(
+  text: string,
+  now: number,
+  turnId?: string,
+): LiveTurn {
   return {
     ...emptyTurn(),
     generating: true,
+    turnId: turnId ?? null,
     startedAt: now,
     userText: text,
   };
@@ -271,7 +278,6 @@ export function reduceFrame(
 export function deriveRows(
   stored: readonly StoredMessage[],
   turn: LiveTurn,
-  activeTurnId?: string,
 ): TimelineRow[] {
   const rows: TimelineRow[] = stored.map((message) => {
     if (message.role === "reasoning") {
@@ -311,8 +317,8 @@ export function deriveRows(
   const activeUserIsStored = stored.some(
     (message) =>
       message.role === "user" &&
-      activeTurnId !== undefined &&
-      message.turnId === activeTurnId,
+      turn.turnId !== null &&
+      message.turnId === turn.turnId,
   );
   if (turn.userText !== null && !activeUserIsStored) {
     rows.push({

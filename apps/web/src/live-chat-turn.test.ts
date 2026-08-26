@@ -1,4 +1,4 @@
-import { createRoot, createSignal } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { describe, expect, test, vi } from "vitest";
 
 import type { ConversationTurn, Message } from "./host/chat";
@@ -213,12 +213,13 @@ describe("live chat turn", () => {
     });
   });
 
-  test("persisted active user message replaces its optimistic row", async () => {
+  test("settlement history replaces its optimistic user row without overlap", async () => {
     let messages: Message[] = [];
+    const observedUserCounts: number[] = [];
     let dispose: () => void = () => undefined;
     const turn = createRoot((rootDispose) => {
       dispose = rootDispose;
-      return createLiveChatTurn({
+      const liveTurn = createLiveChatTurn({
         conversationId: () => "conversation-1",
         history: {
           listMessages: () => Promise.resolve(messages),
@@ -229,6 +230,15 @@ describe("live chat turn", () => {
           sendPrompt: () => undefined,
         },
       });
+      createEffect(() => {
+        observedUserCounts.push(
+          liveTurn
+            .rows()
+            .filter((row) => row.kind === "message" && row.role === "user")
+            .length,
+        );
+      });
+      return liveTurn;
     });
     await vi.waitFor(() => {
       expect(turn.historyReady()).toBe(true);
@@ -237,13 +247,16 @@ describe("live chat turn", () => {
     turn.sendPrompt("new turn");
     turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
     messages = [{ ...message("new turn", 1), turn_id: "turn-1" }];
-    turn.handleFrame({ keys: ["messages"], type: "invalidate" });
+    turn.handleFrame(
+      chat({ event: "turn_ended", status: "succeeded", turn_id: "turn-1" }),
+    );
 
     await vi.waitFor(() => {
       expect(turn.rows().filter((row) => row.kind === "message")).toEqual([
         expect.objectContaining({ id: "message-1", text: "new turn" }),
       ]);
     });
+    expect(Math.max(...observedUserCounts)).toBe(1);
     dispose();
   });
 
