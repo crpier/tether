@@ -219,9 +219,6 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
           activeTurnConversationId() === dependencies.conversationId()
             ? turn()
             : emptyTurn(),
-          activeTurnConversationId() === dependencies.conversationId()
-            ? activeTurnId
-            : undefined,
         ),
       ),
     [],
@@ -513,7 +510,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     setInterrupted(false);
     setOutboundPrompt(prompt);
     setActiveTurnConversationId(prompt.conversationId);
-    setTurn(startTurn(prompt.content, now()));
+    setTurn(startTurn(prompt.content, now(), prompt.turnId));
     runningPrompt = prompt;
     runningReplyMode = prompt.replyMode;
     toolPhaseActive = false;
