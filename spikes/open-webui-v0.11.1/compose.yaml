@@ -1,0 +1,62 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.1@sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16
+    ports:
+      - "127.0.0.1:18080:8080"
+    environment:
+      AUDIO_STT_ENGINE: openai
+      AUDIO_STT_OPENAI_API_BASE_URL: http://spike-services:8081/v1
+      AUDIO_STT_OPENAI_API_KEY: fake-provider-key
+      AUDIO_STT_OPENAI_API_REQUEST_FORMAT: json
+      ENABLE_AUTOMATIONS: "false"
+      ENABLE_CODE_EXECUTION: "false"
+      ENABLE_CODE_INTERPRETER: "false"
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_PERSISTENT_CONFIG: "false"
+      ENABLE_SIGNUP: "false"
+      ENABLE_TOOL_PERMISSIONS: "true"
+      OFFLINE_MODE: "true"
+      OPENAI_API_BASE_URLS: http://spike-services:8081/v1
+      OPENAI_API_KEYS: fake-provider-key
+      TOOL_SERVER_CONNECTIONS: >-
+        [{"url":"http://spike-services:8081","path":"/tools/openapi.json","type":"openapi","auth_type":"bearer","key":"fake-tool-key","config":{"enable":true,"access_grants":[]},"info":{"id":"tether-spike","name":"Tether Spike","description":"Deterministic migration spike tool server."}}]
+      WEBUI_SECRET_KEY: spike-only-secret-key-longer-than-thirty-two-bytes
+      WEBUI_URL: http://127.0.0.1:18080
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      spike-services:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=1)",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  spike-services:
+    image: python:3.12-slim
+    command: ["python", "/spike/fake_services.py"]
+    ports:
+      - "127.0.0.1:18081:8081"
+    volumes:
+      - ./fake_services.py:/spike/fake_services.py:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=1)",
+        ]
+      interval: 1s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  open-webui-data:
