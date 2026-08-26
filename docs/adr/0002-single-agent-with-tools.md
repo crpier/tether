@@ -1,8 +1,3 @@
----
-status: superseded
-superseded_by: 0030-open-webui-owns-assistant-runtime
----
-
 # One agent with a tool belt, not multiple agents
 
 Tether has a **single agent definition** — one tool belt, one system prompt, one set of (pi) extensions — and no per-domain or specialized sub-agents. Every capability (memory operations, bucket-item operations, media ingestion, cooking, enrichment, …) is a **tool** that single definition exposes.

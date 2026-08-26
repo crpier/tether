@@ -1,149 +1,86 @@
-# Agent guide
-
 ## GitHub workflow
 
 - This project uses GitHub issues for tracking work.
-- Do not hand-edit GitHub URLs or assume issue state. Query with
-  `gh issue view/list` when needed.
+- Do not hand-edit GitHub URLs or assume issue state; query with `gh issue view/list` when needed.
 - Implementation work should reference the relevant GitHub issue.
-- When starting a new unit of work, stash uncommitted changes, run `git fetch`,
-  and create a branch from the latest `origin/main`.
-- Work in a branch and open a PR against `main` when the unit is complete. Merge
-  only when explicitly told to do so.
-- Write PR Markdown to a temporary file and pass it to `gh` with `--body-file`.
-  Verify the rendered body with `gh pr view`.
-- Use TDD for feature, bug-fix, and refactoring work.
+- When starting a new unit of work, stash any uncommitted changes, run `git fetch`, then create a new branch from the latest `origin/main`.
+- All work should be done in a branch, and when a unit of work is complete, open a PR against `main`. Only merge the PR if explicitly told to do so.
+- When creating or editing a PR body with `gh`, write the markdown to a temporary file and use `--body-file`; do not pass multiline markdown through `--body`. Verify the rendered body with `gh pr view` afterward.
+- When doing feature/bug-fixing/refactoring or any code-related work, use TDD.
 
 ## Architecture
 
-- [ADR 0030](./docs/adr/0030-open-webui-owns-assistant-runtime.md) is the active
-  assistant architecture decision. Stock Open WebUI owns accounts, sessions,
-  conversations, models, tool continuation, approvals, voice, files, and native
-  memory. Tether is a headless Python domain host.
-- Open WebUI is pinned to
-  `ghcr.io/open-webui/open-webui:v0.11.1@sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16`.
-  Do not use a floating tag or patch Open WebUI.
-- Do not recreate the Pi runtime, Tether SPA, chat or browser authentication,
-  STT/TTS, model allowlist, assistant scheduler, or writable assistant memory.
-- Open WebUI calls `http://host:8000` with the spec path
-  `tools/openapi.json`. It authenticates with `TETHER_OPEN_WEBUI_TOKEN`.
-- Android Health Connect keeps the host's HTTPS 443 origin and authenticates
-  with the independent `TETHER_API_TOKEN`. Never reuse either bearer token.
-- The first-release OpenAPI allowlist has exactly 17 Bucket, Todo, and Health
-  Connect operations. Bucket search is deterministic SQLite.
-- Keep Automations, code execution, the code interpreter, and Ollama disabled.
-  Keep persistent configuration disabled and tool permissions enabled so stored
-  settings cannot override these environment-owned defaults after restart.
-  Provider, tool-server, and voice global configuration must come from the
-  supported environment inputs; Admin UI changes are runtime-only. Open WebUI
-  `v0.11.1` approvals are experimental and do not protect Automations.
-- Keep the first admin account private for setup and recovery. Daily chat uses a
-  separate `user` role account, which must receive HTTP 401 from admin
-  configuration endpoints and must not receive `TETHER_OPEN_WEBUI_TOKEN`.
+- [ADR 0031](./docs/adr/0031-tether-owns-assistant-runtime-again.md) restores the
+  Tether-owned SolidJS, Python host, and Pi runtime after the stock Open WebUI
+  trial failed daily-use evaluation.
+- Keep the retired Open WebUI volume and validated post-migration backup. Do not
+  import its conversations or native memories, and do not delete either copy.
 
 ## Production deployment
 
 - Canonical runbook: [`docs/deployment.md`](./docs/deployment.md).
-- The Open WebUI production cutover completed on 2026-08-26. The initial
-  cutover revision was `9ca9e34`; deploy later changes only from merged,
-  validated `main`.
-- Live tailnet target: `tether@tether`. Deploy only merged, validated `main`.
-- The host remains on local `8000` behind existing Funnel HTTPS 443. Open WebUI
-  uses local `3000` behind Funnel HTTPS 8443.
-- Publish Open WebUI only with
-  `sudo tailscale funnel --bg --https=8443 3000`. Remove only that listener with
-  `sudo tailscale funnel --bg --https=8443 3000 off`. Do not use
-  `tailscale funnel reset`, which would also remove the retained 443 listener.
-- Pull the VM checkout before deployment when `compose.yaml` or `deploy/`
-  changes.
-- Backups must include the full Open WebUI volume as well as Tether SQLite data.
-  Stop Open WebUI before taking either SQLite snapshot and keep it stopped
-  through its volume archive. Post-migration retention must not include the
-  locked legacy snapshot. A full migration rollback needs the old Git revision,
-  old image, and preserved `/srv/tether/pi-agent` directory.
+- Live tailnet target: `tether@tether`; deploy merged, validated `main` with
+  `TETHER_DEPLOY_HOST=tether@tether just deploy`.
+- `just deploy` updates only the image. Pull the VM checkout first when
+  `compose.yaml` or `deploy/` changes.
+- A rollback pins `TETHER_IMAGE_TAG` on the VM; remove the pin before deploying
+  forward. Verify HTTPS login/chat after every release.
 
-## Debugging
+## Debugging: logs and session data
 
-- Read host behavior from structured container logs with
-  `docker compose logs -f host`.
-- Read assistant and tool-continuation behavior from Open WebUI's logs and
-  activity views with `docker compose logs -f open-webui`.
-- Tether no longer has Pi session transcripts, Vite logs, chat `run_id` traces,
-  or a `/trace` endpoint.
-- Tool logs may contain operation, duration, and success. They must not contain
-  prompts, request bodies, health values, or bearer tokens.
-- Tether is single-user and local or low latency. Prefer short waits so a hang
-  fails quickly.
+- When a bug is reported against a running `just dev`, read what the app actually
+  did from the files it mirrors under `.tether/` (gitignored) — don't rely on the
+  live terminal:
+  - **`.tether/logs/host.log`** — host (Python) logs as one JSON object per line:
+    requests, tool calls, scheduler, ingestion, and full tracebacks. Follow one
+    chat turn with `jq -r 'select(.run_id=="<run_id>")' .tether/logs/host.log`.
+  - **`.tether/logs/web.log`** — Vite/HMR dev-server output (proxy + build errors).
+  - **`.tether/pi-sessions/<id>/*.jsonl`** — per-run agent transcripts (model
+    turns + tool calls); `scheduled/` and `recall/` subdirs for those run kinds.
+  - **`GET /trace`** on the host (`:8000`) — in-memory per-run agent trace view.
+- `just dev` truncates the two `.log` files at launch (fresh per run) and sets
+  `TETHER_LOG_FILE=.tether/logs/host.log`; the console stays a colorized TTY view
+  regardless. Full details: [docs/development.md](./docs/development.md#logs-and-session-data).
+
+## Web UI work
+
+- A headed Playwright MCP server (`playwright`, configured in the project-local `.mcp.json`) is available for driving and observing the running SPA. Use it to load the page, click through the affected flow, and read the browser console/network while iterating — not just at the end. It runs headed by default so the developer can watch the browser in real time.
+- Before opening a PR that touches the web app, load the page through the MCP and confirm the console is clean (no errors) on the flows you changed. This catches runtime/integration breakage that static checks and jsdom unit tests miss — the same class of bug as the `/ws` 404. `just validate-web-smoke` (issue #63) is the automated backstop in the gate; the interactive check is the cheap first line of defence.
+- The MCP manages its own browser binary. `.mcp.json` pins `--browser chromium` so it uses Playwright's bundled build (the default `chrome` channel needs a sudo system install). If the first launch reports a missing browser, install it with `npx @playwright/mcp@0.0.76 install-browser chrome-for-testing`. Headed mode needs a display (`$DISPLAY`/Wayland).
+
+## Performance characteristics
+
+- Tether is single-tenant: one user, one host process, local/low-latency calls. It is fast and not subject to multi-user contention. Assume operations return quickly.
+- Prefer short timeouts/waits over generous ones. Long defaults (e.g. 30s Playwright waits) mostly hide real hangs here — if something doesn't respond in a couple of seconds it's usually broken, not slow. Tighten waits in tests and tooling so failures surface fast.
 
 ## Testing and validation
 
-- Use `snektest` for Python tests. Its installed distribution `METADATA`
-  contains the usage guide.
-- Use `pyright` for static typing and `ruff` for lint and format checks.
-- Run the full changed surface before commit, push, PR, merge, or deploy.
-- Do not relax production `pyright` or `ruff` rules to hide findings. A scoped,
-  commented test-only exception is acceptable only for a genuine false positive.
-- Do not invent `just` recipe names. Check `justfile` before documenting or
-  running one.
+- Use `snektest` for tests.
+  - For snektest usage documentation, read its installed distribution metadata with `importlib.metadata.distribution("snektest").read_text("METADATA")`; the `METADATA` file embeds snektest's README.
+- Use `pyright` for static typing validation.
+- Use `ruff` for linting and formatting checks.
 
-Host gate, from `apps/host`:
+### Validation gate (keep `main` clean)
 
-```sh
-uv run pyright
-uv run ruff check .
-uv run ruff format --check .
-uv run python -m snektest tests/
-```
+- `main` must always pass every check. Never commit, push, open, or merge a PR until all of the checks below pass clean from the relevant package dir (e.g. `apps/host`):
+  - `uv run pyright` — 0 errors.
+  - `uv run ruff check .` — all checks passed.
+  - `uv run ruff format --check .` — no files would be reformatted.
+  - `uv run python -m snektest tests/` — all tests pass.
+  - `just codegen-check` — generated tool shims have no drift.
+  - `pnpm -C apps/agent typecheck` — 0 errors.
+  - `pnpm -C apps/agent lint` — all checks passed.
+  - `pnpm -C apps/agent format:check` — no files would be reformatted.
+  - `pnpm -C apps/agent test` — all tests pass.
+  - `pnpm -C apps/web typecheck` — 0 errors.
+  - `pnpm -C apps/web lint` — all checks passed.
+  - `pnpm -C apps/web format:check` — no files would be reformatted.
+  - `pnpm -C apps/web test` — all tests pass.
+  - `just validate-web-smoke` — boots host + Vite on ephemeral ports and runs the Playwright e2e suite (`apps/web/e2e`: login → chat view, create reminder, recall panel) against the live SPA. Every spec carries a console guard that fails on any console error, page error, 5xx response, or genuine request failure. Catches runtime/integration breakage that static checks and jsdom unit tests miss (needs a one-time `pnpm -C apps/web exec playwright install chromium`). Set `TETHER_E2E_HEADED=1` to watch the browser. The live-LLM chat spec is gated by `TETHER_E2E_LLM=1` and skipped by default (it spends tokens and is non-deterministic); enabling it also needs `pnpm -C apps/agent install` plus a default model + provider credentials in the environment. For interactive iteration, run `just host` + `just web` and `pnpm -C apps/web e2e` (or `e2e:headed`) against the default `http://127.0.0.1:3000`.
+- Run the gate against the full changed surface, not just files you touched — formatting/typing issues often surface in neighbours. If any check fails, fix it before proceeding rather than committing and following up.
+- Do not silence findings by relaxing the strict `pyright`/`ruff` config for production code. Fix the code. Config relaxations are only acceptable for genuine test-only false positives, scoped to `tests/` (ruff `per-file-ignores`, pyright `executionEnvironments`), and must be commented with the reason.
 
-Standalone `snekok` gate, from `packages/snekok`:
+## Interacting with databases
 
-```sh
-env -u UV_PROJECT -u VIRTUAL_ENV uv run pyright
-env -u UV_PROJECT -u VIRTUAL_ENV uv run ruff check .
-env -u UV_PROJECT -u VIRTUAL_ENV uv run ruff format --check .
-env -u UV_PROJECT -u VIRTUAL_ENV uv run python -m snektest tests/
-```
-
-Repository gate:
-
-```sh
-TETHER_API_TOKEN=test-capture-token \
-TETHER_OPEN_WEBUI_TOKEN=test-open-webui-token \
-WEBUI_SECRET_KEY=test-webui-secret \
-WEBUI_URL=http://127.0.0.1:3000 \
-OPENAI_API_BASE_URLS=https://provider.example/v1 \
-OPENAI_API_KEYS=test-provider-token \
-docker compose config --quiet
-docker build .
-just validate-host-logs
-just validate-open-webui-smoke
-```
-
-The Open WebUI smoke must use the real pinned image, real host, a fake
-OpenAI-compatible model, and Chromium. It must cover first-admin creation,
-admin-created daily-user isolation, authenticated schema discovery, an approval
-that survives refresh, a read tool, Todo create and list, conversation
-persistence, and Open WebUI restart persistence. Console errors, page errors,
-5xx responses, and unexpected request failures fail the smoke.
-
-Android gate, from `apps/capture-android` with a compatible SDK and JDK:
-
-```sh
-JAVA_HOME=/path/to/jdk17 ./gradlew \
-  :app:assembleDebug \
-  :app:testDebugUnitTest \
-  :app:lintDebug \
-  :core:test
-```
-
-Before production cutover, test the chosen provider and model's native function
-calling, Open WebUI voice transcription and TTS on a physical phone over Funnel
-HTTPS 8443, a full backup restore, and a physical Android Health Connect sync on
-the unchanged HTTPS 443 host origin. Cut over only with explicit approval.
-
-## Databases
-
-- Use `snekql` for database access. Its installed distribution `METADATA`
-  contains the usage guide.
-- Keep old assistant tables inert during the migration. Do not drop them; the
-  old image may need them during operational rollback.
+- Use `snekql` for interacting with the database.
+  - For `snekql` usage documentation, read its installed distribution metadata with `importlib.metadata.distribution("snekql").read_text("METADATA")`; the `METADATA` file embeds snektest's README.

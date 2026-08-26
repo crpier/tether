@@ -1,16 +1,24 @@
-"""The Open WebUI Bucket item tool descriptors.
+"""The internal Bucket item tool surface, over the shared response envelope.
+
+These mount alongside the Memory tools under `/internal/tools/*` — the loopback
+seam a pi process calls back into — reusing the same auth gate, params-to-
+envelope validation, and rule-driven domain-error translation (`tether.tools`).
+The capability executes live in `tether.bucket_capabilities`, shared with the
+REST routes; this module only names each tool's params model and mounts it.
 
 Bucket items are typed, so Add is exposed per item type (`add_movie`,
 `add_place`, `add_book`, `add_travel`): each tool takes that type's own flat
 fields, keeping the surface
 friendly to a weak model rather than asking it to assemble a polymorphic JSON
-payload. Complete, Delete, and Search round out the capability set.
+payload. The richer/optional fields and a single generic Add live on the REST
+surface. Complete, Delete, and Search round out the belt.
 """
 
 from __future__ import annotations
 
 from pydantic import UUID7, BaseModel, Field, PositiveInt
 from starlette.requests import Request
+from starlette.routing import Route
 
 from tether.bucket_capabilities import (
     BUCKET_ERRORS,
@@ -120,10 +128,10 @@ class DeleteBucketItemParams(BaseModel):
 
 
 class SearchBucketItemsParams(BaseModel):
-    """Params for bounded keyword Search over active Bucket items."""
+    """Params for keyword Search over active Bucket items."""
 
     q: str
-    limit: int = Field(default=50, ge=1, le=50)
+    limit: PositiveInt = 50
 
 
 class SetPurchaseDecisionParams(BaseModel):
@@ -183,4 +191,13 @@ BUCKET_TOOL_SPECS: tuple[ToolSpec, ...] = (
         BUCKET_ERRORS,
     ),
 )
-"""The Bucket item capabilities exposed to Open WebUI."""
+"""The Bucket item capabilities exposed as internal tools, in generated order."""
+
+
+def internal_bucket_tool_routes() -> list[Route]:
+    """Mount the Bucket item capabilities as `/internal/tools/*` POST endpoints.
+
+    Returned separately from the public Bucket routes (and the Memory tools) so
+    they stay absent from the public OpenAPI document and generated client.
+    """
+    return [spec.route() for spec in BUCKET_TOOL_SPECS]

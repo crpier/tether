@@ -16,7 +16,6 @@ BACKUP_SCRIPT = PROJECT_ROOT / "deploy" / "backup.sh"
 @dataclass(frozen=True)
 class BackupRun:
     result: subprocess.CompletedProcess[str]
-    archive_manifest: list[str]
     manifest: list[str]
     docker_log: str
     restic_log: str
@@ -33,7 +32,6 @@ def _read_if_present(path: Path) -> str:
 
 
 FailureMode = Literal[
-    "open-webui-archive",
     "tether-snapshot",
     "telemetry-snapshot",
     "tether-copy",
@@ -51,18 +49,7 @@ def _run_backup(*, failure_mode: FailureMode | None = None) -> BackupRun:
         bin_dir.mkdir()
         log_dir.mkdir()
         _ = (app / "compose.yaml").write_text("services: {}\n")
-        _ = (app / ".env").write_text(
-            "".join(
-                (
-                    "TETHER_API_TOKEN=capture-secret\n",
-                    "TETHER_OPEN_WEBUI_TOKEN=tool-secret\n",
-                    "WEBUI_SECRET_KEY=webui-secret\n",
-                    "WEBUI_URL=http://127.0.0.1:3000\n",
-                    "OPENAI_API_BASE_URLS=https://provider.example/v1\n",
-                    "OPENAI_API_KEYS=provider-secret\n",
-                )
-            )
-        )
+        _ = (app / ".env").write_text("TETHER_APP_PASSWORD=secret\n")
 
         _write_executable(
             bin_dir / "docker",
@@ -70,40 +57,48 @@ def _run_backup(*, failure_mode: FailureMode | None = None) -> BackupRun:
 set -euo pipefail
 printf '%s\n' "$*" >> "${FAKE_LOG_DIR}/docker"
 case "${FAKE_FAILURE_MODE:-}:$*" in
-    open-webui-archive:*"run --rm"*"python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17"*) exit 42 ;;
     tether-snapshot:*"python3 - /data/tether.sqlite3"* | telemetry-snapshot:*"python3 - /data/telemetry.sqlite3"*) exit 42 ;;
     tether-copy:*"cp host:"*"-tether.sqlite3"* | telemetry-copy:*"cp host:"*"-telemetry.sqlite3"*) exit 42 ;;
 esac
-if [[ "${1:-}" == "compose" && "$*" == *" ps -q open-webui" ]]; then
-    printf 'fake-open-webui-container\n'
-    exit 0
-fi
-if [[ "${1:-}" == "inspect" ]]; then
-    printf 'actual-open-webui-volume\n'
-    exit 0
-fi
-if [[ "${1:-}" == "run" && "$*" == *"python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17"* ]]; then
-    backup_dir=""
-    for argument in "$@"; do
-        if [[ "${argument}" == type=bind,src=*,dst=/backup ]]; then
-            backup_dir="${argument#type=bind,src=}"
-            backup_dir="${backup_dir%,dst=/backup}"
-        fi
-    done
-    test -n "${backup_dir}"
+if [[ "$*" == *"exec -T host python3 -c"*"/data/kb"* ]]; then
     fixture_dir="$(mktemp -d)"
     trap 'rm -rf "${fixture_dir}"' EXIT
-    mkdir -p "${fixture_dir}/uploads"
-    printf 'database\n' > "${fixture_dir}/webui.db"
-    printf 'upload\n' > "${fixture_dir}/uploads/file.txt"
-    tar -cf "${backup_dir}/open-webui-data.tar" \
-        -C "${fixture_dir}" webui.db uploads/file.txt
+    mkdir -p \
+        "${fixture_dir}/memory/travel" \
+        "${fixture_dir}/memory/.obsidian" \
+        "${fixture_dir}/pi-sessions" \
+        "${fixture_dir}/index" \
+        "${fixture_dir}/transcript-index" \
+        "${fixture_dir}/bucket-item-index"
+    printf 'memory\n' > "${fixture_dir}/memory/00000000-0000-0000-0000-000000000001.md"
+    printf 'nested memory\n' > "${fixture_dir}/memory/travel/preferences.md"
+    printf 'hidden\n' > "${fixture_dir}/memory/.hidden.md"
+    printf 'editor\n' > "${fixture_dir}/memory/.obsidian/workspace.md"
+    printf 'session\n' > "${fixture_dir}/pi-sessions/session.jsonl"
+    printf 'derived\n' > "${fixture_dir}/index/chunk.lance"
+    printf 'derived\n' > "${fixture_dir}/transcript-index/chunk.lance"
+    printf 'derived\n' > "${fixture_dir}/bucket-item-index/chunk.lance"
+    python3 -c "${@: -2:1}" "${fixture_dir}"
     exit 0
 fi
 if [[ "$*" == *" cp host:"* ]]; then
     source_path="${@: -2:1}"
     destination="${@: -1}"
-    printf 'consistent snapshot\n' > "${destination}"
+    if [[ "${source_path}" == *"/kb" ]]; then
+        mkdir -p \
+            "${destination}/memory" \
+            "${destination}/pi-sessions" \
+            "${destination}/index" \
+            "${destination}/transcript-index" \
+            "${destination}/bucket-item-index"
+        printf 'memory\n' > "${destination}/memory/00000000-0000-0000-0000-000000000001.md"
+        printf 'session\n' > "${destination}/pi-sessions/session.jsonl"
+        printf 'derived\n' > "${destination}/index/chunk.lance"
+        printf 'derived\n' > "${destination}/transcript-index/chunk.lance"
+        printf 'derived\n' > "${destination}/bucket-item-index/chunk.lance"
+    else
+        printf 'consistent snapshot\n' > "${destination}"
+    fi
 fi
 """,
         )
@@ -114,7 +109,6 @@ set -euo pipefail
 printf '%s\n' "$*" >> "${FAKE_LOG_DIR}/restic"
 if [[ "${1:-}" == "backup" ]]; then
     find "$2" -type f -printf '%P\n' | sort > "${FAKE_LOG_DIR}/manifest"
-    tar -tf "$2/open-webui-data.tar" > "${FAKE_LOG_DIR}/archive-manifest"
 fi
 """,
         )
@@ -151,9 +145,6 @@ printf '%s\n' "$*" >> "${FAKE_LOG_DIR}/curl"
         manifest_path = log_dir / "manifest"
         return BackupRun(
             result=result,
-            archive_manifest=_read_if_present(
-                log_dir / "archive-manifest"
-            ).splitlines(),
             manifest=manifest_path.read_text().splitlines()
             if manifest_path.exists()
             else [],
@@ -172,7 +163,9 @@ def test_backup_snapshots_both_sqlite_sources_of_truth() -> None:
         run.manifest,
         [
             "env",
-            "open-webui-data.tar",
+            "kb/memory/00000000-0000-0000-0000-000000000001.md",
+            "kb/memory/travel/preferences.md",
+            "kb/pi-sessions/session.jsonl",
             "telemetry.sqlite3",
             "tether.sqlite3",
         ],
@@ -180,69 +173,18 @@ def test_backup_snapshots_both_sqlite_sources_of_truth() -> None:
 
 
 @test(mark="slow")
-def test_backup_retention_groups_current_architecture_snapshots_across_paths() -> None:
-    """Random staging paths do not defeat retention or include rollback backups."""
+def test_backup_retention_does_not_select_open_webui_snapshots() -> None:
     run = _run_backup()
 
-    assert_eq(run.result.returncode, 0)
-    restic_commands = run.restic_log.splitlines()
-    assert_in("--tag tether-open-webui --host tether-vm", restic_commands[0])
+    forget_commands = [
+        line for line in run.restic_log.splitlines() if line.startswith("forget ")
+    ]
     assert_eq(
-        restic_commands[1],
-        "forget --host tether-vm --tag tether-open-webui --group-by host,tags --keep-daily 7 --keep-weekly 4 --prune",
+        forget_commands,
+        [
+            "forget --host tether-vm --tag tether --group-by host,tags --keep-daily 7 --keep-weekly 4 --prune"
+        ],
     )
-
-
-@test(mark="slow")
-def test_backup_archives_the_open_webui_compose_volume_read_only() -> None:
-    """The stopped service's resolved data volume is archived without mutation."""
-    run = _run_backup()
-
-    assert_eq(run.result.returncode, 0)
-    assert_eq(run.archive_manifest, ["webui.db", "uploads/file.txt"])
-    assert_in("ps -q open-webui", run.docker_log)
-    assert_in("inspect --format", run.docker_log)
-    assert_in("fake-open-webui-container", run.docker_log)
-    assert_in("stop open-webui", run.docker_log)
-    assert_in(
-        "type=volume,src=actual-open-webui-volume,dst=/source,readonly",
-        run.docker_log,
-    )
-    assert_in(
-        "python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17",
-        run.docker_log,
-    )
-    assert_in("start open-webui", run.docker_log)
-    assert_false("stop host" in run.docker_log)
-    assert_false("volume rm" in run.docker_log)
-    archive_position = run.docker_log.index("python:3.12-slim@sha256:")
-    stop_position = run.docker_log.index("stop open-webui")
-    tether_snapshot_position = run.docker_log.index("python3 - /data/tether.sqlite3")
-    telemetry_snapshot_position = run.docker_log.index(
-        "python3 - /data/telemetry.sqlite3"
-    )
-    restart_position = run.docker_log.index("start open-webui")
-    assert_true(
-        stop_position
-        < tether_snapshot_position
-        < telemetry_snapshot_position
-        < archive_position
-        < restart_position
-    )
-
-
-@test(mark="slow")
-def test_backup_restarts_open_webui_when_its_archive_fails() -> None:
-    """The error trap restarts Open WebUI before preserving backup failure."""
-    run = _run_backup(failure_mode="open-webui-archive")
-
-    assert_eq(run.result.returncode, 42)
-    assert_eq(run.restic_log, "")
-    assert_in("start open-webui", run.docker_log)
-    assert_in("https://health.example/id/fail", run.curl_log)
-    archive_position = run.docker_log.index("python:3.12-slim@sha256:")
-    restart_position = run.docker_log.index("start open-webui")
-    assert_true(archive_position < restart_position)
 
 
 @test(
@@ -262,7 +204,6 @@ def test_backup_fails_as_a_whole_when_either_database_is_incomplete(
     assert_eq(run.result.returncode, 42)
     assert_eq(run.restic_log, "")
     assert_in("https://health.example/id/fail", run.curl_log)
-    assert_in("start open-webui", run.docker_log)
     assert_false(
         any(
             "https://health.example/id" in line.split()

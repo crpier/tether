@@ -1,0 +1,106 @@
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+
+export interface GeneratedToolMetadata {
+  endpoint: string;
+  name: string;
+}
+
+export interface TetherToolConfig {
+  baseUrl: string;
+  secret: string;
+  sessionId: string;
+}
+
+export interface TetherToolDetails {
+  provenance: unknown;
+  quota: unknown;
+  result: unknown;
+}
+
+interface ToolEnvelope {
+  error?: { code?: unknown; message?: unknown } | null;
+  provenance?: unknown;
+  quota?: unknown;
+  result?: unknown;
+  success?: unknown;
+}
+
+function readRequiredEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) {
+    throw new Error(`missing ${name}`);
+  }
+  return value;
+}
+
+export function readTetherToolConfig(): TetherToolConfig {
+  return {
+    baseUrl: readRequiredEnv("TETHER_TOOL_BASE_URL"),
+    secret: readRequiredEnv("TETHER_TOOL_SECRET"),
+    sessionId: readRequiredEnv("TETHER_TOOL_SESSION_ID"),
+  };
+}
+
+function toolUrl(config: TetherToolConfig, endpoint: string): URL {
+  const baseUrl = config.baseUrl.endsWith("/")
+    ? config.baseUrl.slice(0, -1)
+    : config.baseUrl;
+  return new URL(endpoint, `${baseUrl}/`);
+}
+
+function envelopeErrorMessage(envelope: ToolEnvelope): string {
+  const code =
+    typeof envelope.error?.code === "string"
+      ? envelope.error.code
+      : "tool_error";
+  const message =
+    typeof envelope.error?.message === "string"
+      ? envelope.error.message
+      : "tool failed";
+  return `${code}: ${message}`;
+}
+
+export async function executeTetherTool(
+  tool: GeneratedToolMetadata,
+  params: object,
+  signal: AbortSignal | undefined,
+  config: TetherToolConfig = readTetherToolConfig(),
+): Promise<AgentToolResult<TetherToolDetails>> {
+  const response = await fetch(toolUrl(config, tool.endpoint), {
+    body: JSON.stringify({ ...params, session_id: config.sessionId }),
+    headers: {
+      "content-type": "application/json",
+      "x-tether-tool-secret": config.secret,
+    },
+    method: "POST",
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `tool endpoint returned HTTP ${String(response.status)}: ${await response.text()}`,
+    );
+  }
+
+  const envelope = (await response.json()) as ToolEnvelope;
+  if (envelope.success !== true) {
+    throw new Error(envelopeErrorMessage(envelope));
+  }
+
+  const result = envelope.result ?? null;
+  // `content` is what the model sees; `details` is for logs/UI only. Surface the
+  // result so the model can actually use it. Action tools (delete/complete)
+  // return a null result — keep the terse success text for those. Payloads are
+  // bounded host-side (limits + transcript-free reps) so this stays small.
+  const text =
+    result === null ? `${tool.name} succeeded` : JSON.stringify(result);
+
+  return {
+    content: [{ type: "text", text }],
+    details: {
+      provenance: envelope.provenance ?? null,
+      quota: envelope.quota ?? null,
+      result,
+    },
+  };
+}

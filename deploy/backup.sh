@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly backup: Tether SQLite, Open WebUI, and .env -> restic -> B2.
+# Nightly backup: both SQLite sources + KB Markdown/sessions + .env -> restic -> B2.
 # Run by the `tether-backup` systemd timer (docs/deployment.md#backups); safe to
 # run by hand too: `sudo -E deploy/backup.sh` (needs restic.env sourced/exported
 # and docker compose access).
@@ -27,27 +27,14 @@ workdir="$(mktemp -d)"
 snapshot_suffix="${workdir##*/}"
 tether_container_snapshot="/data/.tether-backup-${snapshot_suffix}-tether.sqlite3"
 telemetry_container_snapshot="/data/.tether-backup-${snapshot_suffix}-telemetry.sqlite3"
-open_webui_stopped=false
-open_webui_volume_name=""
 
 compose() {
     docker compose --project-directory "${app_dir}" -f "${compose_file}" --env-file "${env_file}" "$@"
 }
 
-restart_open_webui() {
-    if [ "${open_webui_stopped}" = true ]; then
-        if compose start open-webui; then
-            open_webui_stopped=false
-        else
-            return 1
-        fi
-    fi
-}
-
 cleanup() {
     trap - ERR
     set +e
-    restart_open_webui
     compose exec -T host rm -f \
         "${tether_container_snapshot}" \
         "${telemetry_container_snapshot}" >/dev/null 2>&1
@@ -57,9 +44,6 @@ trap cleanup EXIT
 
 on_error() {
     local exit_code=$?
-    trap - ERR
-    set +e
-    restart_open_webui
     curl --fail --silent --show-error --max-time 10 "${ping_url}/fail" \
         --data-raw "backup.sh failed (exit ${exit_code}); see journalctl -u tether-backup" \
         >/dev/null 2>&1 || true
@@ -85,63 +69,50 @@ PY
     compose cp "host:${container_snapshot}" "${workdir}/${output_name}"
 }
 
-stop_open_webui_for_backup() {
-    local container_id
+copy_kb_source_data() {
+    mkdir "${workdir}/kb"
+    compose exec -T host python3 -c '
+import sys
+import tarfile
+from pathlib import Path
 
-    container_id="$(compose ps -q open-webui)"
-    if [ -z "${container_id}" ] || [[ "${container_id}" == *$'\n'* ]]; then
-        echo "backup.sh: expected one running open-webui container" >&2
-        return 1
-    fi
-
-    open_webui_volume_name="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}{{end}}' "${container_id}")"
-    if [ -z "${open_webui_volume_name}" ] || [[ "${open_webui_volume_name}" == *$'\n'* ]]; then
-        echo "backup.sh: open-webui data volume was not found" >&2
-        return 1
-    fi
-
-    open_webui_stopped=true
-    compose stop open-webui
-}
-
-archive_open_webui_data() {
-    docker run --rm \
-        --network none \
-        --read-only \
-        --mount "type=volume,src=${open_webui_volume_name},dst=/source,readonly" \
-        --mount "type=bind,src=${workdir},dst=/backup" \
-        python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17 \
-        python3 -c 'import tarfile
-
-with tarfile.open("/backup/open-webui-data.tar", mode="w") as archive:
-    archive.add("/source", arcname=".")
-'
+root = Path(sys.argv[1])
+memory_path = root / "memory"
+with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+    if memory_path.is_dir():
+        for markdown_path in sorted(memory_path.rglob("*.md")):
+            relative_path = markdown_path.relative_to(memory_path)
+            if (
+                markdown_path.is_file()
+                and not markdown_path.is_symlink()
+                and all(not part.startswith((".", "~")) for part in relative_path.parts)
+            ):
+                archive.add(markdown_path, arcname=str(markdown_path.relative_to(root)))
+    sessions_path = root / "pi-sessions"
+    if sessions_path.is_dir():
+        archive.add(sessions_path, arcname=sessions_path.name)
+' /data/kb | tar -C "${workdir}/kb" -xf -
 }
 
 curl --fail --silent --show-error --max-time 10 "${ping_url}/start" >/dev/null
 
-# 1. Quiesce assistant tool mutations before capturing any related state. The
-# traps restart Open WebUI if a later snapshot or archive command fails.
-stop_open_webui_for_backup
-
-# 2. SQLite: independently VACUUM INTO both source-of-truth databases inside
-# the host container, then copy the consistent snapshots into one backup set.
+# 1. SQLite: independently VACUUM INTO both source-of-truth databases inside
+# the live container, then copy the consistent snapshots into one backup set.
 snapshot_database "/data/tether.sqlite3" "${tether_container_snapshot}" "tether.sqlite3"
 snapshot_database "/data/telemetry.sqlite3" "${telemetry_container_snapshot}" "telemetry.sqlite3"
 
-# 3. Archive Open WebUI's actual Compose volume through a read-only mount while
-# it remains stopped, then restore assistant availability.
-archive_open_webui_data
-restart_open_webui
+# 2. KB source data. Derived Lance indexes are rebuildable and can exceed the
+# host's tmpfs, so stream only Markdown and retained pi sessions into staging.
+copy_kb_source_data
 
-# 4. .env: the app secrets, so a total-loss recovery doesn't depend on
+# 3. .env: the app secrets, so a total-loss recovery doesn't depend on
 # remembering what was in it (1Password is still the primary source of truth).
 cp "${env_file}" "${workdir}/env"
 
-restic backup "${workdir}" --tag tether-open-webui --host tether-vm
+restic backup "${workdir}" --tag tether --host tether-vm
 restic forget \
     --host tether-vm \
-    --tag tether-open-webui \
+    --tag tether \
     --group-by host,tags \
     --keep-daily 7 \
     --keep-weekly 4 \

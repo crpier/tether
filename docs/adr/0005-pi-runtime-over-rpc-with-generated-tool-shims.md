@@ -1,8 +1,3 @@
----
-status: superseded
-superseded_by: 0030-open-webui-owns-assistant-runtime
----
-
 # pi is the agent runtime, driven over RPC, with generated TS tool shims calling the Python host
 
 The agent loop is **pi** (earendil-works/pi, a coding agent) run in its **RPC mode** as a subprocess of a **Python host**. pi drives the loop ("pi drives, host serves tools"); the host owns all state and logic. Because pi's RPC protocol cannot register host tools, every Tether capability is a **pi extension** (`pi.registerTool`) whose `execute` is a thin shim that calls back into the host over a loopback HTTP **internal tool API**; all behaviour, validation, and state live in the host (SQLite, ADR 0003). pi runs with its built-in tools (bash, file edit) disabled — a **closed tool world** whose only surface is Tether's tools.

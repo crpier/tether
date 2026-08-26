@@ -1,8 +1,3 @@
----
-status: superseded
-superseded_by: 0030-open-webui-owns-assistant-runtime
----
-
 # TTS is a required host dependency
 
 Conversation mode initially used the browser Web Speech API. Mobile browsers usually had usable system voices, while desktop Chromium could expose `speechSynthesis` with no voices and fail every playback attempt. Browser and operating-system voices also produced different results across clients.

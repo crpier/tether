@@ -1,72 +1,35 @@
 # Engineering principles
 
-These conventions apply to Tether's retained domain host. Open WebUI owns the
-assistant interface and runtime; its internal behavior is outside this guide.
+Cross-cutting conventions for *how Tether's code behaves*, distinct from the ADRs (which record specific hard-to-reverse decisions) and CONTEXT.md (which fixes domain language). When a new operation is written, it should follow these unless there is a recorded reason not to.
 
-## Operations are strict about existence and convergent about state
+## Operations are strict about existence, convergent about state
 
-Every state mutation asks two separate questions: does the target exist, and
-what state is it in?
+Every state-mutating operation faces two separate questions about the entity it targets: **does it exist**, and **what state is it in**. We answer them differently, and on purpose.
 
-- Existence is strict. A missing live entity is a caller error. Raise the
-  domain-specific not-found error instead of silently succeeding.
-- State is convergent. For a live entity, drive it to the requested end state.
-  Repeating the same request is a no-op rather than an error.
+- **Existence is strict.** Targeting an id that does not refer to a live entity is a referential bug in the *caller*, not a state to absorb. Raise (e.g. `MemoryNotFoundError`). Never silently succeed on a missing target — best-effort about existence hides the bug instead of surfacing it.
+- **State is convergent.** Given a live row, the operation drives toward its declared end-state regardless of the starting state, and re-asserting the end-state is a **no-op, not an error**. `tether` → tethered and `delete` → deleted are idempotent on a present row by construction.
 
-This gives retries and duplicate tool calls safe idempotency without hiding bad
-identifiers. Completing an already completed Todo is harmless. Completing a
-Todo that does not exist is not.
+This buys idempotency exactly where it is free and wanted: retried or duplicated requests, double-clicks, and at-least-once delivery from the scheduler all *converge* instead of erroring.
 
-Do not apply convergence when a write replaces distinct prior state that the
-caller used to make its decision. Such writes need a precondition, usually an
-expected version. Reject the write if the row changed after the caller read it.
-This matters even in a single-user system because two Open WebUI conversations
-or an ingestion worker can act on the same record.
+Two tempting extremes are both rejected:
 
-Use this test: if losing the prior value would cost real work to notice and
-recover, require a precondition instead of using last-write-wins.
+- *Blanket strictness* — "re-tethering an already-tethered Memory is a conflict, raise" — turns benign retries into errors and forces every caller to pre-check state it shouldn't have to.
+- *Blanket leniency* — "operating on a missing id quietly succeeds" — is the best-effort trap: it makes referential bugs invisible.
 
-## Bound every tool
+So: **lenient about redundant operations, strict about nonsensical ones.**
 
-Open WebUI receives a small allowlist of typed operations, not general access to
-Tether internals.
+### Caveat: operations that overwrite distinct prior state
 
-- Validate every request with the operation's Pydantic model.
-- Keep list and search results bounded.
-- Return declared domain failures in the tool envelope.
-- Do not add a generic database query, filesystem, shell, or code-execution
-  tool.
-- Log operation, duration, and outcome without request bodies, prompts, health
-  values, or credentials.
+Convergence is safe *only* when "already in the end-state" carries no information the caller must reconcile. It breaks for an operation whose new value **depends on, and overwrites, a distinct prior value the caller was reasoning about**. There, "just converge on what I'm setting" silently discards a decision someone else made.
 
-The model may choose the wrong tool or malformed arguments. Validation and
-domain invariants must prevent that mistake from corrupting state.
+`edit_content` is the canonical case. An edit is formulated against the content the author last saw — frequently an agent proposing a change to *specific* text. Under last-write-wins, a concurrent edit (a second conversation the same human is holding, or a background agent) silently overwrites that basis; the displaced content is technically recoverable from history but, in practice, very hard to locate and reconstruct. Such an operation is therefore **not** convergent: the caller must prove it is editing the state it believes it is.
 
-## Keep credentials separate
+The mechanism is **optimistic concurrency control** — the caller supplies the version it read, and the write is rejected as a conflict if the row has moved on since. This is *not* a multi-user concern (Tether is single-user; see architecture.md "Security"): one human running two conversations can unwittingly target the same Memory. Nor does it contradict ADR 0001's "a human edit *is* the review" — it decides *which* review wins rather than letting a race decide silently.
 
-`TETHER_OPEN_WEBUI_TOKEN` authenticates Open WebUI tool traffic inside the
-Compose network. `TETHER_API_TOKEN` authenticates Android Health Connect at the
-public host origin. Generate them independently and never substitute one for
-the other.
+Rule of thumb: if losing the prior value would cost the user real work to notice and recover, the operation is state-destructive and needs a precondition, not convergence.
 
-Provider API keys belong to Open WebUI configuration or supported environment
-settings. They do not belong in Tether source, tool results, or browser-visible
-host responses.
+## No streak mechanics, no guilt accrual
 
-## Prefer deterministic integrations
+Nothing in Tether tracks consecutive-day streaks, and no state accrues a sense of falling behind during an absence — a user coming back after a week or a year sees the same thing they would after a day. This holds everywhere the temptation to add it recurs: Recall scheduling, Curriculum/Lesson progress, Triage, Bucket item staleness, proactive surfacing.
 
-Tether keeps typed domain state and deterministic ingestion. It does not run a
-second agent loop, model-backed scheduler, transcript mirror, or assistant
-memory writer behind Open WebUI. If a feature belongs to generic chat, model
-execution, voice, files, memory, or web search, use stock Open WebUI rather than
-recreating it in the host.
-
-## No streak mechanics or guilt accrual
-
-Tether does not track consecutive-day streaks or turn absence into debt. A user
-returning after a year should not see a broken-streak warning or a backlog score
-whose purpose is to punish time away.
-
-Retained ingestion and triage may use elapsed time for correctness or ordering.
-They must not frame absence as failure. Tether is a single-user tool with no
-engagement metric to optimize.
+This is a deliberate rejection of the common growth-hacking pattern where absence is framed as a broken streak or a debt to repay. A single-user tool with no engagement metrics to optimize has no reason to manufacture pressure, and a personal operating system that guilts its one user for living their life works against the reason it exists. Where an operation needs to *notice* time has passed (e.g. Recall's adaptive scheduling, Triage's staleness detection), it may use elapsed time to inform its own logic, but never to display a counter, a "your streak is broken" message, or any framing that makes the absence itself the subject.

@@ -825,11 +825,11 @@ def summary_rejects_an_unbounded_time_window() -> None:
 
 
 @test()
-def query_accepts_the_record_limit_cap() -> None:
-    """The tool can return up to fifty parent records when requested."""
+def query_accepts_a_large_record_limit() -> None:
+    """The tool can return up to one thousand parent records when requested."""
     with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
         envelope = call_tool(
-            client, "query_health_connect", record_type="steps", limit=50
+            client, "query_health_connect", record_type="steps", limit=1_000
         )
 
     assert_eq(envelope["success"], True)
@@ -840,7 +840,7 @@ def query_rejects_a_record_limit_above_the_cap() -> None:
     """The tool cannot return more than its fixed maximum parent records."""
     with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
         envelope = call_tool(
-            client, "query_health_connect", record_type="steps", limit=51
+            client, "query_health_connect", record_type="steps", limit=1_001
         )
 
     assert_eq(envelope["success"], False)

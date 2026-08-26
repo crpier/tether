@@ -1,4 +1,4 @@
-"""Read-only Health Connect Telemetry tools for Open WebUI."""
+"""Read-only Health Connect Telemetry tools for the closed agent world."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Literal, Protocol, Self, cast
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from starlette.requests import Request
+from starlette.routing import Route
 
 from tether.capabilities import bind_params
 from tether.capability_contracts import CapabilityOutcome
@@ -102,7 +103,7 @@ class QueryHealthConnectParams(BaseModel):
 
     after: AwareDatetime | None = None
     before: AwareDatetime | None = None
-    limit: int = Field(default=5, ge=1, le=50)
+    limit: int = Field(default=5, ge=1, le=1_000)
     record_type: HealthRecordType
 
     @model_validator(mode="after")
@@ -193,4 +194,9 @@ HEALTH_CONNECT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         _summarize_health_connect,
     ),
 )
-"""Read-only Health Connect capabilities exposed to Open WebUI."""
+"""Read-only Health Connect capabilities exposed as internal tools."""
+
+
+def internal_health_connect_tool_routes() -> list[Route]:
+    """Mount Health Connect reads under `/internal/tools/*`."""
+    return [spec.route() for spec in HEALTH_CONNECT_TOOL_SPECS]
