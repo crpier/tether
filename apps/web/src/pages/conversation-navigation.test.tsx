@@ -582,8 +582,8 @@ describe("Conversation navigation", () => {
       within(row).getByRole("button", { name: "Copy message" }),
     ).toBeVisible();
     expect(
-      within(row).getByRole("button", { name: "Quote message" }),
-    ).toBeVisible();
+      within(row).queryByRole("button", { name: "Quote message" }),
+    ).not.toBeInTheDocument();
     expect(
       within(row).queryByRole("button", { name: "Record product feedback" }),
     ).not.toBeInTheDocument();

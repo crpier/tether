@@ -24,7 +24,7 @@ const DESKTOP = { width: 1280, height: 860 };
 
 const LONG_CONVERSATION_ID = "018f0000-0000-7000-8000-000000000307";
 
-type ChatFixtureMessage = {
+interface ChatFixtureMessage {
   content: string;
   conversation_id: string;
   created_at: string;
@@ -36,7 +36,7 @@ type ChatFixtureMessage = {
   tool_name: string | null;
   tool_result: unknown;
   turn?: Record<string, unknown>;
-};
+}
 
 function longMessage(
   seq: number,
@@ -439,6 +439,7 @@ for (const viewport of [PHONE, DESKTOP]) {
     ]);
     await login();
 
+    const userRow = page.getByRole("article", { name: "You message" });
     const userText = page.getByText("Keep this dark bubble coherent");
     const scheduledText = page.getByText("Review recent email");
     await expect(userText).toBeVisible();
@@ -464,7 +465,36 @@ for (const viewport of [PHONE, DESKTOP]) {
         .getByText("Searched Gmail · 2 results")
         .evaluate((element) => getComputedStyle(element).fontSize),
     ).toBe("12px");
+    const completedStyle = await activity
+      .getByText("Completed")
+      .first()
+      .evaluate((element) => ({
+        background: getComputedStyle(element).backgroundColor,
+        fontWeight: getComputedStyle(element).fontWeight,
+      }));
+    expect(completedStyle).toEqual({
+      background: "rgba(0, 0, 0, 0)",
+      fontWeight: "400",
+    });
     expect((await boundingBox(activity)).height).toBeLessThanOrEqual(66);
+    await expect(
+      page.getByRole("button", { name: "Quote message" }),
+    ).toHaveCount(0);
+
+    const copy = userRow.getByRole("button", { name: "Copy message" });
+    const feedback = userRow.getByRole("button", {
+      name: "Record product feedback",
+    });
+    await expect(copy.locator("svg")).toBeVisible();
+    await expect(feedback.locator("svg")).toBeVisible();
+    await expect(copy).toHaveText("");
+    await expect(feedback).toHaveText("");
+    const userBox = await boundingBox(userRow);
+    for (const action of [copy, feedback]) {
+      const actionBox = await boundingBox(action);
+      expect(actionBox.y - userBox.y).toBeLessThanOrEqual(8);
+      expect(actionBox.x).toBeGreaterThan(userBox.x + userBox.width * 0.75);
+    }
   });
 }
 

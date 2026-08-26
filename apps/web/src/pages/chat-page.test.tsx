@@ -514,22 +514,17 @@ describe("Chat view", () => {
     expect(writeText).toHaveBeenCalledWith("Keep this text");
   });
 
-  test("quotes a transcript message into the composer", async () => {
+  test("omits the unused quote action", async () => {
     const host = new FakeHost({
       authenticated: true,
-      messages: [
-        message({ content: "First line\nSecond line", role: "assistant" }),
-      ],
+      messages: [message({ content: "Keep this concise", role: "assistant" })],
     });
     renderApp(host);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Quote message" }),
-    );
-
+    await screen.findByText("Keep this concise");
     expect(
-      textarea(screen.getByRole("textbox", { name: "Message" })),
-    ).toHaveValue("> First line\n> Second line\n\n");
+      screen.queryByRole("button", { name: "Quote message" }),
+    ).not.toBeInTheDocument();
   });
 
   test("records explicit product feedback from a settled user message", async () => {
@@ -541,9 +536,16 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true, messages: [source] });
     renderApp(host);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Record product feedback" }),
-    );
+    const feedbackButton = await screen.findByRole("button", {
+      name: "Record product feedback",
+    });
+    const copyButton = screen.getByRole("button", { name: "Copy message" });
+    expect(feedbackButton).toHaveTextContent(/^$/);
+    expect(feedbackButton.querySelector("svg")).toBeInTheDocument();
+    expect(copyButton).toHaveTextContent(/^$/);
+    expect(copyButton.querySelector("svg")).toBeInTheDocument();
+    expect(feedbackButton.parentElement).toHaveClass("absolute", "right-2");
+    fireEvent.click(feedbackButton);
     fireEvent.input(
       screen.getByRole("textbox", { name: "Expected behavior" }),
       {
@@ -696,6 +698,9 @@ describe("Chat view", () => {
     });
 
     expect(await screen.findByText("Searched Gmail · 2 results")).toBeVisible();
+    expect(
+      screen.getAllByText("Completed")[0]?.closest(".chat-tool-trace-complete"),
+    ).not.toBeNull();
     expect(screen.getByText("Read email")).toBeVisible();
     const activity = screen.getByLabelText("Tool activity");
     expect(screen.getAllByLabelText("Tool activity")).toHaveLength(1);

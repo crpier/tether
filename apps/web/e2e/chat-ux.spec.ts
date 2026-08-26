@@ -103,12 +103,17 @@ test("chat session controls and message actions work together", async ({
     .fill("selector");
   await expect(page.getByText("1 match")).toBeVisible();
 
-  await page.getByRole("button", { name: "Quote message" }).click();
-  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
-    "> The model selector should be clearer.\n\n",
+  await expect(page.getByRole("button", { name: "Quote message" })).toHaveCount(
+    0,
   );
-
-  await page.getByRole("button", { name: "Record product feedback" }).click();
+  await expect(
+    page.getByRole("button", { name: "Copy message" }).locator("svg"),
+  ).toBeVisible();
+  const feedback = page.getByRole("button", {
+    name: "Record product feedback",
+  });
+  await expect(feedback.locator("svg")).toBeVisible();
+  await feedback.click();
   await page
     .getByRole("textbox", { name: "Expected behavior" })
     .fill("Name the active profile.");

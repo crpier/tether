@@ -71,7 +71,7 @@ function messageLabel(role: ChatRole): string {
 }
 
 function bubbleClass(role: ChatRole): string {
-  const base = "flex flex-col gap-1 rounded-lg text-sm";
+  const base = "relative flex flex-col gap-1 rounded-lg text-sm";
   switch (role) {
     case "user":
       return `${base} bg-primary text-primary-foreground ml-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
@@ -514,11 +514,47 @@ function UndoArchiveButton(props: {
   );
 }
 
+function CopyMessageIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      class="size-4"
+      fill="none"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="1.75"
+      viewBox="0 0 24 24"
+    >
+      <rect height="13" rx="2" width="13" x="9" y="9" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function FeedbackMessageIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      class="size-4"
+      fill="none"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="1.75"
+      viewBox="0 0 24 24"
+    >
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
+      <path d="M12 7v4" />
+      <path d="M12 15h.01" />
+    </svg>
+  );
+}
+
 function MessageActions(props: {
   canRecordFeedback: boolean;
   messageId: string;
   onCopy: () => void;
-  onQuote: () => void;
   onRecordFeedback: (
     messageId: string,
     interpretation: string,
@@ -546,35 +582,29 @@ function MessageActions(props: {
   };
 
   return (
-    <KitnMessageActions class="mt-2 flex-col items-start text-xs">
-      <div class="flex gap-3 opacity-70 focus-within:opacity-100 hover:opacity-100">
+    <KitnMessageActions class="contents text-xs">
+      <div class="absolute top-1 right-2 flex gap-0.5 opacity-60 focus-within:opacity-100 hover:opacity-100">
         <button
           aria-label="Copy message"
-          class="hover:underline"
+          class="flex size-7 items-center justify-center rounded-md hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current/40 dark:hover:bg-white/10"
           onClick={props.onCopy}
+          title="Copy message"
           type="button"
         >
-          Copy
-        </button>
-        <button
-          aria-label="Quote message"
-          class="hover:underline"
-          onClick={props.onQuote}
-          type="button"
-        >
-          Quote
+          <CopyMessageIcon />
         </button>
         <Show when={props.canRecordFeedback && feedbackStatus() !== "saved"}>
           <button
             aria-label="Record product feedback"
-            class="hover:underline"
+            class="flex size-7 items-center justify-center rounded-md hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current/40 dark:hover:bg-white/10"
             onClick={() => {
               setFeedbackOpen(true);
               setFeedbackStatus("idle");
             }}
+            title="Record product feedback"
             type="button"
           >
-            Feedback
+            <FeedbackMessageIcon />
           </button>
         </Show>
       </div>
@@ -644,7 +674,6 @@ function MessageRow(props: {
   onCopy: (text: string) => void;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
   onOpenEvidence: (uri: string) => void;
-  onQuote: (text: string) => void;
   onRecordFeedback: (
     messageId: string,
     interpretation: string,
@@ -671,7 +700,7 @@ function MessageRow(props: {
                       return (
                         <div class="flex min-w-0 items-center gap-1">
                           <KitnTool
-                            class="chat-tool-trace min-w-0 flex-1 bg-transparent"
+                            class={`chat-tool-trace min-w-0 flex-1 bg-transparent ${tool().status === "done" ? "chat-tool-trace-complete" : ""}`}
                             defaultOpen={tool().status === "running"}
                             toolPart={{
                               ...projectedTool().toolPart,
@@ -800,9 +829,6 @@ function MessageRow(props: {
                   onCopy={() => {
                     props.onCopy(message().text);
                   }}
-                  onQuote={() => {
-                    props.onQuote(message().text);
-                  }}
                   onRecordFeedback={props.onRecordFeedback}
                 />
               </Show>
@@ -836,7 +862,6 @@ function MessageRows(props: {
   onCopy: (text: string) => void;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
   onOpenEvidence: (uri: string) => void;
-  onQuote: (text: string) => void;
   onRecordFeedback: (
     messageId: string,
     interpretation: string,
@@ -1058,7 +1083,6 @@ function MessageRows(props: {
                       onCopy={props.onCopy}
                       onOpenArtifact={props.onOpenArtifact}
                       onOpenEvidence={props.onOpenEvidence}
-                      onQuote={props.onQuote}
                       onRecordFeedback={props.onRecordFeedback}
                       onUndoArchive={props.onUndoArchive}
                       row={row()}
@@ -2058,17 +2082,6 @@ export function ChatPage() {
             onNearTop={loadOlderMessages}
             onOpenArtifact={setOpenArtifact}
             onOpenEvidence={openEvidence}
-            onQuote={(text) => {
-              const quote = text
-                .split("\n")
-                .map((line) => `> ${line}`)
-                .join("\n");
-              setDraft(
-                (current) =>
-                  `${current}${current.trim().length > 0 ? "\n\n" : ""}${quote}\n\n`,
-              );
-              queueMicrotask(() => messageInput?.focus());
-            }}
             onRecordFeedback={async (messageId, interpretation) => {
               const currentConversationId = conversationId();
               if (currentConversationId === undefined) {

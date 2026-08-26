@@ -166,6 +166,17 @@
   line-height: 0.875rem;
 }
 
+.chat-tool-trace-complete button span.rounded-full {
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-weight: 400;
+}
+
+.chat-tool-trace-complete button > div > svg {
+  color: currentColor;
+  opacity: 0.55;
+}
+
 .chat-tool-trace .space-y-3 {
   padding: 0.5rem;
 }
