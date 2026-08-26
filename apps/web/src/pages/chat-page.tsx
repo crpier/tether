@@ -661,7 +661,7 @@ function MessageRow(props: {
           return (
             <article
               aria-label="Tool activity"
-              class={`text-muted-foreground mr-auto max-w-[96%] space-y-2 rounded-lg border px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some(({ row }) => TOOL_LABELS[row.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
+              class={`chat-tool-group text-muted-foreground mr-auto max-w-[96%] rounded-lg border px-2 py-1 text-xs sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some(({ row }) => TOOL_LABELS[row.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
             >
               <For each={toolIds()}>
                 {(_id, index) => (
@@ -669,9 +669,9 @@ function MessageRow(props: {
                     {(projectedTool) => {
                       const tool = () => projectedTool().row;
                       return (
-                        <div>
+                        <div class="flex min-w-0 items-center gap-1">
                           <KitnTool
-                            class="bg-transparent"
+                            class="chat-tool-trace min-w-0 flex-1 bg-transparent"
                             defaultOpen={tool().status === "running"}
                             toolPart={{
                               ...projectedTool().toolPart,
@@ -680,12 +680,10 @@ function MessageRow(props: {
                           />
                           <Show when={undoableArchiveMessageId(tool())}>
                             {(messageId) => (
-                              <div class="mt-1 flex justify-end">
-                                <UndoArchiveButton
-                                  messageId={messageId()}
-                                  onUndo={props.onUndoArchive}
-                                />
-                              </div>
+                              <UndoArchiveButton
+                                messageId={messageId()}
+                                onUndo={props.onUndoArchive}
+                              />
                             )}
                           </Show>
                         </div>
@@ -777,7 +775,7 @@ function MessageRow(props: {
               </Show>
               <Show
                 fallback={
-                  <KitnMessageContent class="p-0">
+                  <KitnMessageContent class="chat-message-plain">
                     {message().role === "tool"
                       ? `used ${message().toolName ?? message().text}`
                       : message().text}

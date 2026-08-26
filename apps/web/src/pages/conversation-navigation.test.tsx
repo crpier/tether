@@ -571,6 +571,9 @@ describe("Conversation navigation", () => {
 
     const row = await screen.findByLabelText("Scheduled message");
     expect(row).toHaveTextContent("Scheduled");
+    expect(within(row).getByText("Summarise my week")).toHaveClass(
+      "chat-message-plain",
+    );
     expect(row).toHaveTextContent(
       "The model failed while generating a response.",
     );
