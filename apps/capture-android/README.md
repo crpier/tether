@@ -1,24 +1,15 @@
 # Tether Capture (Android)
 
-A deliberately dumb Android client for capturing into a running Tether host.
-Two Gradle modules ship from here:
+An Android Health Connect client for a running Tether host. After explicit
+permission, the phone syncs granted Health Connect records immediately and about
+every six hours. Health data is read and transferred, never analyzed on the
+phone.
 
-- **`app`** — the phone client:
-  1. **Share-target** — shares text or URLs to `<host>/api/memories`.
-  2. **Hold-to-record voice capture** — uploads m4a audio to
-     `<host>/api/capture/voice`, then deletes the local file.
-  3. **Health Connect ingestion gate** — after explicit permission, syncs
-     granted Health Connect records to the host immediately and about every six
-     hours. Health data is read and transferred, never analyzed on the phone.
-- **`wear`** — a Wear OS companion: a tile (single tap) launches a
-  hold-to-record screen that mirrors `app`'s voice-note flow and uploads
-  directly to the same host, independent of the phone. See
-  [`wear/README.md`](./wear/README.md).
-
-Both request the same two endpoints, sharing request-building/parsing code via
-the plain-Kotlin **`core`** module. Both authenticate with
+The **`app`** module contains the Android integration and the plain-Kotlin
+**`core`** module contains the synchronization and host HTTP logic. Requests use
+the configured host origin unchanged and authenticate with
 `Authorization: Bearer <token>`, where the token is the host's
-`TETHER_API_TOKEN` (phase 1, PR #226).
+`TETHER_API_TOKEN`.
 
 ## Prerequisites
 
@@ -42,40 +33,35 @@ the plain-Kotlin **`core`** module. Both authenticate with
 From the repo root:
 
 ```sh
-just android-build          # assembles app + wear, runs core's JVM tests
+cd apps/capture-android
+JAVA_HOME=/path/to/jdk17 ./gradlew :app:assembleDebug :app:testDebugUnitTest :core:test
 ```
 
-or directly in this directory:
+Lint separately with:
 
 ```sh
-gradle :app:assembleDebug :wear:assembleDebug  # both APKs
-gradle :app:lintDebug :wear:lintDebug          # lint
-gradle :core:test                              # shared-module JVM unit tests
+JAVA_HOME=/path/to/jdk17 ./gradlew :app:lintDebug
 ```
 
-The debug APKs land at:
+The debug APK lands at:
 
 ```
 app/build/outputs/apk/debug/app-debug.apk
-wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
 ## Install
 
 ```sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb install -r wear/build/outputs/apk/debug/wear-debug.apk   # to a paired watch's ADB
 ```
 
 ## Configure
 
-(`app`, the phone client.) Open the app, tap **Settings**, and enter:
+Open the app and enter:
 
 - **Host base URL** — e.g. `https://tether.example.com` or `http://10.0.0.5:8000`
   (no trailing `/api`; the client appends the paths itself).
 - **API token** — the value of the host's `TETHER_API_TOKEN`.
-
-Grant the microphone permission when first recording a voice capture.
 
 ## Health Connect
 
@@ -93,9 +79,9 @@ supported earlier Android release). In **Settings → Health Connect**:
 
 Without history access, the authoritative baseline is limited to Health
 Connect's normally accessible recent window. Missing background/history access
-is shown in Settings. Unsupported devices retain text-share and voice capture.
-The section also shows running state, last success, and a sanitized last failure;
-raw values, notes, and opaque cursor tokens are never displayed or logged.
+is shown in Settings. The section also shows running state, last success, and a
+sanitized last failure; raw values, notes, and opaque cursor tokens are never
+displayed or logged.
 
 The host must include the Health Connect API from
 [`docs/health-connect-wire-v3.md`](../../docs/health-connect-wire-v3.md).
@@ -127,13 +113,9 @@ Troubleshooting:
 
 ## What it deliberately does not do
 
-- No image/screenshot share ingestion (text/URL only).
-- No streaming STT, wake words, or on-device transcription.
+- No Android share-target capture.
+- No phone or Wear OS voice capture.
+- No Wear OS tile or companion APK.
 - No token issuance/login flow — you paste the static host token.
-- No retained audio: voice clips are deleted after a successful upload.
 - No health interpretation, charts, alerts, aggregation, or Health Connect writes.
-- No capture offline queue; failed text/voice captures report failure directly.
-- Android verification uses phone/wear assemble, lint, and JVM unit tests.
-
-See [`wear/README.md`](./wear/README.md) for the watch companion's own scope
-and setup.
+- Android verification uses phone assemble, lint, and app/core unit tests.

@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded_by: 0030-open-webui-owns-assistant-runtime
 ---
 
 # Dreaming mutates canonical Memory through confined native-shaped pi file tools

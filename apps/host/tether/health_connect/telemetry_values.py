@@ -8,7 +8,7 @@ _EXERCISE_TYPE_LABELS = {
     56: "running",
     79: "walking",
 }
-"""Health Connect exercise labels needed by agent summaries."""
+"""Health Connect exercise labels used by deterministic summaries."""
 
 _COMPLETE_STAGE_COVERAGE_MIN_PERCENT = 95
 _COMPLETE_STAGE_COVERAGE_MAX_PERCENT = 105
@@ -22,7 +22,7 @@ _SLEEP_STAGE_LABELS = {
     6: "rem",
     7: "awake_in_bed",
 }
-"""Health Connect sleep-stage labels needed by agent summaries."""
+"""Health Connect sleep-stage labels used by deterministic summaries."""
 
 
 def stage_coverage_is_complete(coverage_percent: float) -> bool:
@@ -35,14 +35,14 @@ def stage_coverage_is_complete(coverage_percent: float) -> bool:
 
 
 def render_exercise_type(exercise_type: int | None) -> str | None:
-    """Render Health Connect exercise enum values for agent-facing reads."""
+    """Render Health Connect exercise enum values for tool reads."""
     if exercise_type is None:
         return None
     return _EXERCISE_TYPE_LABELS.get(exercise_type, f"unknown_{exercise_type}")
 
 
 def render_sleep_stage(stage: int) -> str:
-    """Render Health Connect sleep-stage enum values for agent-facing reads."""
+    """Render Health Connect sleep-stage enum values for tool reads."""
     return _SLEEP_STAGE_LABELS.get(stage, f"unknown_{stage}")
 
 

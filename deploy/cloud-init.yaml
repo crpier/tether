@@ -92,6 +92,5 @@ runcmd:
 
   # --- App directory ------------------------------------------------------
   - install -d -o tether -g tether -m 0755 /srv/tether
-  - install -d -o tether -g tether -m 0700 /srv/tether/pi-agent
 
 final_message: "Tether base box ready after $UPTIME seconds. Next: docs/deployment.md#first-deploy."

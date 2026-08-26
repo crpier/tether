@@ -1,3 +1,8 @@
+---
+status: superseded
+superseded_by: 0030-open-webui-owns-assistant-runtime
+---
+
 # STT is a required host dependency
 
 STT (speech-to-text) was introduced off-by-default in the capture app v1 spec (#225), configured behind an `stt_enabled` flag with `stt_api_key` optional. Web voice input (#19) and the voice-as-chat pivot (#239) now make voice a first-class input path across the product — the web composer gets two voice buttons, and the existing Voice capture endpoint (spec #225) is set to be rewired onto the same chat path. A maybe-configured capability forces hidden/disabled UI states and 503 error paths for something that is no longer optional, and pushes conditional complexity into every voice surface for a case that shouldn't exist.

@@ -29,7 +29,9 @@ log_level="${TETHER_LOGGING_LEVEL:-INFO}"
 
 echo "Starting Tether host on $base_url with TETHER_LOGGING_LEVEL=$log_level"
 TETHER_DATABASE_PATH="$runtime_dir/tether.sqlite3" \
-TETHER_KB_ROOT="$runtime_dir/kb" \
+TETHER_TELEMETRY_DATABASE_PATH="$runtime_dir/telemetry.sqlite3" \
+TETHER_API_TOKEN=log-smoke-capture-token \
+TETHER_OPEN_WEBUI_TOKEN=log-smoke-open-webui-token \
 TETHER_LOGGING_LEVEL="$log_level" \
 TETHER_HOST=127.0.0.1 \
 TETHER_PORT="$port" \
@@ -48,16 +50,24 @@ base_url = sys.argv[1]
 log_file = sys.argv[2]
 
 
-def request(method: str, path: str, body: dict[str, object] | None = None) -> object:
+def request(
+    method: str,
+    path: str,
+    body: dict[str, object] | None = None,
+    *,
+    authorized: bool = False,
+) -> object:
     encoded = None if body is None else json.dumps(body).encode()
     headers = {"content-type": "application/json"} if body is not None else {}
+    if authorized:
+        headers["authorization"] = "Bearer log-smoke-open-webui-token"
     with urlopen(Request(f"{base_url}{path}", data=encoded, headers=headers, method=method), timeout=5) as response:
         raw = response.read().decode()
         return None if not raw else json.loads(raw)
 
 for _ in range(100):
     try:
-        request("GET", "/openapi.json")
+        request("GET", "/health")
         break
     except URLError:
         time.sleep(0.1)
@@ -67,17 +77,25 @@ else:
     raise SystemExit(1)
 
 print("\nRequests:")
-print("GET /memories?state=loose")
-print(request("GET", "/memories?state=loose"))
-print("POST /memories")
-memory = request("POST", "/memories", {"content": "  I prefer aisle seats  "})
-print(memory)
-assert isinstance(memory, dict)
-print(f"POST /memories/{memory['id']}/tether")
-tethered = request("POST", f"/memories/{memory['id']}/tether", {"version": memory["version"]})
-print(tethered)
-print("GET /memories/search?q=aisle")
-print(request("GET", "/memories/search?q=aisle"))
+print("GET /health")
+print(request("GET", "/health"))
+print("GET /tools/openapi.json")
+schema = request("GET", "/tools/openapi.json", authorized=True)
+assert isinstance(schema, dict)
+paths = schema.get("paths")
+assert isinstance(paths, dict)
+print({"operation_count": len(paths)})
+print("POST /tools/create_todo")
+print(
+    request(
+        "POST",
+        "/tools/create_todo",
+        {"action": "Verify structured host logs"},
+        authorized=True,
+    )
+)
+print("POST /tools/list_todos")
+print(request("POST", "/tools/list_todos", {}, authorized=True))
 PY
 
 echo ""

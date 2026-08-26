@@ -1,14 +1,15 @@
-# Tether — single-service deploy. Same file runs locally (over http://localhost)
-# and on the VM (behind public Tailscale Funnel HTTPS, which terminates TLS
-# outside compose and proxies to the published port). Copy `.env.example` to
-# `.env` and fill secrets
-# before `docker compose up`.
+# Tether capability host plus stock Open WebUI. Both bind only to loopback;
+# Tailscale Funnel terminates production HTTPS outside Compose. The existing
+# host origin on 443 remains for Health Connect, while Open WebUI uses 8443.
+# Copy `.env.example` to `.env` and fill secrets before `docker compose up`.
 #
 # Image resolution: `image:` names the published GHCR tag (`just deploy` pushes
 # `:<git-sha>` and `:latest`); `build:` is only consulted when that tag isn't
 # already present locally (or on an explicit `docker compose build`) — the local
-# dev/smoke path (`just deploy-local`) always passes `--build`, so it never
-# depends on GHCR. Set TETHER_IMAGE_TAG=<git-sha> on the VM to pin/roll back.
+# dev/smoke path builds the host locally. Open WebUI always comes from the
+# official exact-digest image below. Set TETHER_IMAGE_TAG=<git-sha> to pin the
+# host between post-migration releases; full cutover rollback also restores the
+# recorded pre-migration Compose revision.
 services:
   host:
     build:
@@ -16,40 +17,63 @@ services:
       dockerfile: Dockerfile
     image: ghcr.io/crpier/tether:${TETHER_IMAGE_TAG:-latest}
     restart: unless-stopped
-    env_file: ${TETHER_ENV_FILE:-.env}
     environment:
-      # Source of truth + derived KB live on the durable `data` volume, separate
-      # from the image so a redeploy never touches them.
+      TETHER_API_TOKEN: ${TETHER_API_TOKEN:?TETHER_API_TOKEN must be set}
       TETHER_DATABASE_PATH: /data/tether.sqlite3
+      TETHER_LOGGING_LEVEL: ${TETHER_LOGGING_LEVEL:-INFO}
+      TETHER_OPEN_WEBUI_TOKEN: ${TETHER_OPEN_WEBUI_TOKEN:?TETHER_OPEN_WEBUI_TOKEN must be set}
       TETHER_TELEMETRY_DATABASE_PATH: /data/telemetry.sqlite3
-      TETHER_KB_ROOT: /data/kb
-      FASTEMBED_CACHE_PATH: /cache/fastembed
-      # Gmail and YouTube OAuth client secrets and tokens live on the
-      # durable data volume. Settings writes refresh tokens here, so reconnecting
-      # and redeploying never require image changes.
-      TETHER_YOUTUBE_TOKEN_PATH: /data/youtube/token.json
-      TETHER_YOUTUBE_CLIENT_SECRET_PATH: /data/youtube/client-secret.json
-      TETHER_GMAIL_TOKEN_PATH: /data/gmail/token.json
-      TETHER_GMAIL_CLIENT_SECRET_PATH: /data/gmail/client-secret.json
-      # Provider credentials for the embedded pi runtime. This is deliberately
-      # separate from pi sessions (stored under /data/kb/pi-sessions) and from
-      # Tether app secrets in .env. It holds pi's auth.json, e.g. Codex OAuth
-      # and OpenCode Go API-key credentials.
-      PI_CODING_AGENT_DIR: /pi-agent
     # Bind to loopback only: locally that's all you need, and on the VM Tailscale
     # Funnel (running on the host, outside compose) reverse-proxies to it. The
     # VM's public interface remains closed; Funnel exposes HTTPS, not this port.
     ports:
       - "127.0.0.1:${TETHER_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=1)",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
     volumes:
       - data:/data
-      - model-cache:/cache
-      # Tether authorizes and refreshes this server-owned credential from the
-      # Settings device-code flow. Deployment sets
-      # TETHER_PI_AGENT_DIR=/srv/tether/pi-agent. It is durable but not currently
-      # covered by deploy/backup.sh; see docs/deployment.md.
-      - ${TETHER_PI_AGENT_DIR:-${HOME}/.local/share/tether/pi-agent}:/pi-agent
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.1@sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16
+    restart: unless-stopped
+    environment:
+      ENABLE_AUTOMATIONS: "false"
+      ENABLE_CODE_EXECUTION: "false"
+      ENABLE_CODE_INTERPRETER: "false"
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_PERSISTENT_CONFIG: "true"
+      ENABLE_SIGNUP: "false"
+      ENABLE_TOOL_PERMISSIONS: "true"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set}
+      WEBUI_URL: ${WEBUI_URL:?WEBUI_URL must be set}
+    ports:
+      - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=1)",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    depends_on:
+      host:
+        condition: service_healthy
 
 volumes:
   data:
-  model-cache:
+  open-webui-data:

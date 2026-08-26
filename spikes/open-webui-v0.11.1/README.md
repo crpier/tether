@@ -10,17 +10,16 @@ and a bearer-authenticated OpenAPI tool server.
 - Published: 2026-08-25
 - Digest: `sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16`
 
-## Run
+## Current smoke
 
-The command removes only this spike's Compose volume and containers.
+The maintained standalone smoke supersedes the throwaway spike harness:
 
 ```sh
-docker compose -f spikes/open-webui-v0.11.1/compose.yaml down -v --remove-orphans
-docker compose -f spikes/open-webui-v0.11.1/compose.yaml up -d --wait
-TETHER_OPEN_WEBUI_SPIKE=1 pnpm -C apps/web exec playwright test \
-  e2e/open-webui-spike.prototype.spec.ts
-docker compose -f spikes/open-webui-v0.11.1/compose.yaml down -v --remove-orphans
+just validate-open-webui-smoke
 ```
+
+It runs five Playwright tests from `tests/open-webui` against the real pinned
+image, real host, fake OpenAI-compatible provider, and Chromium.
 
 ## Result
 
@@ -46,8 +45,8 @@ configuration policy.
 
 ## Not proved
 
-- The eventual production provider and model: no provider credentials were
-  available. Validate its exact native tool-call schema before deleting Pi.
-- Physical-phone microphone behavior, Tailscale Serve HTTPS, TTS, and production
-  restore. Those remain deployment acceptance checks.
-- Evidence projection. It is intentionally out of the first release.
+- The production provider and model. Validate their native function calling.
+- Physical-phone voice transcription and TTS over Tailscale Funnel HTTPS 8443.
+- A full backup restore drill.
+- Physical Android Health Connect sync at the unchanged HTTPS 443 origin.
+- Production cutover approval.

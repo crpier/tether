@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal
 
 from opentelemetry.trace import Tracer
 from pydantic import UUID7
@@ -47,7 +47,6 @@ from tether.bucket_item_model import (
     normalise_intent,
 )
 from tether.bucket_item_store import BucketItem, derive_state
-from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
 
 
@@ -77,11 +76,6 @@ def _info(logger: Logger, event: str, **context: object) -> None:
     logger.info(event, **context)
 
 
-def _exception(logger: Logger, event: str, **context: object) -> None:
-    """Emit an exception event (with traceback) using caller-supplied context."""
-    logger.exception(event, **context)
-
-
 @dataclass(frozen=True, slots=True)
 class AddOutcome:
     """The result of Adding a Bucket item: the new item plus a dedup advisory.
@@ -106,35 +100,20 @@ def _dedup_severity(duplicates: list[BucketItem[Fetched]]) -> DedupSeverity:
     return "inform"
 
 
-class BucketItemIndexProjection(Protocol):
-    """Recoverable index writes driven after canonical Bucket Item mutations."""
-
-    async def index_item(
-        self, item: BucketItem[Fetched], *, logger: Logger
-    ) -> None: ...
-
-    async def deindex_item(self, item_id: UUID7, *, logger: Logger) -> None: ...
-
-
 class BucketItemService:
     """Capability surface for Bucket items, over a snekql database.
 
     Each mutation owns its own transaction (one mutation, one commit) and
-    returns the resulting item so the REST and tool layers can echo it.
+    returns the resulting item so the tool layer can echo it.
     """
 
     def __init__(
         self,
         database: Database,
         tracer: Tracer,
-        event_publisher: EventPublisher | None = None,
-        indexer: BucketItemIndexProjection | None = None,
     ) -> None:
         self.database: Database = database
-        self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self.tracer: Tracer = tracer
-        self.indexer: BucketItemIndexProjection | None = indexer
-        """Recoverable index projection; `None` when Search is unwired."""
 
     async def add(
         self,
@@ -199,8 +178,6 @@ class BucketItemService:
                 dedup_severity=severity,
                 duplicate_count=len(duplicates),
             )
-            await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
-            await self._try_index(item, logger=logger)
             return AddOutcome(item=item, duplicates=duplicates, severity=severity)
 
     async def complete(
@@ -311,8 +288,6 @@ class BucketItemService:
             previous_version=item.version,
             version=fresh_item.version,
         )
-        await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
-        await self._try_deindex(fresh_item.id, logger=logger)
         return fresh_item
 
     async def set_purchase_decision(
@@ -369,8 +344,6 @@ class BucketItemService:
             decision=decision,
             version=fresh_item.version,
         )
-        await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
-        await self._try_index(fresh_item, logger=logger)
         return fresh_item
 
     async def set_intent(
@@ -435,7 +408,6 @@ class BucketItemService:
             previous_version=item.version,
             version=fresh_item.version,
         )
-        await self.event_publisher.publish(InvalidateEvent(keys=["bucket-items"]))
         return fresh_item
 
     async def _fetch(
@@ -443,10 +415,9 @@ class BucketItemService:
     ) -> BucketItem[Fetched]:
         """Fetch a Bucket item by id or raise.
 
-        Unlike the Memory spine, a terminal Bucket item is not hidden: it is
-        retained history, a legitimate target for inspection and the reason a
-        terminate conflicts rather than 404s. So this fetches in any state and
-        only raises when the row is genuinely absent.
+        A terminal Bucket item remains retained history and is a legitimate
+        mutation target, so this fetches in any state and raises only when the
+        row is genuinely absent.
         """
         item = await tx.fetch_one_or_none(
             select(BucketItem).where(BucketItem.id.eq(bucket_item_id))
@@ -454,50 +425,3 @@ class BucketItemService:
         if item is None:
             raise BucketItemNotFoundError(bucket_item_id)
         return item
-
-    async def _try_index(
-        self,
-        item: BucketItem[Fetched],
-        *,
-        logger: Logger,
-    ) -> None:
-        """Best-effort index a Bucket item after an Add; never fails the write.
-
-        The index entry is a derived artifact and SQLite is canonical: a failed
-        hook is logged, not raised, because the reconciler's pass is the
-        correctness backstop. No-op when search is unwired."""
-        if self.indexer is None:
-            return
-        _debug(logger, "Indexing Bucket item for search", bucket_item_id=str(item.id))
-        try:
-            await self.indexer.index_item(item, logger=logger)
-        except Exception:
-            _exception(
-                logger,
-                "Failed to index Bucket item for search",
-                bucket_item_id=str(item.id),
-            )
-
-    async def _try_deindex(
-        self,
-        item_id: UUID7,
-        *,
-        logger: Logger,
-    ) -> None:
-        """Best-effort drop a Bucket item from the index after it terminates.
-
-        Never raises: complete/delete both leave the index entry as drift for
-        the reconciler's periodic pass to sweep if this best-effort call fails."""
-        if self.indexer is None:
-            return
-        _debug(
-            logger, "Deindexing Bucket item from search", bucket_item_id=str(item_id)
-        )
-        try:
-            await self.indexer.deindex_item(item_id, logger=logger)
-        except Exception:
-            _exception(
-                logger,
-                "Failed to deindex Bucket item from search",
-                bucket_item_id=str(item_id),
-            )

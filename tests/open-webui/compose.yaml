@@ -1,0 +1,91 @@
+services:
+  host:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ${TETHER_SMOKE_HOST_IMAGE:?TETHER_SMOKE_HOST_IMAGE must be set}
+    environment:
+      TETHER_API_TOKEN: ${TETHER_SMOKE_CAPTURE_TOKEN:?TETHER_SMOKE_CAPTURE_TOKEN must be set}
+      TETHER_DATABASE_PATH: /data/tether.sqlite3
+      TETHER_HOST: 0.0.0.0
+      TETHER_OPEN_WEBUI_TOKEN: ${TETHER_SMOKE_TOOL_TOKEN:?TETHER_SMOKE_TOOL_TOKEN must be set}
+      TETHER_PORT: "8000"
+      TETHER_TELEMETRY_DATABASE_PATH: /data/telemetry.sqlite3
+    ports:
+      - "127.0.0.1::8000"
+    volumes:
+      - host-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=1)",
+        ]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  fake-provider:
+    image: python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17
+    command: ["python", "/smoke/fake_provider.py"]
+    environment:
+      SMOKE_PROVIDER_TOKEN: ${TETHER_SMOKE_PROVIDER_TOKEN:?TETHER_SMOKE_PROVIDER_TOKEN must be set}
+    ports:
+      - "127.0.0.1::8081"
+    volumes:
+      - ./fake_provider.py:/smoke/fake_provider.py:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=1)",
+        ]
+      interval: 1s
+      timeout: 2s
+      retries: 10
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.1@sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16
+    environment:
+      ENABLE_AUTOMATIONS: "false"
+      ENABLE_CODE_EXECUTION: "false"
+      ENABLE_CODE_INTERPRETER: "false"
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_PERSISTENT_CONFIG: "true"
+      ENABLE_SIGNUP: "false"
+      ENABLE_TOOL_PERMISSIONS: "true"
+      OFFLINE_MODE: "true"
+      OPENAI_API_BASE_URLS: http://fake-provider:8081/v1
+      OPENAI_API_KEYS: ${TETHER_SMOKE_PROVIDER_TOKEN:?TETHER_SMOKE_PROVIDER_TOKEN must be set}
+      TOOL_SERVER_CONNECTIONS: >-
+        [{"url":"http://host:8000","path":"/tools/openapi.json","type":"openapi","auth_type":"bearer","key":"${TETHER_SMOKE_TOOL_TOKEN:?TETHER_SMOKE_TOOL_TOKEN must be set}","config":{"enable":true,"access_grants":[]},"info":{"id":"tether-smoke","name":"Tether Smoke","description":"Real Tether domain capabilities for the Open WebUI integration smoke."}}]
+      WEBUI_SECRET_KEY: smoke-webui-secret-key-longer-than-thirty-two-bytes
+      WEBUI_URL: http://127.0.0.1
+    ports:
+      - "127.0.0.1::8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      fake-provider:
+        condition: service_healthy
+      host:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=1)",
+        ]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
+volumes:
+  host-data:
+  open-webui-data:

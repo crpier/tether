@@ -10,6 +10,7 @@ separate, later consolidation step.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
@@ -23,8 +24,6 @@ from snekql.sqlite import (
     select,
     update,
 )
-
-from tether.search_projection.loop import run_reconcile_loop
 
 if TYPE_CHECKING:
     from tether.structured_logging import Logger
@@ -165,16 +164,12 @@ class HealthEpisodeSummarizer:
         the next tick retries.
         """
 
-        async def _pass() -> EpisodeMaterializeResult:
-            return await self.materialize(now=datetime.now(UTC))
-
-        await run_reconcile_loop(
-            _pass,
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=interval_seconds,
-            logger=logger,
-            failure_message="Health episode summarization failed",
-        )
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                _ = await self.materialize(now=datetime.now(UTC))
+            except Exception:
+                logger.exception("Health episode summarization failed")
 
     async def _materialize_exercise(
         self, transaction: Transaction, *, cutoff_millis: int

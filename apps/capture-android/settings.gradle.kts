@@ -23,4 +23,3 @@ dependencyResolutionManagement {
 rootProject.name = "TetherCapture"
 include(":core")
 include(":app")
-include(":wear")

@@ -53,7 +53,7 @@ _DUPLICATE_STEP_SOURCE_WARNING = (
     "Multiple step origins overlap; total_count uses the largest origin for this "
     "day and raw_total_count is the simple sum."
 )
-"""Agent-facing warning for Health Connect's overlapping step sources."""
+"""Tool warning for Health Connect's overlapping step sources."""
 
 
 def _numeric_payload_values(
@@ -158,7 +158,7 @@ def _summarize_step_rows(
 
 @dataclass(frozen=True, slots=True)
 class HealthConnectSummaryQuery:
-    """Aggregate bounded current records for agent overviews and trends."""
+    """Aggregate bounded current records for tool overviews and trends."""
 
     database: Database
 

@@ -6,12 +6,6 @@ its tests.
 """
 
 from tether.health_connect.episodes import HealthEpisodeSummarizer
-from tether.health_connect.evidence import (
-    HealthConnectEvidence,
-    HealthConnectEvidenceResolver,
-    HealthConnectExerciseEvidence,
-    HealthConnectSleepEvidence,
-)
 from tether.health_connect.ingestion import HealthConnectIngestion
 from tether.health_connect.persistence import (
     HcExerciseEpisodeSummary,
@@ -22,21 +16,15 @@ from tether.health_connect.routes import router
 from tether.health_connect.telemetry import HealthConnectTelemetry
 from tether.health_connect.tools import (
     HEALTH_CONNECT_TOOL_SPECS,
-    internal_health_connect_tool_routes,
 )
 
 __all__ = [
     "HEALTH_CONNECT_TOOL_SPECS",
     "HcExerciseEpisodeSummary",
     "HcSleepEpisodeSummary",
-    "HealthConnectEvidence",
-    "HealthConnectEvidenceResolver",
-    "HealthConnectExerciseEvidence",
     "HealthConnectIngestion",
-    "HealthConnectSleepEvidence",
     "HealthConnectTelemetry",
     "HealthEpisodeSummarizer",
     "create_health_connect_schema",
-    "internal_health_connect_tool_routes",
     "router",
 ]

@@ -4,8 +4,8 @@ __pycache__/
 *.pyc
 # node
 node_modules/
-apps/web/dist/
-apps/agent/dist/
+tests/open-webui/test-results/
+tests/open-webui/playwright-report/
 # state (single shared volume in prod; local dev db)
 *.db
 *.db-wal
@@ -19,7 +19,6 @@ data/
 # Deploy secrets (the committed templates live under deploy/).
 .env
 /restic.env
-/pi-agent/
 
 # Playwright MCP scratch output
 .playwright-mcp/

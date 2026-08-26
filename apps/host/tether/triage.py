@@ -1,18 +1,7 @@
-"""Triage: the host-computed report over the active Bucket items.
+"""Deterministic triage over a bounded view of active Bucket items.
 
-Issue #21 surfaces the problems lurking in the active Bucket list — items that
-are **under-specified**, **duplicate**, or **stale** — in one place, so the
-backlog stays healthy without manual grooming. Triage is the Bucket-side mirror
-of Memory's Review, and the two never share vocabulary (CONTEXT.md): Review is a
-trust gate that ends in a human tether; Triage is a pure report that ends in
-nothing stored.
-
-Everything mechanical — the under-specified heuristic, duplicate clustering, and
-staleness with its decayed intent context — is computed in plain Python so the
-load-bearing behaviour is testable; the model only narrates the result. The
-report is recomputed from live SQLite on each call (ADR-0006): no new tables, no
-persisted flags, **no new stored state** at all, so there is nothing to
-invalidate and Triage can run on demand or on a Scheduled trigger identically.
+The report identifies under-specified, duplicate, and stale items using plain
+Python over canonical SQLite state. It stores nothing and invokes no model.
 
 Stale items carry their **decayed intent context**: the immutable *why* the
 human saved the item, paired with how far that reason has eroded with age, so a
@@ -52,6 +41,9 @@ _MIN_CLUSTER_SIZE = 2
 
 PURCHASE_WATCH_STALE_AFTER_DAYS = 30
 """How long a `wait` purchase decision stays quiet before resurfacing."""
+
+TRIAGE_ITEM_CAP = 50
+"""Maximum active Bucket items included in one tool response."""
 
 
 def _decay(age_days: int) -> float:
@@ -229,6 +221,7 @@ class TriageService:
                     BucketItem.completed_at.is_null() & BucketItem.deleted_at.is_null()
                 )
                 .order_by(BucketItem.created_at.desc())
+                .limit(TRIAGE_ITEM_CAP)
             )
         report = TriageReport(
             active=[BucketItemRead.from_item(item) for item in active],

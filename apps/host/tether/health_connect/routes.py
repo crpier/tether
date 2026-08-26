@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Protocol, cast
+from typing import Annotated, Protocol, cast
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, model_validator
 from snekok import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -33,14 +31,6 @@ from tether.health_connect.ingestion import (
 )
 from tether.structured_logging import Logger
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable
-    from datetime import datetime
-
-    from snekql.sqlite import Fetched
-
-    from tether.dreaming_store import HealthDreamRun
-
 router = APIRouter()
 
 
@@ -51,40 +41,10 @@ def _contract_failure_detail(failure: HealthConnectContractFailure) -> str:
     return "record_types contains unsupported values"
 
 
-class HealthDreamNowRequest(BaseModel):
-    """Optional episode period bounding a manual consolidation run."""
-
-    start: datetime | None = None
-    end: datetime | None = None
-
-    @model_validator(mode="after")
-    def _period_is_ordered(self) -> HealthDreamNowRequest:
-        if self.start is not None and self.end is not None and self.start >= self.end:
-            message = "start must precede end"
-            raise ValueError(message)
-        return self
-
-
-class _HealthDistillationPort(Protocol):
-    """Manual-trigger surface of the health consolidation service."""
-
-    telemetry_database: object
-
-    def queue_run(self) -> Awaitable[HealthDreamRun[Fetched] | None]: ...
-
-    def drain_backlog(self) -> Awaitable[list[HealthDreamRun[Fetched]]]: ...
-
-    def queue_explicit_run(
-        self, *, start: datetime, end: datetime
-    ) -> Awaitable[HealthDreamRun[Fetched] | None]: ...
-
-
 class _HealthConnectRuntime(Protocol):
     """Health Connect dependencies available while the host serves requests."""
 
-    dreaming_enabled: bool
     health_connect_ingestion: HealthConnectIngestion
-    health_distillation_service: _HealthDistillationPort | None
     logger: Logger
 
 
@@ -208,42 +168,3 @@ async def ingest_health_connect_batch(
         skipped=report.skipped,
     )
     return JSONResponse(report.model_dump(mode="json"))
-
-
-@router.post("/api/telemetry/health-connect/dream-now")
-async def health_dream_now(
-    request: Request,
-    body: HealthDreamNowRequest | None = None,
-) -> Response:
-    """Queue manual consolidation runs over Health Connect summaries.
-
-    Without a period, every summary not yet captured by a prior run is
-    windowed into successive capped runs (bounded prompts) and all of them
-    are queued. With `{start, end}`, only episodes ending inside the period
-    are reconsidered, as one run.
-    """
-    runtime = _runtime(request)
-    service = runtime.health_distillation_service
-    if not runtime.dreaming_enabled or service is None:
-        return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)
-    if body is not None and body.start is not None and body.end is not None:
-        run = await service.queue_explicit_run(start=body.start, end=body.end)
-        runs = [] if run is None else [run]
-    else:
-        runs = await service.drain_backlog()
-    if not runs:
-        return Response(status_code=204)
-    return JSONResponse([_health_dream_run_payload(run) for run in runs])
-
-
-def _health_dream_run_payload(run: HealthDreamRun[Fetched]) -> dict[str, object]:
-    """Render one queued health dream run for the wire."""
-    return {
-        "id": str(run.id),
-        "status": run.status,
-        "exercise_since_version_id": run.exercise_since_version_id,
-        "exercise_through_version_id": run.exercise_through_version_id,
-        "sleep_since_version_id": run.sleep_since_version_id,
-        "sleep_through_version_id": run.sleep_through_version_id,
-        "attempts": run.attempts,
-    }
