@@ -28,6 +28,7 @@ snapshot_suffix="${workdir##*/}"
 tether_container_snapshot="/data/.tether-backup-${snapshot_suffix}-tether.sqlite3"
 telemetry_container_snapshot="/data/.tether-backup-${snapshot_suffix}-telemetry.sqlite3"
 open_webui_stopped=false
+open_webui_volume_name=""
 
 compose() {
     docker compose --project-directory "${app_dir}" -f "${compose_file}" --env-file "${env_file}" "$@"
@@ -84,9 +85,8 @@ PY
     compose cp "host:${container_snapshot}" "${workdir}/${output_name}"
 }
 
-archive_open_webui_data() {
+stop_open_webui_for_backup() {
     local container_id
-    local volume_name
 
     container_id="$(compose ps -q open-webui)"
     if [ -z "${container_id}" ] || [[ "${container_id}" == *$'\n'* ]]; then
@@ -94,18 +94,21 @@ archive_open_webui_data() {
         return 1
     fi
 
-    volume_name="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}{{end}}' "${container_id}")"
-    if [ -z "${volume_name}" ] || [[ "${volume_name}" == *$'\n'* ]]; then
+    open_webui_volume_name="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}{{end}}' "${container_id}")"
+    if [ -z "${open_webui_volume_name}" ] || [[ "${open_webui_volume_name}" == *$'\n'* ]]; then
         echo "backup.sh: open-webui data volume was not found" >&2
         return 1
     fi
 
     open_webui_stopped=true
     compose stop open-webui
+}
+
+archive_open_webui_data() {
     docker run --rm \
         --network none \
         --read-only \
-        --mount "type=volume,src=${volume_name},dst=/source,readonly" \
+        --mount "type=volume,src=${open_webui_volume_name},dst=/source,readonly" \
         --mount "type=bind,src=${workdir},dst=/backup" \
         python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17 \
         python3 -c 'import tarfile
@@ -113,27 +116,36 @@ archive_open_webui_data() {
 with tarfile.open("/backup/open-webui-data.tar", mode="w") as archive:
     archive.add("/source", arcname=".")
 '
-    restart_open_webui
 }
 
 curl --fail --silent --show-error --max-time 10 "${ping_url}/start" >/dev/null
 
-# 1. SQLite: independently VACUUM INTO both source-of-truth databases inside
-# the live container, then copy the consistent snapshots into one backup set.
+# 1. Quiesce assistant tool mutations before capturing any related state. The
+# traps restart Open WebUI if a later snapshot or archive command fails.
+stop_open_webui_for_backup
+
+# 2. SQLite: independently VACUUM INTO both source-of-truth databases inside
+# the host container, then copy the consistent snapshots into one backup set.
 snapshot_database "/data/tether.sqlite3" "${tether_container_snapshot}" "tether.sqlite3"
 snapshot_database "/data/telemetry.sqlite3" "${telemetry_container_snapshot}" "telemetry.sqlite3"
 
-# 2. Open WebUI: briefly stop only its service and archive its actual Compose
-# volume through a read-only mount. The function restarts it before returning;
-# the traps restart it if any command fails after the stop.
+# 3. Archive Open WebUI's actual Compose volume through a read-only mount while
+# it remains stopped, then restore assistant availability.
 archive_open_webui_data
+restart_open_webui
 
-# 3. .env: the app secrets, so a total-loss recovery doesn't depend on
+# 4. .env: the app secrets, so a total-loss recovery doesn't depend on
 # remembering what was in it (1Password is still the primary source of truth).
 cp "${env_file}" "${workdir}/env"
 
-restic backup "${workdir}" --tag tether --host tether-vm
-restic forget --keep-daily 7 --keep-weekly 4 --prune
+restic backup "${workdir}" --tag tether-open-webui --host tether-vm
+restic forget \
+    --host tether-vm \
+    --tag tether-open-webui \
+    --group-by host,tags \
+    --keep-daily 7 \
+    --keep-weekly 4 \
+    --prune
 
 # Success means the backup completed and no temporary snapshots remain. The EXIT
 # trap repeats this best-effort if any earlier command fails.

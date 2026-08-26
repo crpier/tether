@@ -20,6 +20,17 @@ def _compose_config() -> dict[str, Any]:
     environment = os.environ.copy()
     environment.update(
         {
+            "AUDIO_STT_ENGINE": "openai",
+            "AUDIO_STT_MODEL": "test-transcription-model",
+            "AUDIO_STT_OPENAI_API_BASE_URL": "https://voice.example/v1",
+            "AUDIO_STT_OPENAI_API_KEY": "test-voice-token",
+            "AUDIO_TTS_ENGINE": "openai",
+            "AUDIO_TTS_MODEL": "test-speech-model",
+            "AUDIO_TTS_OPENAI_API_BASE_URL": "https://voice.example/v1",
+            "AUDIO_TTS_OPENAI_API_KEY": "test-voice-token",
+            "AUDIO_TTS_VOICE": "test-voice",
+            "OPENAI_API_BASE_URLS": "https://provider.example/v1",
+            "OPENAI_API_KEYS": "test-provider-token",
             "TETHER_API_TOKEN": "test-capture-token",
             "TETHER_ENV_FILE": "deploy/.env.example",
             "TETHER_OPEN_WEBUI_TOKEN": "test-open-webui-token",
@@ -29,6 +40,38 @@ def _compose_config() -> dict[str, Any]:
     )
     completed = subprocess.run(
         ["docker", "compose", "-f", "compose.yaml", "config", "--format", "json"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    document: dict[str, Any] = json.loads(completed.stdout)
+    return document
+
+
+def _smoke_compose_config() -> dict[str, Any]:
+    """Resolve the isolated smoke topology with deterministic credentials."""
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "TETHER_SMOKE_CAPTURE_TOKEN": "test-capture-token",
+            "TETHER_SMOKE_HOST_IMAGE": "tether-smoke-host:test",
+            "TETHER_SMOKE_PROVIDER_TOKEN": "test-provider-token",
+            "TETHER_SMOKE_TOOL_TOKEN": "test-open-webui-token",
+            "TETHER_SMOKE_WEBUI_SECRET": "test-webui-secret",
+        }
+    )
+    completed = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "tests/open-webui/compose.yaml",
+            "config",
+            "--format",
+            "json",
+        ],
         cwd=PROJECT_ROOT,
         env=environment,
         check=True,
@@ -62,18 +105,60 @@ def open_webui_starts_with_restricted_production_features() -> None:
     assert_eq(
         open_webui["environment"],
         {
+            "AUDIO_STT_ENGINE": "openai",
+            "AUDIO_STT_MODEL": "test-transcription-model",
+            "AUDIO_STT_OPENAI_API_BASE_URL": "https://voice.example/v1",
+            "AUDIO_STT_OPENAI_API_KEY": "test-voice-token",
+            "AUDIO_TTS_ENGINE": "openai",
+            "AUDIO_TTS_MODEL": "test-speech-model",
+            "AUDIO_TTS_OPENAI_API_BASE_URL": "https://voice.example/v1",
+            "AUDIO_TTS_OPENAI_API_KEY": "test-voice-token",
+            "AUDIO_TTS_VOICE": "test-voice",
             "ENABLE_AUTOMATIONS": "false",
             "ENABLE_CODE_EXECUTION": "false",
             "ENABLE_CODE_INTERPRETER": "false",
+            "ENABLE_COMMUNITY_SHARING": "false",
+            "ENABLE_MEMORIES": "true",
             "ENABLE_OLLAMA_API": "false",
-            "ENABLE_PERSISTENT_CONFIG": "true",
+            "ENABLE_OPENAI_API": "true",
+            "ENABLE_PERSISTENT_CONFIG": "false",
             "ENABLE_SIGNUP": "false",
             "ENABLE_TOOL_PERMISSIONS": "true",
+            "ENABLE_WEB_SEARCH": "false",
+            "OPENAI_API_BASE_URLS": "https://provider.example/v1",
+            "OPENAI_API_KEYS": "test-provider-token",
+            "TOOL_SERVER_CONNECTIONS": '[{"url":"http://host:8000","path":"/tools/openapi.json","type":"openapi","auth_type":"bearer","key":"test-open-webui-token","config":{"enable":true,"access_grants":[{"principal_type":"user","principal_id":"*","permission":"read"}]},"info":{"id":"tether","name":"Tether","description":"Tether Bucket, Todo, and Health Connect capabilities."}}]',
+            "USER_PERMISSIONS_CHAT_SHARE": "false",
+            "USER_PERMISSIONS_CHAT_TEMPORARY": "false",
             "WEBUI_SECRET_KEY": "test-webui-secret",
             "WEBUI_URL": "http://127.0.0.1:3000",
         },
     )
     assert_true("env_file" not in open_webui)
+
+
+@test(mark="slow")
+def open_webui_smoke_enforces_the_same_non_persistent_safety_settings() -> None:
+    """The real-image gate exercises environment-enforced production settings."""
+    open_webui: dict[str, Any] = _smoke_compose_config()["services"]["open-webui"]
+
+    expected = {
+        "ENABLE_AUTOMATIONS": "false",
+        "ENABLE_CODE_EXECUTION": "false",
+        "ENABLE_CODE_INTERPRETER": "false",
+        "ENABLE_COMMUNITY_SHARING": "false",
+        "ENABLE_MEMORIES": "true",
+        "ENABLE_OLLAMA_API": "false",
+        "ENABLE_OPENAI_API": "true",
+        "ENABLE_PERSISTENT_CONFIG": "false",
+        "ENABLE_SIGNUP": "false",
+        "ENABLE_TOOL_PERMISSIONS": "true",
+        "ENABLE_WEB_SEARCH": "false",
+        "USER_PERMISSIONS_CHAT_SHARE": "false",
+        "USER_PERMISSIONS_CHAT_TEMPORARY": "false",
+    }
+    environment: dict[str, str] = open_webui["environment"]
+    assert_eq({name: environment.get(name) for name in expected}, expected)
 
 
 @test(mark="slow")

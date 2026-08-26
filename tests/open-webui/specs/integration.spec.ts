@@ -15,6 +15,12 @@ const admin = {
   password: "smoke-admin-password",
   profile_image_url: "",
 };
+const dailyUser = {
+  email: "smoke-user@example.com",
+  name: "Smoke User",
+  password: "smoke-user-password",
+  profile_image_url: "",
+};
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -51,9 +57,12 @@ function objectValue(value: unknown, message: string): JsonObject {
   return value as JsonObject;
 }
 
-async function signIn(request: APIRequestContext): Promise<string> {
+async function signIn(
+  request: APIRequestContext,
+  account: typeof admin = admin,
+): Promise<string> {
   const response = await request.post(`${webuiUrl}/api/v1/auths/signin`, {
-    data: { email: admin.email, password: admin.password },
+    data: { email: account.email, password: account.password },
   });
   const session = objectValue(
     await readJson(response),
@@ -244,14 +253,19 @@ test("real host rejects absent and non-Open-WebUI bearer credentials", async ({
   expect(paths).toHaveProperty("/tools/list_todos");
 });
 
-test("first account becomes admin while signup remains disabled", async ({
+test("private admin creates a daily user while signup remains disabled", async ({
   request,
 }) => {
   const first = await request.post(`${webuiUrl}/api/v1/auths/signup`, {
     data: admin,
   });
   expect(first.status()).toBe(200);
-  expect(await readJson(first)).toMatchObject({ role: "admin" });
+  const adminSession = objectValue(
+    await readJson(first),
+    "First signup returned a non-object session",
+  );
+  expect(adminSession).toMatchObject({ role: "admin" });
+  expect(typeof adminSession.token).toBe("string");
 
   const second = await request.post(`${webuiUrl}/api/v1/auths/signup`, {
     data: {
@@ -262,12 +276,19 @@ test("first account becomes admin while signup remains disabled", async ({
     },
   });
   expect(second.status()).toBe(403);
+
+  const addedUser = await request.post(`${webuiUrl}/api/v1/auths/add`, {
+    headers: { Authorization: `Bearer ${adminSession.token as string}` },
+    data: { ...dailyUser, role: "user" },
+  });
+  expect(addedUser.status()).toBe(200);
+  expect(await readJson(addedUser)).toMatchObject({ role: "user" });
 });
 
 test("backend discovers the global real-host tool connection", async ({
   request,
 }) => {
-  const token = await signIn(request);
+  const token = await signIn(request, dailyUser);
   const toolsResponse = await request.get(`${webuiUrl}/api/v1/tools/`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -277,6 +298,12 @@ test("backend discovers the global real-host tool connection", async ({
       expect.objectContaining({ id: "server:tether-smoke" }),
     ]),
   );
+
+  const adminConfig = await request.get(
+    `${webuiUrl}/api/v1/configs/tool_servers`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  expect(adminConfig.status()).toBe(401);
 });
 
 test("ask approval gates create, continues, lists, and persists through refresh", async ({
@@ -284,21 +311,68 @@ test("ask approval gates create, continues, lists, and persists through refresh"
   request,
 }) => {
   const browser = guardBrowser(page);
-  const token = await signIn(request);
+  const adminToken = await signIn(request);
+  const token = await signIn(request, dailyUser);
+
+  const baseModelResponse = await request.post(
+    `${webuiUrl}/api/v1/models/create`,
+    {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: {
+        id: "smoke-model",
+        base_model_id: null,
+        name: "Smoke Base Model",
+        meta: {},
+        params: {},
+        access_grants: [
+          {
+            principal_type: "user",
+            principal_id: "*",
+            permission: "read",
+          },
+        ],
+        is_active: true,
+      },
+    },
+  );
+  expect(baseModelResponse.status()).toBe(200);
 
   const modelResponse = await request.post(`${webuiUrl}/api/v1/models/create`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${adminToken}` },
     data: {
       id: "tether-smoke",
       base_model_id: "smoke-model",
       name: "Tether Smoke",
       meta: { toolIds: ["server:tether-smoke"] },
       params: { function_calling: "native" },
-      access_grants: [],
+      access_grants: [
+        {
+          principal_type: "user",
+          principal_id: "*",
+          permission: "read",
+        },
+      ],
       is_active: true,
     },
   });
   expect(modelResponse.status()).toBe(200);
+
+  const dailyModelResponse = await request.get(
+    `${webuiUrl}/api/v1/models/model?id=tether-smoke`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  expect(dailyModelResponse.status()).toBe(200);
+
+  const dailyModelsResponse = await request.get(`${webuiUrl}/api/models`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(dailyModelsResponse.status()).toBe(200);
+  expect(await readJson(dailyModelsResponse)).toMatchObject({
+    data: expect.arrayContaining([
+      expect.objectContaining({ id: "smoke-model" }),
+      expect.objectContaining({ id: "tether-smoke" }),
+    ]),
+  });
 
   const settingsResponse = await request.post(
     `${webuiUrl}/api/v1/users/user/settings/update`,
@@ -326,6 +400,11 @@ test("ask approval gates create, continues, lists, and persists through refresh"
   await expect(allow).toBeVisible({ timeout: 10_000 });
   expect(await hostTodos(request)).toMatchObject({ ready: [], waiting: [] });
 
+  const chatId = await firstChatId(request, token);
+  await page.reload();
+  await expect(allow).toBeVisible({ timeout: 10_000 });
+  expect(await hostTodos(request)).toMatchObject({ ready: [], waiting: [] });
+
   await allow.click();
   await expect(
     page.getByText(`Todo created: ${TODO_ACTION}`, { exact: true }),
@@ -337,7 +416,6 @@ test("ask approval gates create, continues, lists, and persists through refresh"
     waiting: [],
   });
 
-  const chatId = await firstChatId(request, token);
   await page.reload();
   await expect(
     page.getByText(`Todo created: ${TODO_ACTION}`, { exact: true }),
@@ -386,13 +464,13 @@ test("ask approval gates create, continues, lists, and persists through refresh"
   await browser.assertClean();
 });
 
-test("conversation survives an Open WebUI container restart", async ({
+test("conversation and environment config survive an Open WebUI restart", async ({
   page,
   request,
 }) => {
   test.setTimeout(45_000);
   const browser = guardBrowser(page);
-  const token = await signIn(request);
+  const token = await signIn(request, dailyUser);
   const chatId = await firstChatId(request, token);
 
   execFileSync("docker", [
@@ -427,6 +505,44 @@ test("conversation survives an Open WebUI container restart", async ({
   await expect(
     page.getByText(`Todo list confirmed: ${TODO_ACTION}`, { exact: true }),
   ).toBeVisible();
+
+  const eventCountBeforeRestartedTurn = (await providerEvents(request)).length;
+  await page.locator("#chat-input").fill("List my Todos after restart.");
+  await page.locator("#send-message-button").click();
+  const allow = page.locator(".tool-call-allow-button");
+  await expect(allow).toBeVisible({ timeout: 10_000 });
+  await allow.click();
+  await expect
+    .poll(async () => (await providerEvents(request)).length, {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(eventCountBeforeRestartedTurn + 1);
+
+  const restartedTurnEvents = (await providerEvents(request)).slice(
+    eventCountBeforeRestartedTurn,
+  );
+  expect(restartedTurnEvents).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "model_call",
+        request: expect.objectContaining({
+          tools: expect.arrayContaining([
+            expect.objectContaining({
+              function: expect.objectContaining({ name: "list_todos" }),
+            }),
+          ]),
+        }),
+      }),
+      expect.objectContaining({
+        kind: "model_call",
+        request: expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ role: "tool" }),
+          ]),
+        }),
+      }),
+    ]),
+  );
   expect(await hostTodos(request)).toMatchObject({
     ready: [expect.objectContaining({ action: TODO_ACTION })],
   });

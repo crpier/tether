@@ -205,6 +205,8 @@ TETHER_API_TOKEN=test-capture-token \
 TETHER_OPEN_WEBUI_TOKEN=test-open-webui-token \
 WEBUI_SECRET_KEY=test-webui-secret \
 WEBUI_URL=http://127.0.0.1:3000 \
+OPENAI_API_BASE_URLS=https://provider.example/v1 \
+OPENAI_API_KEYS=test-provider-token \
 docker compose config --quiet
 docker build .
 ```
@@ -229,7 +231,8 @@ On 2026-08-26, production still had the historical `tether_data` and
 `/srv/tether/pi-agent` was owned by `tether:tether` with mode `0700`. A fresh
 old-stack restic backup completed at 06:53 UTC. Preserve that backup, the old
 image, the old Git revision, and the Pi credential directory through the
-migration trial.
+migration trial. Post-migration backups use the distinct `tether-open-webui` tag,
+and their retention command excludes this legacy `tether` snapshot.
 
 This paragraph records the old stack only. The new stack has no model-cache
 volume and does not use `/srv/tether/pi-agent`.
@@ -260,12 +263,14 @@ Cutover is one explicitly approved maintenance operation:
 
 1. Merge a fully validated migration commit to `main`.
 2. Record the merge SHA and verify the locked rollback assets remain available.
-3. Run and verify one final old-stack backup.
+3. Run and verify one final old-stack backup with the legacy `tether` tag.
 4. Pull the VM checkout because `compose.yaml` and `deploy/` changed.
-5. Deploy the new host image and pinned Open WebUI image with a fresh
-   `open-webui-data` volume.
-6. Complete private first-admin, provider, Workspace Model, prompt, and tool
-   setup.
+5. Configure the selected OpenAI-compatible provider and optional voice
+   environment values, then deploy the new host image and pinned Open WebUI
+   image with a fresh `open-webui-data` volume.
+6. Complete private first-admin, Workspace Model, and prompt setup; verify the
+   environment-owned provider and Tether tool connection. Create a separate
+   `user` role account for all published browser and phone sessions.
 7. Run the linked-Todo cleanup only after reviewing its report.
 8. Publish only the new HTTPS 8443 Funnel listener.
 9. Run every production acceptance gate.

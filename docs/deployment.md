@@ -48,6 +48,8 @@ TETHER_API_TOKEN=<Android Health Connect token>
 TETHER_OPEN_WEBUI_TOKEN=<Open WebUI tool token>
 WEBUI_SECRET_KEY=<Open WebUI session secret>
 WEBUI_URL=http://127.0.0.1:3000
+OPENAI_API_BASE_URLS=<OpenAI-compatible API base URL>
+OPENAI_API_KEYS=<matching provider API key>
 ```
 
 Then build and start both services:
@@ -89,8 +91,9 @@ WEBUI_URL=https://<host>.<tailnet>.ts.net:8443
 Open WebUI also needs an API credential for a supported model provider. Pi's
 ChatGPT/Codex subscription login does not work with Open WebUI. Before cutover,
 choose one API-backed model with reliable native function calling and record
-its expected pricing. Store its credential through Open WebUI's supported
-environment settings or admin UI, never in source control.
+its expected pricing. Store its credential in production `.env` through the
+supported `OPENAI_API_BASE_URLS` and `OPENAI_API_KEYS` inputs, never in source
+control or runtime-only Admin UI configuration.
 
 ## Open WebUI safety settings
 
@@ -98,29 +101,57 @@ Compose starts the pinned release with:
 
 ```dotenv
 ENABLE_SIGNUP=false
-ENABLE_PERSISTENT_CONFIG=true
+ENABLE_PERSISTENT_CONFIG=false
 ENABLE_AUTOMATIONS=false
 ENABLE_CODE_EXECUTION=false
 ENABLE_CODE_INTERPRETER=false
+ENABLE_COMMUNITY_SHARING=false
 ENABLE_OLLAMA_API=false
 ENABLE_TOOL_PERMISSIONS=true
+ENABLE_MEMORIES=true
+ENABLE_WEB_SEARCH=false
+USER_PERMISSIONS_CHAT_SHARE=false
+USER_PERMISSIONS_CHAT_TEMPORARY=false
 ```
 
+Persistent configuration stays disabled so values restored from the Open WebUI
+database or changed through an admin endpoint cannot override these
+environment-owned defaults after restart. An authenticated admin can still
+change them in memory until the next restart; do not use the Admin UI to enable
+excluded features. The model provider, Tether tool server, native memory, and
+optional voice settings are supplied through supported environment inputs so
+they survive every restart without making database configuration authoritative.
+
 Do not enable arbitrary code execution, terminal access, external MCP servers,
-community Functions, Ollama, or Automations during the first release. Open
-WebUI `v0.11.1` tool permissions and approvals are experimental. They pause
+community Functions or filters, Ollama, or Automations during the first
+release. Keep community sharing disabled. Stock Open WebUI `v0.11.1` requires
+its plugin subsystem for OpenAPI tool servers too, so do not set
+`ENABLE_PLUGINS=false`; instead, keep the admin private and do not install local
+Tools or Functions. Tool permissions and approvals are experimental. They pause
 interactive chat tool calls but do not protect Automations.
 
 ## One-time Open WebUI setup
 
-Complete this privately before publishing the HTTPS 8443 Funnel listener. Keep
-the `open-webui-data` volume afterward; it preserves the setup.
+Complete this privately before publishing the HTTPS 8443 Funnel listener. From
+the operator workstation, open an SSH tunnel to the VM's loopback listener and
+then browse to <http://127.0.0.1:3000>:
 
-1. Open local Open WebUI and create the first account.
-2. Confirm the first account is an admin and a second signup is rejected.
-3. Add one API-backed provider and one default model with native function
-   calling.
-4. Add an OpenAPI tool server with these exact values:
+```sh
+ssh -N -L 3000:127.0.0.1:3000 tether@tether
+```
+
+Use this same private tunnel for later admin recovery. Keep the
+`open-webui-data` volume afterward; it preserves the setup.
+
+1. Set `OPENAI_API_BASE_URLS` and `OPENAI_API_KEYS` in production `.env`. Set the
+   `AUDIO_STT_*` and `AUDIO_TTS_*` values there before the voice acceptance gate.
+2. Start Open WebUI locally and create the first account.
+3. Confirm the first account is an admin and a second signup is rejected.
+4. Confirm the environment-owned OpenAI-compatible provider is available. In
+   Workspace Models, configure the selected provider base model and grant read
+   access to signed-in users; a shared Workspace Model cannot bypass its base
+   model's access control.
+5. Confirm the environment-owned OpenAPI tool server has these exact values:
 
    | Setting        | Value                                   |
    | -------------- | --------------------------------------- |
@@ -130,24 +161,31 @@ the `open-webui-data` volume afterward; it preserves the setup.
    | Key            | the dedicated `TETHER_OPEN_WEBUI_TOKEN` |
    | ID             | `tether`                                |
 
-5. Create one Workspace Model named `Tether`.
-6. Paste the checked-in
+6. Create one Workspace Model named `Tether` and grant read access to signed-in
+   users.
+7. Paste the checked-in
    [`deploy/open-webui/tether-system-prompt.md`](../deploy/open-webui/tether-system-prompt.md)
    as its system prompt.
-7. Attach only the `tether` tool server to that model and enable native function
+8. Attach only the `tether` tool server to that model and enable native function
    calling.
-8. Set tool approval mode to `ask`. During the trial, accept confirmation for
-   read tools as well as mutations.
-9. Enable Open WebUI native memory. Configure voice transcription and TTS for
-   the production acceptance gate.
-10. Configure Open WebUI's built-in web search only if wanted. Do not expose the
+9. From this private admin session, add a second account with the `user` role for
+   daily browser and phone use. Store both independent passwords in 1Password.
+10. Sign out of the admin account and sign in as the daily user. Do not use the
+    admin account through the published Funnel listener.
+11. Set the daily user's tool approval mode to `ask`. During the trial, accept
+    confirmation for read tools as well as mutations.
+12. Confirm native memory is enabled. Confirm the environment-owned voice
+    transcription and TTS configuration for the production acceptance gate.
+13. Keep built-in web search disabled for the first release. Do not expose the
     former Tether Tavily tool.
-11. Disable temporary chats and public sharing for the trial.
-12. Reconfirm that Automations, code execution, the code interpreter, Ollama,
-    external MCP servers, and community Functions are disabled.
+14. Confirm temporary chats and public sharing are unavailable to the daily user.
+15. Reconfirm that Automations, code execution, the code interpreter, Ollama,
+    and external MCP servers are disabled, and that no local Tools or Functions
+    are installed.
 
 Do not bootstrap Open WebUI by writing its private database or calling
-undocumented admin routes.
+undocumented admin routes. Do not configure provider, tool-server, or voice
+globals through the Admin UI because those runtime-only changes reset on restart.
 
 ## VM provisioning
 
@@ -184,7 +222,8 @@ migration remains local.
 1. Confirm the complete migration gate passes on the merged commit.
 2. Record the merge SHA and preserve the locked pre-migration Git revision,
    image, and `/srv/tether/pi-agent` directory.
-3. Run the final old-stack backup and verify that restic lists it.
+3. Run the final old-stack backup and verify that restic lists it with the
+   legacy `tether` tag. Post-migration retention excludes that tag.
 4. Pull the VM checkout because `compose.yaml` and `deploy/` change.
 5. Deploy the new host image and pinned Open WebUI image with a fresh
    `open-webui-data` volume.
@@ -211,7 +250,9 @@ all of them against the proposed production deployment before declaring cutover
 healthy:
 
 - Open WebUI login works on desktop and a physical phone at HTTPS 8443.
-- Signup is disabled and only the expected account exists.
+- Signup is disabled and only the private admin plus daily user accounts exist.
+- The published browser and phone sessions use the daily `user` role account;
+  the private admin account is reserved for setup and recovery.
 - The actual selected provider and model stream chat and perform native function
   calls with Tether's schema.
 - Interactive approval pauses, survives refresh, and resumes the same tool call.
@@ -220,7 +261,8 @@ healthy:
 - Open WebUI voice transcription and TTS both work from a physical phone over
   Funnel HTTPS 8443.
 - Conversations survive browser refresh and an Open WebUI container restart.
-- The browser does not receive `TETHER_OPEN_WEBUI_TOKEN`.
+- The daily-user browser receives HTTP 401 from admin configuration endpoints
+  and does not receive `TETHER_OPEN_WEBUI_TOKEN` during chat or tool calls.
 - An invalid token cannot read `/tools/openapi.json` or call a tool.
 - Open WebUI cannot reach the Docker socket, Tether volume, Pi directory, or
   host filesystem.
@@ -328,14 +370,19 @@ client-side encrypted restic backup to Backblaze B2. Each run contains:
 - a complete `open-webui-data.tar` archive of the Open WebUI volume
 - production `.env`
 
-The script briefly stops only `open-webui`, mounts its volume read-only in a
-short-lived container, archives it, and restarts the service. EXIT and error
-traps restart Open WebUI if a later command fails. It no longer backs up Pi
-sessions. Keep `/srv/tether/pi-agent` separately until the migration trial is
-accepted because full rollback still needs it.
+The script resolves the Open WebUI volume, stops only `open-webui` before either
+SQLite snapshot, mounts its volume read-only in a short-lived container, and
+restarts the service after the archive. This prevents an assistant tool mutation
+from spanning mismatched conversation and domain snapshots. EXIT and error traps
+restart Open WebUI if a later command fails. It no longer backs up Pi sessions.
+Keep `/srv/tether/pi-agent` separately until the migration trial is accepted
+because full rollback still needs it.
 
-Restic retains seven daily and four weekly snapshots. healthchecks.io receives
-start, success, and failure pings.
+Post-migration backups use the `tether-open-webui` tag. Restic filters that tag
+and groups by stable host and tag values, rather than each random staging path,
+before retaining seven daily and four weekly snapshots. The old-stack `tether`
+snapshot is therefore outside ordinary retention and must remain locked through
+the migration trial. healthchecks.io receives start, success, and failure pings.
 
 ### One-time backup setup
 

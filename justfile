@@ -49,7 +49,7 @@ bootstrap:
             f"{name}={secrets.token_urlsafe(48)}",
         )
     path.write_text(text)
-    print("wrote .env with independent Capture, tool-server, and WebUI secrets")
+    print("wrote .env with independent secrets; fill the model provider settings")
     PY
 
 # Install Python packages and the standalone Playwright smoke dependencies.
@@ -125,7 +125,7 @@ validate-env env_file=".env":
     set -a
     source "{{env_file}}"
     set +a
-    for name in TETHER_API_TOKEN TETHER_OPEN_WEBUI_TOKEN WEBUI_SECRET_KEY WEBUI_URL; do
+    for name in TETHER_API_TOKEN TETHER_OPEN_WEBUI_TOKEN WEBUI_SECRET_KEY WEBUI_URL OPENAI_API_BASE_URLS OPENAI_API_KEYS; do
       value="${!name:-}"
       if [ -z "$value" ] || [ "$value" = change-me ]; then
         echo "$name must be set to a non-template value in {{env_file}}" >&2
