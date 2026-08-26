@@ -213,6 +213,40 @@ describe("live chat turn", () => {
     });
   });
 
+  test("persisted active user message replaces its optimistic row", async () => {
+    let messages: Message[] = [];
+    let dispose: () => void = () => undefined;
+    const turn = createRoot((rootDispose) => {
+      dispose = rootDispose;
+      return createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve(messages),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+    });
+    await vi.waitFor(() => {
+      expect(turn.historyReady()).toBe(true);
+    });
+
+    turn.sendPrompt("new turn");
+    turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+    messages = [{ ...message("new turn", 1), turn_id: "turn-1" }];
+    turn.handleFrame({ keys: ["messages"], type: "invalidate" });
+
+    await vi.waitFor(() => {
+      expect(turn.rows().filter((row) => row.kind === "message")).toEqual([
+        expect.objectContaining({ id: "message-1", text: "new turn" }),
+      ]);
+    });
+    dispose();
+  });
+
   test("unchanged settled rows retain identity while a turn streams", async () => {
     let dispose: () => void = () => undefined;
     const turn = createRoot((rootDispose) => {
