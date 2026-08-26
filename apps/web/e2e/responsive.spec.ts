@@ -24,7 +24,24 @@ const DESKTOP = { width: 1280, height: 860 };
 
 const LONG_CONVERSATION_ID = "018f0000-0000-7000-8000-000000000307";
 
-function longMessage(seq: number, role: "assistant" | "user") {
+type ChatFixtureMessage = {
+  content: string;
+  conversation_id: string;
+  created_at: string;
+  id: string;
+  pi_message_id: null;
+  role: "assistant" | "scheduled" | "tool" | "user";
+  seq: number;
+  tool_args: unknown;
+  tool_name: string | null;
+  tool_result: unknown;
+  turn?: Record<string, unknown>;
+};
+
+function longMessage(
+  seq: number,
+  role: "assistant" | "user",
+): ChatFixtureMessage {
   return {
     content: `Long mobile transcript message ${seq.toString()}: ${"Tether should keep the composer reachable while history scrolls independently. ".repeat(8)}`,
     conversation_id: LONG_CONVERSATION_ID,
@@ -377,6 +394,79 @@ test("desktop chat keeps the model selector reasonably narrow", async ({
   expect(selectorBox.width).toBeLessThanOrEqual(384);
   expect(selectorBox.width).toBeLessThan(composerBox.width * 0.6);
 });
+
+for (const viewport of [PHONE, DESKTOP]) {
+  test(`chat bubbles and tool traces stay visually coherent at ${viewport.width.toString()}px`, async ({
+    page,
+    login,
+  }) => {
+    await page.setViewportSize(viewport);
+    await serveLongChat(page, [
+      {
+        ...longMessage(1, "user"),
+        content: "Keep this dark bubble coherent",
+      },
+      {
+        ...longMessage(2, "user"),
+        content: "Review recent email",
+        role: "scheduled",
+        turn: {
+          failure_code: null,
+          failure_summary: null,
+          intended_fire_at: "2026-08-26T03:00:00Z",
+          occurrence_id: "018f0000-0000-7000-8000-000000000399",
+          origin: "scheduled",
+          status: "succeeded",
+          trigger_id: "018f0000-0000-7000-8000-000000000398",
+        },
+      },
+      {
+        ...longMessage(3, "assistant"),
+        content: "",
+        role: "tool",
+        tool_args: { query: "newer_than:1d" },
+        tool_name: "search_gmail",
+        tool_result: { details: { result: { messages: [{}, {}] } } },
+      },
+      {
+        ...longMessage(4, "assistant"),
+        content: "",
+        role: "tool",
+        tool_args: { message_id: "message-1" },
+        tool_name: "read_gmail_message",
+        tool_result: { ok: true },
+      },
+    ]);
+    await login();
+
+    const userText = page.getByText("Keep this dark bubble coherent");
+    const scheduledText = page.getByText("Review recent email");
+    await expect(userText).toBeVisible();
+    await expect(scheduledText).toBeVisible();
+    for (const content of [userText, scheduledText]) {
+      expect(
+        await content.evaluate(
+          (element) => getComputedStyle(element).backgroundColor,
+        ),
+      ).toBe("rgba(0, 0, 0, 0)");
+    }
+
+    const activity = page.getByRole("article", { name: "Tool activity" });
+    const summaries = activity.locator("button[aria-expanded]");
+    await expect(summaries).toHaveCount(2);
+    for (let index = 0; index < 2; index += 1) {
+      expect(
+        (await boundingBox(summaries.nth(index))).height,
+      ).toBeLessThanOrEqual(30);
+    }
+    expect(
+      await activity
+        .getByText("Searched Gmail · 2 results")
+        .evaluate((element) => getComputedStyle(element).fontSize),
+    ).toBe("12px");
+    expect((await boundingBox(activity)).height).toBeLessThanOrEqual(66);
+  });
+}
 
 for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
   test(`chat stays anchored and composeable at ${viewport.width.toString()}px`, async ({

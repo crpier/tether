@@ -212,6 +212,7 @@ describe("Chat view", () => {
 
     expect(user).toHaveAttribute("data-role", "user");
     expect(user).toHaveAttribute("data-message-id", "user-host-id");
+    expect(within(user).getByText("hello")).toHaveClass("chat-message-plain");
     expect(assistant).toHaveAttribute("data-role", "assistant");
     expect(assistant).toHaveAttribute("data-message-id", "assistant-host-id");
     expect(composer).toHaveAttribute("data-prompt-input");
@@ -696,7 +697,10 @@ describe("Chat view", () => {
 
     expect(await screen.findByText("Searched Gmail · 2 results")).toBeVisible();
     expect(screen.getByText("Read email")).toBeVisible();
+    const activity = screen.getByLabelText("Tool activity");
     expect(screen.getAllByLabelText("Tool activity")).toHaveLength(1);
+    expect(activity).toHaveClass("chat-tool-group");
+    expect(activity.querySelectorAll(".chat-tool-trace")).toHaveLength(2);
   });
 
   test("undoes a completed archive from its action receipt", async () => {
@@ -727,9 +731,10 @@ describe("Chat view", () => {
       type: "chat",
     });
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Undo archive" }),
-    );
+    const undo = await screen.findByRole("button", { name: "Undo archive" });
+    expect(undo.parentElement).toHaveClass("items-center");
+    expect(undo.previousElementSibling).toHaveClass("chat-tool-trace");
+    fireEvent.click(undo);
 
     await waitFor(() => {
       expect(host.chat.undoGmailArchiveCalls).toEqual(["message-1"]);
