@@ -54,15 +54,21 @@ services:
       ENABLE_AUTOMATIONS: "false"
       ENABLE_CODE_EXECUTION: "false"
       ENABLE_CODE_INTERPRETER: "false"
+      ENABLE_COMMUNITY_SHARING: "false"
+      ENABLE_MEMORIES: "true"
       ENABLE_OLLAMA_API: "false"
-      ENABLE_PERSISTENT_CONFIG: "true"
+      ENABLE_OPENAI_API: "true"
+      ENABLE_PERSISTENT_CONFIG: "false"
       ENABLE_SIGNUP: "false"
       ENABLE_TOOL_PERMISSIONS: "true"
+      ENABLE_WEB_SEARCH: "false"
       OFFLINE_MODE: "true"
       OPENAI_API_BASE_URLS: http://fake-provider:8081/v1
       OPENAI_API_KEYS: ${TETHER_SMOKE_PROVIDER_TOKEN:?TETHER_SMOKE_PROVIDER_TOKEN must be set}
       TOOL_SERVER_CONNECTIONS: >-
-        [{"url":"http://host:8000","path":"/tools/openapi.json","type":"openapi","auth_type":"bearer","key":"${TETHER_SMOKE_TOOL_TOKEN:?TETHER_SMOKE_TOOL_TOKEN must be set}","config":{"enable":true,"access_grants":[]},"info":{"id":"tether-smoke","name":"Tether Smoke","description":"Real Tether domain capabilities for the Open WebUI integration smoke."}}]
+        [{"url":"http://host:8000","path":"/tools/openapi.json","type":"openapi","auth_type":"bearer","key":"${TETHER_SMOKE_TOOL_TOKEN:?TETHER_SMOKE_TOOL_TOKEN must be set}","config":{"enable":true,"access_grants":[{"principal_type":"user","principal_id":"*","permission":"read"}]},"info":{"id":"tether-smoke","name":"Tether Smoke","description":"Real Tether domain capabilities for the Open WebUI integration smoke."}}]
+      USER_PERMISSIONS_CHAT_SHARE: "false"
+      USER_PERMISSIONS_CHAT_TEMPORARY: "false"
       WEBUI_SECRET_KEY: smoke-webui-secret-key-longer-than-thirty-two-bytes
       WEBUI_URL: http://127.0.0.1
     ports:

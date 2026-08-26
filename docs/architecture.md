@@ -82,10 +82,22 @@ The image has its own `open-webui-data` volume. It does not mount the Docker
 socket, Tether data, host files, or credentials. Tether does not fork Open
 WebUI, rebuild its frontend, inject JavaScript, or add custom routes.
 
-The initial configuration disables Automations, code execution, the code
-interpreter, and Ollama. Tool permissions remain enabled. Open WebUI `v0.11.1`
-tool permissions and approvals are experimental. Interactive approvals do not
+Environment-enforced configuration disables persistent configuration,
+Automations, code execution, the code interpreter, and Ollama. Disabling
+persistent configuration prevents restored or admin-modified database values
+from overriding those defaults after restart. An authenticated admin can still
+change in-memory values until the next restart, so the operator must not enable
+the excluded features. Provider, Tether tool-server, native-memory, and optional
+voice defaults come from supported environment inputs instead of global Admin UI
+configuration. Tool permissions remain enabled. Open WebUI `v0.11.1` tool
+permissions and approvals are experimental. Interactive approvals do not
 protect Automations, so Automations remain disabled.
+
+The first account is a private setup-and-recovery administrator. Regular browser
+and phone sessions use a separate `user` role account. Open WebUI's admin tool
+configuration endpoint can return server credentials to an administrator, so
+the admin account is not the daily chat identity and is used only before the
+public Funnel listener is enabled or through private maintenance access.
 
 Open WebUI requires an API credential for a supported model provider. Pi's
 ChatGPT/Codex subscription authentication is not compatible with Open WebUI.
@@ -122,15 +134,18 @@ which lets the old release use the existing databases during rollback.
 
 Open WebUI keeps its own SQLite-backed state in `open-webui-data`. This volume
 contains accounts, configuration, conversations, native memory, and tool-server
-setup. The normal backup stops Open WebUI briefly and archives this complete
-volume before sending it to restic with Tether's SQLite snapshots and the
-production environment file.
+setup. The normal backup stops Open WebUI before either Tether SQLite snapshot,
+keeps it stopped through the complete volume archive, and then restarts it
+before sending the coherent backup set and production environment file to
+restic.
 
 ## Security
 
 There are three independent boundaries:
 
 - Open WebUI authenticates people and owns its browser sessions on HTTPS 8443.
+- The daily Open WebUI account has the `user` role and cannot read admin
+  configuration endpoints containing server credentials.
 - Open WebUI authenticates to Tether tools with `TETHER_OPEN_WEBUI_TOKEN` over
   the Compose network.
 - Android Health Connect authenticates to the host with `TETHER_API_TOKEN` on

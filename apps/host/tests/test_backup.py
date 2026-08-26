@@ -58,6 +58,8 @@ def _run_backup(*, failure_mode: FailureMode | None = None) -> BackupRun:
                     "TETHER_OPEN_WEBUI_TOKEN=tool-secret\n",
                     "WEBUI_SECRET_KEY=webui-secret\n",
                     "WEBUI_URL=http://127.0.0.1:3000\n",
+                    "OPENAI_API_BASE_URLS=https://provider.example/v1\n",
+                    "OPENAI_API_KEYS=provider-secret\n",
                 )
             )
         )
@@ -178,6 +180,20 @@ def test_backup_snapshots_both_sqlite_sources_of_truth() -> None:
 
 
 @test(mark="slow")
+def test_backup_retention_groups_current_architecture_snapshots_across_paths() -> None:
+    """Random staging paths do not defeat retention or include rollback backups."""
+    run = _run_backup()
+
+    assert_eq(run.result.returncode, 0)
+    restic_commands = run.restic_log.splitlines()
+    assert_in("--tag tether-open-webui --host tether-vm", restic_commands[0])
+    assert_eq(
+        restic_commands[1],
+        "forget --host tether-vm --tag tether-open-webui --group-by host,tags --keep-daily 7 --keep-weekly 4 --prune",
+    )
+
+
+@test(mark="slow")
 def test_backup_archives_the_open_webui_compose_volume_read_only() -> None:
     """The stopped service's resolved data volume is archived without mutation."""
     run = _run_backup()
@@ -200,8 +216,19 @@ def test_backup_archives_the_open_webui_compose_volume_read_only() -> None:
     assert_false("stop host" in run.docker_log)
     assert_false("volume rm" in run.docker_log)
     archive_position = run.docker_log.index("python:3.12-slim@sha256:")
+    stop_position = run.docker_log.index("stop open-webui")
+    tether_snapshot_position = run.docker_log.index("python3 - /data/tether.sqlite3")
+    telemetry_snapshot_position = run.docker_log.index(
+        "python3 - /data/telemetry.sqlite3"
+    )
     restart_position = run.docker_log.index("start open-webui")
-    assert_true(archive_position < restart_position)
+    assert_true(
+        stop_position
+        < tether_snapshot_position
+        < telemetry_snapshot_position
+        < archive_position
+        < restart_position
+    )
 
 
 @test(mark="slow")
@@ -235,6 +262,7 @@ def test_backup_fails_as_a_whole_when_either_database_is_incomplete(
     assert_eq(run.result.returncode, 42)
     assert_eq(run.restic_log, "")
     assert_in("https://health.example/id/fail", run.curl_log)
+    assert_in("start open-webui", run.docker_log)
     assert_false(
         any(
             "https://health.example/id" in line.split()

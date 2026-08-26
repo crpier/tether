@@ -32,8 +32,14 @@
 - The first-release OpenAPI allowlist has exactly 17 Bucket, Todo, and Health
   Connect operations. Bucket search is deterministic SQLite.
 - Keep Automations, code execution, the code interpreter, and Ollama disabled.
-  Keep tool permissions enabled. Open WebUI `v0.11.1` approvals are
-  experimental and do not protect Automations.
+  Keep persistent configuration disabled and tool permissions enabled so stored
+  settings cannot override these environment-owned defaults after restart.
+  Provider, tool-server, and voice global configuration must come from the
+  supported environment inputs; Admin UI changes are runtime-only. Open WebUI
+  `v0.11.1` approvals are experimental and do not protect Automations.
+- Keep the first admin account private for setup and recovery. Daily chat uses a
+  separate `user` role account, which must receive HTTP 401 from admin
+  configuration endpoints and must not receive `TETHER_OPEN_WEBUI_TOKEN`.
 
 ## Production deployment
 
@@ -50,8 +56,10 @@
 - Pull the VM checkout before deployment when `compose.yaml` or `deploy/`
   changes.
 - Backups must include the full Open WebUI volume as well as Tether SQLite data.
-  A full migration rollback needs the old Git revision, old image, and preserved
-  `/srv/tether/pi-agent` directory.
+  Stop Open WebUI before taking either SQLite snapshot and keep it stopped
+  through its volume archive. Post-migration retention must not include the
+  locked legacy snapshot. A full migration rollback needs the old Git revision,
+  old image, and preserved `/srv/tether/pi-agent` directory.
 
 ## Debugging
 
@@ -102,6 +110,8 @@ TETHER_API_TOKEN=test-capture-token \
 TETHER_OPEN_WEBUI_TOKEN=test-open-webui-token \
 WEBUI_SECRET_KEY=test-webui-secret \
 WEBUI_URL=http://127.0.0.1:3000 \
+OPENAI_API_BASE_URLS=https://provider.example/v1 \
+OPENAI_API_KEYS=test-provider-token \
 docker compose config --quiet
 docker build .
 just validate-host-logs
@@ -110,10 +120,10 @@ just validate-open-webui-smoke
 
 The Open WebUI smoke must use the real pinned image, real host, a fake
 OpenAI-compatible model, and Chromium. It must cover first-admin creation,
-authenticated schema discovery, interactive approval, a read tool, Todo create
-and list, refresh persistence, and Open WebUI restart persistence. Console
-errors, page errors, 5xx responses, and unexpected request failures fail the
-smoke.
+admin-created daily-user isolation, authenticated schema discovery, an approval
+that survives refresh, a read tool, Todo create and list, conversation
+persistence, and Open WebUI restart persistence. Console errors, page errors,
+5xx responses, and unexpected request failures fail the smoke.
 
 Android gate, from `apps/capture-android` with a compatible SDK and JDK:
 

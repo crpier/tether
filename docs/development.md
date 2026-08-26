@@ -30,6 +30,8 @@ TETHER_API_TOKEN=<Android Health Connect token>
 TETHER_OPEN_WEBUI_TOKEN=<Open WebUI tool-server token>
 WEBUI_SECRET_KEY=<Open WebUI session secret>
 WEBUI_URL=http://127.0.0.1:3000
+OPENAI_API_BASE_URLS=<OpenAI-compatible provider base URL>
+OPENAI_API_KEYS=<provider API credential>
 ```
 
 `TETHER_OPEN_WEBUI_TOKEN` and `TETHER_API_TOKEN` must be different. Review the
@@ -53,9 +55,10 @@ to delete both applications' local state.
 
 ## Open WebUI setup
 
-Open <http://127.0.0.1:3000> and perform the one-time setup documented in
+With `OPENAI_API_BASE_URLS` and `OPENAI_API_KEYS` set in `.env`, open
+<http://127.0.0.1:3000> and perform the one-time setup documented in
 [deployment.md](./deployment.md#one-time-open-webui-setup). For local work, the
-tool connection still uses:
+environment-owned tool connection uses:
 
 - URL `http://host:8000`
 - spec path `tools/openapi.json`
@@ -68,8 +71,10 @@ prerequisite for real model turns. Open WebUI cannot use the former Pi
 ChatGPT/Codex subscription login.
 
 Keep Automations, code execution, the code interpreter, and Ollama disabled.
-Keep tool permissions enabled. Approval mode starts at `ask`, but approvals in
-Open WebUI `v0.11.1` are experimental and do not protect Automations.
+Keep persistent configuration disabled and tool permissions enabled. Approval
+mode starts at `ask`, but approvals in Open WebUI `v0.11.1` are experimental and
+do not protect Automations. Global Admin UI changes are runtime-only and reset
+on restart; configure provider and voice defaults through `.env` instead.
 
 ## Python iteration
 
@@ -154,6 +159,8 @@ TETHER_API_TOKEN=test-capture-token \
 TETHER_OPEN_WEBUI_TOKEN=test-open-webui-token \
 WEBUI_SECRET_KEY=test-webui-secret \
 WEBUI_URL=http://127.0.0.1:3000 \
+OPENAI_API_BASE_URLS=https://provider.example/v1 \
+OPENAI_API_KEYS=test-provider-token \
 docker compose config --quiet
 docker build .
 ```
@@ -171,10 +178,11 @@ just validate-open-webui-smoke
 
 `just validate-open-webui-smoke` starts the real pinned Open WebUI image, the
 real host, a fake OpenAI-compatible provider, and Chromium. Its five tests cover
-first-admin creation, authenticated schema discovery, interactive approval,
-Todo create and list, refresh persistence, and Open WebUI restart persistence.
-Browser console errors, page errors, 5xx responses, and unexpected request
-failures fail the smoke.
+first-admin creation, admin-created daily-user isolation, authenticated schema
+discovery, an approval that survives refresh, Todo create and list, conversation
+persistence, and a fresh native tool call after Open WebUI restart. Browser
+console errors, page errors, 5xx responses, and unexpected request failures fail
+the smoke.
 
 Android Capture:
 
