@@ -4,9 +4,9 @@ Tracking issue: [#604](https://github.com/crpier/tether/issues/604)
 
 ## Status
 
-The local implementation is complete on the migration branch. Production still
-runs the locked pre-migration release. Deployment requires the production gates
-and explicit cutover approval recorded below.
+Production cut over to Open WebUI on 2026-08-26 at merged revision
+`9ca9e34b9a77244baa84e4a24e017e7daf51424c`. All production acceptance gates
+passed, and the user explicitly approved completion after reviewing the results.
 
 The implementation uses stock Open WebUI `v0.11.1` at digest
 `sha256:6bb1fbe8ab0a3e0456067f493044ffb66a30a65a34be47f6a5862176a370dd16`
@@ -56,8 +56,8 @@ Open WebUI calls `http://host:8000` and reads `tools/openapi.json`. The browser
 does not receive `TETHER_OPEN_WEBUI_TOKEN`. Android continues to use the host's
 existing HTTPS 443 origin and the independent `TETHER_API_TOKEN`.
 
-Open WebUI binds local port `3000`. The future cutover publishes it with a
-separate Funnel listener on HTTPS 8443:
+Open WebUI binds local port `3000`. Production publishes it with a separate
+Funnel listener on HTTPS 8443:
 
 ```sh
 sudo tailscale funnel --bg --https=8443 3000
@@ -226,40 +226,44 @@ The locked pre-migration production release is Git commit and image tag
 `c956fff`. Its image digest is
 `sha256:9c684b0ac3bb1863ff56eeb48dbcbf0bab4d523fd836948bda108ba7f39d238c`.
 
-On 2026-08-26, production still had the historical `tether_data` and
-`tether_model-cache` volumes. Funnel HTTPS 443 proxied to host port `8000`, and
-`/srv/tether/pi-agent` was owned by `tether:tether` with mode `0700`. A fresh
-old-stack restic backup completed at 06:53 UTC. Preserve that backup, the old
-image, the old Git revision, and the Pi credential directory through the
-migration trial. Post-migration backups use the distinct `tether-open-webui` tag,
-and their retention command excludes this legacy `tether` snapshot.
+Immediately before cutover on 2026-08-26, production had the historical
+`tether_data` and `tether_model-cache` volumes. Funnel HTTPS 443 proxied to host
+port `8000`, and `/srv/tether/pi-agent` was owned by `tether:tether` with mode
+`0700`. Final old-stack restic snapshot `1a5573ba` completed at 11:47 UTC with
+the legacy `tether` tag. Preserve that snapshot, the old image, the old Git
+revision, and the Pi credential directory through the migration trial.
+Post-migration backups use the distinct `tether-open-webui` tag, and their
+retention command excludes the legacy snapshots.
 
 This paragraph records the old stack only. The new stack has no model-cache
 volume and does not use `/srv/tether/pi-agent`.
 
-## Remaining production acceptance gates
+## Production acceptance record
 
-Local implementation is not production migration. Complete all of these gates
-against the proposed production deployment:
+All migration gates passed against production on 2026-08-26:
 
-1. Configure the actual provider and model, then prove native function calling
-   with Tether's schema and real tool continuation.
-2. On a physical phone, prove Open WebUI voice transcription and TTS over
-   Tailscale Funnel HTTPS 8443.
-3. Run a full restore drill into a fresh Compose project. Recover both Tether
-   SQLite databases, `.env`, the complete Open WebUI volume, admin access,
-   provider configuration, tool-server configuration, and a persisted
-   conversation.
-4. Run a physical Android Health Connect sync against the unchanged HTTPS 443
-   host origin with `TETHER_API_TOKEN`.
-5. Review the complete results and obtain explicit production cutover approval.
+1. The environment-owned OpenAI provider and `gpt-5.6-luna` model performed
+   native Todo, Bucket, and Health Connect calls with real approval and tool
+   continuation. The `Tether` Workspace Model sets `reasoning_effort` to `none`
+   for provider-compatible native function calling.
+2. Daily-user login, voice transcription, and TTS worked on a physical phone
+   over Tailscale Funnel HTTPS 8443.
+3. Post-migration restic snapshot `6f382155` restored into a fresh, isolated
+   Compose project. The drill recovered both Tether SQLite databases, `.env`,
+   the complete Open WebUI volume, both accounts, provider and tool-server
+   configuration, daily-user settings, and a persisted conversation.
+4. Android Capture completed a physical Health Connect sync against the
+   unchanged HTTPS 443 host origin with `TETHER_API_TOKEN`.
+5. The user reviewed the complete results and explicitly approved the cutover.
 
-Do not claim production is migrated until all five gates pass and cutover is
-approved.
+Additional production checks covered the exact 17-operation schema, disabled
+signup, admin/daily-user isolation, invalid-token rejection, browser token
+isolation, container mounts, secret-free logs, conversation restart persistence,
+and separate legacy and post-migration backup retention.
 
-## Future production cutover
+## Production cutover record
 
-Cutover is one explicitly approved maintenance operation:
+The explicitly approved cutover completed on 2026-08-26:
 
 1. Merge a fully validated migration commit to `main`.
 2. Record the merge SHA and verify the locked rollback assets remain available.
@@ -274,7 +278,7 @@ Cutover is one explicitly approved maintenance operation:
 7. Run the linked-Todo cleanup only after reviewing its report.
 8. Publish only the new HTTPS 8443 Funnel listener.
 9. Run every production acceptance gate.
-10. Start the trial only after explicit approval. Do not run the old Pi stack in
+10. Start the trial only after explicit approval. The old Pi stack is not run in
     parallel.
 
 Do not import old Tether chats, mirror Open WebUI transcripts, or copy Open
@@ -298,6 +302,5 @@ UI. Open WebUI conversations and native memories will not. This is accepted.
 
 ## Completion
 
-The local implementation and its record are complete. Production completion is
-separate: every production acceptance gate must pass, and the user must
-explicitly approve cutover.
+The implementation, production cutover, acceptance gates, and explicit approval
+are complete. Routine updates now follow [`deployment.md`](./deployment.md).

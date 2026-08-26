@@ -1,11 +1,8 @@
 # Deploying Tether
 
-This is the runbook for the target architecture in
-[ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md). The migration is
-still local. Production continues to run the locked pre-migration release until
-the migration PR is merged and a separate cutover is explicitly approved.
-
-Do not use the cutover commands against production during migration work.
+This is the production runbook for the architecture in
+[ADR 0030](./adr/0030-open-webui-owns-assistant-runtime.md). Production cut over
+to Open WebUI on 2026-08-26 at initial revision `9ca9e34`.
 
 ## Deployment shape
 
@@ -214,10 +211,10 @@ $EDITOR .env restic.env
 Keep `/srv/tether/pi-agent` intact through the migration trial. The new stack
 does not mount or use it, but full rollback needs its old credentials and mode.
 
-## Migration cutover
+## Historical migration cutover
 
-Cutover is a future maintenance operation. Do not run these steps while the
-migration remains local.
+Cutover completed on 2026-08-26. These steps are retained as the audit record;
+do not repeat them against the live deployment.
 
 1. Confirm the complete migration gate passes on the merged commit.
 2. Record the merge SHA and preserve the locked pre-migration Git revision,
@@ -245,9 +242,9 @@ WebUI state into Tether.
 
 ## Production acceptance gates
 
-Local implementation and the standalone smoke do not satisfy these gates. Run
-all of them against the proposed production deployment before declaring cutover
-healthy:
+Local implementation and the standalone smoke do not satisfy these gates. The
+2026-08-26 migration passed all of them against production. Use the same gates
+for changes that could affect this deployment shape:
 
 - Open WebUI login works on desktop and a physical phone at HTTPS 8443.
 - Signup is disabled and only the private admin plus daily user accounts exist.
