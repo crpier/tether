@@ -216,6 +216,17 @@ describe("Chat view", () => {
     expect(assistant).toHaveAttribute("data-role", "assistant");
     expect(assistant).toHaveAttribute("data-message-id", "assistant-host-id");
     expect(composer).toHaveAttribute("data-prompt-input");
+    const transcript = screen.getByRole("log", { name: "Chat transcript" });
+    expect(transcript).toHaveAttribute("tabindex", "0");
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 1000 },
+      scrollTop: { configurable: true, value: 0, writable: true },
+    });
+    fireEvent.scroll(transcript);
+    expect(
+      screen.getByRole("button", { name: "Scroll to bottom" }),
+    ).toBeInTheDocument();
   });
 
   test("does not expose a destructive transcript reset", async () => {
@@ -289,10 +300,14 @@ describe("Chat view", () => {
       type: "chat",
     });
 
-    expect(await screen.findByText("63k context")).toHaveAttribute(
-      "title",
-      "63k of 200k tokens · 32% of pi working context",
-    );
+    const contextTrigger = await screen.findByRole("button", {
+      name: "31.6% Model context usage",
+    });
+    contextTrigger.focus();
+    expect(
+      await screen.findByRole("progressbar", { name: "Context usage" }),
+    ).toHaveAttribute("aria-valuenow", "63100");
+    expect(screen.getByText("63K / 200K")).toBeInTheDocument();
   });
 
   test("warns when pi working context nears capacity", async () => {
@@ -309,9 +324,11 @@ describe("Chat view", () => {
       type: "chat",
     });
 
-    expect(await screen.findByText("182k context")).toHaveClass(
-      "text-destructive",
-    );
+    expect(
+      await screen.findByRole("button", {
+        name: "91% Model context usage",
+      }),
+    ).toHaveClass("text-destructive");
   });
 
   test("hides a confirmed zero skill count", async () => {
@@ -1276,6 +1293,7 @@ describe("Chat view", () => {
     expect(
       within(context).getByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
+    expect(within(context).getByRole("separator")).toBeInTheDocument();
     expect(
       await within(context).findByRole("slider", { name: "Model profile" }),
     ).toBeInTheDocument();

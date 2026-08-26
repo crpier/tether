@@ -1,5 +1,15 @@
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
+  ChatContainer,
+  ChatContainerContent,
+  ChatContainerScrollAnchor,
+  Checkpoint,
+  CheckpointIcon,
+  Context as KitnContext,
+  ContextContent,
+  ContextContentHeader,
+  ContextTrigger,
+  ConversationList,
   Message as KitnMessage,
   MessageActions as KitnMessageActions,
   MessageContent as KitnMessageContent,
@@ -8,6 +18,7 @@ import {
   Reasoning,
   ReasoningContent,
   ReasoningTrigger,
+  ScrollButton,
   Textarea as KitnTextarea,
   Tool as KitnTool,
 } from "@kitn.ai/ui/solid";
@@ -36,9 +47,12 @@ import {
   type UpdateConversation,
 } from "../host/chat";
 import { ApiError } from "../host/error";
-import { isPinned, restoredScrollTop } from "../chat-scroll";
 import { createConversationMode } from "../conversation-mode";
-import { projectTimelineRows } from "../kitn-chat-projection";
+import {
+  conversationHref,
+  projectConversations,
+  projectTimelineRows,
+} from "../kitn-chat-projection";
 import type { KitnTimelineItem } from "../kitn-chat-projection";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
@@ -88,13 +102,6 @@ const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
 
 const CHAT_INPUT_MAX_ROWS = 10;
-
-function formatContextTokens(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${(Math.round(tokens / 100_000) / 10).toString()}m`;
-  }
-  return `${Math.round(tokens / 1_000).toString()}k`;
-}
 
 function fitChatInputToContent(element: HTMLTextAreaElement): void {
   element.style.height = "auto";
@@ -869,7 +876,7 @@ function MessageRows(props: {
   onUndoArchive: (messageId: string) => Promise<void>;
 }) {
   let viewport: HTMLElement | undefined;
-  const [pinned, setPinned] = createSignal(true);
+  let root: HTMLDivElement | undefined;
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activeMatch, setActiveMatch] = createSignal(0);
@@ -915,47 +922,17 @@ function MessageRows(props: {
     void searchQuery();
     setActiveMatch(0);
   });
-  let pendingRestore: { scrollHeight: number; scrollTop: number } | null = null;
-
-  const updatePinned = () => {
-    if (!viewport) {
-      setPinned(true);
-      return;
-    }
-    setPinned(
-      isPinned(
-        viewport.scrollTop,
-        viewport.scrollHeight,
-        viewport.clientHeight,
-      ),
-    );
-  };
-  const scrollToEnd = () => {
-    if (viewport) {
-      viewport.scrollTop = viewport.scrollHeight;
-    }
-  };
-
-  createEffect(() => {
-    void props.rows;
-    void props.working;
-    if (pendingRestore !== null && viewport !== undefined) {
-      const { scrollHeight, scrollTop } = pendingRestore;
-      viewport.scrollTop = restoredScrollTop(
-        scrollTop,
-        scrollHeight,
-        viewport.scrollHeight,
-      );
-      pendingRestore = null;
-      return;
-    }
-    if (pinned()) {
-      queueMicrotask(scrollToEnd);
-    }
+  onMount(() => {
+    viewport = root?.querySelector<HTMLElement>("[role='log']") ?? undefined;
   });
 
   return (
-    <div class="relative flex min-h-0 flex-1 flex-col gap-2">
+    <div
+      ref={(element) => {
+        root = element;
+      }}
+      class="relative flex min-h-0 flex-1 flex-col gap-2"
+    >
       <Show when={props.searchEnabled}>
         <Show
           fallback={
@@ -1038,93 +1015,76 @@ function MessageRows(props: {
           </div>
         </Show>
       </Show>
-      <section
-        ref={(element) => {
-          viewport = element;
-        }}
+      <ChatContainer
         aria-label={props.historyReady ? "Chat transcript" : undefined}
-        class="bg-card flex-1 space-y-3 overflow-y-auto [overflow-anchor:none] rounded-xl border p-3 shadow-sm"
-        onScroll={() => {
-          updatePinned();
-          if (
-            viewport !== undefined &&
-            viewport.scrollTop < NEAR_TOP_THRESHOLD_PX
-          ) {
-            const snapshot = {
-              scrollHeight: viewport.scrollHeight,
-              scrollTop: viewport.scrollTop,
-            };
-            if (props.onNearTop()) {
-              pendingRestore = snapshot;
-            }
+        class="bg-card relative flex-1 rounded-xl border shadow-sm"
+        onScroll={(event) => {
+          viewport = event.currentTarget;
+          if (event.currentTarget.scrollTop < NEAR_TOP_THRESHOLD_PX) {
+            props.onNearTop();
           }
         }}
       >
-        <For each={displayRowIds()}>
-          {(_id, index) => (
-            <Show when={displayRows()[index()]}>
-              {(row) => {
-                const matches = () => matchingIds().includes(row().id);
-                const active = () => matches() && activeMatchId() === row().id;
-                return (
-                  <div
-                    ref={(element) => {
-                      rowElements.set(row().id, element);
-                    }}
-                    class={
-                      active() ? "rounded-lg ring-2 ring-primary/60" : undefined
-                    }
-                    data-search-match={
-                      active() ? "active" : matches() ? "match" : undefined
-                    }
-                  >
-                    <MessageRow
-                      isSpoken={props.isSpoken}
-                      onCopy={props.onCopy}
-                      onOpenArtifact={props.onOpenArtifact}
-                      onOpenEvidence={props.onOpenEvidence}
-                      onRecordFeedback={props.onRecordFeedback}
-                      onUndoArchive={props.onUndoArchive}
-                      row={row()}
-                      transcriptItemNumber={index() + 1}
-                    />
-                  </div>
-                );
-              }}
-            </Show>
-          )}
-        </For>
-        <Show when={props.working && props.startedAt !== null}>
-          <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
-        </Show>
-        <Show when={props.stopped}>
-          <p
-            aria-label="Generation stopped"
-            class="text-muted-foreground mr-auto flex items-center gap-1.5 py-0.5 text-xs italic"
-            role="status"
-          >
-            <span
-              aria-hidden="true"
-              class="bg-muted-foreground/60 inline-block size-1.5 rounded-full"
-            />
-            Generation stopped.
-          </p>
-        </Show>
-      </section>
-      <Show when={!pinned()}>
-        <Button
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 shadow"
-          onClick={() => {
-            setPinned(true);
-            scrollToEnd();
-          }}
-          size="sm"
-          type="button"
-          variant="secondary"
-        >
-          Jump to latest ↓
-        </Button>
-      </Show>
+        <ChatContainerContent class="space-y-3 p-3">
+          <For each={displayRowIds()}>
+            {(_id, index) => (
+              <Show when={displayRows()[index()]}>
+                {(row) => {
+                  const matches = () => matchingIds().includes(row().id);
+                  const active = () =>
+                    matches() && activeMatchId() === row().id;
+                  return (
+                    <div
+                      ref={(element) => {
+                        rowElements.set(row().id, element);
+                      }}
+                      class={
+                        active()
+                          ? "rounded-lg ring-2 ring-primary/60"
+                          : undefined
+                      }
+                      data-search-match={
+                        active() ? "active" : matches() ? "match" : undefined
+                      }
+                    >
+                      <MessageRow
+                        isSpoken={props.isSpoken}
+                        onCopy={props.onCopy}
+                        onOpenArtifact={props.onOpenArtifact}
+                        onOpenEvidence={props.onOpenEvidence}
+                        onRecordFeedback={props.onRecordFeedback}
+                        onUndoArchive={props.onUndoArchive}
+                        row={row()}
+                        transcriptItemNumber={index() + 1}
+                      />
+                    </div>
+                  );
+                }}
+              </Show>
+            )}
+          </For>
+          <Show when={props.working && props.startedAt !== null}>
+            <WorkingIndicator startedAt={props.startedAt ?? Date.now()} />
+          </Show>
+          <Show when={props.stopped}>
+            <p
+              aria-label="Generation stopped"
+              class="text-muted-foreground mr-auto flex items-center gap-1.5 py-0.5 text-xs italic"
+              role="status"
+            >
+              <span
+                aria-hidden="true"
+                class="bg-muted-foreground/60 inline-block size-1.5 rounded-full"
+              />
+              Generation stopped.
+            </p>
+          </Show>
+          <ChatContainerScrollAnchor />
+        </ChatContainerContent>
+        <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+          <ScrollButton class="pointer-events-auto shadow" variant="outline" />
+        </div>
+      </ChatContainer>
     </div>
   );
 }
@@ -1182,6 +1142,14 @@ function ConversationPicker(props: {
   conversations: Conversation[];
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
+  const params = useParams<{ conversationId?: string }>();
+  const summaries = createMemo(() => projectConversations(props.conversations));
+  const activeId = createMemo(
+    () =>
+      params.conversationId ??
+      props.conversations.find((candidate) => candidate.kind === "main")?.id,
+  );
   let dialog: HTMLDivElement | undefined;
   const previouslyFocused = document.activeElement;
 
@@ -1240,33 +1208,40 @@ function ConversationPicker(props: {
         role="dialog"
         tabindex={-1}
       >
-        <div class="flex items-center justify-between">
-          <h2 class="font-semibold">Choose conversation</h2>
-          <Button
-            aria-label="Close conversation picker"
-            onClick={props.onClose}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            Close
-          </Button>
-        </div>
-        <nav class="mt-3 min-h-0 flex-1 overflow-y-auto flex flex-col gap-2">
-          <For each={props.conversations}>
-            {(candidate) => (
-              <A
-                class="rounded-md border px-3 py-2"
-                href={
-                  candidate.kind === "main" ? "/chat" : `/chat/${candidate.id}`
-                }
+        <ConversationList
+          activeId={activeId()}
+          class="min-h-0 flex-1"
+          compact
+          conversations={summaries()}
+          groups={[]}
+          header={
+            <div class="flex items-center justify-between px-3 py-2">
+              <h2 class="font-semibold">Choose conversation</h2>
+              <Button
+                aria-label="Close conversation picker"
                 onClick={props.onClose}
+                size="sm"
+                type="button"
+                variant="ghost"
               >
-                {conversationLabel(candidate, props.conversations)}
-              </A>
-            )}
-          </For>
-        </nav>
+                Close
+              </Button>
+            </div>
+          }
+          onNewChat={() => {
+            props.onClose();
+            navigate("/chat?new=1");
+          }}
+          onSelect={(id) => {
+            const selected = props.conversations.find(
+              (candidate) => candidate.id === id,
+            );
+            if (selected !== undefined) {
+              props.onClose();
+              navigate(conversationHref(selected));
+            }
+          }}
+        />
       </div>
     </>
   );
@@ -2131,31 +2106,38 @@ export function ChatPage() {
                     !historyIncomplete()
                   }
                 >
-                  <p
-                    class="text-muted-foreground text-xs"
+                  <Checkpoint
+                    aria-label="Pi session boundary"
+                    class="min-w-48 flex-1 text-xs"
+                    role="status"
                     title="Pi's working context resets after a few minutes idle; chat history stays."
                   >
-                    Next message starts a fresh working session
-                  </p>
+                    <CheckpointIcon />
+                    <span class="shrink-0">
+                      Next message starts a fresh working session
+                    </span>
+                  </Checkpoint>
                 </Show>
                 <Show when={visibleContextUsage()}>
                   {(usage) => {
-                    const roundedPercent = () =>
-                      Math.round(usage().contextPercent);
                     const severityClass = () =>
                       usage().contextPercent >= 90
-                        ? "border-destructive/50 text-destructive"
+                        ? "text-destructive"
                         : usage().contextPercent >= 70
-                          ? "border-amber-500/50 text-amber-700 dark:text-amber-300"
+                          ? "text-amber-700 dark:text-amber-300"
                           : "text-muted-foreground";
                     return (
-                      <span
-                        class={`rounded-full border px-2 py-0.5 text-xs tabular-nums ${severityClass()}`}
-                        role="status"
-                        title={`${formatContextTokens(usage().contextTokens)} of ${formatContextTokens(usage().contextWindow)} tokens · ${roundedPercent().toString()}% of pi working context`}
+                      <KitnContext
+                        maxTokens={usage().contextWindow}
+                        usedTokens={usage().contextTokens}
                       >
-                        {formatContextTokens(usage().contextTokens)} context
-                      </span>
+                        <ContextTrigger
+                          class={`h-7 gap-1 px-2 text-xs ${severityClass()}`}
+                        />
+                        <ContextContent>
+                          <ContextContentHeader />
+                        </ContextContent>
+                      </KitnContext>
                     );
                   }}
                 </Show>
@@ -2347,6 +2329,7 @@ export function ChatPage() {
                       conversationMode.start();
                     }}
                     onTranscript={handleVoiceTranscript}
+                    playbackState={() => conversationMode.playbackState()}
                     recordingCancelSignal={() =>
                       conversationMode.recordingCancelSignal()
                     }

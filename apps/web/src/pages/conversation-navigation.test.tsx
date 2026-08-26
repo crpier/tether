@@ -179,8 +179,8 @@ describe("Conversation navigation", () => {
     });
     fireEvent.click(
       within(screen.getByRole("region", { name: "Conversations" })).getByRole(
-        "link",
-        { name: "House" },
+        "button",
+        { name: /^House\b/ },
       ),
     );
 
@@ -271,14 +271,14 @@ describe("Conversation navigation", () => {
     host.chat.storedConversations = [conversation, working, unread, archived];
     renderApp(host, undefined, { path: "/chat" });
 
-    await screen.findByText("Working");
+    await screen.findByRole("button", { name: "Working Working" });
     const navigation = screen.getByRole("region", {
       name: "Conversations",
     });
     expect(
       within(navigation)
-        .getAllByRole("link")
-        .map((link) => link.textContent),
+        .getAllByRole("button")
+        .map((button) => button.textContent),
     ).toEqual(
       expect.arrayContaining([
         expect.stringContaining("Main Chat"),
@@ -288,11 +288,37 @@ describe("Conversation navigation", () => {
     );
     expect(within(navigation).queryByText("Archived")).not.toBeInTheDocument();
     expect(
-      within(navigation).getByLabelText("Working conversation"),
+      within(navigation).getByRole("button", { name: "Working Working" }),
     ).toBeVisible();
     expect(
-      within(navigation).getByLabelText("Unread conversation"),
+      within(navigation).getByRole("button", { name: "Unread Unread" }),
     ).toBeVisible();
+  });
+
+  test("filters Kitn conversation presentation without changing host order", async () => {
+    const garden = scoped("018f0000-0000-7000-8000-000000000104", "Garden");
+    const errands = scoped("018f0000-0000-7000-8000-000000000105", "Errands");
+    const host = new FakeHost({ authenticated: true });
+    host.chat.storedConversations = [conversation, garden, errands];
+    renderApp(host, undefined, { path: "/chat" });
+
+    await screen.findByRole("button", { name: /^Garden\b/ });
+    const navigation = screen.getByRole("region", {
+      name: "Conversations",
+    });
+    fireEvent.input(
+      within(navigation).getByRole("textbox", { name: "Search chats" }),
+      {
+        target: { value: "garden" },
+      },
+    );
+
+    expect(
+      within(navigation).getByRole("button", { name: /Garden/ }),
+    ).toBeVisible();
+    expect(
+      within(navigation).queryByRole("button", { name: /Errands/ }),
+    ).not.toBeInTheDocument();
   });
 
   test("switching Conversations stops voice without aborting the background turn", async () => {
@@ -329,7 +355,9 @@ describe("Conversation navigation", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const navigation = screen.getByRole("region", { name: "Conversations" });
-    fireEvent.click(within(navigation).getByRole("link", { name: "Garden" }));
+    fireEvent.click(
+      within(navigation).getByRole("button", { name: /^Garden\b/ }),
+    );
 
     await waitFor(() => {
       expect(window.location.pathname).toBe(`/chat/${garden.id}`);
@@ -366,13 +394,13 @@ describe("Conversation navigation", () => {
       name: "Conversations",
     });
     expect(
-      await within(navigation).findByRole("link", {
-        name: "Garden · Vegetables and irrigation",
+      await within(navigation).findByRole("button", {
+        name: /^Garden · Vegetables and irrigation\b/,
       }),
     ).toBeVisible();
     expect(
-      await within(navigation).findByRole("link", {
-        name: "Garden · Landscaping and trees",
+      await within(navigation).findByRole("button", {
+        name: /^Garden · Landscaping and trees\b/,
       }),
     ).toBeVisible();
   });
@@ -392,13 +420,13 @@ describe("Conversation navigation", () => {
       name: "Conversations",
     });
     expect(
-      await within(navigation).findByRole("link", {
-        name: "Garden · Same scope · 00a120",
+      await within(navigation).findByRole("button", {
+        name: /^Garden · Same scope · 00a120\b/,
       }),
     ).toBeVisible();
     expect(
-      await within(navigation).findByRole("link", {
-        name: "Garden · Same scope · 00b121",
+      await within(navigation).findByRole("button", {
+        name: /^Garden · Same scope · 00b121\b/,
       }),
     ).toBeVisible();
   });
@@ -438,7 +466,7 @@ describe("Conversation navigation", () => {
       await screen.findByRole("button", { name: "Choose conversation" }),
     );
     const picker = screen.getByRole("dialog", { name: "Choose conversation" });
-    fireEvent.click(within(picker).getByRole("link", { name: /Garden/ }));
+    fireEvent.click(within(picker).getByRole("button", { name: /^Garden\b/ }));
 
     await waitFor(() => {
       expect(window.location.pathname).toBe(`/chat/${garden.id}`);

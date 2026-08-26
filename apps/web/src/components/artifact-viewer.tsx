@@ -1,3 +1,4 @@
+import { Artifact } from "@kitn.ai/ui/solid";
 import {
   Match,
   Show,
@@ -101,13 +102,12 @@ export function ArtifactOverlay(props: {
     })();
   });
 
-  // Wires the postMessage relay to whichever iframe element is currently
-  // mounted. Called from the iframe's `ref`, so a fresh element (a re-open,
-  // or a fetch settling into a new render) always gets its own listener, and
-  // the previous one is torn down via `onCleanup` rather than accumulating.
-  const attachRelay = (element: HTMLIFrameElement, artifactId: string) => {
+  // Kitn owns the artifact frame and may replace it on reload. Resolve the
+  // current iframe for every event so the relay follows that replacement.
+  const attachRelay = (element: HTMLElement, artifactId: string) => {
     const listener = (event: MessageEvent) => {
-      if (event.source !== element.contentWindow) {
+      const frame = element.querySelector("iframe");
+      if (event.source !== frame?.contentWindow) {
         return;
       }
       const data: unknown = event.data;
@@ -134,7 +134,7 @@ export function ArtifactOverlay(props: {
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
         >
-          <div class="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-lg border bg-card shadow-lg">
+          <div class="flex h-[75vh] max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-lg border bg-card shadow-lg">
             <header class="flex items-center justify-between gap-3 border-b px-4 py-2">
               <div>
                 <h2 class="text-sm font-semibold">{pointer().title}</h2>
@@ -161,7 +161,7 @@ export function ArtifactOverlay(props: {
                 Close
               </button>
             </header>
-            <div class="flex-1 overflow-auto p-2">
+            <div class="min-h-0 flex-1 overflow-hidden p-2">
               <Switch>
                 <Match when={state().status === "loading"}>
                   <p class="text-muted-foreground p-3 text-sm">
@@ -189,15 +189,26 @@ export function ArtifactOverlay(props: {
                   }
                 >
                   {(ready) => (
-                    <iframe
-                      class="h-[60vh] w-full rounded border bg-white"
+                    <div
+                      class="h-full"
                       ref={(element) => {
                         attachRelay(element, pointer().id);
                       }}
-                      sandbox="allow-scripts"
-                      srcdoc={injectArtifactCsp(ready().html)}
-                      title={pointer().title}
-                    />
+                    >
+                      <Artifact
+                        class="h-full"
+                        displayUrl={pointer().title}
+                        iframeTitle={pointer().title}
+                        readonlyPath
+                        sandbox="allow-scripts"
+                        showHome={false}
+                        showNav={false}
+                        showPathField
+                        showTabs={false}
+                        src={`data:text/html;charset=utf-8,${encodeURIComponent(injectArtifactCsp(ready().html))}`}
+                        standalone
+                      />
+                    </div>
                   )}
                 </Match>
               </Switch>

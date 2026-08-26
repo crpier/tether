@@ -78,10 +78,17 @@ describe("ArtifactOverlay", () => {
       expect(found).not.toBeNull();
       return found;
     });
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+      "Quiz",
+    );
     expect(iframe?.getAttribute("sandbox")).toBe("allow-scripts");
     expect(iframe?.hasAttribute("allow-same-origin")).toBe(false);
-    expect(iframe?.srcdoc).toContain("Hello artifact");
-    expect(iframe?.srcdoc).toContain("Content-Security-Policy");
+    const framedDocument = decodeURIComponent(
+      iframe?.getAttribute("src")?.split(",").slice(1).join(",") ?? "",
+    );
+    expect(framedDocument).toContain("Hello artifact");
+    expect(framedDocument).toContain("Content-Security-Policy");
     expect(api.getArtifactCalls).toEqual([
       "018f0000-0000-7000-8000-0000000005aa",
     ]);

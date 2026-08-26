@@ -7,6 +7,20 @@
 @source "../../node_modules/@kitn.ai/ui/src/components/reasoning.tsx";
 @source "../../node_modules/@kitn.ai/ui/src/components/tool.tsx";
 @source "../../node_modules/@kitn.ai/ui/src/ui/textarea.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/button.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/hover-card.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/progress-bar.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/scroll-area.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/separator.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/ui/tooltip.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/artifact.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/audio-visualizer/**/*.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/chat-container.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/checkpoint.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/conversation-item.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/conversation-list.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/context.tsx";
+@source "../../node_modules/@kitn.ai/ui/src/components/scroll-button.tsx";
 
 @custom-variant dark (&:is([data-kb-theme="dark"] *));
 

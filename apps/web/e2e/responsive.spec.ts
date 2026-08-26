@@ -208,7 +208,7 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   await page.setViewportSize(PHONE);
   await login();
 
-  const transcript = page.locator('section[aria-label="Chat transcript"]');
+  const transcript = page.locator('[role="log"][aria-label="Chat transcript"]');
   await transcript.waitFor({ state: "visible" });
 
   // The desktop sidebar is not shown at this width…
@@ -507,7 +507,9 @@ for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
     await serveLongChat(page);
     await login();
 
-    const transcript = page.locator('section[aria-label="Chat transcript"]');
+    const transcript = page.locator(
+      '[role="log"][aria-label="Chat transcript"]',
+    );
     await transcript.waitFor({ state: "visible" });
     const composer = page.getByRole("textbox", { name: "Message" });
     await expect(composer).toBeVisible();
@@ -666,7 +668,7 @@ test("desktop width: left sidebar visible, bottom tabs hidden", async ({
   await page.setViewportSize(DESKTOP);
   await login();
 
-  const transcript = page.locator('section[aria-label="Chat transcript"]');
+  const transcript = page.locator('[role="log"][aria-label="Chat transcript"]');
   await transcript.waitFor({ state: "visible" });
 
   const sidebar = page.getByRole("navigation", { name: "Main navigation" });
