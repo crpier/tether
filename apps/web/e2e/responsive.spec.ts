@@ -196,7 +196,22 @@ test("phone chat contains wide code and tables without page overflow", async ({
   await login();
 
   await expect(page.locator("pre")).toBeVisible();
-  await expect(page.locator("table")).toBeVisible();
+  const message = page.getByRole("article", { name: "Tether message" });
+  const table = message.locator("table");
+  const tableScroller = table.locator("..");
+  await expect(table).toBeVisible();
+
+  const messageBox = await boundingBox(message);
+  const scrollerBox = await boundingBox(tableScroller);
+  expect(scrollerBox.x).toBeGreaterThanOrEqual(messageBox.x);
+  expect(scrollerBox.x + scrollerBox.width).toBeLessThanOrEqual(
+    messageBox.x + messageBox.width,
+  );
+  expect(
+    await tableScroller.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    ),
+  ).toBe(true);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
