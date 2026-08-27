@@ -19,3 +19,9 @@ Every record row carries an `origin_id` pointing at an `hc_origin` dimension tab
 - `telemetry.sqlite3` is one more file in scope for encrypted off-box backups (#61).
 - Charts and any future Distillation-layer reads go through the per-table `_current` views, never the raw `hc_*` tables directly, so append-only history doesn't leak into code that only wants current state.
 - This ADR does not generalize Telemetry into a shared store: "typed, append-only, per-source vertical tables" remains the general pattern (ADR 0012, CONTEXT.md), and `hc_`-prefixed tables in `telemetry.sqlite3` are the Health Connect ingestion gate's specific instance of it. A future Telemetry source gets its own tables under this same pattern, not a slot in this one.
+
+## Refinement: retain Health Connect's canonical activity projection
+
+Raw source records remain append-only and lossless. For activity measurements that multiple apps can write, the Android gate also captures Health Connect's aggregate result as a separate append-only derived projection. Health Connect alone knows the user's app-priority order and applies it while removing overlapping activity data. The host cannot reconstruct that decision faithfully from raw records.
+
+Agent and overview summaries use the canonical projection when it covers their requested period. Raw records remain available for provenance and diagnosis, but their per-origin totals and simple sum do not enter ordinary summaries. This is an exception to read-time-only aggregation because the required source-priority state exists only inside Health Connect on the phone.

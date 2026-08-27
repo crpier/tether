@@ -122,6 +122,41 @@ class AndroidHealthConnectSourceTest {
     }
 
     @Test
+    fun stepSnapshotUsesHealthConnectsPriorityAwareHourlyAggregate() = runTest {
+        val end = Instant.parse("2026-08-27T18:33:05Z")
+        val bucket = AndroidHealthConnectStepAggregateBucket(
+            startTime = Instant.parse("2026-08-27T17:00:00Z"),
+            endTime = Instant.parse("2026-08-27T18:00:00Z"),
+            zoneOffset = ZoneOffset.ofHours(3),
+            count = 321,
+        )
+        val gateway = FakeHealthConnectGateway(stepAggregateBuckets = listOf(bucket))
+        val source = AndroidHealthConnectSource(gateway = gateway, clock = { end })
+
+        val snapshot = source.readStepAggregateSnapshot()
+
+        assertEquals(
+            HealthConnectStepAggregateSnapshot(
+                startTimeEpochMillis = Instant.parse("2026-05-29T18:00:00Z").toEpochMilli(),
+                endTimeEpochMillis = end.toEpochMilli(),
+                buckets = listOf(
+                    HealthConnectStepAggregateBucket(
+                        startTimeEpochMillis = bucket.startTime.toEpochMilli(),
+                        endTimeEpochMillis = bucket.endTime.toEpochMilli(),
+                        zoneOffsetSeconds = 10_800,
+                        count = 321,
+                    ),
+                ),
+            ),
+            snapshot,
+        )
+        assertEquals(
+            listOf("aggregateSteps(2026-05-29T18:00:00Z,2026-08-27T18:33:05Z)"),
+            gateway.events,
+        )
+    }
+
+    @Test
     fun changesReturnOneDurablePageAndContinuationToken() = runTest {
         val gateway = FakeHealthConnectGateway(
             changePages = ArrayDeque(
@@ -154,8 +189,17 @@ class AndroidHealthConnectSourceTest {
     private class FakeHealthConnectGateway(
         private val baselinePages: MutableMap<KClass<out androidx.health.connect.client.records.Record>, ArrayDeque<AndroidHealthConnectReadPage>> = mutableMapOf(),
         private val changePages: ArrayDeque<AndroidHealthConnectChangePage> = ArrayDeque(),
+        private val stepAggregateBuckets: List<AndroidHealthConnectStepAggregateBucket> = emptyList(),
     ) : HealthConnectGateway {
         val events = mutableListOf<String>()
+
+        override suspend fun aggregateSteps(
+            startTime: Instant,
+            endTime: Instant,
+        ): List<AndroidHealthConnectStepAggregateBucket> {
+            events += "aggregateSteps($startTime,$endTime)"
+            return stepAggregateBuckets
+        }
 
         override suspend fun getChangesToken(recordTypes: Set<KClass<out androidx.health.connect.client.records.Record>>): String = "token"
 

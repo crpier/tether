@@ -127,19 +127,12 @@ const overview: HealthOverview = {
       total_duration_minutes: 3290,
     },
     steps: {
-      by_origin: [],
       daily: [
         {
-          by_origin: [],
           date: "2026-08-27",
-          duplicate_source_warning: null,
-          raw_total_count: 6432,
-          record_count: 8,
           total_count: 6432,
         },
       ],
-      duplicate_source_warning: null,
-      raw_total_count: 41200,
       record_count: 50,
       total_count: 41200,
     },

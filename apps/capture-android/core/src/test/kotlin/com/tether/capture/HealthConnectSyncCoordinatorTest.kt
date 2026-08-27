@@ -160,6 +160,7 @@ class HealthConnectSyncCoordinatorTest {
                 "host.getSyncState(token-authoritative)",
                 "health.readChanges(token-authoritative)",
                 "host.uploadChanges(request-2,token-authoritative,token-next,records=1)",
+                "health.readStepAggregateSnapshot",
             ),
             events,
         )
@@ -224,6 +225,56 @@ class HealthConnectSyncCoordinatorTest {
                 "host.completeBaseline(token-before-read)",
                 "health.readChanges(token-before-read)",
                 "host.uploadChanges(request-4,token-before-read,token-after-change,records=1)",
+                "health.readStepAggregateSnapshot",
+                "host.uploadStepAggregates(request-5,buckets=0)",
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun successfulStepSyncUploadsCanonicalAggregateAfterRawChanges() = runTest {
+        val events = mutableListOf<String>()
+        val health = FakeHealthConnectSource(
+            events = events,
+            startingToken = "unused",
+            baselineRecords = emptyList(),
+            changes = HealthConnectChanges(emptyList(), emptyList(), "token-next"),
+            stepAggregateSnapshot = HealthConnectStepAggregateSnapshot(
+                startTimeEpochMillis = 1_700_000_000_000,
+                endTimeEpochMillis = 1_700_007_200_000,
+                buckets = listOf(
+                    HealthConnectStepAggregateBucket(
+                        startTimeEpochMillis = 1_700_000_000_000,
+                        endTimeEpochMillis = 1_700_003_600_000,
+                        zoneOffsetSeconds = 3_600,
+                        count = 321,
+                    ),
+                ),
+            ),
+        )
+        val host = FakeHealthConnectHost(
+            events = events,
+            state = HostSyncState.Changes,
+            generation = 1,
+            token = "token-current",
+        )
+        val coordinator = HealthConnectSyncCoordinator(
+            installationId = "pixel-installation",
+            recordTypes = setOf(HealthConnectRecordType.STEPS),
+            health = health,
+            host = host,
+            requestIds = SequentialRequestIds("request"),
+        )
+
+        assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
+        assertEquals(
+            listOf(
+                "host.getSyncState",
+                "health.readChanges(token-current)",
+                "host.uploadChanges(request-1,token-current,token-next,records=0)",
+                "health.readStepAggregateSnapshot",
+                "host.uploadStepAggregates(request-2,buckets=1)",
             ),
             events,
         )
@@ -246,10 +297,17 @@ private class FakeHealthConnectSource(
     private val startingToken: String,
     private val baselineRecords: List<HealthConnectRecord>,
     private val changes: HealthConnectChanges,
+    private val stepAggregateSnapshot: HealthConnectStepAggregateSnapshot =
+        HealthConnectStepAggregateSnapshot(0, 1, emptyList()),
 ) : HealthConnectSource {
     override suspend fun getChangesToken(recordTypes: Set<HealthConnectRecordType>): String {
         events += "health.getChangesToken"
         return startingToken
+    }
+
+    override suspend fun readStepAggregateSnapshot(): HealthConnectStepAggregateSnapshot {
+        events += "health.readStepAggregateSnapshot"
+        return stepAggregateSnapshot
     }
 
     override suspend fun scanBaseline(
@@ -298,6 +356,8 @@ private class StaleOnceHost(private val events: MutableList<String>) : HealthCon
         }
     }
 
+    override suspend fun uploadStepAggregateSnapshot(request: HealthConnectStepAggregateSnapshotRequest) = Unit
+
     override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor =
         error("baseline not expected")
 }
@@ -306,13 +366,14 @@ private class FakeHealthConnectHost(
     private val events: MutableList<String>,
     private val state: HostSyncState,
     private val generation: Int,
+    private val token: String? = null,
 ) : HealthConnectHost {
     override suspend fun getSyncState(
         installationId: String,
         recordTypes: Set<HealthConnectRecordType>,
     ): HostSyncCursor {
         events += "host.getSyncState"
-        return HostSyncCursor(state = state, generation = generation, token = null)
+        return HostSyncCursor(state = state, generation = generation, token = token)
     }
 
     override suspend fun startBaseline(request: StartBaselineRequest): HostSyncCursor {
@@ -323,6 +384,10 @@ private class FakeHealthConnectHost(
     override suspend fun uploadBatch(request: HealthConnectBatchRequest): BatchUploadResult {
         events += "host.upload${request.mode.name.lowercase().replaceFirstChar { it.uppercase() }}(${request.requestId},${request.expectedToken},${request.nextToken},records=${request.records.size})"
         return BatchUploadResult.Accepted
+    }
+
+    override suspend fun uploadStepAggregateSnapshot(request: HealthConnectStepAggregateSnapshotRequest) {
+        events += "host.uploadStepAggregates(${request.requestId},buckets=${request.snapshot.buckets.size})"
     }
 
     override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor {
@@ -360,6 +425,8 @@ private class RecordingChangesHost(
         }
         return BatchUploadResult.Accepted
     }
+
+    override suspend fun uploadStepAggregateSnapshot(request: HealthConnectStepAggregateSnapshotRequest) = Unit
 
     override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor =
         error("baseline not expected")

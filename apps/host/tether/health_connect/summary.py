@@ -18,6 +18,8 @@ from tether.health_connect.persistence import (
     HcOrigin,
     HcSleepSessionCurrent,
     HcSleepStage,
+    HcStepAggregateBucketCurrent,
+    HcStepAggregateSnapshot,
     HcStepIntervalCurrent,
 )
 from tether.health_connect.telemetry_model import (
@@ -48,12 +50,6 @@ _SUMMARY_IGNORED_NUMERIC_FIELDS = frozenset(
     {"end_time", "start_time", "time", "zone_offset", "zone_offset_seconds"}
 )
 """Generic payload fields that encode instants rather than measurements."""
-
-_DUPLICATE_STEP_SOURCE_WARNING = (
-    "Multiple step origins overlap; total_count uses the largest origin for this "
-    "day and raw_total_count is the simple sum."
-)
-"""Agent-facing warning for Health Connect's overlapping step sources."""
 
 
 def _numeric_payload_values(
@@ -106,15 +102,6 @@ def _step_origin_summaries(
     ]
 
 
-def _step_duplicate_warning(
-    by_origin: list[HealthConnectStepOriginSummary],
-) -> str | None:
-    """Flag multi-origin step totals because Health Connect often mirrors sources."""
-    if len(by_origin) <= 1:
-        return None
-    return _DUPLICATE_STEP_SOURCE_WARNING
-
-
 def _recommended_step_total(by_origin: list[HealthConnectStepOriginSummary]) -> int:
     """Prefer one step source over summing overlapping writers."""
     return max((origin.total_count for origin in by_origin), default=0)
@@ -137,22 +124,35 @@ def _summarize_step_rows(
         by_origin = _step_origin_summaries(date_rows, origins)
         daily_summaries.append(
             HealthConnectDailyStepsSummary(
-                by_origin=by_origin,
                 date=local_date,
-                duplicate_source_warning=_step_duplicate_warning(by_origin),
-                raw_total_count=sum(row.count or 0 for row in date_rows),
-                record_count=len(date_rows),
                 total_count=_recommended_step_total(by_origin),
             )
         )
-    by_origin = _step_origin_summaries(rows, origins)
     return HealthConnectStepsSummary(
-        by_origin=by_origin,
         daily=daily_summaries if include_daily else [],
-        duplicate_source_warning=_step_duplicate_warning(by_origin),
-        raw_total_count=sum(row.count or 0 for row in rows),
         record_count=len(rows),
         total_count=sum(day.total_count for day in daily_summaries),
+    )
+
+
+def _summarize_canonical_step_rows(
+    rows: list[HcStepAggregateBucketCurrent[Fetched]], *, include_daily: bool
+) -> HealthConnectStepsSummary:
+    """Present Health Connect's source-priority result without raw-source details."""
+    totals_by_date: dict[str, int] = {}
+    for row in rows:
+        local_date = local_record_date(row.bucket_start, row.zone_offset_seconds)
+        totals_by_date[local_date] = totals_by_date.get(local_date, 0) + (
+            row.count or 0
+        )
+    daily = [
+        HealthConnectDailyStepsSummary(date=local_date, total_count=total_count)
+        for local_date, total_count in sorted(totals_by_date.items())
+    ]
+    return HealthConnectStepsSummary(
+        daily=daily if include_daily else [],
+        record_count=len(rows),
+        total_count=sum(totals_by_date.values()),
     )
 
 
@@ -241,6 +241,31 @@ class HealthConnectSummaryQuery:
                     )
                 )
                 .where(HcStepIntervalCurrent.start_time.lte(before_millis))
+            )
+            latest_step_snapshot = await transaction.fetch_one_or_none(
+                select(HcStepAggregateSnapshot)
+                .all()
+                .order_by(
+                    HcStepAggregateSnapshot.end_time.desc(),
+                    HcStepAggregateSnapshot.snapshot_id.desc(),
+                )
+                .limit(1)
+            )
+            canonical_step_rows = (
+                await transaction.fetch_all(
+                    select(HcStepAggregateBucketCurrent)
+                    .where(HcStepAggregateBucketCurrent.bucket_end.gt(after_millis))
+                    .where(
+                        HcStepAggregateBucketCurrent.bucket_start.lt(
+                            min(before_millis, latest_step_snapshot.end_time)
+                        )
+                    )
+                    .order_by(HcStepAggregateBucketCurrent.bucket_start.asc())
+                )
+                if latest_step_snapshot is not None
+                and after_millis >= latest_step_snapshot.start_time
+                and after_millis < latest_step_snapshot.end_time
+                else []
             )
             generic_rows = await transaction.fetch_all(
                 select(HcGenericRecordCurrent)
@@ -393,9 +418,17 @@ class HealthConnectSummaryQuery:
                 stage_duration_minutes=stage_duration_minutes,
                 total_duration_minutes=total_sleep_minutes,
             ),
-            steps=_summarize_step_rows(
-                step_rows,
-                {origin.origin_id: origin for origin in step_origins},
-                include_daily=bucket == "day",
+            steps=(
+                _summarize_canonical_step_rows(
+                    canonical_step_rows, include_daily=bucket == "day"
+                )
+                if latest_step_snapshot is not None
+                and after_millis >= latest_step_snapshot.start_time
+                and after_millis < latest_step_snapshot.end_time
+                else _summarize_step_rows(
+                    step_rows,
+                    {origin.origin_id: origin for origin in step_origins},
+                    include_daily=bucket == "day",
+                )
             ),
         )

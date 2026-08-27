@@ -29,6 +29,8 @@ from tether.health_connect.contracts import (
     HealthConnectBatchRequest,
     HealthConnectDeletion,
     HealthConnectRecords,
+    HealthConnectStepAggregateSnapshotRead,
+    HealthConnectStepAggregateSnapshotRequest,
     HealthConnectSyncStateRead,
     HealthRecordType,
     RecordStatus,
@@ -43,6 +45,9 @@ from tether.health_connect.persistence import (
     HcHeartRateRecordCurrent,
     HcPageRequest,
     HcSleepSessionCurrent,
+    HcStepAggregateBucket,
+    HcStepAggregateBucketCurrent,
+    HcStepAggregateSnapshot,
     HcStepIntervalCurrent,
     HealthConnectSyncState,
 )
@@ -282,6 +287,154 @@ class HealthConnectIngestion:
             )
         return Ok(
             HealthConnectBaselineCompletionRead(deleted=deleted, status="completed")
+        )
+
+    async def ingest_step_aggregate_snapshot(
+        self, snapshot: HealthConnectStepAggregateSnapshotRequest
+    ) -> Result[
+        HealthConnectStepAggregateSnapshotRead,
+        HealthConnectRequestIdentityConflict,
+    ]:
+        """Replace one authoritative canonical-step range append-only."""
+        payload_hash = _hash_json(snapshot.model_dump(mode="json"))
+        async with self.database.transaction(mode="immediate") as transaction:
+            replay = await transaction.fetch_one_or_none(
+                select(HcStepAggregateSnapshot).where(
+                    HcStepAggregateSnapshot.request_id.eq(snapshot.request_id)
+                )
+            )
+            if replay is not None:
+                if replay.payload_hash != payload_hash:
+                    return Err(HealthConnectRequestIdentityConflict())
+                return Ok(
+                    HealthConnectStepAggregateSnapshotRead(
+                        accepted=replay.accepted_count,
+                        deleted=replay.deleted_count,
+                        replayed=True,
+                        skipped=replay.skipped_count,
+                        status="accepted",
+                    )
+                )
+
+            latest_snapshot = await transaction.fetch_one_or_none(
+                select(HcStepAggregateSnapshot)
+                .all()
+                .order_by(
+                    HcStepAggregateSnapshot.end_time.desc(),
+                    HcStepAggregateSnapshot.snapshot_id.desc(),
+                )
+                .limit(1)
+            )
+            if (
+                latest_snapshot is not None
+                and snapshot.end_time < latest_snapshot.end_time
+            ):
+                skipped = len(snapshot.buckets)
+                _ = await transaction.execute(
+                    insert(
+                        HcStepAggregateSnapshot(
+                            accepted_count=0,
+                            deleted_count=0,
+                            end_time=snapshot.end_time,
+                            installation_id=snapshot.installation_id,
+                            payload_hash=payload_hash,
+                            received_at=time.time_ns() // 1_000_000,
+                            request_id=snapshot.request_id,
+                            skipped_count=skipped,
+                            start_time=snapshot.start_time,
+                        )
+                    )
+                )
+                return Ok(
+                    HealthConnectStepAggregateSnapshotRead(
+                        accepted=0,
+                        deleted=0,
+                        replayed=False,
+                        skipped=skipped,
+                        status="accepted",
+                    )
+                )
+
+            current_rows = await transaction.fetch_all(
+                select(HcStepAggregateBucketCurrent)
+                .where(
+                    HcStepAggregateBucketCurrent.bucket_start.gte(snapshot.start_time)
+                )
+                .where(HcStepAggregateBucketCurrent.bucket_start.lt(snapshot.end_time))
+            )
+            current_by_start = {row.bucket_start: row for row in current_rows}
+            incoming_by_start = {
+                bucket.start_time: bucket for bucket in snapshot.buckets
+            }
+            accepted = 0
+            skipped = 0
+            for bucket in sorted(snapshot.buckets, key=lambda item: item.start_time):
+                bucket_hash = _hash_json(bucket.model_dump(mode="json"))
+                current = current_by_start.get(bucket.start_time)
+                if current is not None and current.payload_hash == bucket_hash:
+                    skipped += 1
+                    continue
+                _ = await transaction.execute(
+                    insert(
+                        HcStepAggregateBucket(
+                            bucket_end=bucket.end_time,
+                            bucket_start=bucket.start_time,
+                            count=bucket.count,
+                            is_deleted=False,
+                            payload_hash=bucket_hash,
+                            received_at=time.time_ns() // 1_000_000,
+                            request_id=snapshot.request_id,
+                            zone_offset_seconds=bucket.zone_offset_seconds,
+                        )
+                    )
+                )
+                accepted += 1
+
+            deleted = 0
+            for bucket_start, current in current_by_start.items():
+                if bucket_start in incoming_by_start:
+                    continue
+                _ = await transaction.execute(
+                    insert(
+                        HcStepAggregateBucket(
+                            bucket_end=current.bucket_end,
+                            bucket_start=bucket_start,
+                            count=None,
+                            is_deleted=True,
+                            payload_hash=_hash_json(
+                                {"deleted_bucket_start": bucket_start}
+                            ),
+                            received_at=time.time_ns() // 1_000_000,
+                            request_id=snapshot.request_id,
+                            zone_offset_seconds=current.zone_offset_seconds,
+                        )
+                    )
+                )
+                deleted += 1
+
+            _ = await transaction.execute(
+                insert(
+                    HcStepAggregateSnapshot(
+                        accepted_count=accepted,
+                        deleted_count=deleted,
+                        end_time=snapshot.end_time,
+                        installation_id=snapshot.installation_id,
+                        payload_hash=payload_hash,
+                        received_at=time.time_ns() // 1_000_000,
+                        request_id=snapshot.request_id,
+                        skipped_count=skipped,
+                        start_time=snapshot.start_time,
+                    )
+                )
+            )
+        return Ok(
+            HealthConnectStepAggregateSnapshotRead(
+                accepted=accepted,
+                deleted=deleted,
+                replayed=False,
+                skipped=skipped,
+                status="accepted",
+            )
         )
 
     async def ingest_batch(

@@ -8,19 +8,31 @@ import androidx.health.connect.client.changes.UpsertionChange
 import androidx.health.connect.client.records.ExerciseSessionRecord as AndroidExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord as AndroidHeartRateRecord
 import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.request.AggregateGroupByDurationRequest
 import androidx.health.connect.client.records.SleepSessionRecord as AndroidSleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord as AndroidStepsRecord
 import androidx.health.connect.client.request.ChangesTokenRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import java.time.Duration
 import java.time.Instant
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import kotlin.reflect.KClass
 
 private const val HEALTH_CONNECT_PAGE_SIZE = 500
+private const val STEP_AGGREGATE_LOOKBACK_DAYS = 90L
 
 data class AndroidHealthConnectReadPage(
     val records: List<Record>,
     val nextPageToken: String?,
+)
+
+data class AndroidHealthConnectStepAggregateBucket(
+    val startTime: Instant,
+    val endTime: Instant,
+    val zoneOffset: ZoneOffset,
+    val count: Long,
 )
 
 data class AndroidHealthConnectChangePage(
@@ -31,6 +43,11 @@ data class AndroidHealthConnectChangePage(
 )
 
 interface HealthConnectGateway {
+    suspend fun aggregateSteps(
+        startTime: Instant,
+        endTime: Instant,
+    ): List<AndroidHealthConnectStepAggregateBucket>
+
     suspend fun getChangesToken(recordTypes: Set<KClass<out Record>>): String
 
     suspend fun readRecords(
@@ -46,6 +63,26 @@ interface HealthConnectGateway {
 class AndroidHealthConnectClientGateway(
     private val client: HealthConnectClient,
 ) : HealthConnectGateway {
+    override suspend fun aggregateSteps(
+        startTime: Instant,
+        endTime: Instant,
+    ): List<AndroidHealthConnectStepAggregateBucket> = client.aggregateGroupByDuration(
+        AggregateGroupByDurationRequest(
+            metrics = setOf(AndroidStepsRecord.COUNT_TOTAL),
+            timeRangeFilter = TimeRangeFilter.between(startTime, endTime),
+            timeRangeSlicer = Duration.ofHours(1),
+        ),
+    ).mapNotNull { bucket ->
+        bucket.result[AndroidStepsRecord.COUNT_TOTAL]?.let { count ->
+            AndroidHealthConnectStepAggregateBucket(
+                startTime = bucket.startTime,
+                endTime = bucket.endTime,
+                zoneOffset = bucket.zoneOffset,
+                count = count,
+            )
+        }
+    }
+
     override suspend fun getChangesToken(recordTypes: Set<KClass<out Record>>): String =
         client.getChangesToken(ChangesTokenRequest(recordTypes = recordTypes))
 
@@ -85,10 +122,30 @@ class AndroidHealthConnectSource(
     private val gateway: HealthConnectGateway,
     private val clock: () -> Instant = { Instant.now() },
     private val baselineStart: (Instant) -> Instant = { Instant.EPOCH },
+    private val stepAggregateStart: (Instant) -> Instant = { end ->
+        end.minus(Duration.ofDays(STEP_AGGREGATE_LOOKBACK_DAYS)).truncatedTo(ChronoUnit.HOURS)
+    },
     private val recordTypeIndex: HealthConnectRecordTypeIndex = InMemoryHealthConnectRecordTypeIndex(),
 ) : HealthConnectSource {
     override suspend fun getChangesToken(recordTypes: Set<HealthConnectRecordType>): String =
         gateway.getChangesToken(recordTypes.toAndroidRecordClasses())
+
+    override suspend fun readStepAggregateSnapshot(): HealthConnectStepAggregateSnapshot {
+        val end = clock()
+        val start = stepAggregateStart(end)
+        return HealthConnectStepAggregateSnapshot(
+            startTimeEpochMillis = start.toEpochMilli(),
+            endTimeEpochMillis = end.toEpochMilli(),
+            buckets = gateway.aggregateSteps(start, end).map { bucket ->
+                HealthConnectStepAggregateBucket(
+                    startTimeEpochMillis = bucket.startTime.toEpochMilli(),
+                    endTimeEpochMillis = bucket.endTime.toEpochMilli(),
+                    zoneOffsetSeconds = bucket.zoneOffset.totalSeconds,
+                    count = bucket.count,
+                )
+            },
+        )
+    }
 
     override suspend fun scanBaseline(
         recordTypes: Set<HealthConnectRecordType>,
@@ -168,6 +225,11 @@ class AndroidHealthConnectSource(
             gateway = AndroidHealthConnectClientGateway(HealthConnectClient.getOrCreate(context)),
             baselineStart = { end ->
                 if (hasHistoryPermission) Instant.EPOCH else end.minusSeconds(30L * 24 * 60 * 60)
+            },
+            stepAggregateStart = { end ->
+                end.minus(
+                    Duration.ofDays(if (hasHistoryPermission) STEP_AGGREGATE_LOOKBACK_DAYS else 30L),
+                ).truncatedTo(ChronoUnit.HOURS)
             },
             recordTypeIndex = SqliteHealthConnectRecordTypeIndex(context),
         )
