@@ -6262,7 +6262,7 @@
         "type": "object"
       },
       "YouTubeVideoRead": {
-        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     transcript=None,\n...     transcript_status=\"pending\",\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n... )\n>>> read.state\n'active'",
+        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     transcript=None,\n...     transcript_status=\"pending\",\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n...     liked_at=None,\n...     duration_seconds=None,\n... )\n>>> read.state\n'active'",
         "properties": {
           "channel": {
             "title": "Channel",
@@ -6276,6 +6276,17 @@
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
           },
           "id": {
             "format": "uuid7",
@@ -6293,6 +6304,18 @@
               }
             ],
             "title": "Ignored At"
+          },
+          "liked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liked At"
           },
           "source": {
             "$ref": "#/components/schemas/YouTubeSource"
@@ -6345,7 +6368,9 @@
           "transcript_status",
           "created_at",
           "updated_at",
-          "ignored_at"
+          "ignored_at",
+          "liked_at",
+          "duration_seconds"
         ],
         "title": "YouTubeVideoRead",
         "type": "object"

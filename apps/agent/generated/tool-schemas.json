@@ -568,6 +568,29 @@
       }
     },
     {
+      "endpoint": "/internal/tools/summarize_youtube_activity",
+      "name": "summarize_youtube_activity",
+      "params_model": "SummarizeYouTubeActivityParams",
+      "schema": {
+        "description": "Summarize liked videos in a half-open interval as a viewing proxy.\n\nThe returned duration is the sum of full video lengths, not measured watch\ntime. Use timezone-aware boundaries so relative calendar weeks reflect the\nuser's local timezone.",
+        "properties": {
+          "after": {
+            "format": "date-time",
+            "title": "After",
+            "type": "string"
+          },
+          "before": {
+            "format": "date-time",
+            "title": "Before",
+            "type": "string"
+          }
+        },
+        "required": ["after", "before"],
+        "title": "SummarizeYouTubeActivityParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/fetch_youtube_transcript",
       "name": "fetch_youtube_transcript",
       "params_model": "FetchYouTubeTranscriptParams",

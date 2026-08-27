@@ -824,6 +824,7 @@ export default function inspectTools(pi) {
             "set_todo_status",
             "start_recall",
             "summarize_health_connect",
+            "summarize_youtube_activity",
             "trash_gmail_message",
             "triage_report",
             "update_artifact",

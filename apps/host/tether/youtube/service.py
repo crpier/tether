@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Literal, Protocol
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Literal, Protocol, Self
 
 from opentelemetry.trace import Tracer
 from snekok import Err, Ok, Result
@@ -93,6 +93,20 @@ class EmptyYouTubeSearchQueryError(Exception):
     """Raised when a keyword Search is asked to run on a blank query."""
 
 
+class InvalidYouTubeActivityRangeError(Exception):
+    """Raised when a liked-video activity interval is ambiguous or empty."""
+
+    @classmethod
+    def timezone_required(cls) -> Self:
+        """Construct the failure for an ambiguous naive boundary."""
+        return cls("after and before must include timezone offsets")
+
+    @classmethod
+    def reversed_or_empty(cls) -> Self:
+        """Construct the failure for a non-forward interval."""
+        return cls("before must be later than after")
+
+
 class ProviderPausesPort(Protocol):
     """Loads persisted provider-health pause state for status reporting.
 
@@ -120,6 +134,25 @@ class BrowseResult:
 
     videos: list[IngestedVideo[Fetched]]
     transcript_statuses: Mapping[str, TranscriptStatus]
+    cache: CacheMeta
+    quota: QuotaMeta
+
+
+@dataclass(frozen=True, slots=True)
+class YouTubeActivitySummary:
+    """A bounded liked-video proxy over one half-open UTC interval.
+
+    Duration is the sum of full video lengths, not measured playback time.
+    Explicit coverage prevents a partial total from masquerading as complete.
+    """
+
+    after: datetime
+    before: datetime
+    video_count: int
+    videos_with_known_duration: int
+    videos_missing_duration: int
+    total_video_duration_seconds: int
+    average_video_duration_seconds: int | None
     cache: CacheMeta
     quota: QuotaMeta
 
@@ -213,9 +246,9 @@ def _info(logger: Logger, event: str, **context: object) -> None:
 class YouTubeService:
     """Capability surface for the local YouTube ingested corpus.
 
-    Browse and Search read only `IngestedVideo` (instant, no quota). Transcript
-    requests delegate to the shared acquisition service and short-circuit once
-    text is stored. Each mutation owns its transaction.
+    Browse, Search, and activity summaries read only `IngestedVideo` (instant,
+    no quota). Transcript requests delegate to the shared acquisition service
+    and short-circuit once text is stored. Each mutation owns its transaction.
     """
 
     database: Database
@@ -225,6 +258,59 @@ class YouTubeService:
     event_publisher: EventPublisher = field(default_factory=NullEventPublisher)
     youtube_search: YouTubeSearchPort | None = None
     provider_pauses: ProviderPausesPort | None = None
+
+    async def summarize_activity(
+        self,
+        *,
+        after: datetime,
+        before: datetime,
+        logger: Logger,
+    ) -> YouTubeActivitySummary:
+        """Summarize active liked videos in the half-open interval `[after, before)`.
+
+        Timestamps must be timezone-aware. They are normalized to UTC before the
+        SQLite query so caller offsets define calendar boundaries without
+        changing the canonical storage representation.
+        """
+        if (
+            after.tzinfo is None
+            or after.utcoffset() is None
+            or before.tzinfo is None
+            or before.utcoffset() is None
+        ):
+            raise InvalidYouTubeActivityRangeError.timezone_required()
+        if after >= before:
+            raise InvalidYouTubeActivityRangeError.reversed_or_empty()
+        after_utc = after.astimezone(UTC)
+        before_utc = before.astimezone(UTC)
+        with self.tracer.start_as_current_span("YouTubeService.summarize_activity"):
+            async with self.database.transaction() as tx:
+                videos = await tx.fetch_all(
+                    select(IngestedVideo)
+                    .where(IngestedVideo.source.eq("liked"))
+                    .where(IngestedVideo.ignored_at.is_null())
+                    .where(IngestedVideo.liked_at.gte(after_utc))
+                    .where(IngestedVideo.liked_at.lt(before_utc))
+                )
+        durations = [
+            video.duration_seconds
+            for video in videos
+            if video.duration_seconds is not None
+        ]
+        total_duration = sum(durations)
+        average_duration = round(total_duration / len(durations)) if durations else None
+        _debug(logger, "YouTube activity summarized", result_count=len(videos))
+        return YouTubeActivitySummary(
+            after=after_utc,
+            before=before_utc,
+            video_count=len(videos),
+            videos_with_known_duration=len(durations),
+            videos_missing_duration=len(videos) - len(durations),
+            total_video_duration_seconds=total_duration,
+            average_video_duration_seconds=average_duration,
+            cache=CacheMeta(hit=True, source="cache"),
+            quota=await self.client.snapshot(),
+        )
 
     async def browse(
         self,

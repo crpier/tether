@@ -70,6 +70,8 @@ async def confined_program_orchestrates_real_tether_tools() -> None:
         [
             {"name": "add_movie", "status": "completed"},
             {"name": "add_movie", "status": "completed"},
+            {"name": "summarize_youtube_activity", "status": "completed"},
+            {"name": "summarize_youtube_activity", "status": "completed"},
             {"name": "triage_report", "status": "completed"},
         ],
     )
@@ -78,4 +80,5 @@ async def confined_program_orchestrates_real_tether_tools() -> None:
     program_result = _object(json.loads(content[0]["text"]))
     added_ids = cast("list[str]", program_result["addedIds"])
     assert_eq(len(added_ids), 2)
+    assert_eq(program_result["activityCounts"], [0, 0])
     assert_in(program_result["duplicateCount"], range(1, 100))

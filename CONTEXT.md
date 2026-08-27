@@ -110,6 +110,10 @@ _Avoid_: sync job, importer, connector
 A hand-built typed slice that brings one external service's Evidence into Tether and exposes tools over it. Each Integration presents exactly one interface to the rest of Tether; everything else inside it stays internal to the Integration.
 _Avoid_: connector, provider wrapper, adapter package
 
+**Liked activity**:
+A bounded YouTube viewing proxy derived from when videos entered the user's Liked playlist. Its duration is the sum of those videos' full lengths with explicit missing-data coverage; it is not measured playback time or proof that every second was watched.
+_Avoid_: watch time, watch history, screen time
+
 **Transcript status**:
 The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. _Needs review_ means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. _Unavailable_ means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
 _Avoid_: terminal, caption state, transcript error

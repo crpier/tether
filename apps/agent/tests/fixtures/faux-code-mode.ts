@@ -36,9 +36,20 @@ export default function registerFauxCodeModeProvider(pi: ExtensionAPI): void {
               tools.add_movie({ title: "Dune", year: 2021, intent_context: "friend recommendation" }),
               tools.add_movie({ title: "dune", year: 2021, intent_context: "trailer" }),
             ]);
+            const activity = await Promise.all([
+              tools.summarize_youtube_activity({
+                after: "2030-01-01T00:00:00Z",
+                before: "2030-01-08T00:00:00Z",
+              }),
+              tools.summarize_youtube_activity({
+                after: "2030-01-08T00:00:00Z",
+                before: "2030-01-15T00:00:00Z",
+              }),
+            ]);
             const report = await tools.triage_report({});
             return {
               addedIds: added.map((result) => result.item.id),
+              activityCounts: activity.map((period) => period.video_count),
               duplicateCount: report.duplicates.length,
             };
           `,

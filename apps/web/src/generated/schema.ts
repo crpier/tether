@@ -4314,6 +4314,8 @@ export interface components {
      *     ...     created_at=datetime(2026, 1, 1),
      *     ...     updated_at=datetime(2026, 1, 1),
      *     ...     ignored_at=None,
+     *     ...     liked_at=None,
+     *     ...     duration_seconds=None,
      *     ... )
      *     >>> read.state
      *     'active'
@@ -4328,6 +4330,8 @@ export interface components {
       created_at: string;
       /** Description */
       description: string;
+      /** Duration Seconds */
+      duration_seconds: number | null;
       /**
        * Id
        * Format: uuid7
@@ -4335,6 +4339,8 @@ export interface components {
       id: string;
       /** Ignored At */
       ignored_at: string | null;
+      /** Liked At */
+      liked_at: string | null;
       source: components["schemas"]["YouTubeSource"];
       state: components["schemas"]["IngestState"];
       /** Title */
