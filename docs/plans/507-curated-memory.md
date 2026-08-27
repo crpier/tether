@@ -2,7 +2,7 @@
 
 Tracks [#507](https://github.com/crpier/tether/issues/507). It establishes the Memory substrate required by [#454](https://github.com/crpier/tether/issues/454); Health/Telemetry summary schemas and general cross-source consolidation remain in #454.
 
-Implementation status: the destructive legacy-domain cutover, Dreaming-only file authority, Conversation assimilation, Health assimilation, direct Topic retrieval/context, and read-only Topic UI are implemented. Suppression/erasure and maintenance remain later slices.
+Implementation status: the destructive legacy-domain cutover, Dreaming-only file authority, Conversation assimilation, Health assimilation, direct Topic retrieval/context, and read-only Topic UI are implemented. Suppression/erasure and maintenance remain later slices. Section 3's planned pi filesystem tools and Bubblewrap shell were never shipped and are superseded by ADR 0033; current Dreaming returns curated text for validated host writes.
 
 ## Outcome
 

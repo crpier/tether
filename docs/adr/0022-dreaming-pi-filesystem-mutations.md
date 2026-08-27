@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0033
 ---
 
 # Dreaming mutates canonical Memory through confined native-shaped pi file tools
+
+ADR 0033 supersedes this planned execution mechanism. Tether never shipped the Bubblewrap or native-shaped Dreaming tool implementation described below.
 
 A dreaming run uses pi's familiar filesystem interaction instead of emitting a bespoke typed memory patch. It receives `read`, wrapped native `write` and `edit`, native-shaped `move` and `delete`, and `bash`; the mutators are confined to the Memory root, serialize their calls, reject symlinks/path escapes, and validate prospective Markdown frontmatter. Bash preserves its normal model-facing interface but executes inside Bubblewrap with the Memory root read-only, an ephemeral writable `/tmp`, no network, no credentials or unrelated host files, and bounded time/output. This gives the model the file ergonomics on which it is well trained without allowing shell mutation to bypass validation and history.
 

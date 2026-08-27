@@ -70,7 +70,7 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0002** — one agent _definition_ with a tool belt; concurrency via multiple pi processes, not sub-agents.
 - **0003** — SQLite is the source of truth and Markdown derived (superseded for Memory by 0021).
 - **0004** — Review and Recall tether Memory (superseded by 0021).
-- **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host (refined by 0022/0023).
+- **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host (refined by 0023/0032/0033).
 - **0006** — search is recomputed at the moment of use, never cached across actions.
 - **0007** — knowledge-base filenames are opaque Memory UUIDs (superseded by 0021).
 - **0008** — custom Starlette route contract layer (superseded by 0020).
@@ -79,7 +79,7 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0012** — raw Telemetry remains typed Evidence outside Memory (refined by 0021).
 - **0020** — FastAPI owns REST validation, routing, and OpenAPI generation.
 - **0021** — Memory is a canonical agent-curated Markdown workspace.
-- **0022** — Dreaming mutates Memory through confined native-shaped pi file tools.
+- **0022** — Dreaming mutates Memory through confined native-shaped pi file tools (superseded by 0033).
 - **0023** — Tether Conversations own history and receive fresh Memory projections independently of pi sessions.
 - **0024** — Delete everywhere physically prunes all retained backups.
 - **0026** — Dreaming is the sole writer of current Memory.
@@ -88,7 +88,8 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0029** — Conversation scope organizes work without becoming Memory authority.
 - **0030** — Open WebUI owns the assistant runtime (superseded by 0031).
 - **0031** — Tether owns the assistant runtime again after the Open WebUI trial failed daily-use evaluation.
-- **0032** — Fresh confined programs may orchestrate host-owned tools; Bash may not run in the co-resident Pi process.
+- **0032** — Fresh confined programs may orchestrate host-owned tools without ambient authority.
+- **0033** — Confined TypeScript/JavaScript is Tether's only programmable agent environment; Memory reads cross typed host tools.
 
 ## Build order
 
