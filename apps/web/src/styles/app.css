@@ -211,15 +211,21 @@
   line-height: 1rem;
 }
 
-/* Shiki dual-theme code highlighting (#537). Tokens are emitted with the
-   light color inline and the dark color in a --shiki-dark custom property
-   (defaultColor: false); switch via the app's data-kb-theme attribute, the
-   same mechanism as @custom-variant dark above. The pre background is kept
-   transparent so code blocks use the app's own bg-background/70. */
+/* Shiki dual-theme code highlighting (#537). With defaultColor: false, Shiki
+   emits light and dark colors as custom properties rather than declarations.
+   Apply the light variables by default and switch via the app's theme
+   attribute. Keep the pre background transparent so the code block uses the
+   app's own bg-background/70. */
 .shiki {
   background-color: transparent !important;
 }
 
+.shiki,
+.shiki span {
+  color: var(--shiki-light) !important;
+}
+
+[data-kb-theme="dark"] .shiki,
 [data-kb-theme="dark"] .shiki span {
   color: var(--shiki-dark) !important;
 }
