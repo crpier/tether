@@ -16,6 +16,8 @@
     "@earendil-works/pi-agent-core": "0.80.10",
     "@earendil-works/pi-ai": "0.80.10",
     "@earendil-works/pi-coding-agent": "0.80.10",
+    "@opencode-ai/codemode": "1.18.4",
+    "effect": "4.0.0-beta.101",
     "typebox": "1.1.38"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 # Architecture overview
 
-A map of Tether's stack and the load-bearing decisions, with pointers to the ADRs that record the hard-to-reverse ones. This is a map, not a spec — it says *what* and *why*, not *how* in detail.
+A map of Tether's stack and the load-bearing decisions, with pointers to the ADRs that record the hard-to-reverse ones. This is a map, not a spec — it says _what_ and _why_, not _how_ in detail.
 
 ## Shape
 
@@ -23,9 +23,9 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 **Python host** — the spine. Owns Evidence, Dreaming policy/history, typed vertical state, Search, scheduling, and the internal tool API. Built on **FastAPI**, fully async. **WebSocket** serves chat; plain **REST** serves current Memory Topics, exact `tether://` Evidence resolution, Dream history, triage, and typed verticals. There is no Memory CRUD or Review queue. Targets Python ≥3.14.
 
-**pi (agent runtime)** — earendil-works/pi in RPC mode, driven as a host-spawned subprocess. "One agent" is a *definition* (one tool belt, prompt, extensions), realized as multiple processes: one long-lived for foreground chat, ephemeral ones for background work. pi runs with built-in tools disabled — a **closed tool world** whose only surface is Tether's tools. See ADR 0002, ADR 0005.
+**pi (agent runtime)** — earendil-works/pi in RPC mode, driven as a host-spawned subprocess. "One agent" is a _definition_ (one tool belt, prompt, extensions), realized as multiple processes: one long-lived for foreground chat, ephemeral ones for background work. pi runs with built-in tools disabled — a **closed tool world** whose only surface is Tether's tools. See ADR 0002, ADR 0005.
 
-**Tools** — every capability is a pi extension (`pi.registerTool`) whose `execute` is a thin TS shim that calls back into the host over the loopback internal tool API. All logic stays in Python; the shim only marshals `{params, session id, secret}`. Tool param schemas have a single source of truth — the host's Pydantic models — from which the shims are generated. See ADR 0005.
+**Tools** — every capability is a pi extension (`pi.registerTool`) whose `execute` is a thin TS shim that calls back into the host over the loopback internal tool API. All logic stays in Python; the shim only marshals `{params, session id, secret}`. Tool param schemas have a single source of truth — the host's Pydantic models — from which the shims are generated. For multi-call work, `execute_tools` runs a fresh confined TypeScript/JavaScript program over those same shims; it has no ambient filesystem, process, environment, network, imports, packages, or persistence, and every nested call still crosses the host boundary. See ADR 0005 and ADR 0032.
 
 **Data layer** — **SQLite owns canonical Evidence, typed vertical state, Dream runs/cursors, suppressions, and complete Memory mutation/history records**, accessed through snekql. Current Memory is the recorded, Dreaming-authored Markdown workspace; there is no `Memory` row, trust state, facet table, or Todo→Memory link. Source integrations retain their own Evidence: Messages, Gmail records, Readwise highlights, reading progress, Health summaries, and other typed records.
 
@@ -35,9 +35,9 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 **Scheduler** — in-process, a ~30s tick polling SQLite for due work; firing a trigger spawns an ephemeral pi process. Durability/retries/backpressure live in the loop and SQLite state (no Redis). Due rows are marked `claimed` before dispatch; each job is an `asyncio` task gated behind a concurrency cap (backpressure); failures get `next_attempt_at` backoff (retries). The push half of capture → resurface.
 
-**Time** — backend stores UTC for every timestamp; the browser supplies the offset to convert one-shot times at capture. Recurrence *rules* additionally store wall-clock time + IANA TZ, and each tick materializes the next fire as UTC (so daily/weekly survives DST).
+**Time** — backend stores UTC for every timestamp; the browser supplies the offset to convert one-shot times at capture. Recurrence _rules_ additionally store wall-clock time + IANA TZ, and each tick materializes the next fire as UTC (so daily/weekly survives DST).
 
-**Frontend** — SolidJS SPA, built into the single production image and served by the Python host. Server state lives in `@tanstack/solid-query` (cache + invalidation), fed by the generated REST client. The single WebSocket is a *tagged event bus* (`{type: chat | invalidate | notify}`), not just chat: the host pushes dumb cache-invalidation signals from its mutation choke point, so background agent mutations (new Candidates, fired triggers) surface live without polling. The **chat transcript is host-owned SQLite data**, not pi's session (ADR 0005) — the host assembles settled messages from pi's RPC delta stream and persists them; the UI rehydrates history from REST and the WS carries only live deltas, so chat survives mobile refresh and pi restarts.
+**Frontend** — SolidJS SPA, built into the single production image and served by the Python host. Server state lives in `@tanstack/solid-query` (cache + invalidation), fed by the generated REST client. The single WebSocket is a _tagged event bus_ (`{type: chat | invalidate | notify}`), not just chat: the host pushes dumb cache-invalidation signals from its mutation choke point, so background agent mutations (new Candidates, fired triggers) surface live without polling. The **chat transcript is host-owned SQLite data**, not pi's session (ADR 0005) — the host assembles settled messages from pi's RPC delta stream and persists them; the UI rehydrates history from REST and the WS carries only live deltas, so chat survives mobile refresh and pi restarts.
 
 **Conversation import** — imported user messages become canonical conversational Evidence. They feed the same bounded Dreaming assimilation path as live Messages; imports do not create provisional Memory rows or a separate Memory Candidate lifecycle.
 
@@ -47,7 +47,7 @@ One deploy container: the **host + Node/pi co-resident** (so the host can spawn 
 
 ## Observability
 
-Three needs, two sinks. **Logs** (agent introspection + system health): **structlog** structured JSON to stdout, captured by Docker — no aggregator yet. Every line servicing a turn carries the **pi session id + turn id** as correlation key, so background (ephemeral-pi) turns are reconstructable after the fact. pi's stdout is the RPC channel, so the host emits the agent's behavior *on its behalf*, rebuilt from pi's RPC events (`tool_execution_start/update/end`) and tool callbacks; pi's **stderr** is folded into the host log stream. **Audit** is *derived*, not a spine: per-table `created_at` + lifecycle history columns + provenance answer "what happened to X" per entity — no event-log table.
+Three needs, two sinks. **Logs** (agent introspection + system health): **structlog** structured JSON to stdout, captured by Docker — no aggregator yet. Every line servicing a turn carries the **pi session id + turn id** as correlation key, so background (ephemeral-pi) turns are reconstructable after the fact. pi's stdout is the RPC channel, so the host emits the agent's behavior _on its behalf_, rebuilt from pi's RPC events (`tool_execution_start/update/end`) and tool callbacks; pi's **stderr** is folded into the host log stream. **Audit** is _derived_, not a spine: per-table `created_at` + lifecycle history columns + provenance answer "what happened to X" per entity — no event-log table.
 
 ## Operations
 
@@ -56,7 +56,8 @@ Three needs, two sinks. **Logs** (agent introspection + system health): **struct
 ## Security
 
 Two separate auth domains:
-- **Human → app**: defense in depth — Tailscale network isolation *plus* a single-password app login that mints a signed httpOnly session cookie (checked on REST and the WS handshake). The session layer is decoupled from the identity method, so OAuth can replace the password later. No multi-user model.
+
+- **Human → app**: defense in depth — Tailscale network isolation _plus_ a single-password app login that mints a signed httpOnly session cookie (checked on REST and the WS handshake). The session layer is decoupled from the identity method, so OAuth can replace the password later. No multi-user model.
 - **pi process → host**: the loopback internal tool API, authorized by a per-process secret injected at spawn; identity is the pi session id. Not reachable from the public surface.
 
 ## Models & cost
@@ -66,7 +67,7 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 ## Decision records
 
 - **0001** — memories are provisional until Review (superseded by 0021).
-- **0002** — one agent *definition* with a tool belt; concurrency via multiple pi processes, not sub-agents.
+- **0002** — one agent _definition_ with a tool belt; concurrency via multiple pi processes, not sub-agents.
 - **0003** — SQLite is the source of truth and Markdown derived (superseded for Memory by 0021).
 - **0004** — Review and Recall tether Memory (superseded by 0021).
 - **0005** — pi as the agent runtime over RPC, with generated TS tool shims calling the Python host (refined by 0022/0023).
@@ -87,6 +88,7 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0029** — Conversation scope organizes work without becoming Memory authority.
 - **0030** — Open WebUI owns the assistant runtime (superseded by 0031).
 - **0031** — Tether owns the assistant runtime again after the Open WebUI trial failed daily-use evaluation.
+- **0032** — Fresh confined programs may orchestrate host-owned tools; Bash may not run in the co-resident Pi process.
 
 ## Build order
 
