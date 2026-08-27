@@ -14,12 +14,36 @@ function formatMinutes(minutes: number): string {
   return `${hours.toString()}h ${remainder.toString()}m`;
 }
 
-function formatInstant(value: string | null): string {
+function formatInstant(value: string | null, timeZone?: string): string {
   if (value === null) return "No observations yet";
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone,
   }).format(new Date(value));
+}
+
+const weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function formatExerciseType(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
+function formatMomentKind(
+  kind: "exercise" | "missed_exercise" | "primary_sleep",
+): string {
+  if (kind === "primary_sleep") return "Primary sleep";
+  if (kind === "missed_exercise") return "Planned exercise check-in";
+  return "Exercise";
+}
+
+function formatWindow(window: {
+  end_local_time: string;
+  start_local_time: string;
+  weekday: number;
+}): string {
+  const weekday = weekdayNames[window.weekday] ?? "Unknown day";
+  return `${weekday} ${window.start_local_time.slice(0, 5)} to ${window.end_local_time.slice(0, 5)}`;
 }
 
 function MetricCard(props: { detail: string; label: string; value: string }) {
@@ -49,7 +73,12 @@ export function HealthPage() {
   );
   const latestSteps = createMemo(() => overview()?.summary.steps.daily.at(-1));
   const exercise = createMemo(() => overview()?.summary.exercise);
+  const hasExercise = createMemo(() => (exercise()?.record_count ?? 0) > 0);
   const heartRate = createMemo(() => overview()?.summary.heart_rate);
+  const hasHeartRate = createMemo(
+    () =>
+      (heartRate()?.sample_count ?? 0) > 0 && heartRate()?.average_bpm !== null,
+  );
 
   return (
     <div class="mx-auto w-full max-w-6xl p-4 sm:p-6 lg:p-8">
@@ -108,25 +137,174 @@ export function HealthPage() {
                 }
               />
               <MetricCard
-                detail={`${formatMinutes(exercise()?.total_duration_minutes ?? 0)} total`}
+                detail={
+                  hasExercise()
+                    ? `${formatMinutes(exercise()?.total_duration_minutes ?? 0)} total`
+                    : "No exercise observations in this period"
+                }
                 label="Exercise"
-                value={`${(exercise()?.record_count ?? 0).toLocaleString()} ${(exercise()?.record_count ?? 0) === 1 ? "workout" : "workouts"}`}
+                value={
+                  hasExercise()
+                    ? `${(exercise()?.record_count ?? 0).toLocaleString()} ${(exercise()?.record_count ?? 0) === 1 ? "workout" : "workouts"}`
+                    : "No data"
+                }
               />
               <MetricCard
-                detail={`${current().summary.steps.total_count.toLocaleString()} across ${days().toString()} days`}
+                detail={
+                  latestSteps() === undefined
+                    ? "No step observations in this period"
+                    : `${current().summary.steps.total_count.toLocaleString()} across ${days().toString()} days`
+                }
                 label="Steps"
-                value={`${(latestSteps()?.total_count ?? 0).toLocaleString()} latest day`}
+                value={
+                  latestSteps() === undefined
+                    ? "No data"
+                    : `${latestSteps()?.total_count.toLocaleString() ?? ""} latest day`
+                }
               />
               <MetricCard
-                detail={`${(heartRate()?.sample_count ?? 0).toLocaleString()} samples`}
+                detail={
+                  hasHeartRate()
+                    ? `${(heartRate()?.sample_count ?? 0).toLocaleString()} samples`
+                    : "No heart-rate observations in this period"
+                }
                 label="Heart rate"
                 value={
-                  heartRate()?.average_bpm === null
-                    ? "No data"
-                    : `${heartRate()?.average_bpm?.toFixed(0) ?? "0"} bpm avg`
+                  hasHeartRate()
+                    ? `${heartRate()?.average_bpm?.toFixed(0) ?? ""} bpm avg`
+                    : "No data"
                 }
               />
             </div>
+
+            <section aria-labelledby="health-plans" class="mt-8">
+              <h2 id="health-plans" class="text-lg font-semibold">
+                Exercise plans
+              </h2>
+              <p class="text-muted-foreground mt-1 text-sm">
+                Explicit intentions from chat. These do not change the measured
+                cards above.
+              </p>
+              <Show
+                fallback={
+                  <p class="text-muted-foreground mt-3 text-sm">
+                    No exercise plans yet. Tell Tether the days and local times
+                    you intend to exercise.
+                  </p>
+                }
+                when={current().plans.length > 0}
+              >
+                <ul class="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <For each={current().plans}>
+                    {(plan) => (
+                      <li class="border-border bg-card rounded-xl border p-4">
+                        <div class="flex flex-wrap items-start gap-2">
+                          <div class="min-w-0 flex-1">
+                            <h3 class="font-semibold">{plan.title}</h3>
+                            <p class="text-muted-foreground mt-1 text-sm capitalize">
+                              {plan.exercise_types
+                                .map(formatExerciseType)
+                                .join(", ")}
+                            </p>
+                          </div>
+                          <span class="bg-muted rounded-full px-2 py-1 text-xs capitalize">
+                            {plan.status}
+                          </span>
+                        </div>
+                        <ul class="mt-3 flex flex-wrap gap-2">
+                          <For each={plan.windows}>
+                            {(window) => (
+                              <li class="bg-muted rounded-md px-2 py-1 text-sm">
+                                {formatWindow(window)}
+                              </li>
+                            )}
+                          </For>
+                        </ul>
+                        <div class="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+                          <span>{plan.timezone}</span>
+                          <span>
+                            {plan.grace_minutes.toString()} min sync grace
+                          </span>
+                          <button
+                            class="hover:text-foreground underline underline-offset-4"
+                            onClick={() =>
+                              app.openEvidence(plan.source_evidence_uri)
+                            }
+                            type="button"
+                          >
+                            Inspect plan evidence
+                          </button>
+                        </div>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </section>
+
+            <section aria-labelledby="health-adherence" class="mt-8">
+              <h2 id="health-adherence" class="text-lg font-semibold">
+                Plan adherence
+              </h2>
+              <p class="text-muted-foreground mt-1 text-sm">
+                Settled window matching. A miss can mean rest, changed plans, or
+                delayed source data.
+              </p>
+              <Show
+                fallback={
+                  <p class="text-muted-foreground mt-3 text-sm">
+                    No settled exercise windows in this period.
+                  </p>
+                }
+                when={current().planned_exercise.length > 0}
+              >
+                <ul class="mt-3 space-y-2">
+                  <For each={current().planned_exercise}>
+                    {(occurrence) => (
+                      <li class="border-border bg-card flex flex-wrap items-center gap-3 rounded-lg border p-3">
+                        <div class="min-w-0 flex-1">
+                          <p class="font-medium">{occurrence.title}</p>
+                          <p class="text-muted-foreground text-sm">
+                            {formatInstant(
+                              occurrence.window_started_at,
+                              occurrence.timezone,
+                            )}{" "}
+                            to{" "}
+                            {formatInstant(
+                              occurrence.window_ended_at,
+                              occurrence.timezone,
+                            )}{" "}
+                            · {occurrence.timezone}
+                          </p>
+                        </div>
+                        <span
+                          class={
+                            occurrence.status === "matched"
+                              ? "bg-muted rounded-full px-2.5 py-1 text-sm"
+                              : "border-border rounded-full border px-2.5 py-1 text-sm"
+                          }
+                        >
+                          {occurrence.status === "matched"
+                            ? "Workout matched"
+                            : "No matching workout"}
+                        </span>
+                        <Show when={occurrence.matched_evidence_uri}>
+                          {(evidenceUri) => (
+                            <button
+                              class="hover:bg-muted rounded-md px-2 py-1.5 text-sm underline underline-offset-4"
+                              onClick={() => app.openEvidence(evidenceUri())}
+                              type="button"
+                            >
+                              Inspect workout
+                            </button>
+                          )}
+                        </Show>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </section>
 
             <section aria-labelledby="health-briefings" class="mt-8">
               <h2 id="health-briefings" class="text-lg font-semibold">
@@ -146,9 +324,7 @@ export function HealthPage() {
                       <li class="border-border bg-card flex flex-wrap items-center gap-3 rounded-lg border p-3">
                         <div class="min-w-0 flex-1">
                           <p class="font-medium">
-                            {moment.kind === "primary_sleep"
-                              ? "Primary sleep"
-                              : "Exercise"}
+                            {formatMomentKind(moment.kind)}
                           </p>
                           <p class="text-muted-foreground text-sm">
                             {formatInstant(moment.observed_at)} ·{" "}

@@ -21,6 +21,55 @@ const overview: HealthOverview = {
       turn_id: "019f0000-0000-7000-8000-000000000002",
     },
   ],
+  planned_exercise: [
+    {
+      grace_ended_at: "2026-08-24T18:00:00Z",
+      local_date: "2026-08-24",
+      matched_evidence_uri: null,
+      plan_id: "019f0000-0000-7000-8000-000000000003",
+      plan_version: 1,
+      source_record_uid:
+        "019f0000-0000-7000-8000-000000000003:2026-08-24:0:18:00:20:00",
+      status: "missed",
+      timezone: "Europe/Athens",
+      title: "Home strength",
+      window_ended_at: "2026-08-24T17:00:00Z",
+      window_started_at: "2026-08-24T15:00:00Z",
+    },
+  ],
+  plans: [
+    {
+      created_at: "2026-08-20T08:00:00Z",
+      effective_at: "2026-08-20T08:00:00Z",
+      exercise_types: ["strength_training", "weightlifting"],
+      grace_minutes: 60,
+      id: "019f0000-0000-7000-8000-000000000003",
+      source_evidence_uri:
+        "tether://message/019f0000-0000-7000-8000-000000000004",
+      status: "active",
+      timezone: "Europe/Athens",
+      title: "Home strength",
+      updated_at: "2026-08-20T08:00:00Z",
+      version: 1,
+      windows: [
+        {
+          end_local_time: "20:00:00",
+          start_local_time: "18:00:00",
+          weekday: 0,
+        },
+        {
+          end_local_time: "20:00:00",
+          start_local_time: "18:00:00",
+          weekday: 2,
+        },
+        {
+          end_local_time: "20:00:00",
+          start_local_time: "18:00:00",
+          weekday: 4,
+        },
+      ],
+    },
+  ],
   primary_sleep: {
     baseline: null,
     focus: "sleep_episode",
@@ -125,9 +174,62 @@ describe("Health page", () => {
         "6,432 latest day",
       ),
     ).toBeInTheDocument();
+    const plans = screen.getByRole("region", { name: "Exercise plans" });
+    expect(within(plans).getByText("Home strength")).toBeVisible();
+    expect(within(plans).getByText("Mon 18:00 to 20:00")).toBeVisible();
+    const adherence = screen.getByRole("region", { name: "Plan adherence" });
+    expect(within(adherence).getByText("No matching workout")).toBeVisible();
     expect(screen.getByRole("link", { name: "Open briefing" })).toHaveAttribute(
       "href",
       "/chat?turn=019f0000-0000-7000-8000-000000000002",
     );
+  });
+
+  test("names a missed-window briefing as a check-in", async () => {
+    const missed = structuredClone(overview);
+    missed.moments[0].kind = "missed_exercise";
+    const host = new FakeHost({ authenticated: true, healthOverview: missed });
+    renderApp(host);
+
+    await navigateTo("Health");
+
+    expect(
+      within(
+        await screen.findByRole("region", { name: "Proactive briefings" }),
+      ).getByText("Planned exercise check-in"),
+    ).toBeVisible();
+  });
+
+  test("presents absent measurements as missing rather than zero", async () => {
+    const missing = structuredClone(overview);
+    missing.primary_sleep.selected_episode = null;
+    missing.primary_sleep.status = "no_matching_episode";
+    missing.summary.exercise.record_count = 0;
+    missing.summary.exercise.total_duration_minutes = 0;
+    missing.summary.heart_rate.average_bpm = null;
+    missing.summary.heart_rate.sample_count = 0;
+    missing.summary.steps.daily = [];
+    missing.summary.steps.record_count = 0;
+    missing.summary.steps.total_count = 0;
+    const host = new FakeHost({ authenticated: true, healthOverview: missing });
+    renderApp(host);
+
+    await navigateTo("Health");
+
+    expect(
+      within(await screen.findByRole("region", { name: "Exercise" })).getByText(
+        "No data",
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("region", { name: "Steps" })).getByText(
+        "No data",
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("region", { name: "Heart rate" })).getByText(
+        "No data",
+      ),
+    ).toBeVisible();
   });
 });

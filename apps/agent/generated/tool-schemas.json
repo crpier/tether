@@ -1534,6 +1534,95 @@
       }
     },
     {
+      "endpoint": "/internal/tools/create_health_plan",
+      "name": "create_health_plan",
+      "params_model": "HealthPlanDraft",
+      "schema": {
+        "$defs": {
+          "ExerciseWindowInput": {
+            "description": "One explicit local weekly interval supplied by foreground chat.",
+            "properties": {
+              "end_local_time": {
+                "format": "time",
+                "title": "End Local Time",
+                "type": "string"
+              },
+              "start_local_time": {
+                "format": "time",
+                "title": "Start Local Time",
+                "type": "string"
+              },
+              "weekday": {
+                "enum": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday",
+                  "saturday",
+                  "sunday"
+                ],
+                "title": "Weekday",
+                "type": "string"
+              }
+            },
+            "required": ["end_local_time", "start_local_time", "weekday"],
+            "title": "ExerciseWindowInput",
+            "type": "object"
+          }
+        },
+        "description": "Create one explicitly requested recurring exercise intention.\n\nUse an IANA `timezone` and one or more same-day local weekly `windows`.\n`strength_training` accepts both strength-training and weightlifting Health\nConnect episodes. The host rejects creation or revision unless the active\nturn has fresh foreground user Evidence.",
+        "properties": {
+          "exercise_types": {
+            "items": {
+              "enum": [
+                "running",
+                "strength_training",
+                "walking",
+                "weightlifting"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Exercise Types",
+            "type": "array"
+          },
+          "grace_minutes": {
+            "default": 60,
+            "maximum": 360,
+            "minimum": 15,
+            "title": "Grace Minutes",
+            "type": "integer"
+          },
+          "timezone": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/$defs/ExerciseWindowInput"
+            },
+            "maxItems": 14,
+            "minItems": 1,
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": ["exercise_types", "timezone", "title", "windows"],
+        "title": "HealthPlanDraft",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/health_connect_inventory",
       "name": "health_connect_inventory",
       "params_model": "HealthConnectInventoryParams",
@@ -1541,6 +1630,25 @@
         "description": "List populated Health Connect record types and their UTC time bounds.",
         "properties": {},
         "title": "HealthConnectInventoryParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_health_plans",
+      "name": "list_health_plans",
+      "params_model": "ListHealthPlansParams",
+      "schema": {
+        "description": "List a bounded set of current active and paused exercise intentions.",
+        "properties": {
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "ListHealthPlansParams",
         "type": "object"
       }
     },
@@ -1638,6 +1746,34 @@
       }
     },
     {
+      "endpoint": "/internal/tools/set_health_plan_status",
+      "name": "set_health_plan_status",
+      "params_model": "SetHealthPlanStatusParams",
+      "schema": {
+        "description": "Pause or resume a Health plan at its observed version.",
+        "properties": {
+          "plan_id": {
+            "format": "uuid7",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["active", "paused"],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["plan_id", "status", "version"],
+        "title": "SetHealthPlanStatusParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/summarize_health_connect",
       "name": "summarize_health_connect",
       "params_model": "SummarizeHealthConnectParams",
@@ -1663,6 +1799,112 @@
         },
         "required": ["after", "before"],
         "title": "SummarizeHealthConnectParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/update_health_plan",
+      "name": "update_health_plan",
+      "params_model": "UpdateHealthPlanParams",
+      "schema": {
+        "$defs": {
+          "ExerciseWindowInput": {
+            "description": "One explicit local weekly interval supplied by foreground chat.",
+            "properties": {
+              "end_local_time": {
+                "format": "time",
+                "title": "End Local Time",
+                "type": "string"
+              },
+              "start_local_time": {
+                "format": "time",
+                "title": "Start Local Time",
+                "type": "string"
+              },
+              "weekday": {
+                "enum": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday",
+                  "saturday",
+                  "sunday"
+                ],
+                "title": "Weekday",
+                "type": "string"
+              }
+            },
+            "required": ["end_local_time", "start_local_time", "weekday"],
+            "title": "ExerciseWindowInput",
+            "type": "object"
+          }
+        },
+        "description": "Replace a complete Health plan definition at its observed version.",
+        "properties": {
+          "exercise_types": {
+            "items": {
+              "enum": [
+                "running",
+                "strength_training",
+                "walking",
+                "weightlifting"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Exercise Types",
+            "type": "array"
+          },
+          "grace_minutes": {
+            "default": 60,
+            "maximum": 360,
+            "minimum": 15,
+            "title": "Grace Minutes",
+            "type": "integer"
+          },
+          "timezone": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/$defs/ExerciseWindowInput"
+            },
+            "maxItems": 14,
+            "minItems": 1,
+            "title": "Windows",
+            "type": "array"
+          },
+          "plan_id": {
+            "format": "uuid7",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exercise_types",
+          "timezone",
+          "title",
+          "windows",
+          "plan_id",
+          "version"
+        ],
+        "title": "UpdateHealthPlanParams",
         "type": "object"
       }
     },

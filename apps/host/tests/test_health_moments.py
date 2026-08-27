@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from uuid import UUID, uuid7
 
 from snekql.sqlite import Config, Database, insert
@@ -18,14 +18,21 @@ from tether.conversation_turns import (
 )
 from tether.conversations import ConversationService
 from tether.health_connect import (
+    ExerciseWindowInput,
     HcExerciseEpisodeSummary,
     HcSleepEpisodeSummary,
     HealthMomentDispatcher,
     HealthMomentObservation,
     HealthMomentObservationQuery,
     HealthMomentService,
+    HealthPlanDraft,
+    HealthPlanEvidence,
+    HealthPlanOccurrenceReconciler,
+    HealthPlanRead,
+    HealthPlanService,
     create_health_connect_schema,
     create_health_moment_schema,
+    create_health_plan_schema,
 )
 from tether.health_connect.persistence import HcSleepSession, HcSleepStage
 from tether.model_selection import AgentModelCatalog
@@ -92,6 +99,7 @@ async def moment_database() -> AsyncGenerator[Database]:
     database = await Database.initialize(backend=Config(database=":memory:"))
     await create_conversation_schema(database)
     await create_health_moment_schema(database)
+    await create_health_plan_schema(database)
     try:
         yield database
     finally:
@@ -106,6 +114,35 @@ async def telemetry_database() -> AsyncGenerator[Database]:
         yield database
     finally:
         await database.close()
+
+
+async def create_monday_strength_plan(
+    database: Database, *, include_weightlifting: bool = False
+) -> HealthPlanRead:
+    """Create one independently timed plan used by reconciliation examples."""
+    return await HealthPlanService(database).create(
+        HealthPlanDraft(
+            exercise_types=[
+                "strength_training",
+                *(["weightlifting"] if include_weightlifting else []),
+            ],
+            grace_minutes=60,
+            timezone="Europe/Athens",
+            title="Home strength",
+            windows=[
+                ExerciseWindowInput(
+                    weekday="monday",
+                    start_local_time=time(18),
+                    end_local_time=time(20),
+                )
+            ],
+        ),
+        evidence=HealthPlanEvidence(
+            conversation_id=uuid7(),
+            message_id=uuid7(),
+            occurred_at=datetime(2026, 8, 24, 12, tzinfo=UTC),
+        ),
+    )
 
 
 def primary_sleep_observation() -> HealthMomentObservation:
@@ -178,6 +215,137 @@ async def settled_exercise_summary_becomes_an_exercise_health_moment() -> None:
     assert_eq(moments[0].evidence_uri, "tether://health-connect/exercise/exercise-1@v7")
     assert_eq(moments[0].evidence_uri in moments[0].observation, True)
     assert_eq("strength training" in moments[0].observation, True)
+
+
+@test()
+async def ended_unmatched_exercise_window_becomes_one_health_moment() -> None:
+    """A plan absence settles once after its explicit sync grace period."""
+    database = await load_fixture(moment_database())
+    telemetry = await load_fixture(telemetry_database())
+    plan = await create_monday_strength_plan(database, include_weightlifting=True)
+    service = HealthMomentService(
+        database=database,
+        observations=HealthMomentObservationQuery(
+            telemetry,
+            planned_exercise=HealthPlanOccurrenceReconciler(
+                database=database,
+                telemetry_database=telemetry,
+            ),
+        ),
+    )
+
+    first = await service.reconcile(now=datetime(2026, 8, 24, 18, 1, tzinfo=UTC))
+    second = await service.reconcile(now=datetime(2026, 8, 24, 18, 2, tzinfo=UTC))
+    moments = await service.list_recent(limit=10)
+
+    assert_eq(first.created, 1)
+    assert_eq(second.created, 0)
+    assert_eq([moment.kind for moment in moments], ["missed_exercise"])
+    assert_eq(moments[0].evidence_uri, plan.source_evidence_uri)
+    assert_eq("Home strength" in moments[0].observation, True)
+
+
+@test()
+async def weightlifting_satisfies_a_strength_training_window() -> None:
+    """Related settled strength exercise suppresses missed-workout coaching."""
+    database = await load_fixture(moment_database())
+    telemetry = await load_fixture(telemetry_database())
+    _ = await create_monday_strength_plan(database)
+    start = datetime(2026, 8, 24, 15, 30, tzinfo=UTC)
+    end = datetime(2026, 8, 24, 16, 30, tzinfo=UTC)
+    async with telemetry.transaction(mode="immediate") as transaction:
+        _ = await transaction.execute(
+            insert(
+                HcExerciseEpisodeSummary(
+                    duration_minutes=60.0,
+                    end_time=int(end.timestamp() * 1_000),
+                    exercise_type=81,
+                    lap_count=0,
+                    origin_id=None,
+                    payload_hash="weightlifting-hash",
+                    processor_version=1,
+                    record_uid="weightlifting-1",
+                    segment_count=0,
+                    start_time=int(start.timestamp() * 1_000),
+                    title="Home weights",
+                    total_lap_meters=None,
+                    version_id=1,
+                )
+            )
+        )
+    service = HealthMomentService(
+        database=database,
+        observations=HealthMomentObservationQuery(
+            telemetry,
+            planned_exercise=HealthPlanOccurrenceReconciler(
+                database=database,
+                telemetry_database=telemetry,
+            ),
+        ),
+    )
+
+    _ = await service.reconcile(now=datetime(2026, 8, 24, 18, 1, tzinfo=UTC))
+    moments = await service.list_recent(limit=10)
+
+    assert_eq([moment.kind for moment in moments], ["exercise"])
+
+
+@test()
+async def late_exercise_corrects_adherence_without_another_missed_briefing() -> None:
+    """Late source Evidence updates occurrence state but keeps one miss identity."""
+    database = await load_fixture(moment_database())
+    telemetry = await load_fixture(telemetry_database())
+    _ = await create_monday_strength_plan(database)
+    service = HealthMomentService(
+        database=database,
+        observations=HealthMomentObservationQuery(
+            telemetry,
+            planned_exercise=HealthPlanOccurrenceReconciler(
+                database=database,
+                telemetry_database=telemetry,
+            ),
+        ),
+    )
+    _ = await service.reconcile(now=datetime(2026, 8, 24, 18, 1, tzinfo=UTC))
+    start = datetime(2026, 8, 24, 15, 30, tzinfo=UTC)
+    end = datetime(2026, 8, 24, 16, 30, tzinfo=UTC)
+    async with telemetry.transaction(mode="immediate") as transaction:
+        _ = await transaction.execute(
+            insert(
+                HcExerciseEpisodeSummary(
+                    duration_minutes=60.0,
+                    end_time=int(end.timestamp() * 1_000),
+                    exercise_type=70,
+                    lap_count=0,
+                    origin_id=None,
+                    payload_hash="late-strength-hash",
+                    processor_version=1,
+                    record_uid="late-strength-1",
+                    segment_count=0,
+                    start_time=int(start.timestamp() * 1_000),
+                    title="Late synced strength",
+                    total_lap_meters=None,
+                    version_id=2,
+                )
+            )
+        )
+
+    _ = await service.reconcile(now=datetime(2026, 8, 24, 18, 2, tzinfo=UTC))
+    moments = await service.list_recent(limit=10)
+    occurrences = await HealthPlanService(database).list_occurrences(
+        after=datetime(2026, 8, 24, tzinfo=UTC),
+        before=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+
+    assert_eq(
+        [moment.kind for moment in moments].count("missed_exercise"),
+        1,
+    )
+    assert_eq([occurrence.status for occurrence in occurrences], ["matched"])
+    assert_eq(
+        occurrences[0].matched_evidence_uri,
+        "tether://health-connect/exercise/late-strength-1@v2",
+    )
 
 
 @test()

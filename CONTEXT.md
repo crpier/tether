@@ -122,8 +122,20 @@ _Avoid_: terminal, caption state, transcript error
 Raw time-series Evidence landing through an Ingestion gate (heart rate, location, read events). It remains in typed Vertical storage and never becomes Memory as-is.
 _Avoid_: metrics, events, raw data
 
+**Health plan**:
+One explicit human-authored recurring exercise intention, anchored to an IANA timezone and one or more weekly Exercise windows. It names the settled exercise kinds that can satisfy those windows. Only fresh foreground user Evidence may create, revise, pause, or resume it. It is an intention rather than Telemetry, Memory, or a Scheduled trigger.
+_Avoid_: workout telemetry, habit, goal, reminder
+
+**Exercise window**:
+One weekly local-time interval within a Health plan. Each dated realization becomes a Planned exercise occurrence. Its grace period delays absence detection so ordinary Health Connect sync latency is not mistaken for a missed workout.
+_Avoid_: reminder, calendar event, streak
+
+**Planned exercise occurrence**:
+One dated realization of an Exercise window. A matching settled exercise episode overlaps its interval and has one of the Health plan's exercise kinds. It becomes missed only after its grace period ends without a match. A late upstream observation may correct its displayed state but does not manufacture another briefing.
+_Avoid_: workout, Scheduled occurrence, score
+
 **Health moment**:
-One durable, host-detected reason for the agent to reconsider settled Health Evidence in the user's broader context, such as a primary sleep or exercise episode finishing. Its identity comes from the observed episode, so retries and upstream corrections do not create repeated briefings. It initiates a Health Message and may deliver the resulting assistant Message through Web Push. Detection is deterministic; the resulting briefing is agent interpretation.
+One durable, host-detected reason for the agent to reconsider settled Health Evidence in the user's broader context, such as a primary sleep or exercise episode finishing, or a Planned exercise occurrence becoming missed. Its identity comes from the observed episode or Planned exercise occurrence, so retries and upstream corrections do not create repeated briefings. It initiates a Health Message and may deliver the resulting assistant Message through Web Push. Detection is deterministic; the resulting briefing is agent interpretation.
 _Avoid_: alert, anomaly, Scheduled trigger, Distillation
 
 **Distillation**:

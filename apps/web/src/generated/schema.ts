@@ -2430,6 +2430,24 @@ export interface components {
       /** Start Time */
       start_time: number;
     };
+    /**
+     * ExerciseWindowRead
+     * @description Canonical numeric-weekday representation of an Exercise window.
+     */
+    ExerciseWindowRead: {
+      /**
+       * End Local Time
+       * Format: time
+       */
+      end_local_time: string;
+      /**
+       * Start Local Time
+       * Format: time
+       */
+      start_local_time: string;
+      /** Weekday */
+      weekday: number;
+    };
     /** GenericRecord */
     GenericRecord: {
       /** End Time */
@@ -3183,7 +3201,7 @@ export interface components {
        * Kind
        * @enum {string}
        */
-      kind: "exercise" | "primary_sleep";
+      kind: "exercise" | "missed_exercise" | "primary_sleep";
       /**
        * Observed At
        * Format: date-time
@@ -3218,8 +3236,59 @@ export interface components {
       latest_observation_at: string | null;
       /** Moments */
       moments: components["schemas"]["HealthOverviewMomentRead"][];
+      /** Planned Exercise */
+      planned_exercise: components["schemas"]["PlannedExerciseOccurrenceRead"][];
+      /** Plans */
+      plans: components["schemas"]["HealthPlanRead"][];
       primary_sleep: components["schemas"]["HealthConnectSleepEpisodeInsightRead"];
       summary: components["schemas"]["HealthConnectSummaryRead"];
+    };
+    /**
+     * HealthPlanRead
+     * @description One Health plan exposed to chat and Health presentation.
+     */
+    HealthPlanRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Effective At
+       * Format: date-time
+       */
+      effective_at: string;
+      /** Exercise Types */
+      exercise_types: (
+        "running" | "strength_training" | "walking" | "weightlifting"
+      )[];
+      /** Grace Minutes */
+      grace_minutes: number;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Source Evidence Uri */
+      source_evidence_uri: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "active" | "paused";
+      /** Timezone */
+      timezone: string;
+      /** Title */
+      title: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Version */
+      version: number;
+      /** Windows */
+      windows: components["schemas"]["ExerciseWindowRead"][];
     };
     /** HeartRateRecord */
     HeartRateRecord: {
@@ -3509,6 +3578,52 @@ export interface components {
       path: string;
       /** Title */
       title: string;
+    };
+    /**
+     * PlannedExerciseOccurrenceRead
+     * @description Current deterministic adherence state for one settled window.
+     */
+    PlannedExerciseOccurrenceRead: {
+      /**
+       * Grace Ended At
+       * Format: date-time
+       */
+      grace_ended_at: string;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      /** Matched Evidence Uri */
+      matched_evidence_uri: string | null;
+      /**
+       * Plan Id
+       * Format: uuid
+       */
+      plan_id: string;
+      /** Plan Version */
+      plan_version: number;
+      /** Source Record Uid */
+      source_record_uid: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "matched" | "missed";
+      /** Timezone */
+      timezone: string;
+      /** Title */
+      title: string;
+      /**
+       * Window Ended At
+       * Format: date-time
+       */
+      window_ended_at: string;
+      /**
+       * Window Started At
+       * Format: date-time
+       */
+      window_started_at: string;
     };
     /**
      * PostArtifactEventRequest

@@ -49,6 +49,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "set_purchase_decision",
             "set_bucket_item_intent",
             "create_todo",
+            "create_health_plan",
             "set_todo_status",
             "link_todo_trigger",
             "list_todos",
@@ -88,6 +89,9 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "health_connect_inventory",
             "query_health_connect",
             "summarize_health_connect",
+            "list_health_plans",
+            "set_health_plan_status",
+            "update_health_plan",
             "record_product_observation",
             "list_product_observations",
         },
@@ -152,6 +156,38 @@ def health_connect_query_schema_is_typed_and_bounded() -> None:
     summary_schema = cast("dict[str, Any]", tools["summarize_health_connect"]["schema"])
     assert_eq(summary_schema["required"], ["after", "before"])
     assert_in("overview", cast("str", summary_schema["description"]).lower())
+
+
+@test()
+def health_plan_schema_requires_explicit_weekly_windows() -> None:
+    """Plan creation names typed exercise kinds, weekdays, timezone, and grace."""
+    tools = {tool["name"]: tool for tool in build_tool_schema_document()["tools"]}
+
+    schema = cast("dict[str, Any]", tools["create_health_plan"]["schema"])
+    exercise_types = schema["properties"]["exercise_types"]["items"]
+    window = schema["$defs"]["ExerciseWindowInput"]
+
+    assert_eq(
+        exercise_types["enum"],
+        ["running", "strength_training", "walking", "weightlifting"],
+    )
+    assert_eq(
+        window["properties"]["weekday"]["enum"],
+        [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ],
+    )
+    assert_in("timezone", schema["required"])
+    assert_eq(schema["properties"]["grace_minutes"]["minimum"], 15)
+    listing = cast("dict[str, Any]", tools["list_health_plans"]["schema"])
+    assert_eq(listing["properties"]["limit"]["default"], 50)
+    assert_eq(listing["properties"]["limit"]["maximum"], 100)
 
 
 @test()

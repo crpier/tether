@@ -26,6 +26,15 @@ from tether.health_connect.persistence import (
     HcSleepEpisodeSummary,
     create_health_connect_schema,
 )
+from tether.health_connect.plans import (
+    ExerciseWindowInput,
+    HealthPlanDraft,
+    HealthPlanEvidence,
+    HealthPlanOccurrenceReconciler,
+    HealthPlanRead,
+    HealthPlanService,
+    create_health_plan_schema,
+)
 from tether.health_connect.routes import router
 from tether.health_connect.telemetry import HealthConnectTelemetry
 from tether.health_connect.tools import (
@@ -35,6 +44,7 @@ from tether.health_connect.tools import (
 
 __all__ = [
     "HEALTH_CONNECT_TOOL_SPECS",
+    "ExerciseWindowInput",
     "HcExerciseEpisodeSummary",
     "HcSleepEpisodeSummary",
     "HealthConnectEvidence",
@@ -49,8 +59,14 @@ __all__ = [
     "HealthMomentObservationQuery",
     "HealthMomentService",
     "HealthMomentWorker",
+    "HealthPlanDraft",
+    "HealthPlanEvidence",
+    "HealthPlanOccurrenceReconciler",
+    "HealthPlanRead",
+    "HealthPlanService",
     "create_health_connect_schema",
     "create_health_moment_schema",
+    "create_health_plan_schema",
     "internal_health_connect_tool_routes",
     "router",
 ]
