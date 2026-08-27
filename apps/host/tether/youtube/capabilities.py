@@ -31,6 +31,7 @@ from tether.transcripts.contracts import (
 from tether.youtube.quota import YouTubeQuotaExceededError
 from tether.youtube.service import (
     EmptyYouTubeSearchQueryError,
+    InvalidYouTubeActivityRangeError,
     TranscriptBlockedError,
     TranscriptNeedsReviewError,
     TranscriptRequestResult,
@@ -84,7 +85,11 @@ YOUTUBE_ERRORS: tuple[ErrorRule, ...] = (
         404,
         detail="youtube video not found",
     ),
-    ErrorRule((EmptyYouTubeSearchQueryError,), "invalid_input", 400),
+    ErrorRule(
+        (EmptyYouTubeSearchQueryError, InvalidYouTubeActivityRangeError),
+        "invalid_input",
+        400,
+    ),
     ErrorRule((YouTubeQuotaExceededError,), "quota_exceeded", 429),
     ErrorRule(
         (TranscriptTransientError, TranscriptBlockedError), "upstream_error", 503
@@ -143,6 +148,8 @@ class YouTubeVideoRead(BaseModel):
     ...     created_at=datetime(2026, 1, 1),
     ...     updated_at=datetime(2026, 1, 1),
     ...     ignored_at=None,
+    ...     liked_at=None,
+    ...     duration_seconds=None,
     ... )
     >>> read.state
     'active'
@@ -161,6 +168,8 @@ class YouTubeVideoRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     ignored_at: datetime | None
+    liked_at: datetime | None
+    duration_seconds: int | None
 
     @classmethod
     def from_video(
@@ -184,6 +193,8 @@ class YouTubeVideoRead(BaseModel):
             created_at=video.created_at,
             updated_at=video.updated_at,
             ignored_at=video.ignored_at,
+            liked_at=video.liked_at,
+            duration_seconds=video.duration_seconds,
         )
 
 

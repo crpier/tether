@@ -16,9 +16,10 @@ and whether the result was served live or from cache (story 71).
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+from datetime import datetime
+from typing import Protocol, Self, cast
 
-from pydantic import BaseModel, PositiveInt
+from pydantic import AwareDatetime, BaseModel, PositiveInt, model_validator
 from snekql.sqlite import Fetched
 from starlette.requests import Request
 from starlette.routing import Route
@@ -37,7 +38,12 @@ from tether.youtube.capabilities import (
 from tether.youtube.capabilities import (
     unwrap_transcript_request as _unwrap_transcript_request,
 )
-from tether.youtube.service import BrowseResult, SearchResult, YouTubeService
+from tether.youtube.service import (
+    BrowseResult,
+    SearchResult,
+    YouTubeActivitySummary,
+    YouTubeService,
+)
 from tether.youtube.store import (
     IngestedVideo,
     TranscriptStatus,
@@ -89,6 +95,31 @@ class SearchYouTubeParams(BaseModel):
 
     q: str
     limit: PositiveInt = _DEFAULT_LIST_LIMIT
+
+
+class YouTubeActivityRangeError(ValueError):
+    """The requested liked-video interval is empty or reversed."""
+
+    def __init__(self) -> None:
+        super().__init__("before must be later than after")
+
+
+class SummarizeYouTubeActivityParams(BaseModel):
+    """Summarize liked videos in a half-open interval as a viewing proxy.
+
+    The returned duration is the sum of full video lengths, not measured watch
+    time. Use timezone-aware boundaries so relative calendar weeks reflect the
+    user's local timezone.
+    """
+
+    after: AwareDatetime
+    before: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> Self:
+        if self.after >= self.before:
+            raise YouTubeActivityRangeError
+        return self
 
 
 class FetchYouTubeTranscriptParams(BaseModel):
@@ -145,6 +176,8 @@ def _compact_video(
         "source": video.source,
         "state": derive_ingest_state(video),
         "transcript_status": transcript_status,
+        "liked_at": video.liked_at,
+        "duration_seconds": video.duration_seconds,
     }
     description = _description_preview(video.description)
     if description is not None:
@@ -197,6 +230,35 @@ async def _search(
     return _compact_videos(result)
 
 
+def _activity_payload(summary: YouTubeActivitySummary) -> dict[str, object]:
+    """Project one domain summary into the explicit assistant-facing contract."""
+    return {
+        "after": summary.after,
+        "before": summary.before,
+        "video_count": summary.video_count,
+        "videos_with_known_duration": summary.videos_with_known_duration,
+        "videos_missing_duration": summary.videos_missing_duration,
+        "total_video_duration_seconds": summary.total_video_duration_seconds,
+        "average_video_duration_seconds": summary.average_video_duration_seconds,
+        "proxy": "liked_videos",
+        "duration_semantics": "sum_of_full_video_lengths_not_watch_time",
+    }
+
+
+async def _summarize_activity(
+    request: Request, after: datetime, before: datetime
+) -> CapabilityOutcome:
+    """Summarize a local liked-video interval without returning individual rows."""
+    summary = await _runtime(request).youtube_service.summarize_activity(
+        after=after,
+        before=before,
+        logger=get_request_logger(request),
+    )
+    return CapabilityOutcome(
+        result=_activity_payload(summary), quota=summary.quota, cache=summary.cache
+    )
+
+
 async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcome:
     """Fetch and persist a transcript for an ingested video."""
     outcome = await _runtime(request).youtube_service.fetch_transcript(
@@ -221,6 +283,12 @@ YOUTUBE_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "search_youtube", SearchYouTubeParams, bind_params(_search), YOUTUBE_ERRORS
+    ),
+    ToolSpec(
+        "summarize_youtube_activity",
+        SummarizeYouTubeActivityParams,
+        bind_params(_summarize_activity),
+        YOUTUBE_ERRORS,
     ),
     ToolSpec(
         "fetch_youtube_transcript",

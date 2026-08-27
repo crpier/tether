@@ -8,6 +8,7 @@ failures through `tether.youtube.capabilities.YOUTUBE_ERRORS`, and ignore/retry
 share one capability execute outright.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -40,6 +41,18 @@ def video(
         channel=channel,
         topic=topic,
         description=description,
+    )
+
+
+def activity_video(
+    video_id: str,
+    *,
+    liked_at: datetime,
+    duration_seconds: int | None = None,
+) -> RawYouTubeVideo:
+    """Build a liked video carrying the activity metadata under test."""
+    return video(video_id).model_copy(
+        update={"liked_at": liked_at, "duration_seconds": duration_seconds}
     )
 
 
@@ -85,6 +98,117 @@ def get_youtube_browses_with_quota_and_cache_metadata() -> None:
     assert_eq(body["cache"]["hit"], True)
     assert_eq(body["quota"]["used"], 2)
     assert_eq({item["transcript_status"] for item in body["videos"]}, {"pending"})
+
+
+@test()
+def youtube_reads_expose_liked_time_and_video_duration() -> None:
+    """REST and tool projections expose metadata already stored by ingestion."""
+    liked_at = datetime(2026, 8, 20, 12, 30, tzinfo=UTC)
+    api = InMemoryYouTubeApi(
+        liked=[activity_video("v1", liked_at=liked_at, duration_seconds=3723)],
+        transcripts={"v1": "transcript"},
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        login(client)
+        rest_video = client.get("/api/youtube").json()["videos"][0]
+        tool_video = call_tool(client, "browse_youtube")["result"][0]
+        fetched_video = call_tool(client, "fetch_youtube_transcript", video_id="v1")[
+            "result"
+        ]["video"]
+
+    for projected in (rest_video, tool_video, fetched_video):
+        assert_eq(projected["liked_at"], "2026-08-20T12:30:00Z")
+        assert_eq(projected["duration_seconds"], 3723)
+
+
+@test()
+def summarize_youtube_activity_returns_bounded_proxy_totals() -> None:
+    """A half-open interval reports counts, duration, and missing-data coverage."""
+    api = InMemoryYouTubeApi(
+        liked=[
+            activity_video(
+                "included-start",
+                liked_at=datetime(2026, 8, 9, 21, tzinfo=UTC),
+                duration_seconds=60,
+            ),
+            activity_video(
+                "included-middle",
+                liked_at=datetime(2026, 8, 12, 12, tzinfo=UTC),
+                duration_seconds=120,
+            ),
+            activity_video(
+                "included-missing",
+                liked_at=datetime(2026, 8, 14, 12, tzinfo=UTC),
+            ),
+            activity_video(
+                "excluded-end",
+                liked_at=datetime(2026, 8, 16, 21, tzinfo=UTC),
+                duration_seconds=300,
+            ),
+            activity_video(
+                "excluded-ignored",
+                liked_at=datetime(2026, 8, 13, 12, tzinfo=UTC),
+                duration_seconds=600,
+            ),
+        ]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        _ = call_tool(client, "ignore_youtube_video", video_id="excluded-ignored")
+        envelope = call_tool(
+            client,
+            "summarize_youtube_activity",
+            after="2026-08-10T00:00:00+03:00",
+            before="2026-08-17T00:00:00+03:00",
+        )
+        empty = call_tool(
+            client,
+            "summarize_youtube_activity",
+            after="2030-01-01T00:00:00Z",
+            before="2030-01-08T00:00:00Z",
+        )
+
+    assert_eq(envelope["success"], True)
+    assert_eq(
+        envelope["result"],
+        {
+            "after": "2026-08-09T21:00:00Z",
+            "before": "2026-08-16T21:00:00Z",
+            "video_count": 3,
+            "videos_with_known_duration": 2,
+            "videos_missing_duration": 1,
+            "total_video_duration_seconds": 180,
+            "average_video_duration_seconds": 90,
+            "proxy": "liked_videos",
+            "duration_semantics": "sum_of_full_video_lengths_not_watch_time",
+        },
+    )
+    assert_eq(empty["result"]["video_count"], 0)
+    assert_eq(empty["result"]["total_video_duration_seconds"], 0)
+    assert_eq(empty["result"]["average_video_duration_seconds"], None)
+
+
+@test()
+def summarize_youtube_activity_rejects_ambiguous_or_empty_ranges() -> None:
+    """The aggregate requires aware timestamps and a non-empty forward interval."""
+    api = InMemoryYouTubeApi(liked=[video("v1")])
+    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
+        naive = call_tool(
+            client,
+            "summarize_youtube_activity",
+            after="2026-08-10T00:00:00",
+            before="2026-08-17T00:00:00",
+        )
+        empty = call_tool(
+            client,
+            "summarize_youtube_activity",
+            after="2026-08-17T00:00:00Z",
+            before="2026-08-17T00:00:00Z",
+        )
+
+    assert_eq(naive["success"], False)
+    assert_eq(naive["error"]["code"], "invalid_input")
+    assert_eq(empty["success"], False)
+    assert_eq(empty["error"]["code"], "invalid_input")
 
 
 @test()
@@ -375,6 +499,8 @@ def browse_rows_are_compact_and_omit_the_transcript() -> None:
             "source",
             "state",
             "transcript_status",
+            "liked_at",
+            "duration_seconds",
         },
     )
 

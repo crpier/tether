@@ -56,6 +56,10 @@ import {
   search_youtubeTool,
 } from "./search_youtube.js";
 import {
+  registerSummarizeYoutubeActivityTool,
+  summarize_youtube_activityTool,
+} from "./summarize_youtube_activity.js";
+import {
   registerFetchYoutubeTranscriptTool,
   fetch_youtube_transcriptTool,
 } from "./fetch_youtube_transcript.js";
@@ -193,6 +197,7 @@ export const tetherToolSources = [
   sourceForTool(triage_reportTool),
   sourceForTool(browse_youtubeTool),
   sourceForTool(search_youtubeTool),
+  sourceForTool(summarize_youtube_activityTool),
   sourceForTool(fetch_youtube_transcriptTool),
   sourceForTool(ignore_youtube_videoTool),
   sourceForTool(retry_youtube_videoTool),
@@ -251,6 +256,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerTriageReportTool(pi);
   registerBrowseYoutubeTool(pi);
   registerSearchYoutubeTool(pi);
+  registerSummarizeYoutubeActivityTool(pi);
   registerFetchYoutubeTranscriptTool(pi);
   registerIgnoreYoutubeVideoTool(pi);
   registerRetryYoutubeVideoTool(pi);

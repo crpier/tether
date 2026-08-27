@@ -56,6 +56,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "triage_report",
             "browse_youtube",
             "search_youtube",
+            "summarize_youtube_activity",
             "fetch_youtube_transcript",
             "ignore_youtube_video",
             "retry_youtube_video",
@@ -154,6 +155,19 @@ def health_connect_query_schema_is_typed_and_bounded() -> None:
     summary_schema = cast("dict[str, Any]", tools["summarize_health_connect"]["schema"])
     assert_eq(summary_schema["required"], ["after", "before"])
     assert_in("overview", cast("str", summary_schema["description"]).lower())
+
+
+@test()
+def youtube_activity_schema_requires_explicit_time_boundaries() -> None:
+    """The aggregate advertises aware date-time inputs and proxy semantics."""
+    tools = {tool["name"]: tool for tool in build_tool_schema_document()["tools"]}
+    schema = cast("dict[str, Any]", tools["summarize_youtube_activity"]["schema"])
+
+    assert_eq(schema["required"], ["after", "before"])
+    assert_eq(schema["properties"]["after"]["format"], "date-time")
+    description = " ".join(cast("str", schema["description"]).lower().split())
+    assert_in("viewing proxy", description)
+    assert_in("not measured watch time", description)
 
 
 @test()
