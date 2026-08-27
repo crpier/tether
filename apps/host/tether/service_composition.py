@@ -38,6 +38,8 @@ from tether.health_connect import (
     HealthMomentObservationQuery,
     HealthMomentService,
     HealthMomentWorker,
+    HealthPlanOccurrenceReconciler,
+    HealthPlanService,
 )
 from tether.health_distillation import (
     HealthDistillationExecutor,
@@ -531,6 +533,7 @@ class CoreServices:
     dreaming_service: DreamingService
     health_distillation_service: HealthDistillationService
     health_moment_service: HealthMomentService
+    health_plan_service: HealthPlanService
     youtube_search: YouTubeSearchService | None
 
 
@@ -708,12 +711,16 @@ async def compose_core_services(
         conversation_turns,
     )
     await scheduler_component.scheduler.repair()
-    product_observation_service = ProductObservationService(
-        host.database, event_publisher=event_hub
-    )
+    health_plan_service = HealthPlanService(host.database)
     health_moment_service = HealthMomentService(
         database=host.database,
-        observations=HealthMomentObservationQuery(host.telemetry_database),
+        observations=HealthMomentObservationQuery(
+            host.telemetry_database,
+            planned_exercise=HealthPlanOccurrenceReconciler(
+                database=host.database,
+                telemetry_database=host.telemetry_database,
+            ),
+        ),
     )
     health_moment_worker = HealthMomentWorker(
         dispatcher=HealthMomentDispatcher(
@@ -850,7 +857,9 @@ async def compose_core_services(
         model_catalog=model_catalog,
         notification_service=scheduler_component.notification_service,
         panel_service=presentation.panel_service,
-        product_observation_service=product_observation_service,
+        product_observation_service=ProductObservationService(
+            host.database, event_publisher=event_hub
+        ),
         provider_auth_service=provider_auth_service,
         push_service=push_service,
         recall_service=recall_service,
@@ -862,5 +871,6 @@ async def compose_core_services(
         dreaming_service=dreaming_service,
         health_distillation_service=health_distillation_service,
         health_moment_service=health_moment_service,
+        health_plan_service=health_plan_service,
         youtube_search=youtube_searcher,
     )

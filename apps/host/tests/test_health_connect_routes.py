@@ -5,13 +5,23 @@ import sqlite3
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
+from datetime import UTC, datetime, time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
+from uuid import uuid7
 
 from httpx2 import Response
 from snektest import assert_eq, assert_true, test
+from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from tether.app_runtime import app_runtime
+from tether.health_connect import (
+    ExerciseWindowInput,
+    HealthPlanDraft,
+    HealthPlanEvidence,
+)
 from tether.server import AppConfig, create_app
 from tether.telemetry import TelemetrySettings
 
@@ -148,6 +158,103 @@ def authenticated_health_overview_reuses_deterministic_health_projections() -> N
     assert_eq(overview["summary"]["steps"]["total_count"], 1234)
     assert_eq(overview["primary_sleep"]["status"], "available")
     assert_eq(overview["moments"], [])
+
+
+@test()
+def authenticated_health_overview_lists_typed_exercise_plans() -> None:
+    """The Health page read presents intentions separately from measurements."""
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        runtime = app_runtime(cast("Starlette", client.app))
+        if client.portal is None:
+            raise RuntimeError("test client portal is not running")
+
+        async def create_plan() -> None:
+            _ = await runtime.health_plan_service.create(
+                HealthPlanDraft(
+                    exercise_types=["strength_training", "weightlifting"],
+                    timezone="Europe/Athens",
+                    title="Home strength",
+                    windows=[
+                        ExerciseWindowInput(
+                            end_local_time=time(20),
+                            start_local_time=time(18),
+                            weekday="monday",
+                        )
+                    ],
+                ),
+                evidence=HealthPlanEvidence(
+                    conversation_id=uuid7(),
+                    message_id=uuid7(),
+                    occurred_at=datetime(2026, 8, 24, 12, tzinfo=UTC),
+                ),
+            )
+
+        client.portal.call(create_plan)
+
+        response = client.get(
+            "/api/health/overview",
+            headers=AUTHORIZATION,
+            params={"before": "2026-08-25T00:00:00Z", "days": 7},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq([plan["title"] for plan in response.json()["plans"]], ["Home strength"])
+    assert_eq(response.json()["plans"][0]["windows"][0]["weekday"], 0)
+
+
+@test()
+def health_overview_explains_settled_plan_adherence() -> None:
+    """Plan occurrence state stays separate from measured summary cards."""
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        runtime = app_runtime(cast("Starlette", client.app))
+        if client.portal is None:
+            raise RuntimeError("test client portal is not running")
+
+        async def create_and_reconcile() -> None:
+            _ = await runtime.health_plan_service.create(
+                HealthPlanDraft(
+                    exercise_types=["strength_training"],
+                    grace_minutes=60,
+                    timezone="Europe/Athens",
+                    title="Monday strength",
+                    windows=[
+                        ExerciseWindowInput(
+                            end_local_time=time(20),
+                            start_local_time=time(18),
+                            weekday="monday",
+                        )
+                    ],
+                ),
+                evidence=HealthPlanEvidence(
+                    conversation_id=uuid7(),
+                    message_id=uuid7(),
+                    occurred_at=datetime(2026, 8, 24, 12, tzinfo=UTC),
+                ),
+            )
+            _ = await runtime.health_moment_service.reconcile(
+                now=datetime(2026, 8, 24, 18, 1, tzinfo=UTC)
+            )
+
+        client.portal.call(create_and_reconcile)
+
+        response = client.get(
+            "/api/health/overview",
+            headers=AUTHORIZATION,
+            params={"before": "2026-08-25T00:00:00Z", "days": 7},
+        )
+
+    assert_eq(response.status_code, 200)
+    occurrences = response.json()["planned_exercise"]
+    assert_eq([occurrence["status"] for occurrence in occurrences], ["missed"])
+    assert_eq(occurrences[0]["title"], "Monday strength")
+    assert_eq(occurrences[0]["timezone"], "Europe/Athens")
+    assert_eq(occurrences[0]["matched_evidence_uri"], None)
 
 
 @test()

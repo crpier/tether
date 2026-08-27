@@ -37,6 +37,7 @@ from tether.health_connect.persistence import (
     HcExerciseEpisodeSummary,
     HcSleepEpisodeSummary,
 )
+from tether.health_connect.plans import PlannedExerciseMiss
 from tether.health_connect.telemetry_values import (
     datetime_from_millis,
     render_exercise_type,
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
 
 _logger = structlog.stdlib.get_logger("tether.health_moments")
 
-HealthMomentKind = Literal["exercise", "primary_sleep"]
+HealthMomentKind = Literal["exercise", "missed_exercise", "primary_sleep"]
 HealthMomentStatus = Literal["pending", "running", "succeeded", "failed"]
 HealthMomentPushStatus = Literal["pending", "delivered"]
 
@@ -126,6 +127,12 @@ class HealthMomentObservationSource(Protocol):
     async def fetch_recent(self, *, now: datetime) -> list[HealthMomentObservation]: ...
 
 
+class PlannedExerciseSource(Protocol):
+    """Converge planned occurrences and return current settled misses."""
+
+    async def reconcile(self, *, now: datetime) -> list[PlannedExerciseMiss]: ...
+
+
 class HealthConversationPort(Protocol):
     """Conversation reads needed after one Health turn settles."""
 
@@ -196,6 +203,7 @@ class HealthMomentObservationQuery:
 
     database: Database
     lookback: timedelta = timedelta(hours=24)
+    planned_exercise: PlannedExerciseSource | None = None
 
     async def fetch_recent(self, *, now: datetime) -> list[HealthMomentObservation]:
         """Return a bounded window so initial deployment cannot replay history."""
@@ -311,6 +319,18 @@ class HealthMomentObservationQuery:
                     source_record_uid=selected_sleep.record_id,
                     source_version_id=selected_sleep.source_version,
                 )
+            )
+        if self.planned_exercise is not None:
+            observations.extend(
+                HealthMomentObservation(
+                    evidence_uri=miss.evidence_uri,
+                    kind="missed_exercise",
+                    observation=miss.observation,
+                    observed_at=miss.observed_at,
+                    source_record_uid=miss.source_record_uid,
+                    source_version_id=miss.source_version_id,
+                )
+                for miss in await self.planned_exercise.reconcile(now=now)
             )
         return sorted(observations, key=lambda observation: observation.observed_at)
 

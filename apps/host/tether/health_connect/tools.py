@@ -1,17 +1,40 @@
-"""Read-only Health Connect Telemetry tools for the closed agent world."""
+"""Health Telemetry reads and Evidence-backed Health plan tools."""
 
 from __future__ import annotations
 
 from datetime import timedelta
 from typing import Literal, Protocol, Self, cast
+from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import (
+    UUID7,
+    AwareDatetime,
+    BaseModel,
+    Field,
+    PositiveInt,
+    model_validator,
+)
 from starlette.requests import Request
 from starlette.routing import Route
 
+from tether.active_user_evidence import (
+    ActiveUserEvidenceError,
+    resolve_active_user_evidence,
+)
+from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.capabilities import bind_params
-from tether.capability_contracts import CapabilityOutcome
+from tether.capability_contracts import CapabilityOutcome, ErrorRule
+from tether.conversations import ConversationService
 from tether.health_connect.contracts import HealthRecordType
+from tether.health_connect.plans import (
+    HealthPlanConflictError,
+    HealthPlanDraft,
+    HealthPlanEvidence,
+    HealthPlanNotFoundError,
+    HealthPlanService,
+    HealthPlanStatus,
+    InvalidHealthPlanError,
+)
 from tether.health_connect.telemetry import HealthConnectTelemetry
 from tether.tool_runtime import ToolSpec
 
@@ -24,7 +47,10 @@ class _HealthConnectToolsRuntime(Protocol):
     either direction would close a static import cycle (ADR-0025).
     """
 
+    conversation_service: ConversationService
     health_connect_telemetry: HealthConnectTelemetry
+    health_plan_service: HealthPlanService
+    trace_recorder: AgentTraceRecorder
 
 
 def _runtime(request: Request) -> _HealthConnectToolsRuntime:
@@ -58,6 +84,27 @@ class AnalyzeHealthConnectParams(BaseModel):
 
 class HealthConnectInventoryParams(BaseModel):
     """List populated Health Connect record types and their UTC time bounds."""
+
+
+class ListHealthPlansParams(BaseModel):
+    """List a bounded set of current active and paused exercise intentions."""
+
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class SetHealthPlanStatusParams(BaseModel):
+    """Pause or resume a Health plan at its observed version."""
+
+    plan_id: UUID7
+    status: HealthPlanStatus
+    version: PositiveInt
+
+
+class UpdateHealthPlanParams(HealthPlanDraft):
+    """Replace a complete Health plan definition at its observed version."""
+
+    plan_id: UUID7
+    version: PositiveInt
 
 
 class HealthConnectMetricStatusRecordTypeError(ValueError):
@@ -118,6 +165,64 @@ class QueryHealthConnectParams(BaseModel):
         return self
 
 
+async def _active_health_plan_evidence(request: Request) -> HealthPlanEvidence:
+    """Resolve the foreground user Message authorizing a plan mutation."""
+    runtime = _runtime(request)
+    try:
+        source = await resolve_active_user_evidence(
+            conversation_service=runtime.conversation_service,
+            trace_recorder=runtime.trace_recorder,
+            session_id=request.state.session_id,
+        )
+    except ActiveUserEvidenceError as error:
+        message = "Health plan changes require active interactive user Evidence"
+        raise InvalidHealthPlanError(message) from error
+    return HealthPlanEvidence(
+        conversation_id=UUID(str(source.conversation_id)),
+        message_id=UUID(str(source.id)),
+        occurred_at=source.created_at,
+    )
+
+
+async def _create_health_plan(
+    request: Request, params: HealthPlanDraft
+) -> CapabilityOutcome:
+    """Create a typed weekly exercise intention from fresh user Evidence."""
+    plan = await _runtime(request).health_plan_service.create(
+        params,
+        evidence=await _active_health_plan_evidence(request),
+    )
+    return CapabilityOutcome(result=plan.model_dump(mode="json"))
+
+
+async def _update_health_plan(
+    request: Request, params: UpdateHealthPlanParams
+) -> CapabilityOutcome:
+    """Apply one Evidence-backed complete plan revision."""
+    plan = await _runtime(request).health_plan_service.update(
+        UUID(str(params.plan_id)),
+        HealthPlanDraft.model_validate(
+            params.model_dump(exclude={"plan_id", "version"})
+        ),
+        evidence=await _active_health_plan_evidence(request),
+        version=params.version,
+    )
+    return CapabilityOutcome(result=plan.model_dump(mode="json"))
+
+
+async def _set_health_plan_status(
+    request: Request, params: SetHealthPlanStatusParams
+) -> CapabilityOutcome:
+    """Apply an Evidence-backed pause or resume transition."""
+    plan = await _runtime(request).health_plan_service.set_status(
+        UUID(str(params.plan_id)),
+        evidence=await _active_health_plan_evidence(request),
+        status=params.status,
+        version=params.version,
+    )
+    return CapabilityOutcome(result=plan.model_dump(mode="json"))
+
+
 async def _analyze_health_connect(
     request: Request, params: AnalyzeHealthConnectParams
 ) -> CapabilityOutcome:
@@ -136,6 +241,12 @@ async def _analyze_health_connect(
     else:
         insight = await telemetry.insights.fetch_sleeping_heart_rate(days=params.days)
     return CapabilityOutcome(result=insight.model_dump(mode="json"))
+
+
+async def _list_health_plans(request: Request, limit: int) -> CapabilityOutcome:
+    """Return current typed Health plans without requiring fresh Evidence."""
+    plans = await _runtime(request).health_plan_service.list(limit=limit)
+    return CapabilityOutcome(result=[plan.model_dump(mode="json") for plan in plans])
 
 
 async def _health_connect_inventory(request: Request) -> CapabilityOutcome:
@@ -172,6 +283,13 @@ async def _query_health_connect(
     return CapabilityOutcome(result=current.model_dump(mode="json"))
 
 
+_HEALTH_PLAN_ERRORS: tuple[ErrorRule, ...] = (
+    ErrorRule((HealthPlanNotFoundError,), "not_found", 404),
+    ErrorRule((HealthPlanConflictError,), "conflict", 409),
+    ErrorRule((InvalidHealthPlanError,), "invalid_input", 422),
+)
+
+
 HEALTH_CONNECT_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "analyze_health_connect",
@@ -179,9 +297,20 @@ HEALTH_CONNECT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         _analyze_health_connect,
     ),
     ToolSpec(
+        "create_health_plan",
+        HealthPlanDraft,
+        _create_health_plan,
+        _HEALTH_PLAN_ERRORS,
+    ),
+    ToolSpec(
         "health_connect_inventory",
         HealthConnectInventoryParams,
         bind_params(_health_connect_inventory),
+    ),
+    ToolSpec(
+        "list_health_plans",
+        ListHealthPlansParams,
+        bind_params(_list_health_plans),
     ),
     ToolSpec(
         "query_health_connect",
@@ -189,9 +318,21 @@ HEALTH_CONNECT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         _query_health_connect,
     ),
     ToolSpec(
+        "set_health_plan_status",
+        SetHealthPlanStatusParams,
+        _set_health_plan_status,
+        _HEALTH_PLAN_ERRORS,
+    ),
+    ToolSpec(
         "summarize_health_connect",
         SummarizeHealthConnectParams,
         _summarize_health_connect,
+    ),
+    ToolSpec(
+        "update_health_plan",
+        UpdateHealthPlanParams,
+        _update_health_plan,
+        _HEALTH_PLAN_ERRORS,
     ),
 )
 """Read-only Health Connect capabilities exposed as internal tools."""

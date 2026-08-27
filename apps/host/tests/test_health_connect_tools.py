@@ -3,11 +3,16 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
+from uuid import UUID, uuid7
 
 from snektest import assert_eq, assert_true, test
+from starlette.applications import Starlette
 
-from tests.surfaces import call_tool, login, surface_client
+from tests.surfaces import SESSION, call_tool, login, surface_client
+from tether.agent_trace_model import RunCorrelation
+from tether.app_runtime import app_runtime
+from tether.conversation_model import MessageDraft
 
 FIXTURE_PATH = (
     Path(__file__).parent
@@ -18,6 +23,34 @@ FIXTURE_PATH = (
 )
 BASELINE_PATH = "/api/telemetry/health-connect/sync-state/baselines"
 BATCH_PATH = "/api/telemetry/health-connect/batches"
+
+
+def _begin_health_plan_turn(client: Any, wording: str) -> None:
+    """Open one foreground turn whose user Message can authorize a Health plan."""
+    runtime = app_runtime(cast("Starlette", client.app))
+    conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
+    if client.portal is None:
+        raise RuntimeError("test client portal is not running")
+    turn_id = uuid7()
+    _ = client.portal.call(
+        runtime.conversation_service.append_message,
+        MessageDraft(
+            content=wording,
+            conversation_id=conversation_id,
+            role="user",
+            turn_id=turn_id,
+        ),
+    )
+    _ = runtime.trace_recorder.begin_run(
+        session_id=SESSION,
+        kind="conversation",
+        prompt=wording,
+        correlation=RunCorrelation(
+            conversation_id=str(conversation_id),
+            origin="interactive",
+            turn_id=str(turn_id),
+        ),
+    )
 
 
 def ingest_representative_telemetry(client: Any) -> None:
@@ -132,6 +165,203 @@ def ingest_duplicate_step_telemetry(client: Any) -> None:
         },
     )
     assert_eq(response.status_code, 200)
+
+
+@test()
+def foreground_chat_can_create_a_weekly_exercise_plan() -> None:
+    """A typed plan retains explicit windows and foreground Evidence provenance."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        _begin_health_plan_turn(
+            client,
+            "Plan home strength training Monday, Wednesday, and Friday evenings.",
+        )
+
+        envelope = call_tool(
+            client,
+            "create_health_plan",
+            title="Home strength training",
+            exercise_types=["strength_training", "weightlifting"],
+            timezone="Europe/Athens",
+            grace_minutes=60,
+            windows=[
+                {
+                    "weekday": "monday",
+                    "start_local_time": "18:00",
+                    "end_local_time": "20:00",
+                },
+                {
+                    "weekday": "wednesday",
+                    "start_local_time": "18:00",
+                    "end_local_time": "20:00",
+                },
+                {
+                    "weekday": "friday",
+                    "start_local_time": "18:00",
+                    "end_local_time": "20:00",
+                },
+            ],
+        )
+
+    assert_true(envelope["success"])
+    plan = envelope["result"]
+    assert_eq(plan["title"], "Home strength training")
+    assert_eq(plan["status"], "active")
+    assert_eq(plan["timezone"], "Europe/Athens")
+    assert_eq(plan["exercise_types"], ["strength_training", "weightlifting"])
+    assert_eq([window["weekday"] for window in plan["windows"]], [0, 2, 4])
+    assert_true(plan["source_evidence_uri"].startswith("tether://message/"))
+
+
+@test()
+def health_turn_cannot_create_a_health_plan() -> None:
+    """Proactive context cannot authorize a new recurring intention."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        _ = runtime.trace_recorder.begin_run(
+            session_id=SESSION,
+            kind="conversation",
+            correlation=RunCorrelation(
+                conversation_id=conversation_id,
+                origin="health",
+                turn_id=str(uuid7()),
+            ),
+        )
+
+        envelope = call_tool(
+            client,
+            "create_health_plan",
+            title="Untrusted plan",
+            exercise_types=["running"],
+            timezone="Europe/Athens",
+            windows=[
+                {
+                    "weekday": "saturday",
+                    "start_local_time": "08:00",
+                    "end_local_time": "10:00",
+                }
+            ],
+        )
+
+    assert_eq(envelope["success"], False)
+    assert_eq(envelope["error"]["code"], "invalid_input")
+
+
+@test()
+def chat_can_list_current_health_plans() -> None:
+    """Plan reads return the typed intention without requiring fresh Evidence."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        _begin_health_plan_turn(client, "Plan a run on Saturday morning.")
+        created = call_tool(
+            client,
+            "create_health_plan",
+            title="Saturday run",
+            exercise_types=["running"],
+            timezone="Europe/Athens",
+            windows=[
+                {
+                    "weekday": "saturday",
+                    "start_local_time": "08:00",
+                    "end_local_time": "10:00",
+                }
+            ],
+        )
+
+        listing = call_tool(client, "list_health_plans")
+
+    assert_true(listing["success"])
+    assert_eq(
+        [plan["id"] for plan in listing["result"]],
+        [created["result"]["id"]],
+    )
+
+
+@test()
+def foreground_chat_can_pause_a_health_plan() -> None:
+    """Pausing records the new user Evidence and advances plan version."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        _begin_health_plan_turn(client, "Plan a run on Saturday morning.")
+        created = call_tool(
+            client,
+            "create_health_plan",
+            title="Saturday run",
+            exercise_types=["running"],
+            timezone="Europe/Athens",
+            windows=[
+                {
+                    "weekday": "saturday",
+                    "start_local_time": "08:00",
+                    "end_local_time": "10:00",
+                }
+            ],
+        )["result"]
+        _begin_health_plan_turn(client, "Pause my Saturday running plan.")
+
+        envelope = call_tool(
+            client,
+            "set_health_plan_status",
+            plan_id=created["id"],
+            version=created["version"],
+            status="paused",
+        )
+
+    assert_true(envelope["success"])
+    paused = envelope["result"]
+    assert_eq(paused["status"], "paused")
+    assert_eq(paused["version"], 2)
+    assert_true(paused["source_evidence_uri"] != created["source_evidence_uri"])
+
+
+@test()
+def foreground_chat_can_revise_a_health_plan() -> None:
+    """A revision atomically replaces the recurring intention at one version."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        _begin_health_plan_turn(client, "Plan a run on Saturday morning.")
+        created = call_tool(
+            client,
+            "create_health_plan",
+            title="Saturday run",
+            exercise_types=["running"],
+            timezone="Europe/Athens",
+            windows=[
+                {
+                    "weekday": "saturday",
+                    "start_local_time": "08:00",
+                    "end_local_time": "10:00",
+                }
+            ],
+        )["result"]
+        _begin_health_plan_turn(client, "Move that run to Sunday morning.")
+
+        envelope = call_tool(
+            client,
+            "update_health_plan",
+            plan_id=created["id"],
+            version=created["version"],
+            title="Sunday run",
+            exercise_types=["running"],
+            timezone="Europe/Athens",
+            grace_minutes=90,
+            windows=[
+                {
+                    "weekday": "sunday",
+                    "start_local_time": "09:00",
+                    "end_local_time": "11:00",
+                }
+            ],
+        )
+
+    assert_true(envelope["success"])
+    revised = envelope["result"]
+    assert_eq(revised["title"], "Sunday run")
+    assert_eq(revised["grace_minutes"], 90)
+    assert_eq(revised["windows"][0]["weekday"], 6)
+    assert_eq(revised["version"], 2)
 
 
 def _sleep_stages(

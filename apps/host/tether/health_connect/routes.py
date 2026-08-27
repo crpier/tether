@@ -34,6 +34,11 @@ from tether.health_connect.ingestion import (
 )
 from tether.health_connect.insight_model import HealthConnectSleepEpisodeInsightRead
 from tether.health_connect.moments import HealthMomentService
+from tether.health_connect.plans import (
+    HealthPlanRead,
+    HealthPlanService,
+    PlannedExerciseOccurrenceRead,
+)
 from tether.health_connect.telemetry import HealthConnectTelemetry
 from tether.health_connect.telemetry_model import HealthConnectSummaryRead
 from tether.structured_logging import Logger
@@ -74,7 +79,7 @@ class HealthOverviewMomentRead(BaseModel):
 
     evidence_uri: str
     id: UUID
-    kind: Literal["exercise", "primary_sleep"]
+    kind: Literal["exercise", "missed_exercise", "primary_sleep"]
     observed_at: AwareDatetime
     status: Literal["pending", "running", "succeeded", "failed"]
     turn_id: UUID | None
@@ -88,6 +93,8 @@ class HealthOverviewRead(BaseModel):
     days: int
     latest_observation_at: AwareDatetime | None
     moments: list[HealthOverviewMomentRead]
+    planned_exercise: list[PlannedExerciseOccurrenceRead]
+    plans: list[HealthPlanRead]
     primary_sleep: HealthConnectSleepEpisodeInsightRead
     summary: HealthConnectSummaryRead
 
@@ -114,6 +121,7 @@ class _HealthConnectRuntime(Protocol):
     health_connect_telemetry: HealthConnectTelemetry
     health_distillation_service: _HealthDistillationPort | None
     health_moment_service: HealthMomentService
+    health_plan_service: HealthPlanService
     logger: Logger
 
 
@@ -173,6 +181,11 @@ async def read_health_overview(
         days=days,
         latest_observation_at=max(observation_bounds, default=None),
         moments=moments,
+        planned_exercise=await runtime.health_plan_service.list_occurrences(
+            after=period_start,
+            before=period_end,
+        ),
+        plans=await runtime.health_plan_service.list(),
         primary_sleep=primary_sleep,
         summary=summary,
     )

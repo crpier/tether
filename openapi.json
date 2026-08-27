@@ -1971,6 +1971,34 @@
         "title": "ExerciseSegment",
         "type": "object"
       },
+      "ExerciseWindowRead": {
+        "description": "Canonical numeric-weekday representation of an Exercise window.",
+        "properties": {
+          "end_local_time": {
+            "format": "time",
+            "title": "End Local Time",
+            "type": "string"
+          },
+          "start_local_time": {
+            "format": "time",
+            "title": "Start Local Time",
+            "type": "string"
+          },
+          "weekday": {
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "end_local_time",
+          "start_local_time",
+          "weekday"
+        ],
+        "title": "ExerciseWindowRead",
+        "type": "object"
+      },
       "GenericRecord": {
         "additionalProperties": false,
         "properties": {
@@ -3876,6 +3904,7 @@
           "kind": {
             "enum": [
               "exercise",
+              "missed_exercise",
               "primary_sleep"
             ],
             "title": "Kind",
@@ -3956,6 +3985,20 @@
             "title": "Moments",
             "type": "array"
           },
+          "planned_exercise": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedExerciseOccurrenceRead"
+            },
+            "title": "Planned Exercise",
+            "type": "array"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPlanRead"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
           "primary_sleep": {
             "$ref": "#/components/schemas/HealthConnectSleepEpisodeInsightRead"
           },
@@ -3969,10 +4012,102 @@
           "days",
           "latest_observation_at",
           "moments",
+          "planned_exercise",
+          "plans",
           "primary_sleep",
           "summary"
         ],
         "title": "HealthOverviewRead",
+        "type": "object"
+      },
+      "HealthPlanRead": {
+        "description": "One Health plan exposed to chat and Health presentation.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "exercise_types": {
+            "items": {
+              "enum": [
+                "running",
+                "strength_training",
+                "walking",
+                "weightlifting"
+              ],
+              "type": "string"
+            },
+            "title": "Exercise Types",
+            "type": "array"
+          },
+          "grace_minutes": {
+            "title": "Grace Minutes",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "source_evidence_uri": {
+            "title": "Source Evidence Uri",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseWindowRead"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "created_at",
+          "effective_at",
+          "exercise_types",
+          "grace_minutes",
+          "id",
+          "source_evidence_uri",
+          "status",
+          "timezone",
+          "title",
+          "updated_at",
+          "version",
+          "windows"
+        ],
+        "title": "HealthPlanRead",
         "type": "object"
       },
       "HeartRateRecord": {
@@ -4694,6 +4829,87 @@
           "title"
         ],
         "title": "PanelTopicRead",
+        "type": "object"
+      },
+      "PlannedExerciseOccurrenceRead": {
+        "description": "Current deterministic adherence state for one settled window.",
+        "properties": {
+          "grace_ended_at": {
+            "format": "date-time",
+            "title": "Grace Ended At",
+            "type": "string"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "matched_evidence_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched Evidence Uri"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "plan_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Plan Version",
+            "type": "integer"
+          },
+          "source_record_uid": {
+            "title": "Source Record Uid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "matched",
+              "missed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "window_ended_at": {
+            "format": "date-time",
+            "title": "Window Ended At",
+            "type": "string"
+          },
+          "window_started_at": {
+            "format": "date-time",
+            "title": "Window Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grace_ended_at",
+          "local_date",
+          "matched_evidence_uri",
+          "plan_id",
+          "plan_version",
+          "source_record_uid",
+          "status",
+          "timezone",
+          "title",
+          "window_ended_at",
+          "window_started_at"
+        ],
+        "title": "PlannedExerciseOccurrenceRead",
         "type": "object"
       },
       "PostArtifactEventRequest": {

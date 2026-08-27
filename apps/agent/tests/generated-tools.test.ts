@@ -75,14 +75,18 @@ describe("generated tool extension", () => {
       "match_ebook_filename",
       "list_unlabeled_ebooks",
       "analyze_health_connect",
+      "create_health_plan",
       "health_connect_inventory",
+      "list_health_plans",
       "query_health_connect",
+      "set_health_plan_status",
       "summarize_health_connect",
+      "update_health_plan",
       "record_product_observation",
       "list_product_observations",
       "execute_tools",
     ]);
-    expect(tetherToolSources).toHaveLength(54);
+    expect(tetherToolSources).toHaveLength(58);
   });
 
   test("makes every generated schema discoverable by confined code", async () => {

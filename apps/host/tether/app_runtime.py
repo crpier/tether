@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         HealthConnectIngestion,
         HealthConnectTelemetry,
         HealthMomentService,
+        HealthPlanService,
     )
     from tether.health_distillation import HealthDistillationService
     from tether.ingestion_lifecycle import IngestionLifecycle
@@ -66,6 +67,7 @@ class AppRuntime:
     health_connect_telemetry: HealthConnectTelemetry
     health_distillation_service: HealthDistillationService | None
     health_moment_service: HealthMomentService
+    health_plan_service: HealthPlanService
     ingestion_lifecycle: IngestionLifecycle
     kosync_auth: KosyncAuth
     gmail_client: GmailClient | None

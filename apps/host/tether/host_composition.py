@@ -151,6 +151,7 @@ async def _compose_app_runtime(
             ),
             health_distillation_service=core.health_distillation_service,
             health_moment_service=core.health_moment_service,
+            health_plan_service=core.health_plan_service,
             ingestion_lifecycle=host.ingestion_lifecycle,
             kosync_auth=core.kosync_auth,
             kosync_service=core.kosync_service,

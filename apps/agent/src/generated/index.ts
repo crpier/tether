@@ -152,17 +152,33 @@ import {
   analyze_health_connectTool,
 } from "./analyze_health_connect.js";
 import {
+  registerCreateHealthPlanTool,
+  create_health_planTool,
+} from "./create_health_plan.js";
+import {
   registerHealthConnectInventoryTool,
   health_connect_inventoryTool,
 } from "./health_connect_inventory.js";
+import {
+  registerListHealthPlansTool,
+  list_health_plansTool,
+} from "./list_health_plans.js";
 import {
   registerQueryHealthConnectTool,
   query_health_connectTool,
 } from "./query_health_connect.js";
 import {
+  registerSetHealthPlanStatusTool,
+  set_health_plan_statusTool,
+} from "./set_health_plan_status.js";
+import {
   registerSummarizeHealthConnectTool,
   summarize_health_connectTool,
 } from "./summarize_health_connect.js";
+import {
+  registerUpdateHealthPlanTool,
+  update_health_planTool,
+} from "./update_health_plan.js";
 import {
   registerRecordProductObservationTool,
   record_product_observationTool,
@@ -222,9 +238,13 @@ export const tetherToolSources = [
   sourceForTool(match_ebook_filenameTool),
   sourceForTool(list_unlabeled_ebooksTool),
   sourceForTool(analyze_health_connectTool),
+  sourceForTool(create_health_planTool),
   sourceForTool(health_connect_inventoryTool),
+  sourceForTool(list_health_plansTool),
   sourceForTool(query_health_connectTool),
+  sourceForTool(set_health_plan_statusTool),
   sourceForTool(summarize_health_connectTool),
+  sourceForTool(update_health_planTool),
   sourceForTool(record_product_observationTool),
   sourceForTool(list_product_observationsTool),
 ];
@@ -279,9 +299,13 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerMatchEbookFilenameTool(pi);
   registerListUnlabeledEbooksTool(pi);
   registerAnalyzeHealthConnectTool(pi);
+  registerCreateHealthPlanTool(pi);
   registerHealthConnectInventoryTool(pi);
+  registerListHealthPlansTool(pi);
   registerQueryHealthConnectTool(pi);
+  registerSetHealthPlanStatusTool(pi);
   registerSummarizeHealthConnectTool(pi);
+  registerUpdateHealthPlanTool(pi);
   registerRecordProductObservationTool(pi);
   registerListProductObservationsTool(pi);
   pi.registerTool(createCodeModeTool(tetherToolSources));
