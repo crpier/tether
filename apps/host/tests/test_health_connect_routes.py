@@ -111,6 +111,81 @@ def operational_logs_exclude_health_values_notes_and_complete_tokens() -> None:
 
 
 @test()
+def authenticated_health_overview_reuses_deterministic_health_projections() -> None:
+    """The browser Health read combines bounded metrics without model prose."""
+    batch = json.loads((FIXTURE_ROOT / "representative-batch.json").read_text())
+    batch["records"]["sleep"][0]["start_zone_offset_seconds"] = 7_200
+    batch["records"]["sleep"][0]["end_zone_offset_seconds"] = 7_200
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        response = client.post(
+            BASELINE_PATH,
+            headers=AUTHORIZATION,
+            json={
+                "contract_version": 2,
+                "installation_id": "pixel-installation",
+                "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                "request_id": "baseline-request-1",
+                "starting_token": "opaque-starting-token",
+            },
+        )
+        assert_eq(response.status_code, 201)
+        response = client.post(BATCH_PATH, headers=AUTHORIZATION, json=batch)
+        assert_eq(response.status_code, 200)
+
+        response = client.get(
+            "/api/health/overview",
+            headers=AUTHORIZATION,
+            params={"before": "2023-11-16T00:00:00Z", "days": 7},
+        )
+
+    assert_eq(response.status_code, 200)
+    overview = response.json()
+    assert_eq(overview["days"], 7)
+    assert_eq(overview["summary"]["exercise"]["record_count"], 1)
+    assert_eq(overview["summary"]["steps"]["total_count"], 1234)
+    assert_eq(overview["primary_sleep"]["status"], "available")
+    assert_eq(overview["moments"], [])
+
+
+@test()
+def health_overview_excludes_primary_sleep_outside_its_period() -> None:
+    """A stale latest episode is not presented as current-period sleep."""
+    batch = json.loads((FIXTURE_ROOT / "representative-batch.json").read_text())
+    batch["records"]["sleep"][0]["start_zone_offset_seconds"] = 7_200
+    batch["records"]["sleep"][0]["end_zone_offset_seconds"] = 7_200
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        response = client.post(
+            BASELINE_PATH,
+            headers=AUTHORIZATION,
+            json={
+                "contract_version": 2,
+                "installation_id": "pixel-installation",
+                "record_types": ["heart_rate", "sleep", "steps", "exercise"],
+                "request_id": "baseline-request-1",
+                "starting_token": "opaque-starting-token",
+            },
+        )
+        assert_eq(response.status_code, 201)
+        response = client.post(BATCH_PATH, headers=AUTHORIZATION, json=batch)
+        assert_eq(response.status_code, 200)
+
+        response = client.get(
+            "/api/health/overview",
+            headers=AUTHORIZATION,
+            params={"before": "2023-12-16T00:00:00Z", "days": 7},
+        )
+
+    assert_eq(response.status_code, 200)
+    assert_eq(response.json()["primary_sleep"]["status"], "no_matching_episode")
+
+
+@test()
 def sync_state_requires_existing_api_authentication() -> None:
     """Health telemetry routes reject anonymous requests."""
     with (

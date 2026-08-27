@@ -30,10 +30,10 @@ class HealthConnectWorkScheduler(
         gateway.enqueue(
             HealthConnectWorkSpec(
                 uniqueName = PERIODIC_WORK_NAME,
-                interval = Duration.ofHours(6),
+                interval = Duration.ofMinutes(15),
                 requiresNetwork = true,
                 requiresCharging = false,
-                replaceExisting = false,
+                replaceExisting = true,
             ),
         )
     }
@@ -79,8 +79,8 @@ class WorkManagerHealthConnectGateway(
             )
         } else {
             val request = PeriodicWorkRequestBuilder<HealthConnectSyncWorker>(
-                spec.interval.toHours(),
-                TimeUnit.HOURS,
+                spec.interval.toMinutes(),
+                TimeUnit.MINUTES,
             )
                 .setConstraints(constraints)
                 .build()

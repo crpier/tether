@@ -85,6 +85,8 @@ function messageLabel(role: ChatRole): string {
   switch (role) {
     case "assistant":
       return "Tether";
+    case "health":
+      return "Health";
     case "scheduled":
       return "Scheduled";
     case "tool":
@@ -101,6 +103,8 @@ function bubbleClass(role: ChatRole): string {
       return `${base} bg-primary text-primary-foreground ml-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "assistant":
       return `${base} bg-muted mr-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
+    case "health":
+      return `${base} border-emerald-500/40 bg-emerald-500/10 mr-auto max-w-[96%] border px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "scheduled":
       return `${base} border-amber-500/40 bg-amber-500/10 mr-auto max-w-[96%] border px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
     case "tool":
@@ -948,7 +952,11 @@ function FocusedTurnLifecycle(props: { turn: ConversationTurn }) {
       class="bg-muted/40 space-y-1 rounded-lg border px-3 py-2 text-sm"
     >
       <p class="font-medium">
-        {props.turn.origin === "scheduled" ? "Scheduled prompt" : "Prompt"}
+        {props.turn.origin === "health"
+          ? "Health moment"
+          : props.turn.origin === "scheduled"
+            ? "Scheduled prompt"
+            : "Prompt"}
       </p>
       <p class="whitespace-pre-wrap break-words">{props.turn.prompt}</p>
       <p class="text-muted-foreground text-xs">Status: {props.turn.status}</p>

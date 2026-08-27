@@ -129,6 +129,27 @@ describe("Kitn chat projection", () => {
     ]);
   });
 
+  test("maps Health moments to labeled Kitn system rows", () => {
+    const row: TimelineRow = {
+      id: "health-1",
+      kind: "message",
+      role: "health",
+      streaming: false,
+      text: "Primary sleep settled",
+      toolName: null,
+    };
+
+    expect(projectTimelineRows([row])).toEqual([
+      {
+        ariaLabel: "Health message",
+        id: "health-1",
+        kind: "message",
+        message: row,
+        role: "system",
+      },
+    ]);
+  });
+
   test("maps scheduled prompts to Kitn system rows without losing Tether role", () => {
     const row: TimelineRow = {
       id: "scheduled-1",

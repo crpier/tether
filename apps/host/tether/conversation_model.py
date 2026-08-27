@@ -16,7 +16,7 @@ type ConversationArchiveBlocker = Literal[
 type ConversationKind = Literal["main", "scoped"]
 type ConversationStatus = Literal["active", "archived"]
 type ConversationTurnOrigin = Literal[
-    "capture", "historical", "interactive", "scheduled"
+    "capture", "health", "historical", "interactive", "scheduled"
 ]
 type ConversationTurnStatus = Literal[
     "pending",
@@ -25,7 +25,9 @@ type ConversationTurnStatus = Literal[
     "failed",
     "cancelled",
 ]
-type MessageRole = Literal["user", "scheduled", "assistant", "tool", "reasoning"]
+type MessageRole = Literal[
+    "user", "health", "scheduled", "assistant", "tool", "reasoning"
+]
 
 
 class ConversationArchiveBlockedError(Exception):

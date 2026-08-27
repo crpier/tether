@@ -87,7 +87,7 @@ export function createBusHarness(): {
 // layout, so it falls back to the desktop sidebar unless tests mock
 // matchMedia.
 export async function navigateTo(
-  label: "Chat" | "Inbox" | "Browse" | "Settings",
+  label: "Chat" | "Health" | "Inbox" | "Browse" | "Settings",
 ): Promise<void> {
   const nav = await screen.findByRole("navigation", {
     name: "Main navigation",

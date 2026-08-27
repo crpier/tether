@@ -523,6 +523,47 @@ def inventory_includes_populated_expanded_record_types() -> None:
 
 
 @test()
+def strength_workouts_have_stable_agent_facing_labels() -> None:
+    """Exercise summaries name Health Connect's two strength workout codes."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        payload = json.loads(FIXTURE_PATH.read_text())
+        strength_session = payload["records"]["exercise"][0]
+        strength_session["exercise_type"] = 70
+        weightlifting_session = json.loads(json.dumps(strength_session))
+        weightlifting_session["metadata"]["id"] = "exercise-weightlifting"
+        weightlifting_session["exercise_type"] = 81
+        payload["records"]["exercise"].append(weightlifting_session)
+        payload["record_types"] = ["exercise"]
+        payload["records"] = {"exercise": payload["records"]["exercise"]}
+        response = client.post(
+            BASELINE_PATH,
+            json={
+                "contract_version": 2,
+                "installation_id": "pixel-installation",
+                "record_types": ["exercise"],
+                "request_id": "strength-baseline-request",
+                "starting_token": "opaque-starting-token",
+            },
+        )
+        assert_eq(response.status_code, 201)
+        response = client.post(BATCH_PATH, json=payload)
+        assert_eq(response.status_code, 200)
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-16T00:00:00Z",
+        )
+
+    assert_eq(
+        envelope["result"]["exercise"]["exercise_type_counts"],
+        {"strength_training": 1, "weightlifting": 1},
+    )
+
+
+@test()
 def metric_status_explains_configured_types_with_no_records() -> None:
     """Missing weight data is distinguished from an unconfigured integration."""
     with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:

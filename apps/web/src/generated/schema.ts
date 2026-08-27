@@ -748,6 +748,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/health/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Health Overview
+     * @description Read one bounded Health page projection without agent interpretation.
+     */
+    get: operations["read_health_overview_api_health_overview_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memory-topics": {
     parameters: {
       query?: never;
@@ -1972,7 +1992,7 @@ export interface components {
     ConversationStatus: "active" | "archived";
     /** @enum {string} */
     ConversationTurnOrigin:
-      "capture" | "historical" | "interactive" | "scheduled";
+      "capture" | "health" | "historical" | "interactive" | "scheduled";
     /**
      * ConversationTurnRead
      * @description Flat durable turn state used for queue restoration and deep links.
@@ -2565,10 +2585,140 @@ export interface components {
       /** Request Id */
       request_id: string;
     };
+    /**
+     * HealthConnectDailyStepsSummary
+     * @description Step totals for one captured local date.
+     */
+    HealthConnectDailyStepsSummary: {
+      /** By Origin */
+      by_origin: components["schemas"]["HealthConnectStepOriginSummary"][];
+      /** Date */
+      date: string;
+      /** Duplicate Source Warning */
+      duplicate_source_warning: string | null;
+      /** Raw Total Count */
+      raw_total_count: number;
+      /** Record Count */
+      record_count: number;
+      /** Total Count */
+      total_count: number;
+    };
     /** HealthConnectDeletion */
     HealthConnectDeletion: {
       /** Record Id */
       record_id: string;
+      /**
+       * Record Type
+       * @enum {string}
+       */
+      record_type:
+        | "active_calories_burned"
+        | "basal_body_temperature"
+        | "basal_metabolic_rate"
+        | "blood_glucose"
+        | "blood_pressure"
+        | "body_fat"
+        | "body_temperature"
+        | "body_water_mass"
+        | "bone_mass"
+        | "cervical_mucus"
+        | "cycling_pedaling_cadence"
+        | "distance"
+        | "elevation_gained"
+        | "exercise"
+        | "floors_climbed"
+        | "heart_rate"
+        | "heart_rate_variability_rmssd"
+        | "height"
+        | "hydration"
+        | "intermenstrual_bleeding"
+        | "lean_body_mass"
+        | "menstruation_flow"
+        | "menstruation_period"
+        | "mindfulness_session"
+        | "nutrition"
+        | "ovulation_test"
+        | "oxygen_saturation"
+        | "planned_exercise_session"
+        | "power"
+        | "respiratory_rate"
+        | "resting_heart_rate"
+        | "sexual_activity"
+        | "skin_temperature"
+        | "sleep"
+        | "speed"
+        | "steps"
+        | "steps_cadence"
+        | "total_calories_burned"
+        | "vo2_max"
+        | "weight"
+        | "wheelchair_pushes";
+    };
+    /**
+     * HealthConnectExerciseSummary
+     * @description Compact exercise-session measurements in a requested time window.
+     */
+    HealthConnectExerciseSummary: {
+      /** Exercise Type Code Counts */
+      exercise_type_code_counts: {
+        [key: string]: number;
+      };
+      /** Exercise Type Counts */
+      exercise_type_counts: {
+        [key: string]: number;
+      };
+      /** Record Count */
+      record_count: number;
+      /** Total Duration Minutes */
+      total_duration_minutes: number;
+    };
+    /**
+     * HealthConnectHeartRateSummary
+     * @description Compact heart-rate measurements in a requested time window.
+     */
+    HealthConnectHeartRateSummary: {
+      /** Average Bpm */
+      average_bpm: number | null;
+      /** Maximum Bpm */
+      maximum_bpm: number | null;
+      /** Minimum Bpm */
+      minimum_bpm: number | null;
+      /** Record Count */
+      record_count: number;
+      /** Sample Count */
+      sample_count: number;
+    };
+    /**
+     * HealthConnectNumericSummary
+     * @description Compact descriptive values for one generic numeric payload path.
+     */
+    HealthConnectNumericSummary: {
+      /** Average */
+      average: number;
+      /** Latest */
+      latest: number;
+      /** Maximum */
+      maximum: number;
+      /** Minimum */
+      minimum: number;
+      /** Path */
+      path: string;
+      /** Sample Count */
+      sample_count: number;
+    };
+    /**
+     * HealthConnectOtherRecordSummary
+     * @description Compact measurements for one generic Health Connect record type.
+     */
+    HealthConnectOtherRecordSummary: {
+      /** Earliest Start */
+      earliest_start: string | null;
+      /** Latest End */
+      latest_end: string | null;
+      /** Numeric Values */
+      numeric_values: components["schemas"]["HealthConnectNumericSummary"][];
+      /** Record Count */
+      record_count: number;
       /**
        * Record Type
        * @enum {string}
@@ -2701,6 +2851,254 @@ export interface components {
       /** Wheelchair Pushes */
       wheelchair_pushes?: components["schemas"]["GenericRecord"][];
     };
+    /**
+     * HealthConnectSleepBaselineDeltaRead
+     * @description Selected episode differences from its same-kind personal baseline.
+     */
+    HealthConnectSleepBaselineDeltaRead: {
+      /** Sleep Efficiency Percentage Points */
+      sleep_efficiency_percentage_points: number;
+      /** Stage Percentage Points */
+      stage_percentage_points: {
+        [key: string]: number;
+      };
+      /** Time Asleep Minutes */
+      time_asleep_minutes: number;
+      /** Time In Bed Minutes */
+      time_in_bed_minutes: number;
+    };
+    /**
+     * HealthConnectSleepBaselineRead
+     * @description Median metrics from comparable prior sleep episodes.
+     */
+    HealthConnectSleepBaselineRead: {
+      /**
+       * Classification
+       * @enum {string}
+       */
+      classification: "nap" | "other" | "primary_sleep";
+      /** Comparison Episode Count */
+      comparison_episode_count: number;
+      /** Median Sleep Efficiency Percent */
+      median_sleep_efficiency_percent: number | null;
+      /** Median Stage Percent Of Time Asleep */
+      median_stage_percent_of_time_asleep: {
+        [key: string]: number;
+      };
+      /** Median Time Asleep Minutes */
+      median_time_asleep_minutes: number | null;
+      /** Median Time In Bed Minutes */
+      median_time_in_bed_minutes: number | null;
+      /** Period Days */
+      period_days: number;
+      selected_delta:
+        components["schemas"]["HealthConnectSleepBaselineDeltaRead"] | null;
+    };
+    /**
+     * HealthConnectSleepDayRead
+     * @description Combined measured sleep ending on one captured local date.
+     */
+    HealthConnectSleepDayRead: {
+      /** Date */
+      date: string;
+      /** Episode Count */
+      episode_count: number;
+      /** Evidence Uris */
+      evidence_uris: string[];
+      /** Nap Count */
+      nap_count: number;
+      /** Primary Sleep Count */
+      primary_sleep_count: number;
+      /** Stage Minutes */
+      stage_minutes: {
+        [key: string]: number;
+      };
+      /** Time Asleep Minutes */
+      time_asleep_minutes: number;
+      /** Time In Bed Minutes */
+      time_in_bed_minutes: number;
+    };
+    /**
+     * HealthConnectSleepEpisodeInsightRead
+     * @description One requested sleep episode with enough context for a chat answer.
+     */
+    HealthConnectSleepEpisodeInsightRead: {
+      baseline?: components["schemas"]["HealthConnectSleepBaselineRead"] | null;
+      /**
+       * Focus
+       * @default sleep_episode
+       * @constant
+       */
+      focus: "sleep_episode";
+      /**
+       * Interpretation Limits
+       * @default Deterministic personal observations only; not a medical diagnosis.
+       */
+      interpretation_limits: string;
+      /** Requested Days */
+      requested_days: number;
+      selected_episode:
+        components["schemas"]["HealthConnectSleepEpisodeRead"] | null;
+      sleep_day?: components["schemas"]["HealthConnectSleepDayRead"] | null;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "available" | "no_matching_episode";
+    };
+    /**
+     * HealthConnectSleepEpisodeRead
+     * @description Measured structure and provenance for one sleep episode.
+     */
+    HealthConnectSleepEpisodeRead: {
+      /**
+       * Classification
+       * @enum {string}
+       */
+      classification: "nap" | "other" | "primary_sleep";
+      /** Evidence Uri */
+      evidence_uri: string;
+      /**
+       * Local End
+       * Format: date-time
+       */
+      local_end: string;
+      /**
+       * Local Start
+       * Format: date-time
+       */
+      local_start: string;
+      /** Record Id */
+      record_id: string;
+      /** Sleep Efficiency Percent */
+      sleep_efficiency_percent: number | null;
+      sleeping_heart_rate:
+        components["schemas"]["HealthConnectSleepingHeartRateRead"] | null;
+      /** Source Version */
+      source_version: number;
+      /** Stage Coverage Percent */
+      stage_coverage_percent: number;
+      /** Stage Interval Count */
+      stage_interval_count: number;
+      /** Stage Minutes */
+      stage_minutes: {
+        [key: string]: number;
+      };
+      /** Stage Percent Of Time Asleep */
+      stage_percent_of_time_asleep: {
+        [key: string]: number;
+      };
+      /** Stages Complete */
+      stages_complete: boolean;
+      /** Time Asleep Minutes */
+      time_asleep_minutes: number;
+      /** Time In Bed Minutes */
+      time_in_bed_minutes: number;
+    };
+    /**
+     * HealthConnectSleepSummary
+     * @description Compact sleep-session measurements in a requested time window.
+     */
+    HealthConnectSleepSummary: {
+      /** Average Duration Minutes */
+      average_duration_minutes: number | null;
+      /** Record Count */
+      record_count: number;
+      /** Stage Code Duration Minutes */
+      stage_code_duration_minutes: {
+        [key: string]: number;
+      };
+      /** Stage Duration Minutes */
+      stage_duration_minutes: {
+        [key: string]: number;
+      };
+      /** Total Duration Minutes */
+      total_duration_minutes: number;
+    };
+    /**
+     * HealthConnectSleepingHeartRateRead
+     * @description Observed heart-rate samples aligned to one sleep episode.
+     */
+    HealthConnectSleepingHeartRateRead: {
+      /** Average Bpm */
+      average_bpm: number;
+      /** By Stage */
+      by_stage: {
+        [key: string]: components["schemas"]["HealthConnectStageHeartRateRead"];
+      };
+      /** Maximum Bpm */
+      maximum_bpm: number;
+      /** Minimum Bpm */
+      minimum_bpm: number;
+      /** Sample Count */
+      sample_count: number;
+    };
+    /**
+     * HealthConnectStageHeartRateRead
+     * @description Observed heart-rate samples aligned to one sleep stage label.
+     */
+    HealthConnectStageHeartRateRead: {
+      /** Average Bpm */
+      average_bpm: number;
+      /** Maximum Bpm */
+      maximum_bpm: number;
+      /** Minimum Bpm */
+      minimum_bpm: number;
+      /** Sample Count */
+      sample_count: number;
+    };
+    /**
+     * HealthConnectStepOriginSummary
+     * @description Step totals from one writing origin.
+     */
+    HealthConnectStepOriginSummary: {
+      /** Data Origin Package */
+      data_origin_package: string;
+      /** Record Count */
+      record_count: number;
+      /** Total Count */
+      total_count: number;
+    };
+    /**
+     * HealthConnectStepsSummary
+     * @description Compact step measurements in a requested time window.
+     */
+    HealthConnectStepsSummary: {
+      /** By Origin */
+      by_origin: components["schemas"]["HealthConnectStepOriginSummary"][];
+      /** Daily */
+      daily: components["schemas"]["HealthConnectDailyStepsSummary"][];
+      /** Duplicate Source Warning */
+      duplicate_source_warning: string | null;
+      /** Raw Total Count */
+      raw_total_count: number;
+      /** Record Count */
+      record_count: number;
+      /** Total Count */
+      total_count: number;
+    };
+    /**
+     * HealthConnectSummaryRead
+     * @description Bounded aggregate Health Connect metrics intended for agent overviews.
+     */
+    HealthConnectSummaryRead: {
+      /**
+       * After
+       * Format: date-time
+       */
+      after: string;
+      /**
+       * Before
+       * Format: date-time
+       */
+      before: string;
+      exercise: components["schemas"]["HealthConnectExerciseSummary"];
+      heart_rate: components["schemas"]["HealthConnectHeartRateSummary"];
+      /** Other Record Types */
+      other_record_types: components["schemas"]["HealthConnectOtherRecordSummary"][];
+      sleep: components["schemas"]["HealthConnectSleepSummary"];
+      steps: components["schemas"]["HealthConnectStepsSummary"];
+    };
     /** HealthConnectSyncStateRead */
     HealthConnectSyncStateRead: {
       /** Baseline Generation */
@@ -2768,6 +3166,60 @@ export interface components {
       end?: string | null;
       /** Start */
       start?: string | null;
+    };
+    /**
+     * HealthOverviewMomentRead
+     * @description One proactive briefing identity linked to its exact chat turn.
+     */
+    HealthOverviewMomentRead: {
+      /** Evidence Uri */
+      evidence_uri: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "exercise" | "primary_sleep";
+      /**
+       * Observed At
+       * Format: date-time
+       */
+      observed_at: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "pending" | "running" | "succeeded" | "failed";
+      /** Turn Id */
+      turn_id: string | null;
+    };
+    /**
+     * HealthOverviewRead
+     * @description Measured Health observations and linked proactive briefings.
+     */
+    HealthOverviewRead: {
+      /**
+       * After
+       * Format: date-time
+       */
+      after: string;
+      /**
+       * Before
+       * Format: date-time
+       */
+      before: string;
+      /** Days */
+      days: number;
+      /** Latest Observation At */
+      latest_observation_at: string | null;
+      /** Moments */
+      moments: components["schemas"]["HealthOverviewMomentRead"][];
+      primary_sleep: components["schemas"]["HealthConnectSleepEpisodeInsightRead"];
+      summary: components["schemas"]["HealthConnectSummaryRead"];
     };
     /** HeartRateRecord */
     HeartRateRecord: {
@@ -2933,7 +3385,8 @@ export interface components {
       turn_message_seq: number | null;
     };
     /** @enum {string} */
-    MessageRole: "user" | "scheduled" | "assistant" | "tool" | "reasoning";
+    MessageRole:
+      "user" | "health" | "scheduled" | "assistant" | "tool" | "reasoning";
     /**
      * ModelListRead
      * @description HTTP response containing the curated allowlist and global default.
@@ -5220,6 +5673,38 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["GmailUndoRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_health_overview_api_health_overview_get: {
+    parameters: {
+      query?: {
+        days?: number;
+        before?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthOverviewRead"];
         };
       };
       /** @description Validation Error */

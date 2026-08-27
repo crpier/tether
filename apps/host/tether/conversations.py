@@ -600,13 +600,13 @@ class ConversationService:
         draft: MessageDraft,
     ) -> Message[Fetched]:
         """Append one turn's initiating Message exactly once in its claim transaction."""
-        if draft.turn_id is None or draft.role not in {"user", "scheduled"}:
+        if draft.turn_id is None or draft.role not in {"user", "health", "scheduled"}:
             message = "an initiating Message requires a turn and initiating role"
             raise ConversationValidationError(message)
         existing = await transaction.fetch_one_or_none(
             select(Message)
             .where(Message.turn_id.eq(draft.turn_id))
-            .where(Message.role.in_("user", "scheduled"))
+            .where(Message.role.in_("user", "health", "scheduled"))
         )
         if existing is not None:
             return existing

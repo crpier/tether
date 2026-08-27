@@ -4,7 +4,7 @@ import { expect, test } from "./fixtures";
 
 // Layout is CSS, so the meaningful guard is real geometry in a real browser —
 // jsdom can't compute it. The shell (#250) swaps a collapsible left sidebar
-// for a bottom tab bar at the `lg` breakpoint; both render the same four nav
+// for a bottom tab bar at the `lg` breakpoint; both render the same five nav
 // destinations.
 
 async function boundingBox(

@@ -13,6 +13,14 @@ from tether.health_connect.evidence import (
     HealthConnectSleepEvidence,
 )
 from tether.health_connect.ingestion import HealthConnectIngestion
+from tether.health_connect.moments import (
+    HealthMomentDispatcher,
+    HealthMomentObservation,
+    HealthMomentObservationQuery,
+    HealthMomentService,
+    HealthMomentWorker,
+    create_health_moment_schema,
+)
 from tether.health_connect.persistence import (
     HcExerciseEpisodeSummary,
     HcSleepEpisodeSummary,
@@ -36,7 +44,13 @@ __all__ = [
     "HealthConnectSleepEvidence",
     "HealthConnectTelemetry",
     "HealthEpisodeSummarizer",
+    "HealthMomentDispatcher",
+    "HealthMomentObservation",
+    "HealthMomentObservationQuery",
+    "HealthMomentService",
+    "HealthMomentWorker",
     "create_health_connect_schema",
+    "create_health_moment_schema",
     "internal_health_connect_tool_routes",
     "router",
 ]

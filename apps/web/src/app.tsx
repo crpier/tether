@@ -32,6 +32,7 @@ import { LoginScreen } from "./login";
 import type { BucketView } from "./panels/bucket";
 import { BrowsePage, type BrowseView } from "./pages/browse-page";
 import { ChatPage } from "./pages/chat-page";
+import { HealthPage } from "./pages/health-page";
 import { InboxPage } from "./pages/inbox-page";
 import { NotFoundPage } from "./pages/not-found-page";
 import { SettingsPage } from "./pages/settings-page";
@@ -169,6 +170,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={RootChatRedirect} path="/" />
         <Route component={ChatPage} path="/chat" />
         <Route component={ChatPage} path="/chat/:conversationId" />
+        <Route component={HealthPage} path="/health" />
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowseIndexPage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />

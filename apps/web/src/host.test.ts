@@ -85,7 +85,7 @@ describe("REST host domain ports", () => {
       },
     });
 
-    await host.chat.synthesizeSpeech("hello", undefined);
+    await host.chat.synthesizeSpeech("hello", new AbortController().signal);
 
     expect(requestedCredentials).toBe("include");
   });

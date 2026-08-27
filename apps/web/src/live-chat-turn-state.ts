@@ -5,7 +5,7 @@
 import type { ChatFrame } from "./chat-bus";
 import type { Message } from "./host/chat";
 
-export type ChatRole = "user" | "scheduled" | "assistant" | "tool";
+export type ChatRole = "user" | "health" | "scheduled" | "assistant" | "tool";
 
 // Settled rows can also carry persisted reasoning, which renders as its own
 // collapsible row rather than a chat bubble.
