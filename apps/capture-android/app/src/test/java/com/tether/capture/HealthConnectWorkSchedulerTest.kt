@@ -6,7 +6,7 @@ import java.time.Duration
 
 class HealthConnectWorkSchedulerTest {
     @Test
-    fun scheduleUsesUniqueSixHourlyNetworkWorkWithoutCharging() {
+    fun scheduleUpdatesUniqueFifteenMinuteNetworkWorkWithoutCharging() {
         val gateway = FakeWorkGateway()
         val scheduler = HealthConnectWorkScheduler(gateway)
 
@@ -17,10 +17,10 @@ class HealthConnectWorkSchedulerTest {
             listOf(
                 HealthConnectWorkSpec(
                     uniqueName = "health-connect-periodic",
-                    interval = Duration.ofHours(6),
+                    interval = Duration.ofMinutes(15),
                     requiresNetwork = true,
                     requiresCharging = false,
-                    replaceExisting = false,
+                    replaceExisting = true,
                 ),
                 HealthConnectWorkSpec(
                     uniqueName = "health-connect-sync",

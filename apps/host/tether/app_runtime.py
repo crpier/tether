@@ -20,7 +20,11 @@ if TYPE_CHECKING:
     from tether.events import EventHub
     from tether.evidence import EvidenceResolver
     from tether.gmail import GmailClient, GoogleGmailAuthService
-    from tether.health_connect import HealthConnectIngestion, HealthConnectTelemetry
+    from tether.health_connect import (
+        HealthConnectIngestion,
+        HealthConnectTelemetry,
+        HealthMomentService,
+    )
     from tether.health_distillation import HealthDistillationService
     from tether.ingestion_lifecycle import IngestionLifecycle
     from tether.kosync import KosyncService
@@ -61,6 +65,7 @@ class AppRuntime:
     health_connect_ingestion: HealthConnectIngestion
     health_connect_telemetry: HealthConnectTelemetry
     health_distillation_service: HealthDistillationService | None
+    health_moment_service: HealthMomentService
     ingestion_lifecycle: IngestionLifecycle
     kosync_auth: KosyncAuth
     gmail_client: GmailClient | None

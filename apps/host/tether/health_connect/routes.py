@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Protocol, cast
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
+from uuid import UUID
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, model_validator
+from pydantic import AwareDatetime, BaseModel, model_validator
 from snekok import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -31,11 +32,14 @@ from tether.health_connect.ingestion import (
     HealthConnectIngestion,
     HealthConnectRequestIdentityConflict,
 )
+from tether.health_connect.insight_model import HealthConnectSleepEpisodeInsightRead
+from tether.health_connect.moments import HealthMomentService
+from tether.health_connect.telemetry import HealthConnectTelemetry
+from tether.health_connect.telemetry_model import HealthConnectSummaryRead
 from tether.structured_logging import Logger
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
-    from datetime import datetime
 
     from snekql.sqlite import Fetched
 
@@ -65,8 +69,31 @@ class HealthDreamNowRequest(BaseModel):
         return self
 
 
+class HealthOverviewMomentRead(BaseModel):
+    """One proactive briefing identity linked to its exact chat turn."""
+
+    evidence_uri: str
+    id: UUID
+    kind: Literal["exercise", "primary_sleep"]
+    observed_at: AwareDatetime
+    status: Literal["pending", "running", "succeeded", "failed"]
+    turn_id: UUID | None
+
+
+class HealthOverviewRead(BaseModel):
+    """Measured Health observations and linked proactive briefings."""
+
+    after: AwareDatetime
+    before: AwareDatetime
+    days: int
+    latest_observation_at: AwareDatetime | None
+    moments: list[HealthOverviewMomentRead]
+    primary_sleep: HealthConnectSleepEpisodeInsightRead
+    summary: HealthConnectSummaryRead
+
+
 class _HealthDistillationPort(Protocol):
-    """Manual-trigger surface of the health consolidation service."""
+    """Manual-trigger interface of the health consolidation service."""
 
     telemetry_database: object
 
@@ -84,13 +111,72 @@ class _HealthConnectRuntime(Protocol):
 
     dreaming_enabled: bool
     health_connect_ingestion: HealthConnectIngestion
+    health_connect_telemetry: HealthConnectTelemetry
     health_distillation_service: _HealthDistillationPort | None
+    health_moment_service: HealthMomentService
     logger: Logger
 
 
 def _runtime(request: Request) -> _HealthConnectRuntime:
     """Read Health Connect dependencies from the canonical host runtime."""
     return cast("_HealthConnectRuntime", request.app.state.runtime)
+
+
+@router.get("/api/health/overview", response_model=HealthOverviewRead)
+async def read_health_overview(
+    request: Request,
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    before: AwareDatetime | None = None,
+) -> Response:
+    """Read one bounded Health page projection without agent interpretation."""
+    runtime = _runtime(request)
+    period_end = datetime.now(UTC) if before is None else before
+    period_start = period_end - timedelta(days=days)
+    summary = await runtime.health_connect_telemetry.summary.fetch_summary(
+        after=period_start,
+        before=period_end,
+        bucket="day",
+    )
+    primary_sleep = await runtime.health_connect_telemetry.insights.fetch_sleep_episode(
+        days=days,
+        episode_kind="primary_sleep",
+    )
+    if primary_sleep.selected_episode is not None and not (
+        period_start <= primary_sleep.selected_episode.local_end <= period_end
+    ):
+        primary_sleep = HealthConnectSleepEpisodeInsightRead(
+            requested_days=days,
+            selected_episode=None,
+            status="no_matching_episode",
+        )
+    inventory = await runtime.health_connect_telemetry.inventory.fetch_inventory()
+    observation_bounds = [
+        entry.latest_end
+        for entry in inventory
+        if entry.latest_end is not None and entry.latest_end <= period_end
+    ]
+    moments = [
+        HealthOverviewMomentRead(
+            evidence_uri=moment.evidence_uri,
+            id=moment.id,
+            kind=moment.kind,
+            observed_at=moment.observed_at,
+            status=moment.status,
+            turn_id=moment.turn_id,
+        )
+        for moment in await runtime.health_moment_service.list_recent(limit=50)
+        if period_start <= moment.observed_at <= period_end
+    ]
+    overview = HealthOverviewRead(
+        after=period_start,
+        before=period_end,
+        days=days,
+        latest_observation_at=max(observation_bounds, default=None),
+        moments=moments,
+        primary_sleep=primary_sleep,
+        summary=summary,
+    )
+    return JSONResponse(overview.model_dump(mode="json"))
 
 
 @router.get(

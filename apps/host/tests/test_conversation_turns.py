@@ -39,6 +39,7 @@ from tether.conversation_turns import (
     CancelTurnRequest,
     ConversationTurnConflictError,
     ConversationTurns,
+    HealthTurnRequest,
     InteractiveTurnRequest,
     ScheduledTurnRequest,
 )
@@ -508,6 +509,34 @@ async def scheduled_submission_keeps_exact_content_under_the_scheduled_role() ->
         "Tether scheduled context" in registry.runtime.client.prompt_messages[0]
     )
     assert_true("summarise my day" in registry.runtime.client.prompt_messages[0])
+
+
+@test()
+async def health_submission_keeps_verified_context_distinct_from_user_evidence() -> (
+    None
+):
+    """A Health moment is visible as context while pi receives safety framing."""
+    turns, service, registry = await load_fixture(conversation_turns_fixture())
+    conversation = await service.fetch_main_conversation()
+
+    ticket = await turns.submit(
+        HealthTurnRequest(
+            conversation_id=conversation.id,
+            moment_id=uuid7(),
+            prompt="Primary sleep settled at 07:30.",
+        ),
+        RecordingSink(),
+    )
+    result = await turns.wait(ticket.turn_id)
+    messages = await service.fetch_messages(conversation.id)
+
+    assert_eq(result.status, "succeeded")
+    assert_eq(messages[0].role, "health")
+    assert_eq(messages[0].content, "Primary sleep settled at 07:30.")
+    assert_true("Tether Health moment" in registry.runtime.client.prompt_messages[0])
+    assert_true(
+        "Primary sleep settled at 07:30." in registry.runtime.client.prompt_messages[0]
+    )
 
 
 @test()

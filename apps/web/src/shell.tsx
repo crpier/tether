@@ -112,6 +112,7 @@ function useNavItems(): NavItem[] {
   const { inboxCount } = useBadgeCounts();
   return [
     { label: "Chat", path: "/chat" },
+    { label: "Health", path: "/health" },
     { badge: inboxCount, label: "Inbox", path: "/inbox" },
     { label: "Browse", path: "/browse" },
     { label: "Settings", path: "/settings" },

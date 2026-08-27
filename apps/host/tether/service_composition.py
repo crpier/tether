@@ -32,7 +32,13 @@ from tether.dreaming import (
     MaintenanceDreamingExecutor,
 )
 from tether.events import EventHub
-from tether.health_connect import HealthEpisodeSummarizer
+from tether.health_connect import (
+    HealthEpisodeSummarizer,
+    HealthMomentDispatcher,
+    HealthMomentObservationQuery,
+    HealthMomentService,
+    HealthMomentWorker,
+)
 from tether.health_distillation import (
     HealthDistillationExecutor,
     HealthDistillationService,
@@ -126,9 +132,10 @@ class _SchedulerDependencies:
 
 @dataclass(frozen=True, slots=True)
 class _SchedulerComponent:
-    """Scheduler and the notification service shared with other domains."""
+    """Scheduler and notification delivery shared with other domains."""
 
     notification_service: NotificationService
+    prompt_push_sender: PushSender | None
     scheduler: Scheduler
 
 
@@ -195,6 +202,7 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     )
     return _SchedulerComponent(
         notification_service=notification_service,
+        prompt_push_sender=prompt_push_sender,
         scheduler=scheduler,
     )
 
@@ -522,6 +530,7 @@ class CoreServices:
     trigger_service: TriggerService
     dreaming_service: DreamingService
     health_distillation_service: HealthDistillationService
+    health_moment_service: HealthMomentService
     youtube_search: YouTubeSearchService | None
 
 
@@ -702,17 +711,29 @@ async def compose_core_services(
     product_observation_service = ProductObservationService(
         host.database, event_publisher=event_hub
     )
-    background_tasks = [asyncio.create_task(runtime_registry.reap_idle_forever())]
-    # PR #558 left the post-sync trigger open. This cursor-based sweep
-    # materializes deterministic episode summaries after syncs.
-    background_tasks.append(
+    health_moment_service = HealthMomentService(
+        database=host.database,
+        observations=HealthMomentObservationQuery(host.telemetry_database),
+    )
+    health_moment_worker = HealthMomentWorker(
+        dispatcher=HealthMomentDispatcher(
+            conversation_service=conversation_service,
+            conversation_turns=conversation_turns,
+            database=host.database,
+            push_sender=scheduler_component.prompt_push_sender,
+        ),
+        service=health_moment_service,
+        summarizer=HealthEpisodeSummarizer(host.telemetry_database),
+    )
+    background_tasks = [
+        asyncio.create_task(runtime_registry.reap_idle_forever()),
         asyncio.create_task(
-            HealthEpisodeSummarizer(host.telemetry_database).sweep_forever(
+            health_moment_worker.run_forever(
                 interval_seconds=config.health_episode_sweep_seconds,
                 logger=host.logger,
             )
-        )
-    )
+        ),
+    ]
     if config.dreaming_enabled:
         dreaming_runner = EphemeralPiPromptRunner(
             replace(
@@ -840,5 +861,6 @@ async def compose_core_services(
         trigger_service=trigger_service,
         dreaming_service=dreaming_service,
         health_distillation_service=health_distillation_service,
+        health_moment_service=health_moment_service,
         youtube_search=youtube_searcher,
     )

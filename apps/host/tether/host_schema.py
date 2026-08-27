@@ -8,6 +8,7 @@ from tether.conversation_store import create_conversation_schema
 from tether.dreaming_store import create_dreaming_schema
 from tether.ebook_stats_store import create_ebook_stats_schema
 from tether.gmail import create_gmail_schema
+from tether.health_connect import create_health_moment_schema
 from tether.kosync_store import create_kosync_schema
 from tether.memory_store import create_memory_schema
 from tether.notification_store import create_notification_schema
@@ -28,6 +29,7 @@ async def create_host_schema(database: Database) -> None:
     await create_bucket_item_schema(database)
     await create_conversation_schema(database)
     await create_dreaming_schema(database)
+    await create_health_moment_schema(database)
     await create_youtube_schema(database)
     await create_trigger_schema(database)
     await create_push_schema(database)

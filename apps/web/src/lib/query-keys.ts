@@ -10,6 +10,7 @@ export const queryKeys = {
   conversations: ["conversations"] as const,
   dreamRuns: ["dream-runs"] as const,
   dreamRun: (runId: string) => ["dream-runs", runId] as const,
+  healthOverview: (days: number) => ["health", "overview", days] as const,
   // The "memories" prefix matches the host's InvalidateEvent key (it emits
   // ["memories", "review-queue"]; the prefix alone already covers every
   // memories query — queue, corpus and search).

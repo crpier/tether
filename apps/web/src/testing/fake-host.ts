@@ -4,6 +4,7 @@ import type {
   DreamRun,
   DreamRunDetail,
   Evidence,
+  HealthOverview,
   MemoryTopic,
   Message,
   MemoryWorkspaceDiagnostic,
@@ -21,6 +22,7 @@ import { FakeBucketHost } from "./fakes/bucket";
 import { FakeChatHost } from "./fakes/chat";
 import { FakeDreamingHost } from "./fakes/dreaming";
 import { FakeEvidenceHost } from "./fakes/evidence";
+import { FakeHealthHost } from "./fakes/health";
 import { FakeMemoriesHost } from "./fakes/memories";
 import { FakeNotificationsHost } from "./fakes/notifications";
 import { FakePanelsHost } from "./fakes/panels";
@@ -40,6 +42,7 @@ export class FakeHost implements WebHost {
   readonly chat: FakeChatHost;
   readonly dreaming: FakeDreamingHost;
   readonly evidence: FakeEvidenceHost;
+  readonly health: FakeHealthHost;
   readonly memories: FakeMemoriesHost;
   readonly notifications = new FakeNotificationsHost();
   readonly panels: FakePanelsHost;
@@ -60,6 +63,7 @@ export class FakeHost implements WebHost {
     dreamNowRuns?: DreamRun[];
     dreamRuns?: DreamRun[];
     evidence?: Evidence[];
+    healthOverview?: HealthOverview;
     memoryTopics?: MemoryTopic[];
     memoryWorkspaceDiagnostics?: MemoryWorkspaceDiagnostic[];
     messages?: Message[];
@@ -79,6 +83,7 @@ export class FakeHost implements WebHost {
       options.dreamNowRuns,
     );
     this.evidence = new FakeEvidenceHost(options.evidence);
+    this.health = new FakeHealthHost(options.healthOverview);
     this.memories = new FakeMemoriesHost(options.memoryTopics);
     this.memories.workspaceDiagnostics =
       options.memoryWorkspaceDiagnostics ?? [];

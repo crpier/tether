@@ -66,9 +66,11 @@ function projectMessage(row: MessageRow): KitnTimelineItem {
       ? "You"
       : row.role === "assistant"
         ? "Tether"
-        : row.role === "scheduled"
-          ? "Scheduled"
-          : "Tool";
+        : row.role === "health"
+          ? "Health"
+          : row.role === "scheduled"
+            ? "Scheduled"
+            : "Tool";
   return {
     ariaLabel: `${label} message`,
     id: row.id,
@@ -119,7 +121,9 @@ export function projectTimelineRows(
       row.createdAt === undefined ? undefined : Date.parse(row.createdAt);
     const startsTurn =
       row.kind === "message" &&
-      (row.role === "user" || row.role === "scheduled");
+      (row.role === "user" ||
+        row.role === "health" ||
+        row.role === "scheduled");
     if (
       startsTurn &&
       previousCreatedAt !== undefined &&

@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 _EXERCISE_TYPE_LABELS = {
     56: "running",
+    70: "strength_training",
     79: "walking",
+    81: "weightlifting",
 }
 """Health Connect exercise labels needed by agent summaries."""
 
