@@ -102,6 +102,21 @@ export function ArtifactOverlay(props: {
     })();
   });
 
+  createEffect(() => {
+    if (props.artifact === null) {
+      return;
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        props.onClose();
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    onCleanup(() => {
+      window.removeEventListener("keydown", closeOnEscape);
+    });
+  });
+
   // Kitn owns the artifact frame and may replace it on reload. Resolve the
   // current iframe for every event so the relay follows that replacement.
   const attachRelay = (element: HTMLElement, artifactId: string) => {

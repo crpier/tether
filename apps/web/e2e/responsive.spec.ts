@@ -231,7 +231,7 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   const modelSelector = await boundingBox(
     page.getByRole("group", { name: "Model" }),
   );
-  expect(modelSelector.width).toBeLessThanOrEqual(256);
+  expect(Math.abs(modelSelector.width - chat.width)).toBeLessThanOrEqual(1);
   expect(modelSelector.y).toBeGreaterThan(chat.y);
   expect(modelSelector.y).toBeLessThan(PHONE.height);
 });
@@ -288,22 +288,28 @@ for (const viewport of [PHONE, DESKTOP]) {
     const context = await boundingBox(
       page.getByRole("group", { name: "Composer context" }),
     );
-    const modelSlider = await boundingBox(
-      page.getByRole("slider", { name: "Model profile" }),
+    const modelSelector = await boundingBox(
+      page.getByRole("combobox", { name: "Model profile" }),
     );
     const sessionStatus = await boundingBox(
       page.getByText("Next message starts a fresh working session"),
     );
-    expect(
-      Math.abs(
-        modelSlider.y +
-          modelSlider.height / 2 -
-          (sessionStatus.y + sessionStatus.height / 2),
-      ),
-    ).toBeLessThanOrEqual(4);
-    expect(modelSlider.x + modelSlider.width).toBeLessThanOrEqual(
-      sessionStatus.x,
-    );
+    if (viewport.width < 640) {
+      expect(sessionStatus.y).toBeGreaterThanOrEqual(
+        modelSelector.y + modelSelector.height - 1,
+      );
+    } else {
+      expect(
+        Math.abs(
+          modelSelector.y +
+            modelSelector.height / 2 -
+            (sessionStatus.y + sessionStatus.height / 2),
+        ),
+      ).toBeLessThanOrEqual(4);
+      expect(modelSelector.x + modelSelector.width).toBeLessThanOrEqual(
+        sessionStatus.x,
+      );
+    }
 
     const composer = page.getByRole("group", { name: "Message composer" });
     const composerBox = await boundingBox(composer);
@@ -376,6 +382,47 @@ for (const viewport of [PHONE, DESKTOP]) {
     ).toBeLessThanOrEqual(12);
   });
 }
+
+test("phone chat gives the model and session status separate readable rows", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        default_model: "descriptive-profile",
+        models: [
+          {
+            display_name: "Descriptive model profile · medium thinking",
+            id: "descriptive-profile",
+            model_id: "provider-model",
+            provider: "provider",
+            thinking_level: "medium",
+          },
+        ],
+      },
+    }),
+  );
+  await login();
+
+  const selectorBox = await boundingBox(
+    page.getByRole("combobox", { name: "Model profile" }),
+  );
+  const sessionBox = await boundingBox(page.getByLabel("Pi session boundary"));
+  expect(sessionBox.y).toBeGreaterThanOrEqual(
+    selectorBox.y + selectorBox.height - 1,
+  );
+  const sessionLabel = page.getByText(
+    "Next message starts a fresh working session",
+    { exact: true },
+  );
+  await expect(sessionLabel).toBeVisible();
+  const sessionLabelBox = await boundingBox(sessionLabel);
+  expect(sessionLabelBox.x + sessionLabelBox.width).toBeLessThanOrEqual(
+    sessionBox.x + sessionBox.width,
+  );
+});
 
 test("desktop chat keeps the model selector reasonably narrow", async ({
   page,

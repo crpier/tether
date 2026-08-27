@@ -95,6 +95,40 @@ describe("Kitn chat projection", () => {
     ]);
   });
 
+  test("inserts a Pi session boundary before the first turn after a cold gap", () => {
+    const rows: TimelineRow[] = [
+      {
+        createdAt: "2026-01-01T00:00:00Z",
+        id: "assistant-old",
+        kind: "message",
+        role: "assistant",
+        streaming: false,
+        text: "Earlier answer",
+        toolName: null,
+        turnId: "turn-old",
+      },
+      {
+        createdAt: "2026-01-01T00:10:00Z",
+        id: "user-new",
+        kind: "message",
+        role: "user",
+        streaming: false,
+        text: "New question",
+        toolName: null,
+        turnId: "turn-new",
+      },
+    ];
+
+    expect(projectTimelineRows(rows, { sessionGapSeconds: 300 })).toEqual([
+      expect.objectContaining({ id: "assistant-old", kind: "message" }),
+      {
+        id: "session-boundary-user-new",
+        kind: "session-boundary",
+      },
+      expect.objectContaining({ id: "user-new", kind: "message" }),
+    ]);
+  });
+
   test("maps scheduled prompts to Kitn system rows without losing Tether role", () => {
     const row: TimelineRow = {
       id: "scheduled-1",

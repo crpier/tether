@@ -200,6 +200,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     Array.from(accumulated().values())
       .sort((left, right) => left.seq - right.seq)
       .map((message) => ({
+        createdAt: message.created_at,
         id: message.id,
         role: message.role,
         content: message.content,
@@ -465,44 +466,6 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         setLoadingOlder(false);
       });
     return true;
-  };
-
-  const loadAllMessages = async (): Promise<void> => {
-    const conversationId = dependencies.conversationId();
-    if (conversationId === undefined || loadingOlder() || !hasMoreHistory()) {
-      return;
-    }
-    const initialBeforeSeq = latestBeforeSeq();
-    if (initialBeforeSeq === undefined) {
-      return;
-    }
-    setLoadingOlder(true);
-    let beforeSeq = initialBeforeSeq;
-    try {
-      while (dependencies.conversationId() === conversationId) {
-        const page = await dependencies.history.listMessages(conversationId, {
-          beforeSeq,
-          limit: MESSAGES_PAGE_SIZE,
-        });
-        setAccumulated((current) => {
-          const merged = new Map(current);
-          for (const message of page) {
-            merged.set(message.seq, message);
-          }
-          return merged;
-        });
-        if (page.length < MESSAGES_PAGE_SIZE) {
-          setHasMoreHistory(false);
-          return;
-        }
-        beforeSeq = Math.min(...page.map((message) => message.seq));
-        setLatestBeforeSeq(beforeSeq);
-      }
-    } catch {
-      return;
-    } finally {
-      setLoadingOlder(false);
-    }
   };
 
   const beginPrompt = (prompt: QueuedPrompt) => {
@@ -966,7 +929,6 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     highestSettledSeq: readThroughSeq,
     historyIncomplete,
     historyReady,
-    loadAllMessages,
     loadOlderMessages,
     loadedSkillCount,
     queuedPrompts: visibleQueuedPrompts,

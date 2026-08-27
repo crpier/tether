@@ -11,6 +11,10 @@ type ToolRow = Extract<TimelineRow, { kind: "tool" }>;
 
 export type KitnTimelineItem =
   | {
+      id: string;
+      kind: "session-boundary";
+    }
+  | {
       ariaLabel: string;
       id: string;
       kind: "message";
@@ -104,9 +108,34 @@ export function projectConversations(
     });
 }
 
-export function projectTimelineRows(rows: TimelineRow[]): KitnTimelineItem[] {
+export function projectTimelineRows(
+  rows: TimelineRow[],
+  options?: { sessionGapSeconds?: number },
+): KitnTimelineItem[] {
   const projected: KitnTimelineItem[] = [];
+  let previousCreatedAt: number | undefined;
   for (const row of rows) {
+    const createdAt =
+      row.createdAt === undefined ? undefined : Date.parse(row.createdAt);
+    const startsTurn =
+      row.kind === "message" &&
+      (row.role === "user" || row.role === "scheduled");
+    if (
+      startsTurn &&
+      previousCreatedAt !== undefined &&
+      createdAt !== undefined &&
+      Number.isFinite(createdAt) &&
+      options?.sessionGapSeconds !== undefined &&
+      createdAt - previousCreatedAt >= options.sessionGapSeconds * 1000
+    ) {
+      projected.push({
+        id: `session-boundary-${row.id}`,
+        kind: "session-boundary",
+      });
+    }
+    if (createdAt !== undefined && Number.isFinite(createdAt)) {
+      previousCreatedAt = createdAt;
+    }
     if (row.kind === "tool") {
       const previous = projected.at(-1);
       if (previous?.kind === "tool-group") {

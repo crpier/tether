@@ -1,11 +1,16 @@
 import { createQuery } from "@tanstack/solid-query";
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, Suspense, createSignal, lazy } from "solid-js";
 
 import { EvidenceLink } from "../components/evidence-link";
-import { MessageContent } from "../components/message-content";
 import type { MemoriesHost } from "../host/memories";
 import { queryKeys } from "../lib/query-keys";
 import { TextField, TextFieldInput } from "@/components/ui/text-field";
+
+const LazyMessageContent = lazy(() =>
+  import("../components/message-content").then((module) => ({
+    default: module.MessageContent,
+  })),
+);
 
 export function MemoriesPanel(props: {
   api: MemoriesHost;
@@ -71,10 +76,16 @@ export function MemoriesPanel(props: {
                   </code>
                 </div>
                 <div class="mt-2">
-                  <MessageContent
-                    onOpenEvidence={props.onOpenEvidence}
-                    text={topic.body}
-                  />
+                  <Suspense
+                    fallback={
+                      <p class="whitespace-pre-wrap text-sm">{topic.body}</p>
+                    }
+                  >
+                    <LazyMessageContent
+                      onOpenEvidence={props.onOpenEvidence}
+                      text={topic.body}
+                    />
+                  </Suspense>
                 </div>
                 <Show when={topic.evidence.length > 0}>
                   <details class="mt-3 text-xs">
