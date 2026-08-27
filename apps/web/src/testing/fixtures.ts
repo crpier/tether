@@ -5,15 +5,11 @@ import type {
   Conversation,
   DuePrompt,
   DreamRun,
-  Grant,
-  GrantSuggestion,
   Message,
   ModelList,
   Notification,
   Panel,
   ProductObservation,
-  Proposal,
-  ProposalAction,
   Todo,
   TranscriptDecision,
   Trigger,
@@ -225,67 +221,6 @@ export function productObservation(
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,
     wording: "Log that as feedback.",
-    ...overrides,
-  };
-}
-
-export function proposalAction(
-  overrides: Partial<ProposalAction>,
-): ProposalAction {
-  return {
-    disposition: "approved",
-    display: null,
-    executed_at: null,
-    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
-    kind: "send_email",
-    outcome: null,
-    outcome_detail: null,
-    params: { subject: "hello" },
-    scope: null,
-    seq: 0,
-    ...overrides,
-  };
-}
-
-export function proposal(overrides: Partial<Proposal>): Proposal {
-  return {
-    actions: [proposalAction({})],
-    consumer: "gmail-purge",
-    created_at: "2026-01-01T00:00:00Z",
-    decided_at: null,
-    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
-    producing_run_id: null,
-    rejection_reason: null,
-    state: "pending",
-    summary: "Purge old promotional emails",
-    title: "Purge 42 promotional emails",
-    updated_at: "2026-01-01T00:00:00Z",
-    version: 1,
-    ...overrides,
-  };
-}
-
-export function grant(overrides: Partial<Grant>): Grant {
-  return {
-    granted_at: "2026-01-01T00:00:00Z",
-    id: `018f0000-0000-7000-8000-${Math.random().toString().slice(2, 14).padEnd(12, "0")}`,
-    kind: "send_email",
-    scope: null,
-    ...overrides,
-  };
-}
-
-export function grantSuggestion(
-  overrides: Partial<GrantSuggestion>,
-): GrantSuggestion {
-  return {
-    approved: 0,
-    edited: 0,
-    kind: "send_email",
-    last_rejection: null,
-    rejected: 0,
-    scope: null,
-    seen: 0,
     ...overrides,
   };
 }

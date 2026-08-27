@@ -85,7 +85,7 @@ describe("REST host domain ports", () => {
       },
     });
 
-    await host.proposals.listProposals("pending");
+    await host.chat.synthesizeSpeech("hello", undefined);
 
     expect(requestedCredentials).toBe("include");
   });

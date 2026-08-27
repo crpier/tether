@@ -1,4 +1,10 @@
+---
+status: superseded by ADR-0034
+---
+
 # Proposals are explicitly composed action sets, host-executed; autonomy is granted explicitly per category
+
+ADR 0034 removes this system after its runtime and interface cost exceeded its demonstrated value.
 
 Proposals gate agent-initiated *action sets* — batches of consequential, reversible-in-intent operations (archive these emails, label those) produced by unattended or multi-step agent work. The design question was how a proposal comes into being, who carries it out, and how (if ever) the human's trust in a category of action lets future instances of it skip the queue.
 

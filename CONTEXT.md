@@ -2,7 +2,7 @@
 
 A single-user, self-hosted AI personal assistant. Its core loop is **capture → resurface**: get a thing out of your head reliably, and have it come back at the right moment. Its distinguishing value is **interconnection** — captured things reference each other, so resurfacing is informed by everything else you've stored.
 
-Tether is a personal operating system: memory is the substrate it is built on, not the product. Capture → resurface is the first loop built on that substrate, not the whole of it — presentation (widgets and artifacts), ingestion (gates and telemetry), proposals and earned autonomy, and typed verticals all layer on top of canonical Evidence and automatically curated Memory.
+Tether is a personal operating system: memory is the substrate it is built on, not the product. Capture → resurface is the first loop built on that substrate, not the whole of it — presentation (widgets and artifacts), ingestion (gates and telemetry), and typed verticals all layer on top of canonical Evidence and automatically curated Memory.
 
 ## Language
 
@@ -175,20 +175,12 @@ An agent-produced report over the _active_ Bucket items that surfaces problems �
 _Avoid_: review, grooming, cleanup, backlog review
 
 **Candidate**:
-An agent-proposed typed thing awaiting human acceptance, such as a Bucket item inferred during conversation import. Memory has no Candidate state: Dreaming curates it automatically. Kin to Proposal: a Candidate awaits acceptance of a thing, while a Proposal awaits approval of a doing.
-_Avoid_: suggestion, proposal, draft
+An agent-derived typed thing awaiting human acceptance, such as a Bucket item inferred during conversation import. Memory has no Candidate state: Dreaming curates it automatically.
+_Avoid_: suggestion, draft
 
 **Product observation**:
 An explicit account of friction, an unmet expectation, or an improvement idea encountered while using Tether. It preserves the user's wording and conversational origin without prematurely diagnosing a bug or feature. It remains open until the user considers it addressed; it is not itself a GitHub issue or implementation plan.
 _Avoid_: issue, bug report, feature request, proposal
-
-**Proposal**:
-A concrete, inspectable set of actions the agent wants to take, awaiting human approval before it executes. The doing-side counterpart to Candidate.
-_Avoid_: suggestion, plan, action item
-
-**Autonomy grant**:
-An earned, per-action-category removal of the Proposal gate for a specific kind of action — visible to the human and revocable at any time.
-_Avoid_: permission, trust level, auto-approve
 
 **Provenance**:
 The objective origin of Evidence or a captured typed thing — where it came from, such as a URL, Conversation, specific video, manual entry, or synced external system. Memory Claims cite Evidence rather than treating generated summaries as fresh Provenance.

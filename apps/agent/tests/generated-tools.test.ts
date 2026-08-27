@@ -80,11 +80,9 @@ describe("generated tool extension", () => {
       "summarize_health_connect",
       "record_product_observation",
       "list_product_observations",
-      "propose",
-      "list_proposals",
       "execute_tools",
     ]);
-    expect(tetherToolSources).toHaveLength(56);
+    expect(tetherToolSources).toHaveLength(54);
   });
 
   test("makes every generated schema discoverable by confined code", async () => {

@@ -23,7 +23,6 @@ from tether.model_selection import router as model_router
 from tether.notification_routes import router as notification_router
 from tether.panel_routes import router as panel_router
 from tether.product_observation_routes import router as product_observation_router
-from tether.proposal_routes import router as proposal_router
 from tether.provider_auth_routes import router as provider_auth_router
 from tether.push_routes import router as push_router
 from tether.recall_routes import router as recall_router
@@ -60,7 +59,6 @@ _PUBLIC_ROUTERS = (
     ebook_router,
     stt_router,
     tts_router,
-    proposal_router,
     provider_auth_router,
 )
 

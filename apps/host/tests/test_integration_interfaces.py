@@ -14,8 +14,7 @@ from snektest import test
 TETHER_ROOT = Path(__file__).resolve().parent.parent / "tether"
 
 # Integration packages. Legacy flat modules (`tether.gmail_store`, …) no
-# longer exist; a consumer like `tether.gmail_purge` imports through the
-# package interface like any other caller.
+# longer exist; consumers import through the package interface.
 INTEGRATIONS = {"youtube", "gmail", "health_connect"}
 
 

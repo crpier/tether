@@ -7,13 +7,7 @@ import {
 } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import {
-  FakeHost,
-  duePrompt,
-  navigateTo,
-  proposal,
-  renderApp,
-} from "./testing/harness";
+import { FakeHost, duePrompt, navigateTo, renderApp } from "./testing/harness";
 
 const noop = () => undefined;
 const originalMatchMedia = window.matchMedia;
@@ -62,6 +56,19 @@ describe("Shell accessibility", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("the removed Proposals route and navigation item are absent", async () => {
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/proposals",
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Page not found" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Proposals/ }),
+    ).not.toBeInTheDocument();
+  });
+
   test("unknown authenticated routes show a not-found state without redirecting", async () => {
     renderApp(new FakeHost({ authenticated: true }), undefined, {
       path: "/not-a-real-route-autoresearch",
@@ -84,17 +91,10 @@ describe("Shell accessibility", () => {
       Browse: "Browse",
       Chat: "Tether chat",
       Inbox: "Inbox",
-      Proposals: "Proposals",
       Settings: "Settings",
     } as const;
 
-    for (const label of [
-      "Chat",
-      "Proposals",
-      "Inbox",
-      "Browse",
-      "Settings",
-    ] as const) {
+    for (const label of ["Chat", "Inbox", "Browse", "Settings"] as const) {
       await navigateTo(label);
       expect(
         await screen.findByRole("heading", {
@@ -115,7 +115,7 @@ describe("Shell accessibility", () => {
       await screen.findByRole("button", { name: "Collapse sidebar" }),
     );
 
-    for (const label of ["Chat", "Proposals", "Inbox", "Browse", "Settings"]) {
+    for (const label of ["Chat", "Inbox", "Browse", "Settings"]) {
       const link = within(nav).getByRole("link", {
         name: new RegExp(`^${label}`),
       });
@@ -137,7 +137,7 @@ describe("Shell accessibility", () => {
   });
 
   test("only the active responsive nav is exposed", async () => {
-    const labels = ["Chat", "Proposals", "Inbox", "Browse", "Settings"];
+    const labels = ["Chat", "Inbox", "Browse", "Settings"];
 
     installMatchMedia(true);
     renderApp(new FakeHost({ authenticated: true }), undefined, {
@@ -177,35 +177,22 @@ describe("Shell accessibility", () => {
 });
 
 describe("Shell nav badges", () => {
-  test("no badge renders when a page has nothing pending", async () => {
-    const host = new FakeHost({ authenticated: true });
-    renderApp(host);
+  test("no badge renders when the inbox has nothing pending", async () => {
+    renderApp(new FakeHost({ authenticated: true }));
     const nav = await mainNav();
 
-    await waitFor(() => {
-      expect(host.proposals.listProposalsCalls.length).toBeGreaterThan(0);
-    });
-    const proposalsLink = within(nav).getByRole("link", {
-      name: /^Proposals/,
-    });
-    expect(badgeDigit(proposalsLink)).toBeNull();
+    const inboxLink = within(nav).getByRole("link", { name: /^Inbox/ });
+    expect(badgeDigit(inboxLink)).toBeNull();
   });
 
-  test("badges reflect pending proposals and inbox items", async () => {
+  test("the badge reflects pending inbox items", async () => {
     const host = new FakeHost({
       authenticated: true,
       duePrompts: [duePrompt({ question: "What is TCP?" })],
-      proposals: [proposal({ id: "prop-1" })],
     });
     renderApp(host);
     const nav = await mainNav();
 
-    await waitFor(() => {
-      const proposalsLink = within(nav).getByRole("link", {
-        name: /^Proposals/,
-      });
-      expect(badgeDigit(proposalsLink)).toBe("1");
-    });
     await waitFor(() => {
       const inboxLink = within(nav).getByRole("link", { name: /^Inbox/ });
       expect(badgeDigit(inboxLink)).toBe("1");
@@ -225,29 +212,6 @@ describe("Shell nav badges", () => {
 
     await waitFor(() => {
       expect(within(nav).getByRole("link", { name: "Inbox 1" })).toBeVisible();
-    });
-  });
-
-  test("a badge updates on a bus invalidate frame", async () => {
-    const host = new FakeHost({ authenticated: true });
-    const bus = renderApp(host);
-    const nav = await mainNav();
-
-    await waitFor(() => {
-      const proposalsLink = within(nav).getByRole("link", {
-        name: /^Proposals/,
-      });
-      expect(badgeDigit(proposalsLink)).toBeNull();
-    });
-
-    host.proposals.storedProposals = [proposal({ id: "prop-1" })];
-    bus.emit({ keys: ["proposals"], type: "invalidate" });
-
-    await waitFor(() => {
-      const proposalsLink = within(nav).getByRole("link", {
-        name: /^Proposals/,
-      });
-      expect(badgeDigit(proposalsLink)).toBe("1");
     });
   });
 });

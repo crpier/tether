@@ -77,6 +77,7 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0009** — hybrid Search is an embedded LanceDB projection, not FTS5 + sqlite-vec (refined by 0021).
 - **0010** — provenance classes govern Memory trust (superseded by 0021).
 - **0012** — raw Telemetry remains typed Evidence outside Memory (refined by 0021).
+- **0014** — generic Proposals gate agent-authored action sets (superseded by 0034).
 - **0020** — FastAPI owns REST validation, routing, and OpenAPI generation.
 - **0021** — Memory is a canonical agent-curated Markdown workspace.
 - **0022** — Dreaming mutates Memory through confined native-shaped pi file tools (superseded by 0033).
@@ -90,6 +91,7 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0031** — Tether owns the assistant runtime again after the Open WebUI trial failed daily-use evaluation.
 - **0032** — Fresh confined programs may orchestrate host-owned tools without ambient authority.
 - **0033** — Confined TypeScript/JavaScript is Tether's only programmable agent environment; Memory reads cross typed host tools.
+- **0034** — Typed capabilities own action policy; Tether has no generic Proposal or earned-autonomy system.
 
 ## Build order
 

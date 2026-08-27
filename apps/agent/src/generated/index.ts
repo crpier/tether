@@ -171,11 +171,6 @@ import {
   registerListProductObservationsTool,
   list_product_observationsTool,
 } from "./list_product_observations.js";
-import { registerProposeTool, proposeTool } from "./propose.js";
-import {
-  registerListProposalsTool,
-  list_proposalsTool,
-} from "./list_proposals.js";
 
 export const tetherToolSources = [
   sourceForTool(searchTool),
@@ -232,8 +227,6 @@ export const tetherToolSources = [
   sourceForTool(summarize_health_connectTool),
   sourceForTool(record_product_observationTool),
   sourceForTool(list_product_observationsTool),
-  sourceForTool(proposeTool),
-  sourceForTool(list_proposalsTool),
 ];
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
@@ -291,7 +284,5 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerSummarizeHealthConnectTool(pi);
   registerRecordProductObservationTool(pi);
   registerListProductObservationsTool(pi);
-  registerProposeTool(pi);
-  registerListProposalsTool(pi);
   pi.registerTool(createCodeModeTool(tetherToolSources));
 }

@@ -14,7 +14,6 @@ import {
   createProductObservationsHost,
   type ProductObservationsHost,
 } from "./product-observations";
-import { createProposalsHost, type ProposalsHost } from "./proposals";
 import { createProviderAuthHost, type ProviderAuthHost } from "./provider-auth";
 import { createPushHost, type PushHost } from "./push";
 import { createRecallHost, type RecallHost } from "./recall";
@@ -34,7 +33,6 @@ export * from "./memories";
 export * from "./notifications";
 export * from "./panels";
 export * from "./product-observations";
-export * from "./proposals";
 export * from "./provider-auth";
 export * from "./push";
 export * from "./recall";
@@ -56,7 +54,6 @@ export interface WebHost {
   notifications: NotificationsHost;
   panels: PanelsHost;
   productObservations: ProductObservationsHost;
-  proposals: ProposalsHost;
   providerAuth: ProviderAuthHost;
   push: PushHost;
   recall: RecallHost;
@@ -81,7 +78,6 @@ export function createRestHost(
     notifications: createNotificationsHost(context),
     panels: createPanelsHost(context),
     productObservations: createProductObservationsHost(context),
-    proposals: createProposalsHost(context),
     providerAuth: createProviderAuthHost(context),
     push: createPushHost(context),
     recall: createRecallHost(context),

@@ -12,11 +12,6 @@ from pathlib import Path
 from opentelemetry.trace import Tracer
 from snekql.sqlite import Database
 
-from tether.action_registry import (
-    ActionContext,
-    all_action_specs,
-    build_action_registry,
-)
 from tether.artifacts import ArtifactService
 from tether.bucket_item_index import BucketItemIndex
 from tether.bucket_item_reconciler import BucketItemReconciler
@@ -37,7 +32,6 @@ from tether.dreaming import (
     MaintenanceDreamingExecutor,
 )
 from tether.events import EventHub
-from tether.gmail import GmailClient
 from tether.health_connect import HealthEpisodeSummarizer
 from tether.health_distillation import (
     HealthDistillationExecutor,
@@ -76,9 +70,6 @@ from tether.notifications import NotificationService
 from tether.panel_execution import PanelExecutor
 from tether.panels import PanelService
 from tether.product_observations import ProductObservationService
-from tether.proposal_autonomy import ProposalAutonomyService
-from tether.proposal_execution import ProposalExecutor
-from tether.proposals import ProposalService
 from tether.provider_auth import ProviderAuthService
 from tether.provider_auth_process import (
     SubprocessProviderAuthBackend,
@@ -205,58 +196,6 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     return _SchedulerComponent(
         notification_service=notification_service,
         scheduler=scheduler,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class _ProposalComponent:
-    """Proposal lifecycle with autonomy and execution collaborators."""
-
-    autonomy_service: ProposalAutonomyService
-    proposal_service: ProposalService
-
-
-def _build_proposal_component(
-    *,
-    config: AppConfig,
-    database: Database,
-    event_publisher: EventHub,
-    notification_service: NotificationService,
-) -> _ProposalComponent:
-    """Wire Proposal lifecycle, autonomy, and execution collaborators.
-
-    Built after `_build_scheduler` so its notification service can queue pending
-    proposals. The executor receives the composed action catalog and the real
-    Gmail client when configured. Without that client, `gmail.*` actions return
-    an explicit unavailable failure rather than raising.
-    """
-    gmail_client = (
-        GmailClient(transport=config.gmail_transport)
-        if config.gmail_transport is not None
-        else None
-    )
-    autonomy_service = ProposalAutonomyService(
-        database=database,
-        event_publisher=event_publisher,
-    )
-    proposal_executor = ProposalExecutor(
-        database=database,
-        action_registry=build_action_registry(
-            config.proposal_action_specs
-            if config.proposal_action_specs is not None
-            else all_action_specs()
-        ),
-        action_context=ActionContext(gmail_client=gmail_client),
-    )
-    return _ProposalComponent(
-        autonomy_service=autonomy_service,
-        proposal_service=ProposalService(
-            database=database,
-            autonomy_policy=autonomy_service,
-            execution=proposal_executor,
-            event_publisher=event_publisher,
-            notification_service=notification_service,
-        ),
     )
 
 
@@ -573,8 +512,6 @@ class CoreServices:
     notification_service: NotificationService
     panel_service: PanelService
     product_observation_service: ProductObservationService
-    proposal_autonomy_service: ProposalAutonomyService
-    proposal_service: ProposalService
     provider_auth_service: ProviderAuthService
     push_service: PushService
     recall_service: RecallService
@@ -762,12 +699,6 @@ async def compose_core_services(
         conversation_turns,
     )
     await scheduler_component.scheduler.repair()
-    proposal_component = _build_proposal_component(
-        config=config,
-        database=host.database,
-        event_publisher=event_hub,
-        notification_service=scheduler_component.notification_service,
-    )
     product_observation_service = ProductObservationService(
         host.database, event_publisher=event_hub
     )
@@ -899,8 +830,6 @@ async def compose_core_services(
         notification_service=scheduler_component.notification_service,
         panel_service=presentation.panel_service,
         product_observation_service=product_observation_service,
-        proposal_autonomy_service=proposal_component.autonomy_service,
-        proposal_service=proposal_component.proposal_service,
         provider_auth_service=provider_auth_service,
         push_service=push_service,
         recall_service=recall_service,

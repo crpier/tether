@@ -10,7 +10,6 @@ type RunKind = Literal[
     "scheduled",
     "recall",
     "gmail",
-    "gmail_purge",
     "dreaming",
     "titling",
 ]

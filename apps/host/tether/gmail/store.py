@@ -22,7 +22,6 @@ from snekql.sqlite import (
 GMAIL_WATERMARK_KEY = "gmail_message_watermark"
 """Cursor for the last fully successful Gmail ingestion pass."""
 
-GMAIL_PURGE_WATERMARK_KEY = "gmail_purge_watermark"
 """Independent cursor for the last successful inbox hygiene sweep."""
 
 type GmailMessageStatus = Literal["prefiltered", "noise", "ingested", "pending"]
@@ -137,7 +136,6 @@ async def create_gmail_schema(database: Database) -> None:
 
 
 __all__ = [
-    "GMAIL_PURGE_WATERMARK_KEY",
     "GMAIL_WATERMARK_KEY",
     "GmailMessageRecord",
     "GmailMessageStatus",

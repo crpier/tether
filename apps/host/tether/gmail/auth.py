@@ -72,8 +72,8 @@ def main() -> None:
         token_path=settings.gmail_token_path,
         client_secret_path=settings.gmail_client_secret_path,
         # Both scopes are requested: `gmail.readonly` for the ingestion gate's
-        # listing/reads and `gmail.modify` for the backlog-purge write path
-        # (archive/label/trash). A token minted before `gmail.modify` was added
+        # listing/reads and `gmail.modify` for direct archive/label/trash tools.
+        # A token minted before `gmail.modify` was added
         # must be re-authorized by re-running this bootstrap and re-consenting.
         scopes=(GMAIL_READONLY_SCOPE, GMAIL_MODIFY_SCOPE),
         no_browser=settings.gmail_oauth_no_browser,

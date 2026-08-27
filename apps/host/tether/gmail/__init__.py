@@ -26,7 +26,6 @@ from tether.gmail.oauth import (
     HttpGmailTransport,
 )
 from tether.gmail.store import (
-    GMAIL_PURGE_WATERMARK_KEY,
     create_gmail_schema,
     read_sync_watermark,
     write_sync_watermark,
@@ -37,7 +36,6 @@ from tether.gmail.triage import GmailTriageRunner
 
 __all__ = [
     "GMAIL_MODIFY_SCOPE",
-    "GMAIL_PURGE_WATERMARK_KEY",
     "GMAIL_READONLY_SCOPE",
     "GMAIL_TOOL_SPECS",
     "GmailAuthBackend",

@@ -34,7 +34,6 @@ import { BrowsePage, type BrowseView } from "./pages/browse-page";
 import { ChatPage } from "./pages/chat-page";
 import { InboxPage } from "./pages/inbox-page";
 import { NotFoundPage } from "./pages/not-found-page";
-import { ProposalsPage } from "./pages/proposals-page";
 import { SettingsPage } from "./pages/settings-page";
 import { Shell } from "./shell";
 
@@ -99,14 +98,6 @@ const BrowseTodosPage = directBrowsePage("todos");
 const BrowseRemindersPage = directBrowsePage("reminders");
 const BrowseFeedbackPage = directBrowsePage("feedback");
 const BrowsePanelsPage = directBrowsePage("panels");
-
-function DirectDecidedProposalsPage() {
-  return <ProposalsPage initialView="history" />;
-}
-
-function DirectGrantsProposalsPage() {
-  return <ProposalsPage initialView="grants" />;
-}
 
 // The WebSocket bus and frame handling live above the router, beside the
 // session gate (#250): one /ws connection app-wide, so `invalidate` and
@@ -178,13 +169,6 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={RootChatRedirect} path="/" />
         <Route component={ChatPage} path="/chat" />
         <Route component={ChatPage} path="/chat/:conversationId" />
-        <Route component={ProposalsPage} path="/proposals" />
-        <Route component={ProposalsPage} path="/proposals/queue" />
-        <Route
-          component={DirectDecidedProposalsPage}
-          path="/proposals/decided"
-        />
-        <Route component={DirectGrantsProposalsPage} path="/proposals/grants" />
         <Route component={InboxPage} path="/inbox" />
         <Route component={BrowseIndexPage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />

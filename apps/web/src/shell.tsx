@@ -23,20 +23,15 @@ interface NavItem {
 }
 
 // Badge counts are client-derived (#250): no count endpoints. Each list query
-// mounted here stays warm — and invalidate-driven — regardless of which page
-// is on screen, so a badge is simply the relevant list's length. Inbox sums
-// every kind awaiting adjudication: bucket triage findings, due Recall prompts,
-// and undismissed fired-reminder notifications. Memory has no Inbox queue.
+// mounted here stays warm and invalidate-driven regardless of which page is on
+// screen. Inbox sums every kind awaiting adjudication: bucket triage findings,
+// due Recall prompts, and undismissed fired-reminder notifications. Memory has
+// no Inbox queue.
 function useBadgeCounts() {
   const bucket = useHost("bucket");
   const notifications = useHost("notifications");
-  const proposals = useHost("proposals");
   const recall = useHost("recall");
 
-  const proposalsQuery = createQuery(() => ({
-    queryFn: () => proposals.listProposals("pending"),
-    queryKey: queryKeys.proposalsState("pending"),
-  }));
   const bucketTriageQuery = createQuery(() => ({
     queryFn: () => bucket.getBucketTriage(),
     queryKey: queryKeys.bucketItemsView("triage"),
@@ -50,7 +45,6 @@ function useBadgeCounts() {
     queryKey: queryKeys.notifications,
   }));
 
-  const proposalsCount = createMemo(() => proposalsQuery.data?.length ?? 0);
   const inboxCount = createMemo(() => {
     const triage = bucketTriageQuery.data;
     const triageCount = triage
@@ -68,7 +62,7 @@ function useBadgeCounts() {
     );
   });
 
-  return { inboxCount, proposalsCount };
+  return { inboxCount };
 }
 
 function createMediaQuery(query: string, fallback: boolean) {
@@ -115,10 +109,9 @@ function NavBadge(props: { count: number }) {
 }
 
 function useNavItems(): NavItem[] {
-  const { inboxCount, proposalsCount } = useBadgeCounts();
+  const { inboxCount } = useBadgeCounts();
   return [
     { label: "Chat", path: "/chat" },
-    { badge: proposalsCount, label: "Proposals", path: "/proposals" },
     { badge: inboxCount, label: "Inbox", path: "/inbox" },
     { label: "Browse", path: "/browse" },
     { label: "Settings", path: "/settings" },
