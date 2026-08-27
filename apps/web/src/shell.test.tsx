@@ -163,9 +163,13 @@ describe("Shell accessibility", () => {
       screen.queryByRole("navigation", { name: "Main navigation" }),
     ).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("navigation", {
-        name: "Main navigation (compact)",
-      }),
+      screen.queryByRole("navigation", { name: "Main navigation (compact)" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open sidebar" }),
+    );
+    expect(
+      await screen.findByRole("navigation", { name: "Main navigation" }),
     ).toBeInTheDocument();
     for (const label of labels) {
       expect(
