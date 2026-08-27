@@ -88,8 +88,9 @@ supported earlier Android release). In **Settings → Health Connect**:
    do not block granted categories. History and background-read access are
    requested where the provider supports them.
 3. Permission grant queues an immediate baseline when at least one readable
-   category is granted. **Sync now** queues another unique sync without racing an
-   active run.
+   category is granted. **Sync now** keeps an already queued immediate run rather
+   than cancelling it. A periodic run that overlaps an active sync exits instead
+   of waiting on the active run's execution window.
 
 Without history access, the authoritative baseline is limited to Health
 Connect's normally accessible recent window. Missing background/history access
@@ -97,10 +98,16 @@ is shown in Settings. Unsupported devices retain text-share and voice capture.
 The section also shows running state, last success, and a sanitized last failure;
 raw values, notes, and opaque cursor tokens are never displayed or logged.
 
-Each successful sync also uploads Health Connect's hourly canonical step
-aggregate for the accessible recent window. Health Connect applies the user's
+Each sync uploads Health Connect's hourly canonical step aggregate before raw
+record paging. This makes the current step total available even when a large
+initial baseline needs several worker runs. Health Connect applies the user's
 Activity app priority before returning these buckets, so agent summaries do not
 sum overlapping phone and Fitbit records. Raw step records are still retained.
+
+The phone checkpoints each accepted baseline page with its fixed scan range and
+Health Connect page token. If WorkManager stops a large baseline, the next run
+restarts at the first unacknowledged page. The host's stable request IDs still
+make the boundary page safe to replay.
 
 The host must include the Health Connect API from
 [`docs/health-connect-wire-v3.md`](../../docs/health-connect-wire-v3.md).

@@ -149,28 +149,44 @@ class AndroidHealthConnectSource(
 
     override suspend fun scanBaseline(
         recordTypes: Set<HealthConnectRecordType>,
-        consumePage: suspend (List<HealthConnectRecord>) -> Unit,
+        progress: HealthConnectBaselineScanProgress?,
+        consumePage: suspend (HealthConnectBaselinePage) -> Unit,
     ): Map<HealthConnectRecordType, HealthConnectScanBounds> {
-        val end = clock()
-        val start = baselineStart(end)
-        val bounds = mutableMapOf<HealthConnectRecordType, HealthConnectScanBounds>()
-        for (recordType in recordTypes) {
-            var pageToken: String? = null
+        val end = progress?.endTimeEpochMillis?.let(Instant::ofEpochMilli) ?: clock()
+        val start = progress?.startTimeEpochMillis?.let(Instant::ofEpochMilli) ?: baselineStart(end)
+        val completedRecordTypes = progress?.completedRecordTypes.orEmpty().toMutableSet()
+        for (recordType in recordTypes.sortedBy { it.wireName }) {
+            if (recordType in completedRecordTypes) continue
+            var pageToken = progress?.nextPageToken.takeIf { progress?.currentRecordType == recordType }
             do {
                 val page = gateway.readRecords(recordType.toAndroidRecordClass(), start, end, pageToken)
                 val mapped = page.records.mapNotNull { it.toWireRecordOrNull() }
                 recordTypeIndex.remember(mapped.map { it.recordType to it.metadata.id })
-                if (mapped.isNotEmpty()) {
-                    consumePage(mapped)
+                val nextPageToken = page.nextPageToken
+                if (nextPageToken == null) {
+                    completedRecordTypes += recordType
                 }
-                pageToken = page.nextPageToken
+                consumePage(
+                    HealthConnectBaselinePage(
+                        records = mapped,
+                        progress = HealthConnectBaselineScanProgress(
+                            startTimeEpochMillis = start.toEpochMilli(),
+                            endTimeEpochMillis = end.toEpochMilli(),
+                            completedRecordTypes = completedRecordTypes.toSet(),
+                            currentRecordType = recordType.takeIf { nextPageToken != null },
+                            nextPageToken = nextPageToken,
+                        ),
+                    ),
+                )
+                pageToken = nextPageToken
             } while (pageToken != null)
-            bounds[recordType] = HealthConnectScanBounds(
+        }
+        return recordTypes.associateWith {
+            HealthConnectScanBounds(
                 startTimeEpochMillis = start.toEpochMilli(),
                 endTimeEpochMillis = end.toEpochMilli(),
             )
         }
-        return bounds
     }
 
     override suspend fun readChanges(token: String): HealthConnectChanges {

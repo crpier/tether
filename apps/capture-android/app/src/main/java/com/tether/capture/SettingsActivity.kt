@@ -9,6 +9,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
 import com.tether.capture.databinding.ActivitySettingsBinding
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -17,6 +19,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var repository: SettingsRepository
     private lateinit var scheduler: HealthConnectWorkScheduler
+    private var healthStatusJob: Job? = null
 
     private val requestHealthPermissions = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
@@ -66,6 +69,12 @@ class SettingsActivity : AppCompatActivity() {
         refreshHealthStatus()
     }
 
+    override fun onPause() {
+        healthStatusJob?.cancel()
+        healthStatusJob = null
+        super.onPause()
+    }
+
     private fun grantOrEnableHealthConnect() {
         when (HealthConnectClient.getSdkStatus(this)) {
             HealthConnectClient.SDK_AVAILABLE -> {
@@ -88,12 +97,18 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshHealthStatus() {
-        lifecycleScope.launch {
+        healthStatusJob?.cancel()
+        healthStatusJob = lifecycleScope.launch {
             val platform = HealthConnectStatusReader(
                 AndroidHealthConnectEnvironment(applicationContext),
             ).read()
-            val sync = repository.healthConnectStatus()
-            render(platform, sync)
+            val available = platform as? HealthConnectStatus.Available
+            if (available?.permissions?.canReadAnyRecord == true) {
+                scheduler.ensurePeriodicSync()
+            }
+            repository.healthConnectStatusUpdates().collect { sync ->
+                render(platform, sync)
+            }
         }
     }
 
@@ -124,14 +139,11 @@ class SettingsActivity : AppCompatActivity() {
                 DateFormat.getDateTimeInstance().format(Date(timestamp)),
             )
         } ?: getString(R.string.health_connect_never_synced)
-        binding.healthLastFailure.text = sync.lastFailure?.let { failure ->
+        binding.healthLastFailure.text = sync.failureForDisplay?.let { failure ->
             getString(R.string.health_connect_last_failure, failure)
         } ?: getString(R.string.health_connect_no_failure)
         binding.healthGrantButton.isEnabled = platform != HealthConnectStatus.Unsupported
         binding.healthSyncButton.isEnabled = available?.permissions?.canReadAnyRecord == true && !sync.running
-        if (available?.permissions?.canReadAnyRecord == true) {
-            scheduler.ensurePeriodicSync()
-        }
     }
 
     private fun toast(message: String) {

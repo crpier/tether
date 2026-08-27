@@ -45,7 +45,7 @@ class HealthConnectWorkScheduler(
                 interval = null,
                 requiresNetwork = true,
                 requiresCharging = false,
-                replaceExisting = true,
+                replaceExisting = false,
             ),
         )
     }

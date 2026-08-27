@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class HealthConnectSyncCoordinatorTest {
     @Test
@@ -37,12 +38,90 @@ class HealthConnectSyncCoordinatorTest {
         assertTrue(requestIds.stableKeys.all { it.startsWith("health-connect-v3:") })
         assertEquals(
             listOf(
-                "host.uploadBaseline(request-2,token,token,records=500)",
                 "host.uploadBaseline(request-3,token,token,records=500)",
-                "host.uploadBaseline(request-4,token,token,records=1)",
+                "host.uploadBaseline(request-4,token,token,records=500)",
+                "host.uploadBaseline(request-5,token,token,records=1)",
             ),
             events.filter { it.startsWith("host.uploadBaseline") },
         )
+    }
+
+    @Test
+    fun interruptedBaselineResumesAtFirstUnacknowledgedHealthConnectPage() = runTest {
+        val records = (1..1_200).map { index ->
+            HealthConnectRecord.HeartRate(
+                metadata = HealthConnectMetadata("heart-$index", "com.example.watch"),
+                startTimeEpochMillis = index.toLong(),
+                endTimeEpochMillis = index.toLong() + 1,
+                samples = emptyList(),
+            )
+        }
+        val source = RestartableBaselineSource(records)
+        val host = InterruptOnceBaselineHost()
+        val checkpoints = InMemoryBaselineCheckpointStore()
+
+        fun coordinator() = HealthConnectSyncCoordinator(
+            installationId = "installation",
+            recordTypes = setOf(HealthConnectRecordType.HEART_RATE),
+            health = source,
+            host = host,
+            requestIds = SequentialRequestIds("request"),
+            baselineCheckpoints = checkpoints,
+        )
+
+        try {
+            coordinator().syncOnce()
+            throw AssertionError("first baseline should be interrupted")
+        } catch (_: IOException) {
+            // WorkManager recreates the coordinator for its retry.
+        }
+
+        assertEquals(HealthConnectSyncResult.Success, coordinator().syncOnce())
+        assertEquals(
+            listOf("heart-1", "heart-501", "heart-501", "heart-1001"),
+            host.attemptedFirstRecordIds,
+        )
+        assertEquals(null, checkpoints.loadBaselineCheckpoint())
+    }
+
+    @Test
+    fun changesStateDiscardsACompletedBaselinesCheckpoint() = runTest {
+        val checkpoints = InMemoryBaselineCheckpointStore()
+        checkpoints.saveBaselineCheckpoint(
+            HealthConnectBaselineCheckpoint(
+                generation = 1,
+                startingToken = "old-token",
+                recordTypes = setOf(HealthConnectRecordType.HEART_RATE),
+                scanProgress = HealthConnectBaselineScanProgress(
+                    startTimeEpochMillis = 1,
+                    endTimeEpochMillis = 2,
+                    completedRecordTypes = setOf(HealthConnectRecordType.HEART_RATE),
+                    currentRecordType = null,
+                    nextPageToken = null,
+                ),
+            ),
+        )
+        val coordinator = HealthConnectSyncCoordinator(
+            installationId = "installation",
+            recordTypes = setOf(HealthConnectRecordType.HEART_RATE),
+            health = FakeHealthConnectSource(
+                events = mutableListOf(),
+                startingToken = "unused",
+                baselineRecords = emptyList(),
+                changes = HealthConnectChanges(emptyList(), emptyList(), "next-token"),
+            ),
+            host = FakeHealthConnectHost(
+                events = mutableListOf(),
+                state = HostSyncState.Changes,
+                generation = 2,
+                token = "current-token",
+            ),
+            requestIds = SequentialRequestIds("request"),
+            baselineCheckpoints = checkpoints,
+        )
+
+        assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
+        assertEquals(null, checkpoints.loadBaselineCheckpoint())
     }
 
     @Test
@@ -154,13 +233,13 @@ class HealthConnectSyncCoordinatorTest {
         assertEquals(HealthConnectSyncResult.Success, result)
         assertEquals(
             listOf(
+                "health.readStepAggregateSnapshot",
                 "host.getSyncState(token-stale)",
                 "health.readChanges(token-stale)",
-                "host.uploadChanges(request-1,token-stale,token-next,records=1)",
+                "host.uploadChanges(request-2,token-stale,token-next,records=1)",
                 "host.getSyncState(token-authoritative)",
                 "health.readChanges(token-authoritative)",
-                "host.uploadChanges(request-2,token-authoritative,token-next,records=1)",
-                "health.readStepAggregateSnapshot",
+                "host.uploadChanges(request-3,token-authoritative,token-next,records=1)",
             ),
             events,
         )
@@ -217,23 +296,23 @@ class HealthConnectSyncCoordinatorTest {
         assertEquals(HealthConnectSyncResult.Success, result)
         assertEquals(
             listOf(
+                "health.readStepAggregateSnapshot",
+                "host.uploadStepAggregates(request-1,buckets=0)",
                 "host.getSyncState",
                 "health.getChangesToken",
                 "host.startBaseline(token-before-read)",
                 "health.scanBaseline(HEART_RATE,STEPS)",
-                "host.uploadBaseline(request-2,token-before-read,token-before-read,records=1)",
+                "host.uploadBaseline(request-3,token-before-read,token-before-read,records=1)",
                 "host.completeBaseline(token-before-read)",
                 "health.readChanges(token-before-read)",
-                "host.uploadChanges(request-4,token-before-read,token-after-change,records=1)",
-                "health.readStepAggregateSnapshot",
-                "host.uploadStepAggregates(request-5,buckets=0)",
+                "host.uploadChanges(request-5,token-before-read,token-after-change,records=1)",
             ),
             events,
         )
     }
 
     @Test
-    fun successfulStepSyncUploadsCanonicalAggregateAfterRawChanges() = runTest {
+    fun stepSyncUploadsCanonicalAggregateBeforeRawChanges() = runTest {
         val events = mutableListOf<String>()
         val health = FakeHealthConnectSource(
             events = events,
@@ -270,14 +349,100 @@ class HealthConnectSyncCoordinatorTest {
         assertEquals(HealthConnectSyncResult.Success, coordinator.syncOnce())
         assertEquals(
             listOf(
+                "health.readStepAggregateSnapshot",
+                "host.uploadStepAggregates(request-1,buckets=1)",
                 "host.getSyncState",
                 "health.readChanges(token-current)",
-                "host.uploadChanges(request-1,token-current,token-next,records=0)",
-                "health.readStepAggregateSnapshot",
-                "host.uploadStepAggregates(request-2,buckets=1)",
+                "host.uploadChanges(request-2,token-current,token-next,records=0)",
             ),
             events,
         )
+    }
+}
+
+private class InMemoryBaselineCheckpointStore : HealthConnectBaselineCheckpointStore {
+    private var checkpoint: HealthConnectBaselineCheckpoint? = null
+
+    override suspend fun loadBaselineCheckpoint(): HealthConnectBaselineCheckpoint? = checkpoint
+
+    override suspend fun saveBaselineCheckpoint(checkpoint: HealthConnectBaselineCheckpoint) {
+        this.checkpoint = checkpoint
+    }
+
+    override suspend fun clearBaselineCheckpoint() {
+        checkpoint = null
+    }
+}
+
+private class RestartableBaselineSource(
+    private val records: List<HealthConnectRecord>,
+) : HealthConnectSource {
+    override suspend fun getChangesToken(recordTypes: Set<HealthConnectRecordType>): String = "token"
+
+    override suspend fun readStepAggregateSnapshot(): HealthConnectStepAggregateSnapshot =
+        error("step aggregates not expected")
+
+    override suspend fun scanBaseline(
+        recordTypes: Set<HealthConnectRecordType>,
+        progress: HealthConnectBaselineScanProgress?,
+        consumePage: suspend (HealthConnectBaselinePage) -> Unit,
+    ): Map<HealthConnectRecordType, HealthConnectScanBounds> {
+        val pages = records.chunked(500)
+        val startIndex = progress?.nextPageToken?.toInt() ?: 0
+        for (index in startIndex until pages.size) {
+            val nextPageToken = (index + 1).takeIf { it < pages.size }?.toString()
+            consumePage(
+                HealthConnectBaselinePage(
+                    records = pages[index],
+                    progress = HealthConnectBaselineScanProgress(
+                        startTimeEpochMillis = 1,
+                        endTimeEpochMillis = 2_000,
+                        completedRecordTypes = if (nextPageToken == null) recordTypes else emptySet(),
+                        currentRecordType = if (nextPageToken == null) null else HealthConnectRecordType.HEART_RATE,
+                        nextPageToken = nextPageToken,
+                    ),
+                ),
+            )
+        }
+        return recordTypes.associateWith { HealthConnectScanBounds(1, 2_000) }
+    }
+
+    override suspend fun readChanges(token: String): HealthConnectChanges =
+        HealthConnectChanges(emptyList(), emptyList(), "next")
+}
+
+private class InterruptOnceBaselineHost : HealthConnectHost {
+    val attemptedFirstRecordIds = mutableListOf<String>()
+    private var state = HostSyncState.Initial
+    private var generation = 1
+    private var interrupted = false
+
+    override suspend fun getSyncState(
+        installationId: String,
+        recordTypes: Set<HealthConnectRecordType>,
+    ): HostSyncCursor = HostSyncCursor(state, generation, if (state == HostSyncState.Initial) null else "token")
+
+    override suspend fun startBaseline(request: StartBaselineRequest): HostSyncCursor {
+        state = HostSyncState.Baseline
+        generation += 1
+        return HostSyncCursor(state, generation, request.startingToken)
+    }
+
+    override suspend fun uploadBatch(request: HealthConnectBatchRequest): BatchUploadResult {
+        if (request.mode == HealthConnectBatchMode.Changes) return BatchUploadResult.Accepted
+        attemptedFirstRecordIds += request.records.first().metadata.id
+        if (!interrupted && attemptedFirstRecordIds.size == 2) {
+            interrupted = true
+            throw IOException("worker stopped")
+        }
+        return BatchUploadResult.Accepted
+    }
+
+    override suspend fun uploadStepAggregateSnapshot(request: HealthConnectStepAggregateSnapshotRequest) = Unit
+
+    override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor {
+        state = HostSyncState.Changes
+        return HostSyncCursor(state, request.generation, request.expectedToken)
     }
 }
 
@@ -312,10 +477,25 @@ private class FakeHealthConnectSource(
 
     override suspend fun scanBaseline(
         recordTypes: Set<HealthConnectRecordType>,
-        consumePage: suspend (List<HealthConnectRecord>) -> Unit,
+        progress: HealthConnectBaselineScanProgress?,
+        consumePage: suspend (HealthConnectBaselinePage) -> Unit,
     ): Map<HealthConnectRecordType, HealthConnectScanBounds> {
         events += "health.scanBaseline(${recordTypes.joinToString(",")})"
-        baselineRecords.chunked(500).forEach { consumePage(it) }
+        val pages = baselineRecords.chunked(500)
+        pages.forEachIndexed { index, records ->
+            consumePage(
+                HealthConnectBaselinePage(
+                    records = records,
+                    progress = HealthConnectBaselineScanProgress(
+                        startTimeEpochMillis = 1_699_990_000_000,
+                        endTimeEpochMillis = 1_700_010_000_000,
+                        completedRecordTypes = if (index == pages.lastIndex) recordTypes else emptySet(),
+                        currentRecordType = recordTypes.firstOrNull().takeIf { index != pages.lastIndex },
+                        nextPageToken = (index + 1).takeIf { it < pages.size }?.toString(),
+                    ),
+                ),
+            )
+        }
         return recordTypes.associateWith {
             HealthConnectScanBounds(
                 startTimeEpochMillis = 1_699_990_000_000,

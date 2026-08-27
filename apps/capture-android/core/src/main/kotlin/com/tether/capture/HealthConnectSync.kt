@@ -171,6 +171,42 @@ data class HealthConnectScanBounds(
     val endTimeEpochMillis: Long,
 )
 
+data class HealthConnectBaselineScanProgress(
+    val startTimeEpochMillis: Long,
+    val endTimeEpochMillis: Long,
+    val completedRecordTypes: Set<HealthConnectRecordType>,
+    val currentRecordType: HealthConnectRecordType?,
+    val nextPageToken: String?,
+)
+
+data class HealthConnectBaselinePage(
+    val records: List<HealthConnectRecord>,
+    val progress: HealthConnectBaselineScanProgress,
+)
+
+data class HealthConnectBaselineCheckpoint(
+    val generation: Int,
+    val startingToken: String,
+    val recordTypes: Set<HealthConnectRecordType>,
+    val scanProgress: HealthConnectBaselineScanProgress,
+)
+
+interface HealthConnectBaselineCheckpointStore {
+    suspend fun loadBaselineCheckpoint(): HealthConnectBaselineCheckpoint?
+
+    suspend fun saveBaselineCheckpoint(checkpoint: HealthConnectBaselineCheckpoint)
+
+    suspend fun clearBaselineCheckpoint()
+}
+
+private object DiscardingHealthConnectBaselineCheckpointStore : HealthConnectBaselineCheckpointStore {
+    override suspend fun loadBaselineCheckpoint(): HealthConnectBaselineCheckpoint? = null
+
+    override suspend fun saveBaselineCheckpoint(checkpoint: HealthConnectBaselineCheckpoint) = Unit
+
+    override suspend fun clearBaselineCheckpoint() = Unit
+}
+
 data class HealthConnectStepAggregateBucket(
     val startTimeEpochMillis: Long,
     val endTimeEpochMillis: Long,
@@ -200,7 +236,8 @@ interface HealthConnectSource {
 
     suspend fun scanBaseline(
         recordTypes: Set<HealthConnectRecordType>,
-        consumePage: suspend (List<HealthConnectRecord>) -> Unit,
+        progress: HealthConnectBaselineScanProgress?,
+        consumePage: suspend (HealthConnectBaselinePage) -> Unit,
     ): Map<HealthConnectRecordType, HealthConnectScanBounds>
 
     suspend fun readChanges(token: String): HealthConnectChanges
@@ -298,10 +335,22 @@ class HealthConnectSyncCoordinator(
     private val health: HealthConnectSource,
     private val host: HealthConnectHost,
     private val requestIds: RequestIds,
+    private val baselineCheckpoints: HealthConnectBaselineCheckpointStore =
+        DiscardingHealthConnectBaselineCheckpointStore,
 ) {
     suspend fun syncOnce(): HealthConnectSyncResult {
+        if (HealthConnectRecordType.STEPS in recordTypes) {
+            val snapshot = health.readStepAggregateSnapshot()
+            host.uploadStepAggregateSnapshot(
+                HealthConnectStepAggregateSnapshotRequest(
+                    installationId = installationId,
+                    requestId = stableRequestId("step-aggregates:$installationId:${snapshot.identityKey()}"),
+                    snapshot = snapshot,
+                ),
+            )
+        }
         val cursor = host.getSyncState(installationId, recordTypes)
-        val recordSync = try {
+        return try {
             when (cursor.state) {
                 HostSyncState.Initial -> runBaseline()
                 HostSyncState.Baseline -> resumeBaseline(cursor)
@@ -310,21 +359,10 @@ class HealthConnectSyncCoordinator(
         } catch (_: HealthConnectChangesTokenExpiredException) {
             runBaseline()
         }
-        if (recordSync != HealthConnectSyncResult.Success || HealthConnectRecordType.STEPS !in recordTypes) {
-            return recordSync
-        }
-        val snapshot = health.readStepAggregateSnapshot()
-        host.uploadStepAggregateSnapshot(
-            HealthConnectStepAggregateSnapshotRequest(
-                installationId = installationId,
-                requestId = stableRequestId("step-aggregates:$installationId:${snapshot.identityKey()}"),
-                snapshot = snapshot,
-            ),
-        )
-        return HealthConnectSyncResult.Success
     }
 
     private suspend fun runBaseline(): HealthConnectSyncResult {
+        baselineCheckpoints.clearBaselineCheckpoint()
         val startingToken = health.getChangesToken(recordTypes)
         val baselineCursor = host.startBaseline(
             StartBaselineRequest(
@@ -341,9 +379,18 @@ class HealthConnectSyncCoordinator(
         baselineCursor: HostSyncCursor,
         startingToken: String,
     ): HealthConnectSyncResult {
+        val storedCheckpoint = baselineCheckpoints.loadBaselineCheckpoint()
+        val checkpoint = storedCheckpoint?.takeIf {
+            it.generation == baselineCursor.generation &&
+                it.startingToken == startingToken &&
+                it.recordTypes == recordTypes
+        }
+        if (storedCheckpoint != null && checkpoint == null) {
+            baselineCheckpoints.clearBaselineCheckpoint()
+        }
         val scannedBounds = try {
-            health.scanBaseline(recordTypes) { page ->
-                for (records in page.chunked(MAX_PARENT_RECORDS_PER_BATCH)) {
+            health.scanBaseline(recordTypes, checkpoint?.scanProgress) { page ->
+                for (records in page.records.chunked(MAX_PARENT_RECORDS_PER_BATCH)) {
                     val baselineResult = host.uploadBatch(
                         HealthConnectBatchRequest(
                             installationId = installationId,
@@ -362,6 +409,14 @@ class HealthConnectSyncCoordinator(
                         throw BaselineUploadRejectedException()
                     }
                 }
+                baselineCheckpoints.saveBaselineCheckpoint(
+                    HealthConnectBaselineCheckpoint(
+                        generation = baselineCursor.generation,
+                        startingToken = startingToken,
+                        recordTypes = recordTypes,
+                        scanProgress = page.progress,
+                    ),
+                )
             }
         } catch (_: BaselineUploadRejectedException) {
             return HealthConnectSyncResult.Failed("baseline cursor changed")
@@ -378,6 +433,7 @@ class HealthConnectSyncCoordinator(
                 scannedBounds = scannedBounds,
             ),
         )
+        baselineCheckpoints.clearBaselineCheckpoint()
         val changes = health.readChanges(startingToken)
         return uploadChanges(expectedToken = startingToken, changes = changes)
     }
@@ -388,6 +444,7 @@ class HealthConnectSyncCoordinator(
     }
 
     private suspend fun runChanges(cursor: HostSyncCursor): HealthConnectSyncResult {
+        baselineCheckpoints.clearBaselineCheckpoint()
         val token = cursor.token ?: return HealthConnectSyncResult.Failed("missing token")
         return uploadChanges(expectedToken = token, changes = health.readChanges(token))
     }

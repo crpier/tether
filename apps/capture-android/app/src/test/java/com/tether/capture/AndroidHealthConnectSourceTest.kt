@@ -66,9 +66,9 @@ class AndroidHealthConnectSourceTest {
         )
 
         val consumedIds = mutableListOf<String>()
-        val bounds = source.scanBaseline(setOf(HealthConnectRecordType.STEPS)) { records ->
-            consumedIds += records.map { it.metadata.id }
-            gateway.events += "consume(${records.joinToString(",") { it.metadata.id }})"
+        val bounds = source.scanBaseline(setOf(HealthConnectRecordType.STEPS), progress = null) { page ->
+            consumedIds += page.records.map { it.metadata.id }
+            gateway.events += "consume(${page.records.joinToString(",") { it.metadata.id }})"
         }
 
         assertEquals(
@@ -91,6 +91,45 @@ class AndroidHealthConnectSourceTest {
     }
 
     @Test
+    fun baselineResumeUsesSavedPageTokenAndFrozenRange() = runTest {
+        val gateway = FakeHealthConnectGateway(
+            baselinePages = mutableMapOf(
+                StepsRecord::class to ArrayDeque(
+                    listOf(
+                        AndroidHealthConnectReadPage(
+                            records = listOf(stepsRecord("steps-2")),
+                            nextPageToken = null,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val source = AndroidHealthConnectSource(
+            gateway = gateway,
+            clock = { Instant.ofEpochMilli(9_999) },
+        )
+        val progress = HealthConnectBaselineScanProgress(
+            startTimeEpochMillis = 100,
+            endTimeEpochMillis = 2_000,
+            completedRecordTypes = emptySet(),
+            currentRecordType = HealthConnectRecordType.STEPS,
+            nextPageToken = "saved-page",
+        )
+
+        val bounds = source.scanBaseline(
+            setOf(HealthConnectRecordType.STEPS),
+            progress,
+        ) { }
+
+        assertEquals(listOf("read(StepsRecord,saved-page)"), gateway.events)
+        assertEquals(
+            listOf(Instant.ofEpochMilli(100) to Instant.ofEpochMilli(2_000)),
+            gateway.readWindows,
+        )
+        assertEquals(HealthConnectScanBounds(100, 2_000), bounds[HealthConnectRecordType.STEPS])
+    }
+
+    @Test
     fun baselineMapsPlannedRecordsAsGenericPayloads() = runTest {
         val gateway = FakeHealthConnectGateway(
             baselinePages = mutableMapOf(
@@ -110,7 +149,9 @@ class AndroidHealthConnectSourceTest {
         )
 
         val consumed = mutableListOf<HealthConnectRecord>()
-        source.scanBaseline(setOf(HealthConnectRecordType.WEIGHT)) { records -> consumed += records }
+        source.scanBaseline(setOf(HealthConnectRecordType.WEIGHT), progress = null) { page ->
+            consumed += page.records
+        }
 
         val record = consumed.single() as HealthConnectRecord.Generic
         assertEquals(HealthConnectRecordType.WEIGHT, record.recordType)
@@ -192,6 +233,7 @@ class AndroidHealthConnectSourceTest {
         private val stepAggregateBuckets: List<AndroidHealthConnectStepAggregateBucket> = emptyList(),
     ) : HealthConnectGateway {
         val events = mutableListOf<String>()
+        val readWindows = mutableListOf<Pair<Instant, Instant>>()
 
         override suspend fun aggregateSteps(
             startTime: Instant,
@@ -210,6 +252,7 @@ class AndroidHealthConnectSourceTest {
             pageToken: String?,
         ): AndroidHealthConnectReadPage {
             events += "read(${recordType.simpleName},$pageToken)"
+            readWindows += startTime to endTime
             return baselinePages.getValue(recordType).removeFirst()
         }
 

@@ -35,11 +35,13 @@ avoid blocking sync for granted categories.
 
 ## Canonical step projection
 
-When the granted set includes `steps`, a successful record sync is followed by
-`POST /api/telemetry/health-connect/step-aggregates`. This projection is
-separate from the opaque changes cursor. The Android client obtains it through
-Health Connect's Aggregate API without a data-origin filter, so Health Connect
-applies the user's Activity app priority and removes overlapping sources.
+When the granted set includes `steps`, Android sends
+`POST /api/telemetry/health-connect/step-aggregates` before raw record paging.
+This projection is separate from the opaque changes cursor, so a baseline that
+spans several worker runs does not delay canonical step totals. The Android
+client obtains it through Health Connect's Aggregate API without a data-origin
+filter, so Health Connect applies the user's Activity app priority and removes
+overlapping sources.
 
 ```json
 {
