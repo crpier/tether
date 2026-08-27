@@ -73,8 +73,11 @@ describe("Conversation navigation", () => {
       expect(window.location.pathname).toBe("/chat");
     });
     expect(
-      await screen.findByRole("heading", { name: "Main Chat" }),
-    ).toBeVisible();
+      await screen.findByRole("button", { name: /^Main Chat\b/ }),
+    ).toHaveAttribute("aria-current", "true");
+    expect(
+      screen.queryByRole("heading", { name: "Main Chat" }),
+    ).not.toBeInTheDocument();
   });
 
   test("shows a retryable load error for non-404 Conversation failures", async () => {
@@ -122,11 +125,9 @@ describe("Conversation navigation", () => {
     await waitFor(() => {
       expect(window.location.pathname).toMatch(/^\/chat\/[0-9a-f-]{36}$/);
     });
+    expect(await screen.findByLabelText("Message")).toBeVisible();
     expect(
-      await screen.findByRole("heading", { name: "Untitled chat" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("heading", { name: "Main Chat" }),
+      screen.queryByRole("heading", { name: "Untitled chat" }),
     ).not.toBeInTheDocument();
   });
 
@@ -154,17 +155,22 @@ describe("Conversation navigation", () => {
     expect(
       screen.queryByRole("button", { name: "Search transcript" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Restore conversation" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Restore conversation" }),
+      screen.getByRole("link", { name: "Archived Conversations" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Restore Old project" }),
     );
 
     await waitFor(() => {
       expect(host.chat.restoreConversationCalls).toEqual([archived.id]);
     });
-    expect(await screen.findByLabelText("Message")).toBeVisible();
   });
 
-  test("header edit state resets on Conversation identity and sends only changed fields", async () => {
+  test("sidebar edit state resets on Conversation identity and sends only changed fields", async () => {
     const garden = scoped("018f0000-0000-7000-8000-000000000103", "Garden");
     const house = scoped("018f0000-0000-7000-8000-000000000104", "House");
     const host = new FakeHost({ authenticated: true });
@@ -184,7 +190,9 @@ describe("Conversation navigation", () => {
       ),
     );
 
-    expect(await screen.findByRole("heading", { name: "House" })).toBeVisible();
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/chat/${house.id}`);
+    });
     expect(
       screen.queryByRole("button", { name: "Save conversation" }),
     ).not.toBeInTheDocument();
@@ -229,7 +237,7 @@ describe("Conversation navigation", () => {
       });
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "Archive conversation" }),
+      await screen.findByRole("button", { name: "Archive conversation" }),
     );
     await waitFor(() => {
       expect(window.location.pathname).toBe("/chat");
@@ -538,10 +546,10 @@ describe("Conversation navigation", () => {
     const host = new FakeHost({ authenticated: true });
     host.chat.storedConversations = [conversation, archived];
     host.chat.restoreConversationRejections = [new ApiError(503)];
-    renderApp(host, undefined, { path: `/chat/${archived.id}` });
+    renderApp(host, undefined, { path: "/chat?archived=1" });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Restore conversation" }),
+      await screen.findByRole("button", { name: "Restore Archive" }),
     );
 
     expect(
