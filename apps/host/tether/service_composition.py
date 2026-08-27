@@ -155,9 +155,9 @@ def _build_scheduler(dependencies: _SchedulerDependencies) -> _SchedulerComponen
     """Wire the Scheduled-trigger scheduler over its dispatch collaborators.
 
     Agent-prompt triggers run through the default Conversation; fixed-message
-    triggers retain durable Inbox delivery. Both action kinds retain configured
-    Web Push delivery. The typed dependency bundle keeps every collaborator
-    explicit at this boundary.
+    triggers retain durable notification storage. Both action kinds retain
+    configured Web Push delivery. The typed dependency bundle keeps every
+    collaborator explicit at this boundary.
     """
     notification_service = NotificationService(
         store=NotificationStore(dependencies.database),

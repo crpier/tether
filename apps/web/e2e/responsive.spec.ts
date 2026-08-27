@@ -158,7 +158,7 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   const tabsBox = await boundingBox(bottomNav);
   expect(tabsBox.x).toBeGreaterThanOrEqual(0);
   expect(tabsBox.x + tabsBox.width).toBeLessThanOrEqual(PHONE.width + 1);
-  await expect(bottomNav.getByRole("link", { name: /^Inbox/ })).toBeVisible();
+  await expect(bottomNav.getByRole("link", { name: "Health" })).toBeVisible();
 
   // Chat is a full-width column. Model controls sit after the transcript, by
   // the composer, rather than above a long mobile conversation.
@@ -574,7 +574,7 @@ test("phone width: primary navigation and tabs are 44px touch targets", async ({
   const bottomNav = page.getByRole("navigation", {
     name: "Main navigation (compact)",
   });
-  for (const label of ["Chat", "Inbox", "Browse", "Settings"]) {
+  for (const label of ["Chat", "Health", "Browse", "Settings"]) {
     expect(
       (
         await boundingBox(

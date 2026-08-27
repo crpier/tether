@@ -1,13 +1,7 @@
-import {
-  cleanup,
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { FakeHost, duePrompt, navigateTo, renderApp } from "./testing/harness";
+import { FakeHost, navigateTo, renderApp } from "./testing/harness";
 
 const noop = () => undefined;
 const originalMatchMedia = window.matchMedia;
@@ -32,14 +26,6 @@ function installMatchMedia(matches: boolean) {
 
 async function mainNav(): Promise<HTMLElement> {
   return screen.findByRole("navigation", { name: "Main navigation" });
-}
-
-// The nav link's icon glyph ("P") is also in `textContent` (only its
-// accessible name hides it via aria-hidden), so badge presence is asserted
-// against the trailing digit rather than the link's full text content.
-function badgeDigit(link: HTMLElement): string | null {
-  const match = /(\d+)$/.exec(link.textContent);
-  return match ? match[1] : null;
 }
 
 describe("Shell accessibility", () => {
@@ -69,6 +55,19 @@ describe("Shell accessibility", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("the removed Inbox route and navigation item are absent", async () => {
+    renderApp(new FakeHost({ authenticated: true }), undefined, {
+      path: "/inbox",
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Page not found" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Inbox/ }),
+    ).not.toBeInTheDocument();
+  });
+
   test("unknown authenticated routes show a not-found state without redirecting", async () => {
     renderApp(new FakeHost({ authenticated: true }), undefined, {
       path: "/not-a-real-route-autoresearch",
@@ -90,11 +89,11 @@ describe("Shell accessibility", () => {
     const headings = {
       Browse: "Browse",
       Chat: "Tether chat",
-      Inbox: "Inbox",
+      Health: "Health",
       Settings: "Settings",
     } as const;
 
-    for (const label of ["Chat", "Inbox", "Browse", "Settings"] as const) {
+    for (const label of ["Chat", "Health", "Browse", "Settings"] as const) {
       await navigateTo(label);
       expect(
         await screen.findByRole("heading", {
@@ -115,7 +114,7 @@ describe("Shell accessibility", () => {
       await screen.findByRole("button", { name: "Collapse sidebar" }),
     );
 
-    for (const label of ["Chat", "Inbox", "Browse", "Settings"]) {
+    for (const label of ["Chat", "Health", "Browse", "Settings"]) {
       const link = within(nav).getByRole("link", {
         name: new RegExp(`^${label}`),
       });
@@ -137,7 +136,7 @@ describe("Shell accessibility", () => {
   });
 
   test("only the active responsive nav is exposed", async () => {
-    const labels = ["Chat", "Inbox", "Browse", "Settings"];
+    const labels = ["Chat", "Health", "Browse", "Settings"];
 
     installMatchMedia(true);
     renderApp(new FakeHost({ authenticated: true }), undefined, {
@@ -173,45 +172,5 @@ describe("Shell accessibility", () => {
         screen.getAllByRole("link", { name: new RegExp(`^${label}`) }),
       ).toHaveLength(1);
     }
-  });
-});
-
-describe("Shell nav badges", () => {
-  test("no badge renders when the inbox has nothing pending", async () => {
-    renderApp(new FakeHost({ authenticated: true }));
-    const nav = await mainNav();
-
-    const inboxLink = within(nav).getByRole("link", { name: /^Inbox/ });
-    expect(badgeDigit(inboxLink)).toBeNull();
-  });
-
-  test("the badge reflects pending inbox items", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      duePrompts: [duePrompt({ question: "What is TCP?" })],
-    });
-    renderApp(host);
-    const nav = await mainNav();
-
-    await waitFor(() => {
-      const inboxLink = within(nav).getByRole("link", { name: /^Inbox/ });
-      expect(badgeDigit(inboxLink)).toBe("1");
-    });
-  });
-
-  test("compact badge names keep a space before the count", async () => {
-    installMatchMedia(false);
-    const host = new FakeHost({
-      authenticated: true,
-      duePrompts: [duePrompt({ question: "What is TCP?" })],
-    });
-    renderApp(host);
-    const nav = await screen.findByRole("navigation", {
-      name: "Main navigation (compact)",
-    });
-
-    await waitFor(() => {
-      expect(within(nav).getByRole("link", { name: "Inbox 1" })).toBeVisible();
-    });
   });
 });

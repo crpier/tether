@@ -11,7 +11,7 @@ test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
   );
 });
 
-test("Browse deep-links to the Feedback inbox", async ({ page, login }) => {
+test("Browse deep-links to Feedback", async ({ page, login }) => {
   await login();
   await page.goto("/browse/feedback", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();

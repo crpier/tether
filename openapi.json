@@ -6196,7 +6196,7 @@
         "type": "string"
       },
       "TranscriptDecisionListResponse": {
-        "description": "The Inbox's pending transcript decisions.",
+        "description": "Pending transcript decisions.",
         "items": {
           "$ref": "#/components/schemas/TranscriptDecisionRead"
         },
@@ -6222,7 +6222,7 @@
         "type": "object"
       },
       "TranscriptDecisionRead": {
-        "description": "A transcript failure awaiting the human's decision in Inbox.",
+        "description": "A transcript failure awaiting the human's decision.",
         "properties": {
           "attempts": {
             "title": "Attempts",

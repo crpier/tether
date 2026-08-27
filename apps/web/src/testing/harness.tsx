@@ -78,7 +78,7 @@ export function createBusHarness(): {
   };
 }
 
-// The app is a routed 4-page shell (#250): tests running with vitest's
+// The app uses a shared routed shell (#250): tests running with vitest's
 // `isolate: false` share one jsdom `window.history` across every test file in
 // the worker, so a route left over from a previous test would otherwise leak
 // into the next render. Reset to canonical Chat before every render unless
@@ -87,14 +87,12 @@ export function createBusHarness(): {
 // layout, so it falls back to the desktop sidebar unless tests mock
 // matchMedia.
 export async function navigateTo(
-  label: "Chat" | "Health" | "Inbox" | "Browse" | "Settings",
+  label: "Chat" | "Health" | "Browse" | "Settings",
 ): Promise<void> {
   const nav = await screen.findByRole("navigation", {
     name: "Main navigation",
   });
-  // `getByRole`'s `name` matcher has no `exact` option (a plain string is
-  // always exact-equality) — a regex is the only way to substring-match past
-  // a badge count appended to the accessible name (e.g. "Inbox" -> "Inbox3").
+  // Use a regex so callers can match a navigation label consistently.
   fireEvent.click(
     within(nav).getByRole("link", { name: new RegExp(`^${label}`) }),
   );

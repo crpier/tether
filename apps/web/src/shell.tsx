@@ -17,52 +17,8 @@ import { cx } from "./lib/cva";
 import { queryKeys } from "./lib/query-keys";
 
 interface NavItem {
-  badge?: () => number;
   label: string;
   path: string;
-}
-
-// Badge counts are client-derived (#250): no count endpoints. Each list query
-// mounted here stays warm and invalidate-driven regardless of which page is on
-// screen. Inbox sums every kind awaiting adjudication: bucket triage findings,
-// due Recall prompts, and undismissed fired-reminder notifications. Memory has
-// no Inbox queue.
-function useBadgeCounts() {
-  const bucket = useHost("bucket");
-  const notifications = useHost("notifications");
-  const recall = useHost("recall");
-
-  const bucketTriageQuery = createQuery(() => ({
-    queryFn: () => bucket.getBucketTriage(),
-    queryKey: queryKeys.bucketItemsView("triage"),
-  }));
-  const recallQuery = createQuery(() => ({
-    queryFn: () => recall.listDueRecallPrompts(),
-    queryKey: queryKeys.recall,
-  }));
-  const notificationsQuery = createQuery(() => ({
-    queryFn: () => notifications.listNotifications(),
-    queryKey: queryKeys.notifications,
-  }));
-
-  const inboxCount = createMemo(() => {
-    const triage = bucketTriageQuery.data;
-    const triageCount = triage
-      ? triage.under_specified.length +
-        triage.duplicates.length +
-        triage.stale.length +
-        triage.purchase.buy_now.length +
-        triage.purchase.missing_price_context.length +
-        triage.purchase.stale_watches.length
-      : 0;
-    return (
-      triageCount +
-      (recallQuery.data?.length ?? 0) +
-      (notificationsQuery.data?.length ?? 0)
-    );
-  });
-
-  return { inboxCount };
 }
 
 function createMediaQuery(query: string, fallback: boolean) {
@@ -98,22 +54,10 @@ function createMediaQuery(query: string, fallback: boolean) {
   return matches;
 }
 
-function NavBadge(props: { count: number }) {
-  return (
-    <Show when={props.count > 0}>
-      <span class="bg-sidebar-primary text-sidebar-primary-foreground ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold">
-        {props.count}
-      </span>
-    </Show>
-  );
-}
-
 function useNavItems(): NavItem[] {
-  const { inboxCount } = useBadgeCounts();
   return [
     { label: "Chat", path: "/chat" },
     { label: "Health", path: "/health" },
-    { badge: inboxCount, label: "Inbox", path: "/inbox" },
     { label: "Browse", path: "/browse" },
     { label: "Settings", path: "/settings" },
   ];
@@ -218,15 +162,9 @@ function DesktopSidebar(props: { items: NavItem[] }) {
                   location.pathname.startsWith("/chat")
                 : location.pathname === item.path,
             );
-            const badgeCount = createMemo(() => item.badge?.() ?? 0);
-            const navLabel = createMemo(() =>
-              badgeCount() > 0
-                ? `${item.label} ${badgeCount().toString()}`
-                : item.label,
-            );
             return (
               <A
-                aria-label={navLabel()}
+                aria-label={item.label}
                 class={cx(
                   "group relative flex min-h-11 items-center gap-2 rounded-md px-2 text-left text-sm font-medium",
                   active()
@@ -253,9 +191,6 @@ function DesktopSidebar(props: { items: NavItem[] }) {
                   >
                     {item.label}
                   </span>
-                </Show>
-                <Show when={!collapsed() && badgeCount() > 0}>
-                  <NavBadge count={badgeCount()} />
                 </Show>
               </A>
             );
@@ -284,15 +219,9 @@ function MobileBottomTabs(props: { items: NavItem[] }) {
                 location.pathname.startsWith("/chat")
               : location.pathname === item.path,
           );
-          const badgeCount = createMemo(() => item.badge?.() ?? 0);
-          const navLabel = createMemo(() =>
-            badgeCount() > 0
-              ? `${item.label} ${badgeCount().toString()}`
-              : item.label,
-          );
           return (
             <A
-              aria-label={navLabel()}
+              aria-label={item.label}
               class={cx(
                 "relative flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
                 active()
@@ -303,11 +232,6 @@ function MobileBottomTabs(props: { items: NavItem[] }) {
               href={item.path}
             >
               <span>{item.label}</span>
-              <Show when={badgeCount() > 0}>
-                <span class="bg-sidebar-primary text-sidebar-primary-foreground absolute top-1 right-3 inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold">
-                  {badgeCount()}
-                </span>
-              </Show>
             </A>
           );
         }}
