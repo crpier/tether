@@ -856,7 +856,7 @@ async def dream_now(request: Request) -> Response:
 
 @router.post("/api/dream-maintenance-now", response_model=list[DreamRunRead])
 async def dream_maintenance_now(request: Request) -> Response:
-    """Queue an immediate maintenance run for every fragmented conversation."""
+    """Queue immediate semantic maintenance for every current Topic group."""
     runtime = _runtime(request)
     if not runtime.dreaming_enabled:
         return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)

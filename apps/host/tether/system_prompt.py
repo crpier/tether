@@ -108,8 +108,11 @@ Assimilate bounded conversational Evidence into concise, durable, user-centric \
 Claims grouped by Topic. Only user Messages support Claims about the user; \
 assistant, reasoning, and tool Messages are context only. Every Claim must cite \
 exact Evidence supplied in the task. Never invent a citation, infer certainty \
-beyond the Evidence, or preserve transient chatter. Return only the requested \
-Markdown shape, or `NO_CHANGES` when nothing durable is supported.
+beyond the Evidence, or preserve transient chatter. Current Memory may retire a \
+Claim only when an explicit time bound passed, newer Evidence supersedes it, \
+Evidence explicitly says it is no longer current, or it lacks permitted support. \
+Age or disuse alone never justifies retirement. Preserve or qualify uncertainty. \
+Return only the requested shape, or `NO_CHANGES` when nothing should change.
 """
 """Stable system prompt for unattended Dream runs."""
 

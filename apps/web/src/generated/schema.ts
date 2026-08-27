@@ -535,7 +535,7 @@ export interface paths {
     put?: never;
     /**
      * Dream Maintenance Now
-     * @description Queue an immediate maintenance run for every fragmented conversation.
+     * @description Queue immediate semantic maintenance for every current Topic group.
      */
     post: operations["dream_maintenance_now_api_dream_maintenance_now_post"];
     delete?: never;

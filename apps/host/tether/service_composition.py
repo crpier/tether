@@ -29,6 +29,7 @@ from tether.dreaming import (
     DreamingWorker,
     HttpDreamingMutationAcknowledger,
     KindDispatchingDreamExecutor,
+    MaintenanceDreamingAgent,
     MaintenanceDreamingExecutor,
 )
 from tether.events import EventHub
@@ -770,7 +771,10 @@ async def compose_core_services(
             memory_workspace_service.workspace_root,
             mutation_coordinator=dreaming_mutation_coordinator,
             mutation_acknowledger=dream_mutation_acknowledger,
-            consolidation_runner=dreaming_runner,
+            agent=MaintenanceDreamingAgent(
+                curator=dreaming_runner,
+                verifier=dreaming_runner,
+            ),
         )
         background_tasks.append(
             asyncio.create_task(
@@ -792,8 +796,7 @@ async def compose_core_services(
         background_tasks.append(
             asyncio.create_task(dreaming_service.scan_forever(logger=host.logger))
         )
-        # Plan 507 §5: periodic maintenance consolidates fragmented topic files
-        # into fewer, larger documents and dedupes claims across runs.
+        # Periodic maintenance keeps Topic structure and current Claims coherent.
         background_tasks.append(
             asyncio.create_task(
                 dreaming_service.maintenance_forever(

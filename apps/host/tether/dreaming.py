@@ -8,7 +8,7 @@ import hashlib
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -28,8 +28,8 @@ from snekql.sqlite import (
     select,
     update,
 )
+from yaml import YAMLError, safe_load
 from yaml import dump as yaml_dump
-from yaml import safe_load
 
 from tether.conversation_store import Conversation, Message
 from tether.conversations import ConversationService
@@ -82,6 +82,11 @@ class _AssimilationWindow:
 def _as_utc(value: datetime) -> datetime:
     """Read legacy-aware timestamps as UTC-aware datetimes."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _utc_now() -> datetime:
+    """Return the current UTC time for production maintenance decisions."""
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1059,8 +1064,8 @@ evidence_end_seq: {run.evidence_end_seq}
         ]
 
 
-_MAINTENANCE_MIN_FILES = 2
-"""Fewer topic files than this leaves a conversation nothing to consolidate."""
+_MAINTENANCE_MIN_FILES = 1
+"""Every current Topic is eligible for periodic semantic maintenance."""
 
 _MAINTENANCE_MAX_FILES = 8
 """Upper bound on topic files consolidated in one maintenance run."""
@@ -1068,8 +1073,54 @@ _MAINTENANCE_MAX_FILES = 8
 _MAINTENANCE_MAX_CHARS = 24_000
 """Upper bound on total input characters handed to one consolidation call."""
 
-_EVIDENCE_URI_PATTERN = re.compile(r"tether://[^\s)\]>,]+")
+_MAINTENANCE_MAX_FOLLOWUP_MESSAGES = 100
+"""Bound newer user Evidence considered for correction and supersession."""
+
+_EVIDENCE_URI_PATTERN = re.compile(r"tether://[^\s)\]>,\"']+")
+_MESSAGE_URI_PATTERN = re.compile(
+    "".join(
+        (
+            r"tether://message/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-",
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+        )
+    )
+)
 _FILE_SEPARATOR_PATTERN = re.compile(r"^===\s+(\S+)\s+===\s*$", re.MULTILINE)
+_RETIREMENT_SEPARATOR = "=== RETIREMENTS ==="
+_SOURCE_CITATION_PATTERN = re.compile(r"\s*\[source\]\(tether://[^)]+\)", re.IGNORECASE)
+
+MaintenanceRetirementReason = Literal[
+    "expired",
+    "explicitly_no_longer_current",
+    "superseded",
+    "unsupported",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenanceRetirement:
+    """One justified removal from current Memory."""
+
+    basis: tuple[str, ...]
+    claim: str
+    reason: MaintenanceRetirementReason
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenanceTransition:
+    """One fully parsed candidate state and its destructive decisions."""
+
+    documents: list[tuple[str, str]]
+    retirements: list[MaintenanceRetirement]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MaintenanceDreamingAgent:
+    """Model roles and clock used to propose and verify Memory transitions."""
+
+    clock: Callable[[], datetime] = _utc_now
+    curator: DreamingCurationRunner
+    verifier: DreamingCurationRunner
 
 
 class _MaintenanceError(Exception):
@@ -1085,14 +1136,11 @@ def maintenance_group_run_id(folder: str) -> UUID7:
 
 
 class MaintenanceDreamingExecutor:
-    """Consolidate fragmented topic documents into fewer, larger files.
+    """Revise current Topics through bounded, verified Memory transitions.
 
-    Plan 507 §5: the dreaming agent chooses boundaries, merges, and splits.
-    This executor hands one bounded batch of related topic files to an
-    unattended consolidation call, validates the proposal (safe paths, real
-    titles, no invented citations), and applies it as recorded Dreaming
-    mutations so file history and reconciliation stay intact. It never reads
-    or advances the assimilation cursor.
+    The curator may merge structure and retire Claims that canonical Evidence
+    proves are no longer current. Deterministic checks and a separate verifier
+    run before recorded mutations, so failed transitions leave Memory unchanged.
     """
 
     def __init__(
@@ -1102,11 +1150,11 @@ class MaintenanceDreamingExecutor:
         *,
         mutation_coordinator: DreamingMutationCoordinator | None = None,
         mutation_acknowledger: DreamingMutationAcknowledger | None = None,
-        consolidation_runner: DreamingCurationRunner | None = None,
+        agent: MaintenanceDreamingAgent | None = None,
     ) -> None:
         self.database: Database = database
         self.workspace_root: Path = Path(workspace_root)
-        self.consolidation_runner: DreamingCurationRunner | None = consolidation_runner
+        self.agent: MaintenanceDreamingAgent | None = agent
         self.mutation_coordinator: DreamingMutationCoordinator = (
             mutation_coordinator
             if mutation_coordinator is not None
@@ -1124,16 +1172,22 @@ class MaintenanceDreamingExecutor:
         *,
         logger: Logger,
     ) -> DreamRunExecutionResult:
-        batch = await self._select_batch(run.conversation_id)
+        agent = self.agent
+        current_time = agent.clock() if agent is not None else _utc_now()
+        batch = await self._select_batch(run.conversation_id, now=current_time)
         if len(batch) < _MAINTENANCE_MIN_FILES:
             return DreamRunExecutionResult(status="no_op")
-        runner = self.consolidation_runner
-        if runner is None:
+        if agent is None:
             return DreamRunExecutionResult(
                 status="failed",
                 error="maintenance requires a consolidation runner",
             )
-        response = (await runner.run(self._render_prompt(batch))).strip()
+        evidence = await self._fetch_message_evidence(batch)
+        response = (
+            await agent.curator.run(
+                self._render_prompt(batch, evidence=evidence, now=current_time)
+            )
+        ).strip()
         if response == "NO_CHANGES":
             await self._mark_maintained(batch)
             logger.info(
@@ -1143,19 +1197,69 @@ class MaintenanceDreamingExecutor:
             )
             return DreamRunExecutionResult(status="no_op")
         try:
-            proposed = self._parse_response(response)
-            self._validate_citations(batch, proposed)
+            transition = self._parse_response(response)
+            needs_semantic_verification = self._validate_transition(
+                batch,
+                transition,
+                evidence=evidence,
+            )
         except _MaintenanceError as error:
             return DreamRunExecutionResult(status="failed", error=str(error))
+        verification_error = (
+            await self._verify_retirements(
+                agent,
+                batch,
+                evidence=evidence,
+                now=current_time,
+                response=response,
+            )
+            if transition.retirements or needs_semantic_verification
+            else None
+        )
+        if verification_error:
+            return DreamRunExecutionResult(
+                status="failed",
+                error=verification_error,
+            )
 
-        applied = await self._apply(run, batch, proposed)
+        applied = await self._apply(
+            run,
+            batch,
+            transition.documents,
+            retirements=transition.retirements,
+        )
         logger.info(
             "Maintenance consolidated topics",
             run_id=str(run.id),
             inputs=len(batch),
             outputs=len(applied),
+            retirements=len(transition.retirements),
         )
         return DreamRunExecutionResult(status="success")
+
+    async def _verify_retirements(
+        self,
+        agent: MaintenanceDreamingAgent,
+        batch: list[tuple[str, str]],
+        *,
+        evidence: list[Message[Fetched]],
+        now: datetime,
+        response: str,
+    ) -> str | None:
+        """Require semantic verification before any Claim leaves current Memory."""
+        verdict = (
+            await agent.verifier.run(
+                self._render_verification_prompt(
+                    batch,
+                    evidence=evidence,
+                    now=now,
+                    response=response,
+                )
+            )
+        ).strip()
+        if verdict == "APPROVED":
+            return None
+        return f"transition verifier rejected retirement: {verdict}"
 
     def _folder_name(self, conversation_id: UUID) -> str:
         """Resolve the workspace folder a maintenance run targets."""
@@ -1186,17 +1290,23 @@ class MaintenanceDreamingExecutor:
             pairs.append((relative, await AsyncPath(topic.path).read_text("utf-8")))
         return pairs
 
-    async def _select_batch(self, conversation_id: UUID) -> list[tuple[str, str]]:
-        """Pick never-maintained-then-least-recently-maintained files, bounded."""
+    async def _select_batch(
+        self,
+        conversation_id: UUID,
+        *,
+        now: datetime,
+    ) -> list[tuple[str, str]]:
+        """Prioritize due review, then least-recently maintained Topics."""
         topics = await self._conversation_topics(conversation_id)
         if len(topics) < _MAINTENANCE_MIN_FILES:
             return []
         progress = {row.path: row for row in await self._fetch_progress()}
 
-        def _maintenance_key(pair: tuple[str, str]) -> tuple[str, str]:
+        def _maintenance_key(pair: tuple[str, str]) -> tuple[int, str, str]:
             entry = progress.get(pair[0])
             maintained = "" if entry is None else str(entry.maintained_at)
-            return (maintained, pair[0])
+            due_order = 0 if self._review_after_is_due(pair[1], now=now) else 1
+            return (due_order, maintained, pair[0])
 
         ordered = sorted(topics, key=_maintenance_key)
         batch: list[tuple[str, str]] = []
@@ -1210,27 +1320,114 @@ class MaintenanceDreamingExecutor:
             total += len(pair[1])
         return batch
 
+    @staticmethod
+    def _review_after_is_due(document: str, *, now: datetime) -> bool:
+        """Prioritize an explicit temporal review hint once its date arrives."""
+        frontmatter: dict[str, object] = {}
+        if document.startswith("---\n"):
+            parts = document.split(_FRONTMATTER_SEPARATOR, 1)
+            if len(parts) == _FRONTMATTER_PART_COUNT:
+                try:
+                    loaded = safe_load(parts[0][3:])
+                except YAMLError:
+                    loaded = None
+                if isinstance(loaded, dict):
+                    frontmatter = cast("dict[str, object]", loaded)
+        review_after = frontmatter.get("review_after")
+        if isinstance(review_after, datetime):
+            return _as_utc(review_after) <= _as_utc(now)
+        if isinstance(review_after, date):
+            return review_after <= _as_utc(now).date()
+        return False
+
     async def _fetch_progress(self) -> list[DreamMaintenanceProgress[Fetched]]:
         async with self.database.transaction() as tx:
             return list(await tx.fetch_all(select(DreamMaintenanceProgress).all()))
 
-    def _render_prompt(self, batch: list[tuple[str, str]]) -> str:
-        """Render exact bounded inputs for unattended Topic consolidation."""
+    async def _fetch_message_evidence(
+        self, batch: list[tuple[str, str]]
+    ) -> list[Message[Fetched]]:
+        """Resolve cited Conversation Evidence so maintenance can reason over time."""
+        message_ids = {
+            UUID(match.group(1))
+            for _, content in batch
+            for match in _MESSAGE_URI_PATTERN.finditer(content)
+        }
+        if not message_ids:
+            return []
+        async with self.database.transaction() as transaction:
+            cited_messages = await transaction.fetch_all(
+                select(Message).where(Message.id.in_(*sorted(message_ids)))
+            )
+            oldest_seq_by_conversation: dict[UUID, int] = {}
+            for message in cited_messages:
+                previous = oldest_seq_by_conversation.get(message.conversation_id)
+                oldest_seq_by_conversation[message.conversation_id] = (
+                    message.seq if previous is None else min(previous, message.seq)
+                )
+            related_messages: dict[UUID, Message[Fetched]] = {
+                message.id: message for message in cited_messages
+            }
+            for conversation_id, oldest_seq in oldest_seq_by_conversation.items():
+                followups = await transaction.fetch_all(
+                    select(Message)
+                    .where(Message.conversation_id.eq(conversation_id))
+                    .where(Message.role.eq("user"))
+                    .where(Message.seq.gte(oldest_seq))
+                    .order_by(Message.seq.desc())
+                    .limit(_MAINTENANCE_MAX_FOLLOWUP_MESSAGES)
+                )
+                related_messages.update({message.id: message for message in followups})
+        return sorted(
+            related_messages.values(),
+            key=lambda message: (message.created_at, message.seq),
+        )
+
+    def _render_prompt(
+        self,
+        batch: list[tuple[str, str]],
+        *,
+        evidence: list[Message[Fetched]],
+        now: datetime,
+    ) -> str:
+        """Render current state, its source Evidence, and temporal policy."""
         blocks = "\n\n".join(
             f"<<< {relative}\n{content}\n>>>" for relative, content in batch
         )
-        return f"""Consolidate fragmented Memory Topic documents into fewer, larger canonical Topic files.
+        evidence_blocks = "\n\n".join(
+            "\n".join(
+                (
+                    f"uri: tether://message/{message.id}",
+                    f"role: {message.role}",
+                    f"created_at: {_as_utc(message.created_at).isoformat()}",
+                    "content:",
+                    message.content,
+                )
+            )
+            for message in evidence
+        )
+        if not evidence_blocks:
+            evidence_blocks = "(No Conversation Evidence resolved.)"
+        return f"""Maintain current Memory Topic documents using canonical Evidence.
+
+current_time: {_as_utc(now).isoformat()}
 
 Inputs (workspace-relative paths with complete contents):
 
 {blocks}
 
+Canonical Conversation Evidence cited by the inputs:
+
+{evidence_blocks}
+
 Rules:
-- Merge duplicate Claims across inputs into one Claim; keep distinct facts distinct.
+- Merge duplicate or tightly overlapping Claims into concise Claims that preserve their complete meaning and citations; keep distinct facts distinct.
 - Unify related fragments into fewer larger Topic files with meaningful titles and stable kebab-case `.md` paths.
-- Never drop information that appears in only one input; preserve uncertainty, corrections, and recognized hints (`context: always`, `review_after`).
-- Every evidence citation must be copied verbatim from the inputs; never invent or alter any `tether://` evidence URI.
-- Return either exactly `NO_CHANGES` or one document per resulting file:
+- Preserve every supported idea unless it qualifies for retirement. Age or disuse alone never qualifies.
+- Retire a Claim only when its explicit time bound passed, newer Evidence supersedes it, Evidence explicitly says it is no longer current, or it lacks permitted support.
+- When uncertain, preserve or qualify the Claim and set `review_after`; never guess.
+- Every evidence citation and retirement basis must be copied verbatim from the supplied Evidence; never invent or alter a `tether://` URI.
+- Return either exactly `NO_CHANGES` or zero or more resulting documents followed by a retirement ledger when any Claim is removed:
 
 === <workspace-relative/path.md> ===
 ---
@@ -1238,13 +1435,86 @@ title: <Topic title>
 ---
 
 <document body>
+
+=== RETIREMENTS ===
+- claim: <exact old Claim text without the leading dash or source citation>
+  reason: <expired|superseded|explicitly_no_longer_current|unsupported>
+  basis:
+    - <exact supplied Evidence URI>
 """
 
-    def _parse_response(self, response: str) -> list[tuple[str, str]]:
-        """Parse the multi-document consolidation shape into proposals."""
+    def _render_verification_prompt(
+        self,
+        batch: list[tuple[str, str]],
+        *,
+        evidence: list[Message[Fetched]],
+        now: datetime,
+        response: str,
+    ) -> str:
+        """Ask a separate pass to reject semantically unsafe retirement."""
+        current_documents = "\n\n".join(
+            f"<<< {relative}\n{content}\n>>>" for relative, content in batch
+        )
+        evidence_blocks = "\n\n".join(
+            "\n".join(
+                (
+                    f"uri: tether://message/{message.id}",
+                    f"role: {message.role}",
+                    f"created_at: {_as_utc(message.created_at).isoformat()}",
+                    "content:",
+                    message.content,
+                )
+            )
+            for message in evidence
+        )
+        return f"""Verify one proposed transition of the user's current Memory.
+
+current_time: {_as_utc(now).isoformat()}
+
+Current Topic documents:
+{current_documents}
+
+Canonical Conversation Evidence:
+{evidence_blocks}
+
+Proposed transition:
+{response}
+
+Return exactly `APPROVED` only when all three checks pass:
+- coverage: every prior Claim's supported meaning remains in a resulting Claim or has an explicit retirement;
+- preservation: no still-supported Claim is dropped or distorted;
+- faithfulness: every retirement reason follows from supplied Evidence and time.
+
+Age or disuse alone never justifies retirement. Otherwise return one concise rejection reason.
+"""
+
+    def _parse_response(self, response: str) -> MaintenanceTransition:
+        """Parse resulting documents and an optional retirement ledger."""
+        if response.count(_RETIREMENT_SEPARATOR) > 1:
+            message = "consolidation response repeated the retirement ledger"
+            raise _MaintenanceError(message)
+        documents_text, marker, retirements_text = response.partition(
+            _RETIREMENT_SEPARATOR
+        )
+        documents = self._parse_documents(documents_text.strip())
+        retirements = (
+            self._parse_retirements(retirements_text.strip()) if marker else []
+        )
+        if not documents and not retirements:
+            message = "consolidation response contained no documents or retirements"
+            raise _MaintenanceError(message)
+        return MaintenanceTransition(
+            documents=documents,
+            retirements=retirements,
+        )
+
+    def _parse_documents(self, response: str) -> list[tuple[str, str]]:
+        """Parse the candidate current Topic documents."""
+        if not response:
+            return []
         separators = list(_FILE_SEPARATOR_PATTERN.finditer(response))
         if not separators:
-            message = "consolidation response contained no documents"
+            message = "consolidation response contained malformed documents"
             raise _MaintenanceError(message)
         proposals: list[tuple[str, str]] = []
         seen_paths: set[str] = set()
@@ -1264,12 +1534,61 @@ title: <Topic title>
                 else len(response)
             )
             document = response[separator.end() : end].strip("\n")
-            frontmatter = self._document_title(document)
-            if not frontmatter:
+            if not self._document_title(document):
                 message = f"consolidated document lacks frontmatter title: {safe_path}"
                 raise _MaintenanceError(message)
             proposals.append((safe_path, document + "\n"))
         return proposals
+
+    def _parse_retirements(self, response: str) -> list[MaintenanceRetirement]:
+        """Decode the closed retirement vocabulary from YAML."""
+        try:
+            loaded = safe_load(response)
+        except YAMLError as error:
+            message = f"retirement ledger is invalid YAML: {error}"
+            raise _MaintenanceError(message) from error
+        if not isinstance(loaded, list):
+            message = "retirement ledger must be a YAML list"
+            raise _MaintenanceError(message)
+        retirements: list[MaintenanceRetirement] = []
+        allowed_reasons: set[str] = {
+            "expired",
+            "explicitly_no_longer_current",
+            "superseded",
+            "unsupported",
+        }
+        for raw_retirement in cast("list[object]", loaded):
+            if not isinstance(raw_retirement, dict):
+                message = "each retirement must be a mapping"
+                raise _MaintenanceError(message)
+            retirement = cast("dict[str, object]", raw_retirement)
+            if set(retirement) != {"basis", "claim", "reason"}:
+                message = "retirement must contain only basis, claim, and reason"
+                raise _MaintenanceError(message)
+            claim = retirement["claim"]
+            reason = retirement["reason"]
+            basis = retirement["basis"]
+            if not isinstance(claim, str) or not claim.strip():
+                message = "retirement claim must be non-empty text"
+                raise _MaintenanceError(message)
+            if not isinstance(reason, str) or reason not in allowed_reasons:
+                message = f"retirement reason is unsupported: {reason}"
+                raise _MaintenanceError(message)
+            if (
+                not isinstance(basis, list)
+                or not basis
+                or not all(isinstance(uri, str) for uri in cast("list[object]", basis))
+            ):
+                message = "retirement basis must contain Evidence URIs"
+                raise _MaintenanceError(message)
+            retirements.append(
+                MaintenanceRetirement(
+                    basis=tuple(cast("list[str]", basis)),
+                    claim=claim.strip(),
+                    reason=cast("MaintenanceRetirementReason", reason),
+                )
+            )
+        return retirements
 
     @staticmethod
     def _document_title(document: str) -> str | None:
@@ -1300,29 +1619,116 @@ title: <Topic title>
         return candidate.as_posix()
 
     @staticmethod
-    def _validate_citations(
+    def _evidence_uris(document: str) -> set[str]:
+        """Extract canonical citations without sentence-ending punctuation."""
+        return {
+            match.rstrip(".,;:!?") for match in _EVIDENCE_URI_PATTERN.findall(document)
+        }
+
+    @staticmethod
+    def _claim_texts(document: str) -> set[str]:
+        """Read exact current Claim text while excluding source-link markup."""
+        body = document
+        if document.startswith("---\n"):
+            parts = document.split(_FRONTMATTER_SEPARATOR, 1)
+            if len(parts) == _FRONTMATTER_PART_COUNT:
+                body = parts[1]
+        return {
+            _SOURCE_CITATION_PATTERN.sub("", line.removeprefix("- ")).strip()
+            for line in body.splitlines()
+            if line.startswith("- ")
+            and _SOURCE_CITATION_PATTERN.sub("", line.removeprefix("- ")).strip()
+        }
+
+    @classmethod
+    def _validate_transition(
+        cls,
         batch: list[tuple[str, str]],
-        proposed: list[tuple[str, str]],
-    ) -> None:
-        """Refuse output that cites evidence the batch does not carry."""
-        supported: set[str] = set()
-        for _, content in batch:
-            supported.update(_EVIDENCE_URI_PATTERN.findall(content))
-        for relative, document in proposed:
-            unsupported = set(_EVIDENCE_URI_PATTERN.findall(document)) - supported
-            if unsupported:
-                message = f"consolidated document contains an unsupported citation: {relative}"
+        transition: MaintenanceTransition,
+        *,
+        evidence: list[Message[Fetched]],
+    ) -> bool:
+        """Reject invalid transitions and flag semantic rewrites for verification."""
+        supported = {
+            uri for _, content in batch for uri in cls._evidence_uris(content)
+        } | {f"tether://message/{message.id}" for message in evidence}
+        message_roles = {
+            f"tether://message/{message.id}": message.role for message in evidence
+        }
+        for relative, document in transition.documents:
+            document_citations = cls._evidence_uris(document)
+            if unsupported := document_citations - supported:
+                message = (
+                    "consolidated document contains an unsupported citation: "
+                    f"{relative}: {', '.join(sorted(unsupported))}"
+                )
                 raise _MaintenanceError(message)
+            non_user_messages = {
+                uri
+                for uri in document_citations
+                if uri.startswith("tether://message/")
+                and message_roles.get(uri) != "user"
+            }
+            if non_user_messages:
+                message = (
+                    "current Claims require resolved user Evidence: "
+                    f"{relative}: {', '.join(sorted(non_user_messages))}"
+                )
+                raise _MaintenanceError(message)
+        retired_claims: set[str] = set()
+        for retirement in transition.retirements:
+            if unsupported := set(retirement.basis) - supported:
+                message = (
+                    "retirement contains an unsupported Evidence basis: "
+                    f"{', '.join(sorted(unsupported))}"
+                )
+                raise _MaintenanceError(message)
+            if retirement.claim in retired_claims:
+                message = f"retirement repeated Claim: {retirement.claim}"
+                raise _MaintenanceError(message)
+            retired_claims.add(retirement.claim)
+
+        prior_claims = {
+            claim for _, document in batch for claim in cls._claim_texts(document)
+        }
+        resulting_claims = {
+            claim
+            for _, document in transition.documents
+            for claim in cls._claim_texts(document)
+        }
+        if unknown_retirements := retired_claims - prior_claims:
+            message = "retirement does not name an exact prior Claim: " + ", ".join(
+                sorted(unknown_retirements)
+            )
+            raise _MaintenanceError(message)
+        unexplained = prior_claims - resulting_claims - retired_claims
+        return bool(unexplained)
 
     async def _apply(
         self,
         run: DreamRun[Fetched],
         batch: list[tuple[str, str]],
         proposed: list[tuple[str, str]],
+        *,
+        retirements: list[MaintenanceRetirement],
     ) -> list[str]:
         """Write consolidated files, delete replaced ones, record mutations."""
         written: list[tuple[str, str]] = []
         replaced_inputs: dict[str, str] = dict(batch)
+        retirement_payload = yaml_dump(
+            {
+                "retirements": [
+                    {
+                        "claim": retirement.claim,
+                        "reason": retirement.reason,
+                        "basis": list(retirement.basis),
+                    }
+                    for retirement in retirements
+                ]
+            },
+            default_flow_style=False,
+            sort_keys=False,
+        )
         async with self.mutation_coordinator.mutation_scope():
             for index, (relative, document) in enumerate(proposed):
                 target = self.workspace_root / relative
@@ -1372,7 +1778,7 @@ title: <Topic title>
                     actor="dream",
                     operation="delete",
                     workspace_path=target,
-                    payload="",
+                    payload=retirement_payload,
                 )
                 settlement = await self.mutation_coordinator.settle(
                     run.id,
@@ -1565,17 +1971,16 @@ class DreamingService:
         now: datetime,
         force: bool = False,
     ) -> list[DreamRun[Fetched]]:
-        """Queue maintenance runs for every fragmented, due conversation.
+        """Queue semantic maintenance for every due Topic group.
 
-        Maintenance consolidates fragmented topic files; it never consumes
-        evidence, so it yields to any conversation with an unassimilated
-        window and stays quiet until `maintenance_interval` has passed since
-        its last completed maintenance run (unless `force`).
+        Maintenance revises current Memory without consuming new Evidence, so
+        it yields to any conversation with an unassimilated window. Every group,
+        including one-file groups, becomes due after `maintenance_interval`.
         """
         if self.workspace_root is None:
             return []
         queued: list[DreamRun[Fetched]] = []
-        for folder, conversation_id in await self._fragmented_groups():
+        for folder, conversation_id in await self._maintenance_groups():
             run = await self._queue_maintenance_run(
                 folder,
                 conversation_id,
@@ -1587,11 +1992,11 @@ class DreamingService:
                 queued.append(run)
         return queued
 
-    async def _fragmented_groups(self) -> list[tuple[str, UUID]]:
-        """List (folder, run-id) pairs whose folder holds 2+ current topics.
+    async def _maintenance_groups(self) -> list[tuple[str, UUID]]:
+        """List current workspace groups and their maintenance run identities.
 
-        Conversation folders use their own id; other folders (verticals like
-        `health/`, and the workspace root itself) get a stable synthetic id.
+        Conversation folders use their own id. Vertical folders and the
+        workspace root receive stable synthetic ids.
         """
         assert self.workspace_root is not None
         scan = await MemoryWorkspace(self.workspace_root).scan()
@@ -1755,7 +2160,7 @@ class DreamingService:
     async def maintenance_forever(
         self, *, interval_seconds: float = 86_400.0, logger: Logger
     ) -> None:
-        """Queue consolidation runs for fragmented conversations on a cadence."""
+        """Queue periodic semantic maintenance for current Topic groups."""
         await run_reconcile_loop(
             lambda: self.queue_maintenance_runs(
                 logger=logger,
@@ -2120,4 +2525,6 @@ __all__ = [
     "DreamingWorker",
     "DreamingWorkerConfig",
     "DreamingWorkspaceReconcileResult",
+    "MaintenanceDreamingAgent",
+    "MaintenanceDreamingExecutor",
 ]

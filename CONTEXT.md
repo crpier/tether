@@ -18,6 +18,10 @@ _Avoid_: category, folder, document
 A granular assertion in Memory supported by exact Evidence. Claims normally huddle within a Topic and are not independent lifecycle entities.
 _Avoid_: memory row, fact record
 
+**Claim retirement**:
+Dreaming's removal of a Claim from current Memory when its explicit time bound has passed, newer Evidence supersedes it, Evidence says it is no longer current, or it lacks permitted support. Retirement preserves canonical Evidence and Dreaming history. Age or disuse alone may trigger review but never retirement.
+_Avoid_: forgetting, deletion, suppression, expiry by age
+
 **Evidence**:
 Canonical durable source material that may support a Claim, such as a user Message or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Assistant output may explain Evidence in context but cannot independently support a Claim about the user.
 _Avoid_: Memory, summary, inference

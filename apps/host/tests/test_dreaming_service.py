@@ -46,6 +46,7 @@ from tether.dreaming import (
     DreamRunExecutionResult,
     HttpDreamingMutationAcknowledger,
     KindDispatchingDreamExecutor,
+    MaintenanceDreamingAgent,
     MaintenanceDreamingExecutor,
 )
 from tether.dreaming_store import (
@@ -1319,13 +1320,17 @@ def _write_topic(  # noqa: PLR0913 - fixture helper mirrors document shape
     title: str,
     body: str,
     uris: tuple[str, ...] = (),
+    review_after: str | None = None,
 ) -> Path:
     """Write one canonical topic document into the conversation folder."""
     key = str(folder)
     directory = workspace_root / key if key else workspace_root
     directory.mkdir(parents=True, exist_ok=True)
     evidence_lines = "".join(f"- {uri}\n" for uri in uris)
-    document = f"---\ntitle: {title}\nevidence:\n{evidence_lines}---\n\n{body}\n"
+    review_line = "" if review_after is None else f"review_after: {review_after}\n"
+    document = (
+        f"---\ntitle: {title}\nevidence:\n{evidence_lines}{review_line}---\n\n{body}\n"
+    )
     path = directory / name
     _ = path.write_text(document, encoding="utf-8")
     return path
@@ -1354,8 +1359,8 @@ async def maintenance_fixture() -> AsyncGenerator[
 
 
 @test()
-async def maintenance_queueing_requires_two_topic_files() -> None:
-    """A single-file conversation has nothing to consolidate."""
+async def maintenance_run_queues_for_a_single_topic() -> None:
+    """A single Topic is eligible for temporal review without fragmentation."""
     _, service, conversation_id, root = await load_fixture(maintenance_fixture())
     _ = _write_topic(
         root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
@@ -1366,7 +1371,9 @@ async def maintenance_queueing_requires_two_topic_files() -> None:
         logger=test_logger(),
         now=datetime.now(UTC),
     )
-    assert_is_none(queued)
+
+    assert queued is not None
+    assert_eq(queued.kind, "maintenance")
 
 
 @test()
@@ -1507,43 +1514,69 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
     conversation_service, service, conversation_id, root = await load_fixture(
         maintenance_fixture()
     )
+    first_evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I like co-op shooters.",
+    )
+    second_evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="Roboquest is a favorite.",
+    )
+    first_uri = f"tether://message/{first_evidence.id}"
+    second_uri = f"tether://message/{second_evidence.id}"
     first = _write_topic(
         root,
         conversation_id,
         "a.md",
         title="Gaming",
-        body="## Gaming\n\n- Likes Roboquest.",
-        uris=("tether://message/018f0000-0000-7000-8000-0000000000a1",),
+        body="## Gaming\n\n- Likes co-op shooters.",
+        uris=(first_uri,),
     )
     second = _write_topic(
         root,
         conversation_id,
         "b.md",
         title="Gaming notes",
-        body="## Gaming notes\n\n- Owns a Switch.",
-        uris=("tether://message/018f0000-0000-7000-8000-0000000000a2",),
+        body="## Gaming notes\n\n- Likes Roboquest.",
+        uris=(second_uri,),
     )
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=2,
+                )
+            )
+        )
     run = await service.queue_maintenance_run(
         conversation_id,
         logger=test_logger(),
         now=datetime.now(UTC),
     )
     assert run is not None
-    merged = (
-        f"=== {conversation_id}/gaming.md ===\n"
-        "---\n"
-        "title: Gaming\n"
-        "---\n\n"
-        "## Gaming\n\n"
-        "- Likes Roboquest. [source](tether://message/"
-        "018f0000-0000-7000-8000-0000000000a1)\n"
-        "- Owns a Switch. [source](tether://message/"
-        "018f0000-0000-7000-8000-0000000000a2)\n"
+    merged = "".join(
+        (
+            f"=== {conversation_id}/gaming.md ===\n",
+            "---\n",
+            "title: Gaming\n",
+            "---\n\n",
+            "## Gaming\n\n",
+            "- Likes co-op shooters such as Roboquest. ",
+            f"[source]({first_uri}) [source]({second_uri})\n",
+        )
     )
     executor = MaintenanceDreamingExecutor(
         conversation_service.database,
         workspace_root=root,
-        consolidation_runner=_ConsolidationRunner(merged),
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(merged),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
     )
 
     result = await executor(run, logger=test_logger())
@@ -1553,7 +1586,9 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
     assert not second.exists()
     merged_path = root / str(conversation_id) / "gaming.md"
     assert merged_path.exists()
-    assert "Owns a Switch" in merged_path.read_text(encoding="utf-8")
+    assert "Likes co-op shooters such as Roboquest" in merged_path.read_text(
+        encoding="utf-8"
+    )
 
     async with conversation_service.database.transaction() as tx:
         mutations = await tx.fetch_all(
@@ -1564,6 +1599,51 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
         assert all(mutation.status == "acknowledged" for mutation in mutations)
         progress = await tx.fetch_all(select(DreamMaintenanceProgress).all())
         assert_eq([row.path for row in progress], [f"{conversation_id}/gaming.md"])
+
+
+@test()
+async def maintenance_executor_prioritizes_a_due_topic() -> None:
+    """A due `review_after` Topic enters a bounded batch before undated peers."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    for name in "abcdefgh":
+        _ = _write_topic(
+            root,
+            conversation_id,
+            f"{name}.md",
+            title=name.upper(),
+            body=f"- Stable Claim {name}.",
+        )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "z.md",
+        title="Due",
+        body="- Needs temporal review.",
+        review_after="2026-08-01",
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    assert run is not None
+    curator = _ConsolidationRunner("NO_CHANGES")
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            clock=lambda: datetime(2026, 9, 15, tzinfo=UTC),
+            curator=curator,
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert f"<<< {conversation_id}/z.md" in curator.prompts[0]
 
 
 @test()
@@ -1587,7 +1667,10 @@ async def maintenance_executor_marks_no_changes_and_records_progress() -> None:
     executor = MaintenanceDreamingExecutor(
         conversation_service.database,
         workspace_root=root,
-        consolidation_runner=_ConsolidationRunner("NO_CHANGES"),
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner("NO_CHANGES"),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
     )
 
     result = await executor(run, logger=test_logger())
@@ -1598,6 +1681,442 @@ async def maintenance_executor_marks_no_changes_and_records_progress() -> None:
     async with conversation_service.database.transaction() as tx:
         progress = await tx.fetch_all(select(DreamMaintenanceProgress).all())
         assert_eq(len(progress), 2)
+
+
+@test()
+async def maintenance_executor_supplies_dated_canonical_evidence() -> None:
+    """The curator receives dated source Evidence rather than Memory prose alone."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    fixed_now = datetime(2026, 9, 15, 12, tzinfo=UTC)
+    evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I am avoiding coffee this week.",
+    )
+    evidence_id = evidence.id
+    await _retime(
+        evidence_id,
+        database=conversation_service.database,
+        when=datetime(2026, 8, 1, 9, tzinfo=UTC),
+    )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "coffee.md",
+        title="Coffee",
+        body=(f"- Avoiding coffee this week. [source](tether://message/{evidence_id})"),
+        uris=(f"tether://message/{evidence_id}",),
+    )
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=1,
+                )
+            )
+        )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=fixed_now,
+    )
+    assert run is not None
+    curator = _ConsolidationRunner("NO_CHANGES")
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            clock=lambda: fixed_now,
+            curator=curator,
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert_eq(len(curator.prompts), 1)
+    assert "current_time: 2026-09-15T12:00:00+00:00" in curator.prompts[0]
+    assert f"uri: tether://message/{evidence_id}" in curator.prompts[0]
+    assert "role: user" in curator.prompts[0]
+    assert "created_at: 2026-08-01T09:00:00+00:00" in curator.prompts[0]
+    assert "I am avoiding coffee this week." in curator.prompts[0]
+
+
+@test()
+async def maintenance_executor_supplies_newer_user_evidence() -> None:
+    """Later assertions are available for supersession decisions."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    old_evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I am vegetarian.",
+    )
+    newer_evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I eat fish now.",
+    )
+    await _retime(
+        old_evidence.id,
+        database=conversation_service.database,
+        when=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    await _retime(
+        newer_evidence.id,
+        database=conversation_service.database,
+        when=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "diet.md",
+        title="Diet",
+        body=(f"- Vegetarian. [source](tether://message/{old_evidence.id})"),
+        uris=(f"tether://message/{old_evidence.id}",),
+    )
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=2,
+                )
+            )
+        )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    assert run is not None
+    curator = _ConsolidationRunner("NO_CHANGES")
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=curator,
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert f"uri: tether://message/{newer_evidence.id}" in curator.prompts[0]
+    assert "I eat fish now." in curator.prompts[0]
+
+
+@test()
+async def maintenance_executor_supersedes_a_claim_with_newer_evidence() -> None:
+    """A verified correction replaces the old current Claim."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    old_evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I am vegetarian.",
+    )
+    newer_evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I eat fish now.",
+    )
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "diet.md",
+        title="Diet",
+        body=(f"- Vegetarian. [source](tether://message/{old_evidence.id})"),
+        uris=(f"tether://message/{old_evidence.id}",),
+    )
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=2,
+                )
+            )
+        )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    assert run is not None
+    curator = _ConsolidationRunner(
+        "".join(
+            (
+                f"=== {conversation_id}/diet.md ===\n",
+                "---\n",
+                "title: Diet\n",
+                "---\n\n",
+                "- Eats fish now. ",
+                f"[source](tether://message/{newer_evidence.id})\n\n",
+                "=== RETIREMENTS ===\n",
+                '- claim: "Vegetarian."\n',
+                "  reason: superseded\n",
+                "  basis:\n",
+                f"    - tether://message/{newer_evidence.id}\n",
+            )
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=curator,
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "success")
+    updated = topic.read_text(encoding="utf-8")
+    assert "Eats fish now." in updated
+    assert "Vegetarian." not in updated
+
+
+@test()
+async def maintenance_executor_retires_an_expired_claim() -> None:
+    """Verified temporal maintenance removes an explicitly expired Claim."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    fixed_now = datetime(2026, 9, 15, 12, tzinfo=UTC)
+    evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I am avoiding coffee this week.",
+    )
+    evidence_id = evidence.id
+    await _retime(
+        evidence_id,
+        database=conversation_service.database,
+        when=datetime(2026, 8, 1, 9, tzinfo=UTC),
+    )
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "coffee.md",
+        title="Coffee",
+        body=(f"- Avoiding coffee this week. [source](tether://message/{evidence_id})"),
+        uris=(f"tether://message/{evidence_id}",),
+    )
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=1,
+                )
+            )
+        )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=fixed_now,
+    )
+    assert run is not None
+    curator = _ConsolidationRunner(
+        "".join(
+            (
+                "=== RETIREMENTS ===\n",
+                '- claim: "Avoiding coffee this week."\n',
+                "  reason: expired\n",
+                "  basis:\n",
+                f"    - tether://message/{evidence_id}\n",
+            )
+        )
+    )
+    verifier = _ConsolidationRunner("APPROVED")
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            clock=lambda: fixed_now,
+            curator=curator,
+            verifier=verifier,
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "success")
+    assert not topic.exists()
+    assert_eq(len(verifier.prompts), 1)
+    async with conversation_service.database.transaction() as transaction:
+        deletion = await transaction.fetch_one_or_none(
+            select(DreamingMutation)
+            .where(DreamingMutation.run_id.eq(run.id))
+            .where(DreamingMutation.operation.eq("delete"))
+        )
+    assert deletion is not None
+    assert deletion.payload is not None
+    assert "Avoiding coffee this week." in deletion.payload
+    assert "reason: expired" in deletion.payload
+
+
+@test()
+async def rejected_retirement_leaves_current_memory_unchanged() -> None:
+    """A semantic-verifier rejection prevents every workspace mutation."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    evidence_uri = "tether://message/018f0000-0000-7000-8000-0000000000a1"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "family.md",
+        title="Family",
+        body=f"- Sister is Ana. [source]({evidence_uri})",
+        uris=(evidence_uri,),
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    assert run is not None
+    curator = _ConsolidationRunner(
+        "".join(
+            (
+                "=== RETIREMENTS ===\n",
+                '- claim: "Sister is Ana."\n',
+                "  reason: expired\n",
+                "  basis:\n",
+                f"    - {evidence_uri}\n",
+            )
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=curator,
+            verifier=_ConsolidationRunner(
+                "Age alone does not show this Claim is no longer current."
+            ),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(topic.read_text(encoding="utf-8"), original)
+
+
+@test()
+async def semantic_verifier_rejects_unexplained_claim_loss() -> None:
+    """The verifier blocks a rewrite that omits a supported idea."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "gaming.md",
+        title="Gaming",
+        body="- Likes Roboquest.",
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    assert run is not None
+    proposed = "".join(
+        (
+            f"=== {conversation_id}/gaming.md ===\n",
+            "---\n",
+            "title: Gaming\n",
+            "---\n\n",
+            "No current Claims.\n",
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(proposed),
+            verifier=_ConsolidationRunner("Supported Claim was omitted."),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert result.error is not None
+    assert "Supported Claim was omitted." in result.error
+    assert_eq(topic.read_text(encoding="utf-8"), original)
+
+
+@test()
+async def maintenance_executor_rejects_assistant_supported_claims() -> None:
+    """Assistant Messages remain context and cannot support current Claims."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    assistant = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="assistant",
+        content="The user loves black coffee.",
+    )
+    assistant_uri = f"tether://message/{assistant.id}"
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "coffee.md",
+        title="Coffee",
+        body=f"- Loves black coffee. [source]({assistant_uri})",
+        uris=(assistant_uri,),
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    assert run is not None
+    proposed = "".join(
+        (
+            f"=== {conversation_id}/coffee.md ===\n",
+            "---\n",
+            "title: Coffee\n",
+            "---\n\n",
+            f"- Loves black coffee. [source]({assistant_uri})\n",
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(proposed),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert result.error is not None
+    assert "user Evidence" in result.error
 
 
 @test()
@@ -1634,7 +2153,10 @@ async def maintenance_executor_rejects_invented_citations() -> None:
     executor = MaintenanceDreamingExecutor(
         conversation_service.database,
         workspace_root=root,
-        consolidation_runner=_ConsolidationRunner(fabricated),
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(fabricated),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
     )
 
     result = await executor(run, logger=test_logger())
@@ -1666,7 +2188,10 @@ async def maintenance_executor_rejects_unsafe_paths() -> None:
     executor = MaintenanceDreamingExecutor(
         conversation_service.database,
         workspace_root=root,
-        consolidation_runner=_ConsolidationRunner(escape),
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(escape),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
     )
 
     result = await executor(run, logger=test_logger())
@@ -1744,7 +2269,10 @@ async def maintenance_covers_non_conversation_folders_like_health() -> None:
     executor = MaintenanceDreamingExecutor(
         service.database,
         workspace_root=root,
-        consolidation_runner=_ConsolidationRunner(merged),
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(merged),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
     )
     result = await executor(queued[0], logger=test_logger())
 
@@ -1795,7 +2323,10 @@ async def maintenance_executor_rejects_unsupported_health_citations() -> None:
     executor = MaintenanceDreamingExecutor(
         service.database,
         workspace_root=root,
-        consolidation_runner=_ConsolidationRunner(fabricated),
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(fabricated),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
     )
 
     result = await executor(queued[0], logger=test_logger())
