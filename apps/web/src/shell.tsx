@@ -1,6 +1,6 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { ConversationList } from "@kitn.ai/ui/solid";
-import { createQuery } from "@tanstack/solid-query";
+import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import {
   For,
   Show,
@@ -13,9 +13,20 @@ import {
 import type { JSX } from "solid-js";
 
 import { useHost } from "./app-context";
+import {
+  ConversationArchiveBlockedError,
+  type UpdateConversation,
+} from "./host/chat";
 import { conversationHref, projectConversations } from "./kitn-chat-projection";
 import { cx } from "./lib/cva";
 import { queryKeys } from "./lib/query-keys";
+import { Button } from "@/components/ui/button";
+import {
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+  TextFieldTextArea,
+} from "@/components/ui/text-field";
 
 interface NavItem {
   label: string;
@@ -68,6 +79,7 @@ function ConversationNavigation() {
   const chat = useHost("chat");
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const conversationsQuery = createQuery(() => ({
     queryFn: () => chat.listConversations(),
     queryKey: queryKeys.conversations,
@@ -82,6 +94,89 @@ function ConversationNavigation() {
       ? location.pathname.slice("/chat/".length)
       : undefined;
   });
+  const activeConversation = createMemo(() =>
+    conversations().find((candidate) => candidate.id === activeId()),
+  );
+  const [editing, setEditing] = createSignal(false);
+  const [displayName, setDisplayName] = createSignal("");
+  const [scopeBrief, setScopeBrief] = createSignal("");
+  const [error, setError] = createSignal<string>();
+  let previousActiveId: string | undefined;
+
+  createEffect(() => {
+    const nextActiveId = activeId();
+    if (nextActiveId !== previousActiveId) {
+      previousActiveId = nextActiveId;
+      setEditing(false);
+      setError(undefined);
+    }
+  });
+
+  const refreshConversations = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+  const beginEditing = () => {
+    const current = activeConversation();
+    if (current === undefined) {
+      return;
+    }
+    setDisplayName(current.display_name ?? "");
+    setScopeBrief(current.scope_brief ?? "");
+    setError(undefined);
+    setEditing(true);
+  };
+  const save = () => {
+    const current = activeConversation();
+    if (current === undefined) {
+      return;
+    }
+    const body: UpdateConversation = {};
+    const nextDisplayName = displayName().trim();
+    const nextScopeBrief = scopeBrief().trim();
+    if (nextDisplayName !== current.display_name) {
+      body.display_name = nextDisplayName;
+    }
+    if (nextScopeBrief !== current.scope_brief) {
+      body.scope_brief = nextScopeBrief;
+    }
+    if (Object.keys(body).length === 0) {
+      setEditing(false);
+      return;
+    }
+    void chat
+      .updateConversation(current.id, body)
+      .then(async () => {
+        setEditing(false);
+        await refreshConversations();
+      })
+      .catch(() => setError("Conversation could not be updated."));
+  };
+  const archive = () => {
+    const current = activeConversation();
+    if (current === undefined) {
+      return;
+    }
+    setError(undefined);
+    void chat
+      .archiveConversation(current.id)
+      .then(async () => {
+        await refreshConversations();
+        navigate("/chat");
+      })
+      .catch((caught: unknown) => {
+        if (
+          caught instanceof ConversationArchiveBlockedError &&
+          caught.blocker === "active_prompt_trigger"
+        ) {
+          navigate(`/browse/reminders?conversation=${current.id}`);
+          return;
+        }
+        setError(
+          caught instanceof ConversationArchiveBlockedError
+            ? "Wait for this Conversation's turns to finish before archiving."
+            : "Conversation could not be archived.",
+        );
+      });
+  };
 
   return (
     <section
@@ -94,12 +189,87 @@ function ConversationNavigation() {
         compact
         conversations={summaries()}
         footer={
-          <A
-            class="text-sidebar-foreground/60 flex min-h-11 items-center px-3 text-xs"
-            href="/chat?archived=1"
-          >
-            Archived Conversations
-          </A>
+          <div>
+            <Show
+              when={
+                activeConversation()?.kind === "scoped" &&
+                activeConversation()?.status === "active"
+              }
+            >
+              <Show
+                fallback={
+                  <div class="flex min-h-11 items-center gap-1 px-2">
+                    <Button
+                      aria-label="Edit conversation"
+                      class="flex-1"
+                      onClick={beginEditing}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      aria-label="Archive conversation"
+                      class="flex-1"
+                      onClick={archive}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      Archive
+                    </Button>
+                  </div>
+                }
+                when={editing()}
+              >
+                <div class="space-y-2 border-b p-3">
+                  <TextField onChange={setDisplayName} value={displayName()}>
+                    <TextFieldLabel>Conversation name</TextFieldLabel>
+                    <TextFieldInput />
+                  </TextField>
+                  <TextField onChange={setScopeBrief} value={scopeBrief()}>
+                    <TextFieldLabel>Scope brief</TextFieldLabel>
+                    <TextFieldTextArea rows={3} />
+                  </TextField>
+                  <div class="flex gap-1">
+                    <Button
+                      disabled={
+                        displayName().trim().length === 0 ||
+                        scopeBrief().trim().length === 0
+                      }
+                      onClick={save}
+                      size="sm"
+                      type="button"
+                    >
+                      Save conversation
+                    </Button>
+                    <Button
+                      onClick={() => setEditing(false)}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </Show>
+              <Show when={error()}>
+                {(message) => (
+                  <p class="text-destructive px-3 py-2 text-xs" role="alert">
+                    {message()}
+                  </p>
+                )}
+              </Show>
+            </Show>
+            <A
+              class="text-sidebar-foreground/60 flex min-h-11 items-center px-3 text-xs"
+              href="/chat?archived=1"
+            >
+              Archived Conversations
+            </A>
+          </div>
         }
         groups={[]}
         header={

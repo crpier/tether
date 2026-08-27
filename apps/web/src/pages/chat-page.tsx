@@ -40,12 +40,10 @@ import type { JSX } from "solid-js";
 
 import { useAppContext, useHost } from "../app-context";
 import {
-  ConversationArchiveBlockedError,
   conversationLabel,
   type ChatHost,
   type Conversation,
   type ConversationTurn,
-  type UpdateConversation,
 } from "../host/chat";
 import { ApiError } from "../host/error";
 import { createConversationMode } from "../conversation-mode";
@@ -58,12 +56,6 @@ import { VoiceComposerControls } from "../components/voice-composer";
 import type { ArtifactPointer } from "../components/widgets/artifact-widget";
 import { queryKeys } from "../lib/query-keys";
 import { Button } from "@/components/ui/button";
-import {
-  TextField,
-  TextFieldInput,
-  TextFieldLabel,
-  TextFieldTextArea,
-} from "@/components/ui/text-field";
 
 const LazyArtifactOverlay = lazy(() =>
   import("../components/artifact-viewer").then((module) => ({
@@ -92,16 +84,16 @@ function messageLabel(role: ChatRole): string {
 }
 
 function bubbleClass(role: ChatRole): string {
-  const base = "relative flex flex-col gap-1 rounded-lg text-sm";
+  const base = "relative flex flex-col gap-1 text-sm";
   switch (role) {
     case "user":
-      return `${base} bg-primary text-primary-foreground ml-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
+      return `${base} bg-primary text-primary-foreground mx-3 w-auto max-w-none rounded-lg px-3 py-2 sm:mr-0 sm:ml-auto sm:max-w-[90%] lg:max-w-[80%]`;
     case "assistant":
-      return `${base} bg-muted mr-auto max-w-[96%] px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
+      return `${base} bg-background mr-0 w-full max-w-none px-3 py-2 sm:mr-auto sm:w-auto sm:max-w-[90%] sm:rounded-lg sm:bg-muted lg:max-w-[80%]`;
     case "health":
-      return `${base} border-emerald-500/40 bg-emerald-500/10 mr-auto max-w-[96%] border px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
+      return `${base} border-emerald-500/40 bg-emerald-500/10 mr-0 w-full max-w-none rounded-lg border px-3 py-2 sm:mr-auto sm:w-auto sm:max-w-[90%] lg:max-w-[80%]`;
     case "scheduled":
-      return `${base} border-amber-500/40 bg-amber-500/10 mr-auto max-w-[96%] border px-3 py-2 sm:max-w-[90%] lg:max-w-[80%]`;
+      return `${base} border-amber-500/40 bg-amber-500/10 mr-0 w-full max-w-none rounded-lg border px-3 py-2 sm:mr-auto sm:w-auto sm:max-w-[90%] lg:max-w-[80%]`;
     case "tool":
       return `${base} text-muted-foreground mx-auto py-0.5 text-xs italic`;
   }
@@ -651,7 +643,7 @@ function MessageRow(props: {
           role="separator"
         >
           <CheckpointIcon />
-          <span>New Pi session</span>
+          <span class="shrink-0 whitespace-nowrap">New Pi session</span>
         </Checkpoint>
       </Match>
       <Match when={props.row.kind === "tool-group" && props.row}>
@@ -662,7 +654,7 @@ function MessageRow(props: {
           return (
             <article
               aria-label="Tool activity"
-              class={`chat-tool-group text-muted-foreground mr-auto max-w-[96%] rounded-lg border px-2 py-1 text-xs sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some(({ row }) => TOOL_LABELS[row.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
+              class={`chat-tool-group text-muted-foreground mx-3 w-auto max-w-none rounded-lg border px-2 py-1 text-xs sm:mr-auto sm:ml-0 sm:max-w-[90%] lg:max-w-[80%] ${group().tools.some(({ row }) => TOOL_LABELS[row.toolName]?.receipt === true) ? "border-primary/20 bg-primary/5" : "bg-muted/50"}`}
             >
               <For each={toolIds()}>
                 {(_id, index) => (
@@ -703,7 +695,7 @@ function MessageRow(props: {
           return (
             <article
               aria-label={`Tether reasoning for transcript item ${props.transcriptItemNumber.toString()}`}
-              class="bg-muted/50 text-muted-foreground mr-auto max-w-[96%] rounded-lg px-3 py-2 text-xs sm:max-w-[90%] lg:max-w-[80%]"
+              class="bg-muted/50 text-muted-foreground mr-0 w-full max-w-none rounded-lg px-3 py-2 text-xs sm:mr-auto sm:w-auto sm:max-w-[90%] lg:max-w-[80%]"
             >
               <Reasoning
                 defaultOpen={!reasoning().done}
@@ -879,7 +871,7 @@ function MessageRows(props: {
     >
       <ChatContainer
         aria-label={props.historyReady ? "Chat transcript" : undefined}
-        class="bg-card relative flex-1 rounded-xl border shadow-sm"
+        class="bg-background relative flex-1 border-0 shadow-none sm:rounded-xl sm:border sm:bg-card sm:shadow-sm"
         onScroll={(event) => {
           viewport = event.currentTarget;
           if (event.currentTarget.scrollTop < NEAR_TOP_THRESHOLD_PX) {
@@ -887,7 +879,7 @@ function MessageRows(props: {
           }
         }}
       >
-        <ChatContainerContent class="space-y-3 p-3">
+        <ChatContainerContent class="space-y-3 px-0 py-3 sm:p-3">
           <For each={displayRowIds()}>
             {(_id, index) => (
               <Show when={displayRows()[index()]}>
@@ -990,195 +982,6 @@ function ConversationNotFound() {
         Main Chat
       </A>
     </div>
-  );
-}
-
-function ConversationHeader(props: {
-  api: ChatHost;
-  conversation: Conversation;
-  onArchived: () => void;
-  onChanged: () => void;
-}) {
-  const navigate = useNavigate();
-  const [editing, setEditing] = createSignal(false);
-  const [displayName, setDisplayName] = createSignal(
-    props.conversation.display_name ?? "",
-  );
-  const [scopeBrief, setScopeBrief] = createSignal(
-    props.conversation.scope_brief ?? "",
-  );
-  const [error, setError] = createSignal<string>();
-  const [restoring, setRestoring] = createSignal(false);
-
-  createEffect((previousId: string | undefined) => {
-    if (props.conversation.id !== previousId) {
-      setEditing(false);
-      setDisplayName(props.conversation.display_name ?? "");
-      setScopeBrief(props.conversation.scope_brief ?? "");
-      setError(undefined);
-    }
-    return props.conversation.id;
-  }, undefined);
-
-  const save = () => {
-    const body: UpdateConversation = {};
-    const nextDisplayName = displayName().trim();
-    const nextScopeBrief = scopeBrief().trim();
-    if (nextDisplayName !== props.conversation.display_name) {
-      body.display_name = nextDisplayName;
-    }
-    if (nextScopeBrief !== props.conversation.scope_brief) {
-      body.scope_brief = nextScopeBrief;
-    }
-    if (Object.keys(body).length === 0) {
-      setEditing(false);
-      return;
-    }
-    void props.api
-      .updateConversation(props.conversation.id, body)
-      .then(() => {
-        setEditing(false);
-        props.onChanged();
-      })
-      .catch(() => {
-        setError("Conversation could not be updated.");
-      });
-  };
-  const restore = () => {
-    if (restoring()) {
-      return;
-    }
-    setRestoring(true);
-    setError(undefined);
-    void props.api
-      .restoreConversation(props.conversation.id)
-      .then(props.onChanged)
-      .catch(() => {
-        setError("Conversation could not be restored.");
-      })
-      .finally(() => {
-        setRestoring(false);
-      });
-  };
-  const archive = () => {
-    setError(undefined);
-    void props.api
-      .archiveConversation(props.conversation.id)
-      .then(props.onArchived)
-      .catch((caught: unknown) => {
-        if (
-          caught instanceof ConversationArchiveBlockedError &&
-          caught.blocker === "active_prompt_trigger"
-        ) {
-          navigate(`/browse/reminders?conversation=${props.conversation.id}`);
-          return;
-        }
-        setError(
-          caught instanceof ConversationArchiveBlockedError
-            ? "Wait for this Conversation's turns to finish before archiving."
-            : "Conversation could not be archived.",
-        );
-      });
-  };
-
-  return (
-    <header class="bg-card shrink-0 rounded-lg border px-3 py-2">
-      <Show
-        fallback={
-          <div class="flex items-start gap-3">
-            <div class="min-w-0 flex-1">
-              <h2 class="truncate text-base font-semibold">
-                {props.conversation.kind === "main"
-                  ? "Main Chat"
-                  : (props.conversation.display_name ?? "Untitled chat")}
-              </h2>
-              <Show when={props.conversation.kind === "scoped"}>
-                <p class="text-muted-foreground line-clamp-2 text-xs">
-                  {props.conversation.scope_brief}
-                </p>
-              </Show>
-            </div>
-            <Show when={props.conversation.kind === "scoped"}>
-              <Show when={props.conversation.status === "active"}>
-                <Button
-                  aria-label="Edit conversation"
-                  onClick={() => setEditing(true)}
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  Edit
-                </Button>
-              </Show>
-              <Show
-                fallback={
-                  <Button
-                    aria-label="Archive conversation"
-                    onClick={archive}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    Archive
-                  </Button>
-                }
-                when={props.conversation.status === "archived"}
-              >
-                <Button
-                  aria-label="Restore conversation"
-                  disabled={restoring()}
-                  onClick={restore}
-                  size="sm"
-                  type="button"
-                >
-                  {restoring() ? "Restoring…" : "Restore"}
-                </Button>
-              </Show>
-            </Show>
-          </div>
-        }
-        when={editing()}
-      >
-        <div class="space-y-2">
-          <TextField onChange={setDisplayName} value={displayName()}>
-            <TextFieldLabel>Conversation name</TextFieldLabel>
-            <TextFieldInput />
-          </TextField>
-          <TextField onChange={setScopeBrief} value={scopeBrief()}>
-            <TextFieldLabel>Scope brief</TextFieldLabel>
-            <TextFieldTextArea rows={3} />
-          </TextField>
-          <div class="flex gap-2">
-            <Button
-              disabled={
-                displayName().trim().length === 0 ||
-                scopeBrief().trim().length === 0
-              }
-              onClick={save}
-              size="sm"
-              type="button"
-            >
-              Save conversation
-            </Button>
-            <Button
-              onClick={() => setEditing(false)}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </Show>
-      <Show when={error()}>
-        {(message) => (
-          <p class="text-destructive mt-2 text-xs" role="alert">
-            {message()}
-          </p>
-        )}
-      </Show>
-    </header>
   );
 }
 
@@ -1590,7 +1393,7 @@ export function ChatPage() {
           Skills loaded · {loadedSkillCount()}
         </p>
       </Show>
-      <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-2 overflow-hidden p-2 sm:p-3">
+      <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-2 overflow-hidden px-0 py-2 sm:p-3">
         <Show when={connection() !== "open"}>
           <p
             class="bg-muted text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
@@ -1729,19 +1532,6 @@ export function ChatPage() {
             conversation() !== undefined
           }
         >
-          <Show when={conversation()}>
-            {(current) => (
-              <ConversationHeader
-                api={api}
-                conversation={current()}
-                onArchived={() => {
-                  refreshConversations();
-                  navigate("/chat");
-                }}
-                onChanged={refreshConversations}
-              />
-            )}
-          </Show>
           <Show when={focusedTurnError()}>
             {(turnError) => (
               <div
@@ -1796,7 +1586,7 @@ export function ChatPage() {
           <Show when={conversation()?.status === "active"}>
             <div
               aria-label="Composer context"
-              class="flex shrink-0 flex-wrap items-center gap-2"
+              class="mx-3 flex shrink-0 flex-wrap items-center gap-2 sm:mx-0"
               role="group"
             >
               <Show when={conversation()}>
@@ -1858,7 +1648,7 @@ export function ChatPage() {
                 </Show>
               </div>
             </div>
-            <form class="shrink-0 space-y-2" onSubmit={onSubmit}>
+            <form class="mx-3 shrink-0 space-y-2 sm:mx-0" onSubmit={onSubmit}>
               <Show
                 when={
                   conversationMode.enabled() &&

@@ -177,9 +177,73 @@ test("phone width: sidebar drawer owns navigation and Conversations", async ({
   const modelSelector = await boundingBox(
     page.getByRole("group", { name: "Model" }),
   );
-  expect(Math.abs(modelSelector.width - chat.width)).toBeLessThanOrEqual(1);
+  expect(modelSelector.x - chat.x).toBeGreaterThanOrEqual(12);
+  expect(
+    chat.x + chat.width - (modelSelector.x + modelSelector.width),
+  ).toBeGreaterThanOrEqual(12);
   expect(modelSelector.y).toBeGreaterThan(chat.y);
   expect(modelSelector.y).toBeLessThan(PHONE.height);
+});
+
+test("phone chat drops title chrome and uses one edge-to-edge transcript surface", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await serveLongChat(page, [longMessage(1, "assistant")]);
+  await login();
+
+  await expect(page.getByRole("heading", { name: "Main Chat" })).toHaveCount(0);
+  const transcript = page.getByRole("log", { name: "Chat transcript" });
+  const message = page.getByRole("article", { name: "Tether message" });
+  const composer = page.getByRole("group", { name: "Message composer" });
+  const transcriptBox = await boundingBox(transcript);
+  const messageBox = await boundingBox(message);
+  const composerBox = await boundingBox(composer);
+
+  expect(transcriptBox.x).toBeLessThanOrEqual(1);
+  expect(transcriptBox.x + transcriptBox.width).toBeGreaterThanOrEqual(
+    PHONE.width - 1,
+  );
+  expect(messageBox.x).toBeLessThanOrEqual(1);
+  expect(messageBox.x + messageBox.width).toBeGreaterThanOrEqual(
+    PHONE.width - 1,
+  );
+  expect(
+    await message.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingLeft),
+    ),
+  ).toBeGreaterThanOrEqual(12);
+  expect(composerBox.x - transcriptBox.x).toBeGreaterThanOrEqual(12);
+  expect(
+    transcriptBox.x + transcriptBox.width - (composerBox.x + composerBox.width),
+  ).toBeGreaterThanOrEqual(12);
+
+  const backgrounds = await Promise.all(
+    [transcript, message].map((element) =>
+      element.evaluate((node) => getComputedStyle(node).backgroundColor),
+    ),
+  );
+  expect(new Set(backgrounds).size).toBe(1);
+});
+
+test("phone historical session separator stays on one line", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await serveLongChat(page, [
+    { ...longMessage(1, "user"), created_at: "2026-08-08T08:00:00Z" },
+    { ...longMessage(2, "user"), created_at: "2026-08-08T09:00:00Z" },
+  ]);
+  await login();
+
+  const label = page.getByText("New Pi session", { exact: true });
+  await expect(label).toBeVisible();
+  expect(
+    await label.evaluate((element) => getComputedStyle(element).whiteSpace),
+  ).toBe("nowrap");
+  expect((await boundingBox(label)).height).toBeLessThanOrEqual(20);
 });
 
 test("phone chat contains wide code and tables without page overflow", async ({
@@ -395,6 +459,7 @@ test("phone chat gives the model and session status separate readable rows", asy
   login,
 }) => {
   await page.setViewportSize(PHONE);
+  await serveLongChat(page);
   await page.route("**/api/models", (route) =>
     route.fulfill({
       json: {
@@ -416,7 +481,18 @@ test("phone chat gives the model and session status separate readable rows", asy
   const selectorBox = await boundingBox(
     page.getByRole("combobox", { name: "Model profile" }),
   );
-  const sessionBox = await boundingBox(page.getByLabel("Pi session boundary"));
+  const sessionBox = await boundingBox(
+    page.getByLabel("Pi session boundary", { exact: true }),
+  );
+  const transcriptBox = await boundingBox(
+    page.getByRole("log", { name: "Chat transcript" }),
+  );
+  for (const elementBox of [selectorBox, sessionBox]) {
+    expect(elementBox.x - transcriptBox.x).toBeGreaterThanOrEqual(12);
+    expect(
+      transcriptBox.x + transcriptBox.width - (elementBox.x + elementBox.width),
+    ).toBeGreaterThanOrEqual(12);
+  }
   expect(sessionBox.y).toBeGreaterThanOrEqual(
     selectorBox.y + selectorBox.height - 1,
   );
@@ -531,6 +607,23 @@ for (const viewport of [PHONE, DESKTOP]) {
       fontWeight: "400",
     });
     expect((await boundingBox(activity)).height).toBeLessThanOrEqual(66);
+    if (viewport.width === PHONE.width) {
+      const transcriptBox = await boundingBox(
+        page.getByRole("log", { name: "Chat transcript" }),
+      );
+      const activityBox = await boundingBox(activity);
+      expect(activityBox.x - transcriptBox.x).toBeGreaterThanOrEqual(12);
+      expect(
+        transcriptBox.x +
+          transcriptBox.width -
+          (activityBox.x + activityBox.width),
+      ).toBeGreaterThanOrEqual(12);
+      const userBox = await boundingBox(userRow);
+      expect(userBox.x - transcriptBox.x).toBeGreaterThanOrEqual(12);
+      expect(
+        transcriptBox.x + transcriptBox.width - (userBox.x + userBox.width),
+      ).toBeGreaterThanOrEqual(12);
+    }
     await expect(
       page.getByRole("button", { name: "Quote message" }),
     ).toHaveCount(0);

@@ -21,10 +21,10 @@ test("new Conversation link immediately opens an untitled chat", async ({
   await page.getByRole("link", { name: "Create Conversation" }).click();
 
   await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Untitled chat" }),
-  ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Main Chat" })).toHaveCount(0);
+  ).toHaveCount(0);
 });
 
 test("creates, selects, archives, and restores a Scoped Conversation", async ({
@@ -43,7 +43,11 @@ test("creates, selects, archives, and restores a Scoped Conversation", async ({
     .getByLabel("Scope brief")
     .fill("Exercise the Conversation lifecycle.");
   await page.getByRole("button", { name: "Save conversation" }).click();
-  await expect(page.getByRole("heading", { name })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Conversations" })
+      .getByRole("button", { name: new RegExp(`^${name}`) }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Archive conversation" }).click();
   await expect(page).toHaveURL(/\/chat$/);
 
