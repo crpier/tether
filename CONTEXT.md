@@ -54,6 +54,10 @@ _Avoid_: pi turn, agent run, Message
 One canonical ordered transcript entry within a Conversation turn, including its speaker or execution role. User Messages are conversational Evidence. Scheduled Messages record a Scheduled occurrence and expose its intended firing time, trigger reference, lifecycle, and stable failure state, but are context only because recurrence does not create fresh user Evidence. Because pi RPC accepts prompts only as user-role input, Tether wraps scheduled prompt content with host-owned context instructions before execution while preserving the canonical Scheduled Message unchanged. A Scheduled Message cannot authorize Product observation capture, email-to-Evidence promotion, or another capability requiring fresh active-turn user Evidence, though scheduled turns retain ordinary tools. Assistant, reasoning, and tool Messages are also context only unless they contain separately verified Evidence.
 _Avoid_: pi message, session entry, Conversation turn
 
+**Confined program**:
+One fresh, bounded TypeScript/JavaScript execution inside an `execute_tools` call. It may sequence, parallelize, filter, and aggregate generated Tether tool calls, but has no ambient filesystem, process, environment, network, packages, persistence, or durable child identity. Each nested call still crosses its existing host authorization and tracing boundary; the outer tool call remains the one transcript Message.
+_Avoid_: shell, agent, workflow, pi session
+
 **Recall**:
 A spaced learning workflow in which the human practices distilled material through scheduled prompts. It measures learning progress and does not gate whether content enters Memory.
 _Avoid_: memory review, quiz gate, study review
@@ -107,7 +111,7 @@ A hand-built typed slice that brings one external service's Evidence into Tether
 _Avoid_: connector, provider wrapper, adapter package
 
 **Transcript status**:
-The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. *Needs review* means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. *Unavailable* means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
+The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. _Needs review_ means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. _Unavailable_ means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
 _Avoid_: terminal, caption state, transcript error
 
 **Telemetry**:
@@ -147,11 +151,11 @@ One durable, immutable firing of a Scheduled trigger. It snapshots the trigger v
 _Avoid_: dispatch attempt, scheduler job, trigger run
 
 **Bucket item**:
-An intention to act on something later. It lives in an active state and then moves to a terminal state — completed or deleted — where it is retained permanently as history (so dedup can warn you when you try to re-add something you have already dealt with). It is not Memory. It is of exactly one item type, which determines its structure, and records why it was saved (its intent context). The test that distinguishes it from Memory: a Bucket item can be *finished*.
+An intention to act on something later. It lives in an active state and then moves to a terminal state — completed or deleted — where it is retained permanently as history (so dedup can warn you when you try to re-add something you have already dealt with). It is not Memory. It is of exactly one item type, which determines its structure, and records why it was saved (its intent context). The test that distinguishes it from Memory: a Bucket item can be _finished_.
 _Avoid_: backlog item, bucket-list entry
 
 **Todo**:
-One actionable thing to do — a single action, no steps ("bring the book next time I visit Ana", "dig out the grey shirt before the gala", "research the pension transfer"). Distinct from a Bucket item (which you *consume*) and a Project (multiple coordinated steps); a Todo is exactly *one action*. It is born active and reaches a terminal state — completed or abandoned. It may carry an optional *waiting condition*: a free-text condition and/or a linked Scheduled trigger (a deadline). Its *waiting* state is always **computed, never stored** — a Todo is waiting while it has an unmet text condition or an unfired linked trigger, and ready otherwise — so it can never get wedged in a stale waiting state. Ready Todos surface in the agent's standing digest; waiting ones are raised only when the conversation makes them relevant. The one-off actionable that had no home before the vertical existed.
+One actionable thing to do — a single action, no steps ("bring the book next time I visit Ana", "dig out the grey shirt before the gala", "research the pension transfer"). Distinct from a Bucket item (which you _consume_) and a Project (multiple coordinated steps); a Todo is exactly _one action_. It is born active and reaches a terminal state — completed or abandoned. It may carry an optional _waiting condition_: a free-text condition and/or a linked Scheduled trigger (a deadline). Its _waiting_ state is always **computed, never stored** — a Todo is waiting while it has an unmet text condition or an unfired linked trigger, and ready otherwise — so it can never get wedged in a stale waiting state. Ready Todos surface in the agent's standing digest; waiting ones are raised only when the conversation makes them relevant. The one-off actionable that had no home before the vertical existed.
 _Avoid_: task, reminder, bucket item, project, waiting-on flag
 
 **Item type**:
@@ -159,11 +163,11 @@ What kind of thing a Bucket item is (movie, book, place, travel, …). Different
 _Avoid_: domain, category, kind, tag
 
 **Intent context**:
-The human's subjective reason for saving a Bucket item — *why* it was worth capturing ("a podcast recommended it," "relates to my interest in X"). Immutable once set; it answers "why did I save this?" months later, when the item alone no longer explains itself. Bucket items only; Memory Claims instead carry supporting Evidence.
+The human's subjective reason for saving a Bucket item — _why_ it was worth capturing ("a podcast recommended it," "relates to my interest in X"). Immutable once set; it answers "why did I save this?" months later, when the item alone no longer explains itself. Bucket items only; Memory Claims instead carry supporting Evidence.
 _Avoid_: reason, rationale, note, why
 
 **Triage**:
-An agent-produced report over the *active* Bucket items that surfaces problems — under-specified, duplicate, and stale items — for the human to act on. A pull action, optionally run on a Scheduled trigger. It produces no new stored state and is unrelated to automatic Memory maintenance.
+An agent-produced report over the _active_ Bucket items that surfaces problems — under-specified, duplicate, and stale items — for the human to act on. A pull action, optionally run on a Scheduled trigger. It produces no new stored state and is unrelated to automatic Memory maintenance.
 _Avoid_: review, grooming, cleanup, backlog review
 
 **Candidate**:
@@ -207,7 +211,7 @@ A canonical, normalized food identity (e.g. "garlic", "all-purpose flour") that 
 _Avoid_: food, product, item
 
 **Recipe**:
-A stored, structured, in-app-editable dish definition — metadata (title, cuisine, servings, time, tags), Recipe lines, and ordered steps. Reference data (something you *can* cook), distinct from a "dish I want to try" (a Bucket item), which is intentionally not coupled to it. Scaling servings is a transient view, never stored.
+A stored, structured, in-app-editable dish definition — metadata (title, cuisine, servings, time, tags), Recipe lines, and ordered steps. Reference data (something you _can_ cook), distinct from a "dish I want to try" (a Bucket item), which is intentionally not coupled to it. Scaling servings is a transient view, never stored.
 _Avoid_: dish, meal, formula
 
 **Recipe line**:
@@ -219,7 +223,7 @@ An entry in a Recipe's append-only edit history, created either by a direct huma
 _Avoid_: version, edit, history
 
 **Pantry item**:
-A canonical Ingredient the household has on hand, tracked as presence + a coarse level (out / low / have), an expiry estimate, and a location (pantry / fridge / freezer). Deliberately *not* a precise quantity. Kept current by cooking (decrements) and shopping (increments), not by manual audits.
+A canonical Ingredient the household has on hand, tracked as presence + a coarse level (out / low / have), an expiry estimate, and a location (pantry / fridge / freezer). Deliberately _not_ a precise quantity. Kept current by cooking (decrements) and shopping (increments), not by manual audits.
 _Avoid_: inventory item, stock, supply
 
 **Shopping list**:

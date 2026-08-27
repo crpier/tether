@@ -790,6 +790,7 @@ export default function inspectTools(pi) {
             "delete_bucket_item",
             "delete_panel",
             "delete_trigger",
+            "execute_tools",
             "fetch_youtube_transcript",
             "health_connect_inventory",
             "ignore_youtube_video",
@@ -832,6 +833,7 @@ export default function inspectTools(pi) {
         ],
     )
     assert_not_in("bash", active_tools)
+    assert_in("execute_tools", active_tools)
     assert_in("read", active_tools)
     assert_in("queue_memory_assimilation", active_tools)
 

@@ -1,7 +1,13 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, test } from "vitest";
 
-import tetherToolsExtension from "../src/generated/index.js";
+import { createCodeModeTool } from "../src/code-mode.js";
+import tetherToolsExtension, {
+  tetherToolSources,
+} from "../src/generated/index.js";
 
 interface RegisteredToolSummary {
   name: string;
@@ -75,6 +81,32 @@ describe("generated tool extension", () => {
       "list_product_observations",
       "propose",
       "list_proposals",
+      "execute_tools",
     ]);
+    expect(tetherToolSources).toHaveLength(55);
+  });
+
+  test("makes every generated schema discoverable by confined code", async () => {
+    const tool = createCodeModeTool(tetherToolSources);
+
+    const execution = await tool.execute(
+      "catalog-call",
+      { code: 'return search({ query: "create_todo" })' },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const content = execution.content[0];
+
+    expect(content.type).toBe("text");
+    if (content.type !== "text") return;
+    const discovery = JSON.parse(content.text) as {
+      items: { path: string; signature: string }[];
+    };
+    const createTodo = discovery.items.find(
+      (item) => item.path === "tools.create_todo",
+    );
+    expect(createTodo?.path).toBe("tools.create_todo");
+    expect(createTodo?.signature).toContain("tools.create_todo");
   });
 });

@@ -2,61 +2,234 @@
 // Source: apps/host/tether/tools.py Pydantic params.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSearchTool } from "./search.js";
-import { registerQueueMemoryAssimilationTool } from "./queue_memory_assimilation.js";
-import { registerAddMovieTool } from "./add_movie.js";
-import { registerAddPlaceTool } from "./add_place.js";
-import { registerAddBookTool } from "./add_book.js";
-import { registerAddTravelTool } from "./add_travel.js";
-import { registerAddPurchaseTool } from "./add_purchase.js";
-import { registerCompleteBucketItemTool } from "./complete_bucket_item.js";
-import { registerDeleteBucketItemTool } from "./delete_bucket_item.js";
-import { registerSearchBucketItemsTool } from "./search_bucket_items.js";
-import { registerSetPurchaseDecisionTool } from "./set_purchase_decision.js";
-import { registerSetBucketItemIntentTool } from "./set_bucket_item_intent.js";
-import { registerCreateTodoTool } from "./create_todo.js";
-import { registerSetTodoStatusTool } from "./set_todo_status.js";
-import { registerLinkTodoTriggerTool } from "./link_todo_trigger.js";
-import { registerListTodosTool } from "./list_todos.js";
-import { registerTriageReportTool } from "./triage_report.js";
-import { registerBrowseYoutubeTool } from "./browse_youtube.js";
-import { registerSearchYoutubeTool } from "./search_youtube.js";
-import { registerFetchYoutubeTranscriptTool } from "./fetch_youtube_transcript.js";
-import { registerIgnoreYoutubeVideoTool } from "./ignore_youtube_video.js";
-import { registerRetryYoutubeVideoTool } from "./retry_youtube_video.js";
-import { registerWebSearchTool } from "./web_search.js";
-import { registerArchiveGmailMessageTool } from "./archive_gmail_message.js";
-import { registerSearchGmailTool } from "./search_gmail.js";
-import { registerReadGmailMessageTool } from "./read_gmail_message.js";
-import { registerListGmailLabelsTool } from "./list_gmail_labels.js";
-import { registerTrashGmailMessageTool } from "./trash_gmail_message.js";
-import { registerUpdateGmailLabelsTool } from "./update_gmail_labels.js";
-import { registerCreateTriggerTool } from "./create_trigger.js";
-import { registerListTriggersTool } from "./list_triggers.js";
-import { registerDeleteTriggerTool } from "./delete_trigger.js";
-import { registerStartRecallTool } from "./start_recall.js";
-import { registerListDueRecallPromptsTool } from "./list_due_recall_prompts.js";
-import { registerAnswerRecallPromptTool } from "./answer_recall_prompt.js";
-import { registerProposeEssayGradeTool } from "./propose_essay_grade.js";
-import { registerReadConversationHistoryTool } from "./read_conversation_history.js";
-import { registerCreateArtifactTool } from "./create_artifact.js";
-import { registerUpdateArtifactTool } from "./update_artifact.js";
-import { registerListArtifactEventsTool } from "./list_artifact_events.js";
-import { registerCreatePanelTool } from "./create_panel.js";
-import { registerListPanelsTool } from "./list_panels.js";
-import { registerUpdatePanelTool } from "./update_panel.js";
-import { registerDeletePanelTool } from "./delete_panel.js";
-import { registerLabelEbookTool } from "./label_ebook.js";
-import { registerMatchEbookFilenameTool } from "./match_ebook_filename.js";
-import { registerListUnlabeledEbooksTool } from "./list_unlabeled_ebooks.js";
-import { registerAnalyzeHealthConnectTool } from "./analyze_health_connect.js";
-import { registerHealthConnectInventoryTool } from "./health_connect_inventory.js";
-import { registerQueryHealthConnectTool } from "./query_health_connect.js";
-import { registerSummarizeHealthConnectTool } from "./summarize_health_connect.js";
-import { registerRecordProductObservationTool } from "./record_product_observation.js";
-import { registerListProductObservationsTool } from "./list_product_observations.js";
-import { registerProposeTool } from "./propose.js";
-import { registerListProposalsTool } from "./list_proposals.js";
+import { createCodeModeTool, sourceForTool } from "../code-mode.js";
+import { registerSearchTool, searchTool } from "./search.js";
+import {
+  registerQueueMemoryAssimilationTool,
+  queue_memory_assimilationTool,
+} from "./queue_memory_assimilation.js";
+import { registerAddMovieTool, add_movieTool } from "./add_movie.js";
+import { registerAddPlaceTool, add_placeTool } from "./add_place.js";
+import { registerAddBookTool, add_bookTool } from "./add_book.js";
+import { registerAddTravelTool, add_travelTool } from "./add_travel.js";
+import { registerAddPurchaseTool, add_purchaseTool } from "./add_purchase.js";
+import {
+  registerCompleteBucketItemTool,
+  complete_bucket_itemTool,
+} from "./complete_bucket_item.js";
+import {
+  registerDeleteBucketItemTool,
+  delete_bucket_itemTool,
+} from "./delete_bucket_item.js";
+import {
+  registerSearchBucketItemsTool,
+  search_bucket_itemsTool,
+} from "./search_bucket_items.js";
+import {
+  registerSetPurchaseDecisionTool,
+  set_purchase_decisionTool,
+} from "./set_purchase_decision.js";
+import {
+  registerSetBucketItemIntentTool,
+  set_bucket_item_intentTool,
+} from "./set_bucket_item_intent.js";
+import { registerCreateTodoTool, create_todoTool } from "./create_todo.js";
+import {
+  registerSetTodoStatusTool,
+  set_todo_statusTool,
+} from "./set_todo_status.js";
+import {
+  registerLinkTodoTriggerTool,
+  link_todo_triggerTool,
+} from "./link_todo_trigger.js";
+import { registerListTodosTool, list_todosTool } from "./list_todos.js";
+import {
+  registerTriageReportTool,
+  triage_reportTool,
+} from "./triage_report.js";
+import {
+  registerBrowseYoutubeTool,
+  browse_youtubeTool,
+} from "./browse_youtube.js";
+import {
+  registerSearchYoutubeTool,
+  search_youtubeTool,
+} from "./search_youtube.js";
+import {
+  registerFetchYoutubeTranscriptTool,
+  fetch_youtube_transcriptTool,
+} from "./fetch_youtube_transcript.js";
+import {
+  registerIgnoreYoutubeVideoTool,
+  ignore_youtube_videoTool,
+} from "./ignore_youtube_video.js";
+import {
+  registerRetryYoutubeVideoTool,
+  retry_youtube_videoTool,
+} from "./retry_youtube_video.js";
+import { registerWebSearchTool, web_searchTool } from "./web_search.js";
+import {
+  registerArchiveGmailMessageTool,
+  archive_gmail_messageTool,
+} from "./archive_gmail_message.js";
+import { registerSearchGmailTool, search_gmailTool } from "./search_gmail.js";
+import {
+  registerReadGmailMessageTool,
+  read_gmail_messageTool,
+} from "./read_gmail_message.js";
+import {
+  registerListGmailLabelsTool,
+  list_gmail_labelsTool,
+} from "./list_gmail_labels.js";
+import {
+  registerTrashGmailMessageTool,
+  trash_gmail_messageTool,
+} from "./trash_gmail_message.js";
+import {
+  registerUpdateGmailLabelsTool,
+  update_gmail_labelsTool,
+} from "./update_gmail_labels.js";
+import {
+  registerCreateTriggerTool,
+  create_triggerTool,
+} from "./create_trigger.js";
+import {
+  registerListTriggersTool,
+  list_triggersTool,
+} from "./list_triggers.js";
+import {
+  registerDeleteTriggerTool,
+  delete_triggerTool,
+} from "./delete_trigger.js";
+import { registerStartRecallTool, start_recallTool } from "./start_recall.js";
+import {
+  registerListDueRecallPromptsTool,
+  list_due_recall_promptsTool,
+} from "./list_due_recall_prompts.js";
+import {
+  registerAnswerRecallPromptTool,
+  answer_recall_promptTool,
+} from "./answer_recall_prompt.js";
+import {
+  registerProposeEssayGradeTool,
+  propose_essay_gradeTool,
+} from "./propose_essay_grade.js";
+import {
+  registerReadConversationHistoryTool,
+  read_conversation_historyTool,
+} from "./read_conversation_history.js";
+import {
+  registerCreateArtifactTool,
+  create_artifactTool,
+} from "./create_artifact.js";
+import {
+  registerUpdateArtifactTool,
+  update_artifactTool,
+} from "./update_artifact.js";
+import {
+  registerListArtifactEventsTool,
+  list_artifact_eventsTool,
+} from "./list_artifact_events.js";
+import { registerCreatePanelTool, create_panelTool } from "./create_panel.js";
+import { registerListPanelsTool, list_panelsTool } from "./list_panels.js";
+import { registerUpdatePanelTool, update_panelTool } from "./update_panel.js";
+import { registerDeletePanelTool, delete_panelTool } from "./delete_panel.js";
+import { registerLabelEbookTool, label_ebookTool } from "./label_ebook.js";
+import {
+  registerMatchEbookFilenameTool,
+  match_ebook_filenameTool,
+} from "./match_ebook_filename.js";
+import {
+  registerListUnlabeledEbooksTool,
+  list_unlabeled_ebooksTool,
+} from "./list_unlabeled_ebooks.js";
+import {
+  registerAnalyzeHealthConnectTool,
+  analyze_health_connectTool,
+} from "./analyze_health_connect.js";
+import {
+  registerHealthConnectInventoryTool,
+  health_connect_inventoryTool,
+} from "./health_connect_inventory.js";
+import {
+  registerQueryHealthConnectTool,
+  query_health_connectTool,
+} from "./query_health_connect.js";
+import {
+  registerSummarizeHealthConnectTool,
+  summarize_health_connectTool,
+} from "./summarize_health_connect.js";
+import {
+  registerRecordProductObservationTool,
+  record_product_observationTool,
+} from "./record_product_observation.js";
+import {
+  registerListProductObservationsTool,
+  list_product_observationsTool,
+} from "./list_product_observations.js";
+import { registerProposeTool, proposeTool } from "./propose.js";
+import {
+  registerListProposalsTool,
+  list_proposalsTool,
+} from "./list_proposals.js";
+
+export const tetherToolSources = [
+  sourceForTool(searchTool),
+  sourceForTool(queue_memory_assimilationTool),
+  sourceForTool(add_movieTool),
+  sourceForTool(add_placeTool),
+  sourceForTool(add_bookTool),
+  sourceForTool(add_travelTool),
+  sourceForTool(add_purchaseTool),
+  sourceForTool(complete_bucket_itemTool),
+  sourceForTool(delete_bucket_itemTool),
+  sourceForTool(search_bucket_itemsTool),
+  sourceForTool(set_purchase_decisionTool),
+  sourceForTool(set_bucket_item_intentTool),
+  sourceForTool(create_todoTool),
+  sourceForTool(set_todo_statusTool),
+  sourceForTool(link_todo_triggerTool),
+  sourceForTool(list_todosTool),
+  sourceForTool(triage_reportTool),
+  sourceForTool(browse_youtubeTool),
+  sourceForTool(search_youtubeTool),
+  sourceForTool(fetch_youtube_transcriptTool),
+  sourceForTool(ignore_youtube_videoTool),
+  sourceForTool(retry_youtube_videoTool),
+  sourceForTool(web_searchTool),
+  sourceForTool(archive_gmail_messageTool),
+  sourceForTool(search_gmailTool),
+  sourceForTool(read_gmail_messageTool),
+  sourceForTool(list_gmail_labelsTool),
+  sourceForTool(trash_gmail_messageTool),
+  sourceForTool(update_gmail_labelsTool),
+  sourceForTool(create_triggerTool),
+  sourceForTool(list_triggersTool),
+  sourceForTool(delete_triggerTool),
+  sourceForTool(start_recallTool),
+  sourceForTool(list_due_recall_promptsTool),
+  sourceForTool(answer_recall_promptTool),
+  sourceForTool(propose_essay_gradeTool),
+  sourceForTool(read_conversation_historyTool),
+  sourceForTool(create_artifactTool),
+  sourceForTool(update_artifactTool),
+  sourceForTool(list_artifact_eventsTool),
+  sourceForTool(create_panelTool),
+  sourceForTool(list_panelsTool),
+  sourceForTool(update_panelTool),
+  sourceForTool(delete_panelTool),
+  sourceForTool(label_ebookTool),
+  sourceForTool(match_ebook_filenameTool),
+  sourceForTool(list_unlabeled_ebooksTool),
+  sourceForTool(analyze_health_connectTool),
+  sourceForTool(health_connect_inventoryTool),
+  sourceForTool(query_health_connectTool),
+  sourceForTool(summarize_health_connectTool),
+  sourceForTool(record_product_observationTool),
+  sourceForTool(list_product_observationsTool),
+  sourceForTool(proposeTool),
+  sourceForTool(list_proposalsTool),
+];
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerSearchTool(pi);
@@ -114,4 +287,5 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerListProductObservationsTool(pi);
   registerProposeTool(pi);
   registerListProposalsTool(pi);
+  pi.registerTool(createCodeModeTool(tetherToolSources));
 }

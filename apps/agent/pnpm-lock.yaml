@@ -16,6 +16,12 @@ importers:
       "@earendil-works/pi-coding-agent":
         specifier: 0.80.10
         version: 0.80.10(ws@8.21.0)(zod@4.4.3)
+      "@opencode-ai/codemode":
+        specifier: 1.18.4
+        version: 1.18.4
+      effect:
+        specifier: 4.0.0-beta.101
+        version: 4.0.0-beta.101
       typebox:
         specifier: 1.1.38
         version: 1.1.38
@@ -756,6 +762,54 @@ packages:
       "@opentelemetry/api":
         optional: true
 
+  "@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4":
+    resolution:
+      {
+        integrity: sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ==,
+      }
+    cpu: [arm64]
+    os: [darwin]
+
+  "@msgpackr-extract/msgpackr-extract-darwin-x64@3.0.4":
+    resolution:
+      {
+        integrity: sha512-zExlW9zUJKZH/tOtVMttwjKa4Xm/3KcNjnE3dPN92uCktwavMxpgCA3MoJK/DOnTWsQgo224OaST27/mPNAf+w==,
+      }
+    cpu: [x64]
+    os: [darwin]
+
+  "@msgpackr-extract/msgpackr-extract-linux-arm64@3.0.4":
+    resolution:
+      {
+        integrity: sha512-dgX0P/9wGPJeHFBG+ZmhgE6bmtMt7NP5CRBGyyktpopdk/mW4POnrpQsSLtKI1dwpc+pPLuXHDh6vvskyQE/sw==,
+      }
+    cpu: [arm64]
+    os: [linux]
+
+  "@msgpackr-extract/msgpackr-extract-linux-arm@3.0.4":
+    resolution:
+      {
+        integrity: sha512-Tg3yX65f5GbtXLkrYEHE5oibZG9epyYWas7FogTTEJeDEF9JlXJzKgXaNhT3UXlTOeA+AfZpYZYZ0uPj7Cfquw==,
+      }
+    cpu: [arm]
+    os: [linux]
+
+  "@msgpackr-extract/msgpackr-extract-linux-x64@3.0.4":
+    resolution:
+      {
+        integrity: sha512-8TNXMEjJc3QEy7R/x1INhgiU+XakDAFUzBhaz7+Rbrs8NH5UQeHQxxmzsSBJGyV6I1jW79undiQm8tOI+D+8FQ==,
+      }
+    cpu: [x64]
+    os: [linux]
+
+  "@msgpackr-extract/msgpackr-extract-win32-x64@3.0.4":
+    resolution:
+      {
+        integrity: sha512-CmCXPQrkbwExx3j946/PtHWHbYJiCRBRDl4BlkRQcJB/YOwQxJRTpoo7aTsortjgoJ1x7opzTSxn7C+ASSLVjQ==,
+      }
+    cpu: [x64]
+    os: [win32]
+
   "@napi-rs/wasm-runtime@1.1.6":
     resolution:
       {
@@ -764,6 +818,12 @@ packages:
     peerDependencies:
       "@emnapi/core": ^1.7.1
       "@emnapi/runtime": ^1.7.1
+
+  "@opencode-ai/codemode@1.18.4":
+    resolution:
+      {
+        integrity: sha512-Bbwj30vHydJ0znhHj9O+Pc3+FD+sPcDHN6QWHhmo8DjbzQYhGUKHWkq3lWlKw07c+RKhvdGeN8RiW2L5imzu1A==,
+      }
 
   "@opentelemetry/api@1.9.0":
     resolution:
@@ -1256,6 +1316,14 @@ packages:
     peerDependencies:
       acorn: ^6.0.0 || ^7.0.0 || ^8.0.0
 
+  acorn@8.15.0:
+    resolution:
+      {
+        integrity: sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==,
+      }
+    engines: { node: ">=0.4.0" }
+    hasBin: true
+
   acorn@8.17.0:
     resolution:
       {
@@ -1452,6 +1520,12 @@ packages:
         integrity: sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ==,
       }
 
+  effect@4.0.0-beta.101:
+    resolution:
+      {
+        integrity: sha512-HjowumlIo+orthn4jMlEJPuzIYPBV+uq/XiciHWhiedLsXQpWHdNJHO5d59BVDP5s1LPuvERcktwFqRXnJqnhA==,
+      }
+
   es-module-lexer@2.1.0:
     resolution:
       {
@@ -1568,6 +1642,13 @@ packages:
         integrity: sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==,
       }
 
+  fast-check@4.9.0:
+    resolution:
+      {
+        integrity: sha512-7ms6T7SybUev/PQITciI0yLM2pOSFy5zpG8Ty7tQofcVaQUvrMXp6CBwqF6fThLCLOrfBtuHAtwq6Yu4XPCllg==,
+      }
+    engines: { node: ">=12.17.0" }
+
   fast-deep-equal@3.1.3:
     resolution:
       {
@@ -1612,6 +1693,12 @@ packages:
       }
     engines: { node: ">=16.0.0" }
 
+  find-my-way-ts@0.1.6:
+    resolution:
+      {
+        integrity: sha512-a85L9ZoXtNAey3Y6Z+eBWW658kO/MwR7zIafkIUPUMf3isZG0NCs2pjW2wtjxAKuJPxMAsHUIP4ZPGv0o5gyTA==,
+      }
+
   find-up@5.0.0:
     resolution:
       {
@@ -1638,14 +1725,6 @@ packages:
         integrity: sha512-buewHzMvYL29jdeQTVILecSaZKnt/RJWjoZCF5OW60Z67/GmSLBkOFM7qh1PI3zFNtJbaZL5eQu1vLfazOwj4g==,
       }
     engines: { node: ">=12.20.0" }
-
-  fsevents@2.3.2:
-    resolution:
-      {
-        integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==,
-      }
-    engines: { node: ^8.16.0 || ^10.6.0 || >=11.0.0 }
-    os: [darwin]
 
   fsevents@2.3.3:
     resolution:
@@ -1779,6 +1858,13 @@ packages:
       }
     engines: { node: ">=0.8.19" }
 
+  ini@7.0.0:
+    resolution:
+      {
+        integrity: sha512-ifK0CgjALofS5bkrcTy4RaQ9Vx2Knf/eLeIO+NaswQEpH1UblrtTSCIvN71qQDMq0PeQ/SSPojvEJp9vvvfr+w==,
+      }
+    engines: { node: ^22.22.2 || ^24.15.0 || >=26.0.0 }
+
   is-extglob@2.1.1:
     resolution:
       {
@@ -1860,6 +1946,12 @@ packages:
     resolution:
       {
         integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==,
+      }
+
+  kubernetes-types@1.30.0:
+    resolution:
+      {
+        integrity: sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==,
       }
 
   levn@0.4.1:
@@ -2045,6 +2137,25 @@ packages:
         integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==,
       }
 
+  msgpackr-extract@3.0.4:
+    resolution:
+      {
+        integrity: sha512-4kmO/MdyUIkLIvTPr8VHLil4AtoKIoniWPIEk5+CDy0xnWC84azhSFmuJ7PxZdsYtiP5kEeQsORAVIeMgxT+Hw==,
+      }
+    hasBin: true
+
+  msgpackr@2.0.6:
+    resolution:
+      {
+        integrity: sha512-plGul/tqjt9vqWFR9zyqyLZls6gb5KTLvnsRO2B9+TZ8tNiXiVI/CR8LiDWlAX4IUeVkQ9gsmzKA6voC2QOciw==,
+      }
+
+  multipasta@0.2.8:
+    resolution:
+      {
+        integrity: sha512-ZPWuMKyv0cSO29f7hozp+k6+crZbQijV8ipMvxNxRf2SwtYGTX1ZX89Kd20VV4H9Znonx+EQn+iy1wGQsJ+b+Q==,
+      }
+
   nanoid@3.3.15:
     resolution:
       {
@@ -2073,6 +2184,13 @@ packages:
         integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==,
       }
     engines: { node: ^12.20.0 || ^14.13.1 || >=16.0.0 }
+
+  node-gyp-build-optional-packages@5.2.2:
+    resolution:
+      {
+        integrity: sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==,
+      }
+    hasBin: true
 
   obug@2.1.3:
     resolution:
@@ -2219,6 +2337,12 @@ packages:
       }
     engines: { node: ">=6" }
 
+  pure-rand@8.4.2:
+    resolution:
+      {
+        integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==,
+      }
+
   resolve-from@4.0.0:
     resolution:
       {
@@ -2356,6 +2480,13 @@ packages:
       }
     engines: { node: ">=14.0.0" }
 
+  toml@4.3.0:
+    resolution:
+      {
+        integrity: sha512-lVb8X9BsPVuH0M4BKeS91tXAmJvCjQ5UIyAbQFaxkKGyUFK2RPkhwaFSQH8vbpl1d23eu/IBH+dwVMHWaq9A5A==,
+      }
+    engines: { node: ">=20" }
+
   ts-algebra@2.0.0:
     resolution:
       {
@@ -2408,6 +2539,14 @@ packages:
       eslint: ^8.57.0 || ^9.0.0 || ^10.0.0
       typescript: ">=4.8.4 <6.1.0"
 
+  typescript@5.8.2:
+    resolution:
+      {
+        integrity: sha512-aJn6wq13/afZp/jT9QZmwEjDqqvSGp1VT5GVg+f/t6/oVyrgXM6BY1h9BRh/O5p3PlUPAe+WuiEZOmb/49RqoQ==,
+      }
+    engines: { node: ">=14.17" }
+    hasBin: true
+
   typescript@5.9.3:
     resolution:
       {
@@ -2434,6 +2573,13 @@ packages:
       {
         integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==,
       }
+
+  uuid@14.0.2:
+    resolution:
+      {
+        integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==,
+      }
+    hasBin: true
 
   vite@8.1.0:
     resolution:
@@ -3125,12 +3271,36 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  "@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4":
+    optional: true
+
+  "@msgpackr-extract/msgpackr-extract-darwin-x64@3.0.4":
+    optional: true
+
+  "@msgpackr-extract/msgpackr-extract-linux-arm64@3.0.4":
+    optional: true
+
+  "@msgpackr-extract/msgpackr-extract-linux-arm@3.0.4":
+    optional: true
+
+  "@msgpackr-extract/msgpackr-extract-linux-x64@3.0.4":
+    optional: true
+
+  "@msgpackr-extract/msgpackr-extract-win32-x64@3.0.4":
+    optional: true
+
   "@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)":
     dependencies:
       "@emnapi/core": 1.11.1
       "@emnapi/runtime": 1.11.1
       "@tybys/wasm-util": 0.10.3
     optional: true
+
+  "@opencode-ai/codemode@1.18.4":
+    dependencies:
+      acorn: 8.15.0
+      effect: 4.0.0-beta.101
+      typescript: 5.8.2
 
   "@opentelemetry/api@1.9.0": {}
 
@@ -3425,6 +3595,8 @@ snapshots:
     dependencies:
       acorn: 8.17.0
 
+  acorn@8.15.0: {}
+
   acorn@8.17.0: {}
 
   agent-base@7.1.4: {}
@@ -3507,6 +3679,19 @@ snapshots:
   ecdsa-sig-formatter@1.0.11:
     dependencies:
       safe-buffer: 5.2.1
+
+  effect@4.0.0-beta.101:
+    dependencies:
+      "@standard-schema/spec": 1.1.0
+      fast-check: 4.9.0
+      find-my-way-ts: 0.1.6
+      ini: 7.0.0
+      kubernetes-types: 1.30.0
+      msgpackr: 2.0.6
+      multipasta: 0.2.8
+      toml: 4.3.0
+      uuid: 14.0.2
+      yaml: 2.9.0
 
   es-module-lexer@2.1.0: {}
 
@@ -3619,6 +3804,10 @@ snapshots:
 
   extend@3.0.2: {}
 
+  fast-check@4.9.0:
+    dependencies:
+      pure-rand: 8.4.2
+
   fast-deep-equal@3.1.3: {}
 
   fast-json-stable-stringify@2.1.0: {}
@@ -3638,6 +3827,8 @@ snapshots:
     dependencies:
       flat-cache: 4.0.1
 
+  find-my-way-ts@0.1.6: {}
+
   find-up@5.0.0:
     dependencies:
       locate-path: 6.0.0
@@ -3653,9 +3844,6 @@ snapshots:
   formdata-polyfill@4.0.10:
     dependencies:
       fetch-blob: 3.2.0
-
-  fsevents@2.3.2:
-    optional: true
 
   fsevents@2.3.3:
     optional: true
@@ -3738,6 +3926,8 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
+  ini@7.0.0: {}
+
   is-extglob@2.1.1: {}
 
   is-glob@4.0.3:
@@ -3781,6 +3971,8 @@ snapshots:
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
+
+  kubernetes-types@1.30.0: {}
 
   levn@0.4.1:
     dependencies:
@@ -3864,6 +4056,24 @@ snapshots:
 
   ms@2.1.3: {}
 
+  msgpackr-extract@3.0.4:
+    dependencies:
+      node-gyp-build-optional-packages: 5.2.2
+    optionalDependencies:
+      "@msgpackr-extract/msgpackr-extract-darwin-arm64": 3.0.4
+      "@msgpackr-extract/msgpackr-extract-darwin-x64": 3.0.4
+      "@msgpackr-extract/msgpackr-extract-linux-arm": 3.0.4
+      "@msgpackr-extract/msgpackr-extract-linux-arm64": 3.0.4
+      "@msgpackr-extract/msgpackr-extract-linux-x64": 3.0.4
+      "@msgpackr-extract/msgpackr-extract-win32-x64": 3.0.4
+    optional: true
+
+  msgpackr@2.0.6:
+    optionalDependencies:
+      msgpackr-extract: 3.0.4
+
+  multipasta@0.2.8: {}
+
   nanoid@3.3.15: {}
 
   natural-compare@1.4.0: {}
@@ -3875,6 +4085,11 @@ snapshots:
       data-uri-to-buffer: 4.0.1
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
+
+  node-gyp-build-optional-packages@5.2.2:
+    dependencies:
+      detect-libc: 2.1.2
+    optional: true
 
   obug@2.1.3: {}
 
@@ -3958,6 +4173,8 @@ snapshots:
 
   punycode@2.3.1: {}
 
+  pure-rand@8.4.2: {}
+
   resolve-from@4.0.0: {}
 
   retry@0.12.0: {}
@@ -4024,6 +4241,8 @@ snapshots:
 
   tinyrainbow@3.1.0: {}
 
+  toml@4.3.0: {}
+
   ts-algebra@2.0.0: {}
 
   ts-api-utils@2.5.0(typescript@5.9.3):
@@ -4055,6 +4274,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  typescript@5.8.2: {}
+
   typescript@5.9.3: {}
 
   undici-types@7.18.2: {}
@@ -4064,6 +4285,8 @@ snapshots:
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
+
+  uuid@14.0.2: {}
 
   vite@8.1.0(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0):
     dependencies:

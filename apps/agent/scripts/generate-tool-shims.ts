@@ -253,12 +253,13 @@ function renderToolFile(tool: ToolSchema): string {
 function renderIndexFile(tools: ToolSchema[]): string {
   const imports = tools.map(
     (tool) =>
-      `import { register${pascalCase(tool.name)}Tool } from "./${tool.name}.js";`,
+      `import { register${pascalCase(tool.name)}Tool, ${tool.name}Tool } from "./${tool.name}.js";`,
   );
+  const catalog = tools.map((tool) => `  sourceForTool(${tool.name}Tool),`);
   const registrations = tools.map(
     (tool) => `  register${pascalCase(tool.name)}Tool(pi);`,
   );
-  return `${GENERATED_HEADER}\nimport type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n${imports.join("\n")}\n\nexport default function tetherToolsExtension(pi: ExtensionAPI): void {\n${registrations.join("\n")}\n}\n`;
+  return `${GENERATED_HEADER}\nimport type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\nimport { createCodeModeTool, sourceForTool } from "../code-mode.js";\n${imports.join("\n")}\n\nexport const tetherToolSources = [\n${catalog.join("\n")}\n];\n\nexport default function tetherToolsExtension(pi: ExtensionAPI): void {\n${registrations.join("\n")}\n  pi.registerTool(createCodeModeTool(tetherToolSources));\n}\n`;
 }
 
 async function readSchemaDocument(path: string): Promise<ToolSchemaDocument> {
