@@ -185,11 +185,10 @@ test("logs in and lands on pure chat, with the nav present", async ({
     page.locator('[role="log"][aria-label="Chat transcript"]'),
   ).toBeVisible();
 
-  // The nav's four destinations are reachable from chat (desktop sidebar by
-  // default in the Playwright viewport).
+  // The four navigation destinations are reachable from chat.
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav).toBeVisible();
-  for (const label of ["Chat", "Inbox", "Browse", "Settings"]) {
+  for (const label of ["Chat", "Health", "Browse", "Settings"]) {
     await expect(
       nav.getByRole("link", { name: new RegExp(`^${label}`) }),
     ).toBeVisible();

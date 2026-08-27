@@ -33,7 +33,6 @@ import type { BucketView } from "./panels/bucket";
 import { BrowsePage, type BrowseView } from "./pages/browse-page";
 import { ChatPage } from "./pages/chat-page";
 import { HealthPage } from "./pages/health-page";
-import { InboxPage } from "./pages/inbox-page";
 import { NotFoundPage } from "./pages/not-found-page";
 import { SettingsPage } from "./pages/settings-page";
 import { Shell } from "./shell";
@@ -134,8 +133,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
           }
           return;
         }
-        // "notify" frames (a fired trigger) invalidate the notifications
-        // query directly — the Inbox's fired-reminders section reads it.
+        // "notify" frames keep the fired-notification cache current.
         void queryClient.invalidateQueries({
           queryKey: queryKeys.notifications,
         });
@@ -171,7 +169,6 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={ChatPage} path="/chat" />
         <Route component={ChatPage} path="/chat/:conversationId" />
         <Route component={HealthPage} path="/health" />
-        <Route component={InboxPage} path="/inbox" />
         <Route component={BrowseIndexPage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
         <Route component={BrowseDreamingPage} path="/browse/dreaming" />

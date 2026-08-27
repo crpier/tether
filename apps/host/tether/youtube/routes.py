@@ -186,7 +186,7 @@ class YouTubeSyncStatusRead(BaseModel):
 
 
 class TranscriptDecisionRead(BaseModel):
-    """A transcript failure awaiting the human's decision in Inbox."""
+    """A transcript failure awaiting the human's decision."""
 
     video_id: str
     title: str
@@ -207,7 +207,7 @@ class TranscriptDecisionRead(BaseModel):
 
 
 class TranscriptDecisionListResponse(RootModel[list[TranscriptDecisionRead]]):
-    """The Inbox's pending transcript decisions."""
+    """Pending transcript decisions."""
 
 
 class TranscriptDecisionOutcomeRead(BaseModel):

@@ -158,9 +158,7 @@ const ALL_BUCKET_VIEWS: BucketView[] = ["active", "history", "triage"];
 
 export function BucketPanel(props: {
   api: BucketHost;
-  // Hides sub-views from the toggle and its initial selection (#250): the
-  // Inbox page only ever wants Triage (the review-queue obligation), and
-  // Browse only wants Active/History (look-things-up, not adjudication).
+  // Browse hides Triage and exposes only Active and History (#250).
   hiddenViews?: BucketView[];
   initialView?: BucketView;
 }) {

@@ -8,9 +8,9 @@ dispatched as an `asyncio` task gated behind a concurrency semaphore
 completes, a recurring one re-arms) and a failed one is backed off via
 `next_attempt_at` for a later retry.
 
-Dispatch itself is a `TriggerDispatcher`: a fixed-message trigger delivers its
-payload through Inbox notification channels, while an agent-prompt trigger runs
-as a normal turn in the default Conversation. The resulting assistant message
+Dispatch itself is a `TriggerDispatcher`: a fixed-message trigger stores its
+payload as a durable notification, while an agent-prompt trigger runs as a
+normal turn in the default Conversation. The resulting assistant message
 also retains configured Web Push delivery.
 
 The loop takes its time from a `Clock`, so tests drive it with a controlled

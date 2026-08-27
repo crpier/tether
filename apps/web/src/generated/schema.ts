@@ -4206,7 +4206,7 @@ export interface components {
     TodoStatus: "active" | "completed" | "abandoned";
     /**
      * TranscriptDecisionListResponse
-     * @description The Inbox's pending transcript decisions.
+     * @description Pending transcript decisions.
      */
     TranscriptDecisionListResponse: components["schemas"]["TranscriptDecisionRead"][];
     /**
@@ -4220,7 +4220,7 @@ export interface components {
     };
     /**
      * TranscriptDecisionRead
-     * @description A transcript failure awaiting the human's decision in Inbox.
+     * @description A transcript failure awaiting the human's decision.
      */
     TranscriptDecisionRead: {
       /** Attempts */
