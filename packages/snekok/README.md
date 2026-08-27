@@ -50,5 +50,5 @@ Pydantic rejects an empty value. Static type checkers also reject an ordinary
 from crossing the typed boundary.
 
 See [`docs/result.md`](docs/result.md) for the Result contract. Pinned design references
-for Better Auth and `dry-python/returns` live in
+for `dmmulroy/better-result` and `dry-python/returns` live in
 [`docs/research/`](docs/research/).

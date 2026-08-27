@@ -8,21 +8,21 @@ a design reference, not snekok's public contract; the contract lives in
 
 | Reference | Pinned source | Best used for |
 | --- | --- | --- |
-| [Better Auth](better-auth.md) | v1.6.27, `be47e941` | Boundary ergonomics, structured errors, inference, and selective throwing |
+| [`dmmulroy/better-result`](better-result.md) | 3.0.1, `75d0b106` | Result algebra, typed errors, generator composition, async, and transport tradeoffs |
 | [`dry-python/returns`](returns.md) | 0.29.0, `cf5e2548` | Result algebra, typing, exception capture, pattern matching, and complexity tradeoffs |
 
 ## Quick comparison
 
-| Concern | Better Auth | `returns` | Current snekok direction |
+| Concern | `better-result` | `returns` | Current snekok direction |
 | --- | --- | --- | --- |
-| Core shape | Client `{data, error}`; small CLI union | `Success[T]` / `Failure[E]` container | `Ok[T] | Err[E]` |
-| Server failures | Usually throws `APIError` | Explicit `Failure`; extraction may throw | Expected failures are values; programmer faults remain exceptions |
-| Composition | Hooks, middleware, plugins | `map`, `bind`, `alt`, `lash`, pipelines | Add only operations demanded by real refactors |
-| Exception capture | Boundary-dependent; client may opt into throwing | Explicit `safe` / `future_safe` adapters | Never catch implicitly in `map` or composition |
-| Async | Promise-shaped client boundary | Separate `FutureResult`/`IOResult` stack | Prefer async functions returning ordinary `Result` initially |
-| Typing | Deep TypeScript schema/route inference | Covariance, HKT emulation, mypy plugin | Covariant, Pyright-native types without plugins |
-| Validation | No general accumulating Result | First failure; no core accumulation type | Keep fail-fast semantics; separate validation if needed |
-| Pattern matching | Object/null discrimination | Structural matching supported | Structural matching is the initial consumption API |
+| Core shape | `Ok<T, E> | Err<T, E>` concrete classes | `Success[T]` / `Failure[E]` container | `Ok[T] | Err[E]` |
+| Expected failures | Explicit `Err`; extraction may throw | Explicit `Failure`; extraction may throw | Expected failures are values; programmer faults remain exceptions |
+| Composition | `map`, `mapError`, `andThen`, recovery, generator `yield*` | `map`, `bind`, `alt`, `lash`, pipelines | Add only operations demanded by real refactors |
+| Exception capture | Explicit adapters; callback defects become `Panic` | Explicit `safe` / `future_safe` adapters | Never catch implicitly in `map` or composition |
+| Async | Ordinary `Promise<Result>` plus helpers | Separate `FutureResult`/`IOResult` stack | Prefer async functions returning ordinary `Result` initially |
+| Typing | Conditional types and overloads; no plugin | Covariance, HKT emulation, mypy plugin | Covariant, Pyright-native types without plugins |
+| Validation | First error or partition; no accumulation type | First failure; no core accumulation type | Keep fail-fast semantics; separate validation if needed |
+| Pattern matching | Discriminant, `match`, and tagged errors | Structural matching supported | Structural matching is the initial consumption API |
 
 ## Using these notes
 
