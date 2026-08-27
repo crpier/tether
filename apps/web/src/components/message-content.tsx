@@ -29,7 +29,8 @@ import {
 // line breaks (chat text rarely uses the double-newline paragraph convention).
 const marked = new Marked({ gfm: true, breaks: true });
 
-const proseClass = "text-sm break-words leading-relaxed";
+const proseClass =
+  "w-full min-w-0 max-w-full text-sm break-words leading-relaxed";
 const paragraphClass = "my-1 first:mt-0 last:mb-0";
 const listClass = "my-1 pl-5";
 const listItemClass = "my-0.5";
