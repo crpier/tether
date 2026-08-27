@@ -30,8 +30,6 @@ if TYPE_CHECKING:
     from tether.notifications import NotificationService
     from tether.panels import PanelService
     from tether.product_observations import ProductObservationService
-    from tether.proposal_autonomy import ProposalAutonomyService
-    from tether.proposals import ProposalService
     from tether.provider_auth import ProviderAuthService
     from tether.push import PushService
     from tether.recall import RecallService
@@ -76,8 +74,6 @@ class AppRuntime:
     notification_service: NotificationService
     panel_service: PanelService
     product_observation_service: ProductObservationService
-    proposal_autonomy_service: ProposalAutonomyService
-    proposal_service: ProposalService
     provider_auth_service: ProviderAuthService
     public_origin: str
     push_service: PushService

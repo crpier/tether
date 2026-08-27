@@ -16,7 +16,6 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.product_observation_tools import (
     internal_product_observation_tool_routes,
 )
-from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.search_tools import internal_search_tool_routes
 from tether.todo_tools import internal_todo_tool_routes
@@ -91,8 +90,6 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "summarize_health_connect",
             "record_product_observation",
             "list_product_observations",
-            "propose",
-            "list_proposals",
         },
     )
     search_schema = cast("dict[str, Any]", tools["search"]["schema"])
@@ -196,7 +193,6 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_kosync_tool_routes(),
             internal_health_connect_tool_routes(),
             internal_product_observation_tool_routes(),
-            internal_proposal_tool_routes(),
         )
         for route in routes
     }

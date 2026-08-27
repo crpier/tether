@@ -54,7 +54,6 @@ from tether.panel_tools import internal_panel_tool_routes
 from tether.product_observation_tools import (
     internal_product_observation_tool_routes,
 )
-from tether.proposal_tools import internal_proposal_tool_routes
 from tether.recall_tools import internal_recall_tool_routes
 from tether.request_logging import ContextLoggerMiddleware
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, FastEmbedder
@@ -210,7 +209,6 @@ def create_app(
             *internal_kosync_tool_routes(),
             *internal_health_connect_tool_routes(),
             *internal_product_observation_tool_routes(),
-            *internal_proposal_tool_routes(),
             *(
                 kosync_protocol_routes()
                 if config.kosync_enabled
@@ -306,7 +304,6 @@ def _local_app_config_from_settings(settings: HostSettings) -> AppConfig:
         extra_extension_paths=(
             Path(__file__).resolve().parents[2] / "agent/src/local-faux.ts",
         ),
-        gmail_purge_enabled=False,
         gmail_sync_enabled=False,
         gmail_transport=None,
         dreaming_enabled=False,
@@ -420,9 +417,6 @@ def _app_config_from_settings(settings: HostSettings) -> AppConfig:
         gmail_sync_enabled=settings.gmail_sync_enabled,
         gmail_sync_interval_seconds=settings.gmail_sync_interval_seconds,
         gmail_triage_batch_size=settings.gmail_triage_batch_size,
-        gmail_purge_enabled=settings.gmail_purge_enabled,
-        gmail_purge_interval_seconds=settings.gmail_purge_interval_seconds,
-        gmail_purge_chunk_size=settings.gmail_purge_chunk_size,
         gmail_auth_backend=GoogleGmailAuthBackend(_gmail_oauth_config(settings)),
         gmail_oauth_config=_gmail_oauth_config(settings),
         dreaming_enabled=settings.dreaming_enabled,

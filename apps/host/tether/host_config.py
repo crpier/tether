@@ -12,7 +12,6 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from tether.action_registry import ActionSpec
 from tether.gmail import GmailAuthBackend, GmailTransport
 from tether.google_oauth import OAuthConfig
 from tether.model_selection import AgentModelConfig
@@ -97,15 +96,11 @@ class AppConfig:
     gmail_sync_enabled: bool = False
     gmail_sync_interval_seconds: float = 15 * 60
     gmail_triage_batch_size: int = 10
-    gmail_purge_enabled: bool = False
-    gmail_purge_interval_seconds: float = 60 * 60
-    gmail_purge_chunk_size: int = 10
     health_episode_sweep_seconds: float = 60.0
     dreaming_enabled: bool = False
     dream_maintenance_interval_seconds: float = 24 * 60 * 60
     pi_idle_seconds: float = 30 * 60
     pi_session_root: str | Path | None = None
-    proposal_action_specs: Sequence[ActionSpec] | None = None
     public_origin: str = ""
     scheduler_concurrency: int = 4
     scheduler_tick_seconds: float = 30.0
@@ -365,18 +360,6 @@ class HostSettings(BaseSettings):
     gmail_triage_batch_size: int = 10
     """How many messages are triaged per ephemeral agent prompt run. Bounds
     both the prompt size and the blast radius of one malformed model reply."""
-    gmail_purge_enabled: bool = False
-    """Whether the background Gmail backlog-purge sweep runs. Off by default and
-    a no-op unless a Gmail transport is also configured. Opt-in on top of the
-    read-only ingestion gate because the sweep proposes consequential mailbox
-    writes (archive/label/trash); those still require human approval or a
-    standing autonomy grant before any write happens."""
-    gmail_purge_interval_seconds: float = 60 * 60
-    """Seconds between backlog-purge sweeps. Backlog changes slowly, so an
-    hourly cadence is ample."""
-    gmail_purge_chunk_size: int = 10
-    """How many backlog messages one sweep chunk triages and one proposal
-    bundles. Bounds both the prompt size and how large a single proposal gets."""
     dreaming_enabled: bool = False
     """Whether Dreaming orchestration is allowed to queue and complete runs."""
     dream_maintenance_interval_seconds: float = 24 * 60 * 60

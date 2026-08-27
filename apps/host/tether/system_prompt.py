@@ -155,7 +155,7 @@ def system_prompt_for(kind: RunKind) -> str:
     match kind:
         case "conversation":
             return CONVERSATION_SYSTEM_PROMPT
-        case "scheduled" | "recall" | "gmail" | "gmail_purge" | "titling":
+        case "scheduled" | "recall" | "gmail" | "titling":
             return TASK_SYSTEM_PROMPT
         case "dreaming":
             return DREAMING_SYSTEM_PROMPT

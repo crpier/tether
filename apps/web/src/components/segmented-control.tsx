@@ -11,8 +11,8 @@ export function segmentedPanelId(controlId: string, value: string): string {
   return `${controlId}-${value}-panel`;
 }
 
-// The repeated view-toggle idiom (Proposals queue/history/grants, Memories
-// review/corpus, Bucket active/history/triage, ...): a tabs pattern where
+// The repeated view-toggle idiom (Browse sections, Bucket
+// active/history/triage, ...): a tabs pattern where
 // exactly one option is selected at a time.
 export function SegmentedControl<Value extends string>(props: {
   "aria-label": string;

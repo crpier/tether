@@ -20,9 +20,9 @@ A Todo is *waiting* while it has an unmet text condition **or** an unfired linke
 
 Readiness feeds a pure composition seam — a `TodoReadiness` in, a system-prompt block out (`render_todo_digest`) — appended to the conversation persona at spawn (`compose_conversation_prompt`). Ready Todos are listed (capped, newest first) under an instruction to surface them proactively; waiting Todos are listed with their condition and/or deadline under an instruction to raise one **only when the conversation makes it relevant** (the user mentions the person, place, or event it waits on), never as an unprompted list. This is ADR 0017 §f's digest idiom, now shipped for the first time. The persona stays a constant prefix so provider prompt caches stay warm; the digest, which changes only as todos are added or settled, is appended after it. An empty digest yields the bare persona, so a user with no todos carries no extra prompt weight. The seam is pure and tested at the block boundary (todos in → text out), not by inspecting live prompts.
 
-## e. Gate integration: the gate writes Todos, un-gated
+## e. Gate integration: the gate writes Todos directly
 
-`_capture_memory` stops writing the `action: pending` facet. When a verdict is actionable, the gate creates a Todo (its action the email subject) linked back to the captured Memory and, when a deadline once-trigger was created, to that trigger. The Todo is written directly (un-gated), at parity with the gate's shipped Memory/trigger behavior (ADR 0014's gate-follows-authorship: the gate already writes tethered Memories and triggers un-gated). Proposal-gating of gate-created Todos is an earned-autonomy question, deferred. The ordering invariant is preserved: the Memory and its idempotency row are recorded before the trigger or Todo is attempted, so a failure past that point never re-captures a second Memory on retry — the trigger/Todo simply do not get a second attempt, and the Memory is never duplicated.
+`_capture_memory` stops writing the `action: pending` facet. When a verdict is actionable, the gate creates a Todo (its action the email subject) linked back to the captured Memory and, when a deadline once-trigger was created, to that trigger. The ordering invariant is preserved: the Memory and its idempotency row are recorded before the trigger or Todo is attempted, so a failure past that point never re-captures a second Memory on retry — the trigger/Todo simply do not get a second attempt, and the Memory is never duplicated.
 
 ## f. Graduation is behavioral, no schema
 
@@ -36,7 +36,7 @@ A boot backfill lifts every Memory carrying `facets.action == "pending"` (the le
 
 Tables: `todo` and the `todo_memories` link table.
 
-In-chat agent tools, ungated per ADR 0014 (human-initiated): `create_todo` (with optional free-text condition), `set_todo_status`, `link_todo_trigger`, `link_todo_memory`, `list_todos` (the ready/waiting split). Chat is the sole authoring surface for structure.
+In-chat agent tools: `create_todo` (with optional free-text condition), `set_todo_status`, `link_todo_trigger`, `link_todo_memory`, `list_todos` (the ready/waiting split). Chat is the sole authoring surface for structure.
 
 Panel: `apps/web/src/panels/todos.tsx`, following ADR 0015's panel pattern — ready/waiting badges and click-through status transitions (complete / abandon) only, no authoring. REST routes (`GET /api/todos` for the split, `POST /api/todos/{id}/status`) and host module layout (`apps/host/tether/todo*.py`) follow the existing Bucket house pattern.
 
@@ -45,7 +45,6 @@ Panel: `apps/web/src/panels/todos.tsx`, following ADR 0015's panel pattern — r
 - **A stored `waiting` status** — rejected: it is the exact stale-state failure computed waiting exists to prevent; readiness is cheap to derive from the condition column plus notification history, with no new write path.
 - **Reusing the `action: pending` facet convention** — rejected: a facet has no lifecycle, no waiting semantics, no proactive surfacing, and only covers email; the whole point of the vertical is to give the one-off actionable a real home. The facets are migrated once and the convention retired.
 - **A `graduated_to` column / seed FK into Project** — rejected: graduation is assisted in chat but schema-free (§f); the observed workflow never needs the coupling mechanized, and a column would blur the disjoint-constructs boundary.
-- **Proposal-gating gate-created Todos** — deferred, not rejected: the gate writes Todos un-gated at parity with its shipped Memory/trigger writes (ADR 0014); earned-autonomy gating is a later question that owns that class of problem.
 - **A generic vertical↔vertical edge table for Todo↔trigger / Todo↔Memory** — rejected per ADR 0016: neither is a genuine cross-vertical edge; the trigger link is a plain spine→vertical reference (like `Notification.trigger_id`) and Memory links live in a bespoke `todo_memories` table.
 - **Multiple triggers per Todo** — rejected as premature: a Todo is a single action with at most one deadline; a single nullable `trigger_id` column matches the construct, and a link table is additive later if a real need appears.
 
@@ -53,5 +52,5 @@ Panel: `apps/web/src/panels/todos.tsx`, following ADR 0015's panel pattern — r
 
 - Waiting is a read-time computation over the condition column plus `Notification` history; that query must be written once, correctly, and reused rather than duplicated per call site (the readiness seam owns it).
 - The standing digest ships the ADR 0017 §f idiom for the first time; it adds a small, bounded per-turn token cost only when the user has todos, and its proactivity beyond "surface ready, gate waiting on relevance" stays in the map's fog, deliberately not designed now.
-- Todo→Project graduation and the earned-autonomy gating of gate-created Todos both stay open; the vertical must not grow ad hoc versions of either in the meantime.
+- Todo→Project graduation stays open; the vertical must not grow an ad hoc version in the meantime.
 - The Gmail gate now depends on the Todo service; the `action: pending` facet convention is retired after the one-time migration, leaving a single convention (the Todo row) for actionable email.

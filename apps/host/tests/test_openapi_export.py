@@ -28,4 +28,8 @@ def write_openapi_document_emits_the_public_api_surface() -> None:
     assert_in("/api/youtube/status", document["paths"])
     assert_in("HTTPValidationError", document["components"]["schemas"])
     assert_true("/api/gmail-auth/callback" not in document["paths"])
+    assert_true(all(not path.startswith("/api/grants") for path in document["paths"]))
+    assert_true(
+        all(not path.startswith("/api/proposals") for path in document["paths"])
+    )
     assert_true(all(path.startswith("/api/") for path in document["paths"]))

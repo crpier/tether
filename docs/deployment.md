@@ -244,7 +244,7 @@ ssh tether@<box> 'cd /srv/tether && just gmail-auth'
 Background triage is opt-in and independent:
 ```sh
 TETHER_GMAIL_SYNC_ENABLED=false  # leave off for tools-only access
-# set true for background proposal flow once the token is in place
+# set true to derive Todos and deadline reminders from incoming mail
 ```
 
 Fill in `restic.env` — see [Backups](#backups) below.

@@ -104,14 +104,13 @@ function renderRequiredExpression(schema: JsonSchema): string {
     return "Type.Record(Type.String(), Type.String())";
   }
   if (schema.type === "object" && schema.additionalProperties === true) {
-    // A Pydantic `dict[str, object]` field (e.g. a proposal action's opaque
-    // `params`, typed against the action kind's model on the host): an
-    // arbitrary string-to-JSON map, so the value type is left `Type.Unknown`.
+    // A Pydantic `dict[str, object]` field is an arbitrary string-to-JSON map,
+    // so the value type is left `Type.Unknown`.
     return "Type.Record(Type.String(), Type.Unknown())";
   }
   if (schema.type === "object" && schema.properties !== undefined) {
-    // A nested Pydantic model (e.g. a proposal's `actions` items): render its
-    // own fields as a nested `Type.Object`, each optional unless required.
+    // Render a nested Pydantic model's fields as a nested `Type.Object`, each
+    // optional unless required.
     return renderObject(schema);
   }
   if (schema.type === "array" && schema.items !== undefined) {

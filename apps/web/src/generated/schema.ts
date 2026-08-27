@@ -748,70 +748,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/grants": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * List Grants
-     * @description List live (unrevoked) grants, newest first.
-     */
-    get: operations["list_grants_api_grants_get"];
-    put?: never;
-    /**
-     * Create Grant
-     * @description Grant autonomy for a `(kind, scope)` category.
-     */
-    post: operations["create_grant_api_grants_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/grants/suggestions": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Grant Suggestions
-     * @description Read-time grant suggestions for ungranted categories with history.
-     */
-    get: operations["grant_suggestions_api_grants_suggestions_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/grants/{grant_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /**
-     * Revoke Grant
-     * @description Revoke a grant convergently; an absent/already-revoked id is a no-op.
-     */
-    delete: operations["revoke_grant_api_grants__grant_id__delete"];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/memory-topics": {
     parameters: {
       query?: never;
@@ -1022,106 +958,6 @@ export interface paths {
      * @description Resolve one Product observation at its observed version.
      */
     post: operations["resolve_product_observation_api_product_observations__observation_id__resolve_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/proposals": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * List Proposals
-     * @description List proposals newest first, optionally filtered by state.
-     */
-    get: operations["list_proposals_api_proposals_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/proposals/counts": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Proposal Counts
-     * @description Count proposals for the queue and history tab labels.
-     */
-    get: operations["proposal_counts_api_proposals_counts_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/proposals/{proposal_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get Proposal
-     * @description Fetch one proposal bundled with its actions.
-     */
-    get: operations["get_proposal_api_proposals__proposal_id__get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/proposals/{proposal_id}/approve": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Approve Proposal
-     * @description Approve a pending proposal, then execute its approved actions.
-     */
-    post: operations["approve_proposal_api_proposals__proposal_id__approve_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/proposals/{proposal_id}/reject": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Reject Proposal
-     * @description Reject a pending proposal (terminal), returning any revocable grants.
-     */
-    post: operations["reject_proposal_api_proposals__proposal_id__reject_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1756,10 +1592,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    /** @enum {string} */
-    ActionDisposition: "approved" | "deselected";
-    /** @enum {string} */
-    ActionOutcome: "succeeded" | "failed" | "skipped";
     /**
      * AddBucketItemRequest
      * @description Body for Adding a Bucket item under one item type.
@@ -1836,22 +1668,6 @@ export interface components {
       response_ms: number;
       /** Selected Index */
       selected_index?: number | null;
-    };
-    /**
-     * ApproveProposalRequest
-     * @description Body for approving a proposal at an observed version.
-     *
-     *     `deselected_action_ids` unticks individual actions before approval; the
-     *     rest are approved and executed by the host.
-     */
-    ApproveProposalRequest: {
-      /**
-       * Deselected Action Ids
-       * @default []
-       */
-      deselected_action_ids: string[];
-      /** Version */
-      version: number;
     };
     /**
      * ArtifactEventRead
@@ -2223,16 +2039,6 @@ export interface components {
       display_name?: string | null;
       /** Scope Brief */
       scope_brief?: string | null;
-    };
-    /**
-     * CreateGrantRequest
-     * @description Body for granting autonomy over a `(kind, scope)` category.
-     */
-    CreateGrantRequest: {
-      /** Kind */
-      kind: string;
-      /** Scope */
-      scope?: string | null;
     };
     /**
      * CreatePanelRequest
@@ -2648,46 +2454,6 @@ export interface components {
        * @enum {string}
        */
       outcome: "done" | "already" | "gone";
-    };
-    /**
-     * GrantRead
-     * @description HTTP representation of a live autonomy grant.
-     */
-    GrantRead: {
-      /**
-       * Granted At
-       * Format: date-time
-       */
-      granted_at: string;
-      /**
-       * Id
-       * Format: uuid
-       */
-      id: string;
-      /** Kind */
-      kind: string;
-      /** Scope */
-      scope: string | null;
-    };
-    /**
-     * GrantSuggestionRead
-     * @description HTTP representation of a read-time calibration suggestion.
-     */
-    GrantSuggestionRead: {
-      /** Approved */
-      approved: number;
-      /** Edited */
-      edited: number;
-      /** Kind */
-      kind: string;
-      /** Last Rejection */
-      last_rejection: string | null;
-      /** Rejected */
-      rejected: number;
-      /** Scope */
-      scope: string | null;
-      /** Seen */
-      seen: number;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -3351,86 +3117,6 @@ export interface components {
     /** @enum {string} */
     ProductObservationStatus: "open" | "resolved";
     /**
-     * ProposalActionRead
-     * @description HTTP representation of one action within a proposal.
-     */
-    ProposalActionRead: {
-      /** Display */
-      display: string | null;
-      disposition: components["schemas"]["ActionDisposition"];
-      /** Executed At */
-      executed_at: string | null;
-      /**
-       * Id
-       * Format: uuid
-       */
-      id: string;
-      /** Kind */
-      kind: string;
-      outcome: components["schemas"]["ActionOutcome"] | null;
-      /** Outcome Detail */
-      outcome_detail: string | null;
-      /** Params */
-      params: {
-        [key: string]: unknown;
-      };
-      /** Scope */
-      scope: string | null;
-      /** Seq */
-      seq: number;
-    };
-    /**
-     * ProposalCountsRead
-     * @description Queue and history totals for the Proposals tab strip.
-     */
-    ProposalCountsRead: {
-      /** Decided */
-      decided: number;
-      /** Pending */
-      pending: number;
-    };
-    /**
-     * ProposalRead
-     * @description HTTP representation of a proposal bundled with its actions.
-     */
-    ProposalRead: {
-      /** Actions */
-      actions: components["schemas"]["ProposalActionRead"][];
-      /** Consumer */
-      consumer: string;
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string;
-      /** Decided At */
-      decided_at: string | null;
-      /**
-       * Id
-       * Format: uuid
-       */
-      id: string;
-      /** Producing Run Id */
-      producing_run_id: string | null;
-      /** Rejection Reason */
-      rejection_reason: string | null;
-      state: components["schemas"]["ProposalState"];
-      /** Summary */
-      summary: string;
-      /** Title */
-      title: string;
-      /**
-       * Updated At
-       * Format: date-time
-       */
-      updated_at: string;
-      /** Version */
-      version: number;
-    };
-    /** @enum {string} */
-    ProposalState:
-      "pending" | "approved" | "executing" | "executed" | "failed" | "rejected";
-    /**
      * ProposeEssayGradeRequest
      * @description Body for requesting a model-proposed essay grade to confirm.
      *
@@ -3601,25 +3287,6 @@ export interface components {
        * Format: uuid7
        */
       message_id: string;
-    };
-    /**
-     * RejectProposalRequest
-     * @description Body for rejecting a proposal at an observed version.
-     */
-    RejectProposalRequest: {
-      /** Reason */
-      reason?: string | null;
-      /** Version */
-      version: number;
-    };
-    /**
-     * RejectionRead
-     * @description A rejected proposal plus the grants a human may now want to revoke.
-     */
-    RejectionRead: {
-      proposal: components["schemas"]["ProposalRead"];
-      /** Revocable Grant Ids */
-      revocable_grant_ids: string[];
     };
     /** @enum {string} */
     ReplyMode: "text" | "spoken";
@@ -5566,108 +5233,6 @@ export interface operations {
       };
     };
   };
-  list_grants_api_grants_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["GrantRead"][];
-        };
-      };
-    };
-  };
-  create_grant_api_grants_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["CreateGrantRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["GrantRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  grant_suggestions_api_grants_suggestions_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["GrantSuggestionRead"][];
-        };
-      };
-    };
-  };
-  revoke_grant_api_grants__grant_id__delete: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        grant_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
   search_memory_topics_api_memory_topics_get: {
     parameters: {
       query?: {
@@ -6036,147 +5601,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProductObservationRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  list_proposals_api_proposals_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ProposalRead"][];
-        };
-      };
-    };
-  };
-  proposal_counts_api_proposals_counts_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ProposalCountsRead"];
-        };
-      };
-    };
-  };
-  get_proposal_api_proposals__proposal_id__get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        proposal_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ProposalRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  approve_proposal_api_proposals__proposal_id__approve_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        proposal_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ApproveProposalRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ProposalRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  reject_proposal_api_proposals__proposal_id__reject_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        proposal_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["RejectProposalRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["RejectionRead"];
         };
       };
       /** @description Validation Error */

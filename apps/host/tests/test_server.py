@@ -281,7 +281,6 @@ def local_dependency_profile_isolates_state_and_external_boundaries() -> None:
             default_model="production",
             dependency_profile="local",
             ebook_statistics_db_path=str(root / "production-ebooks.sqlite3"),
-            gmail_purge_enabled=True,
             gmail_sync_enabled=True,
             gmail_token_path=gmail_token,
             kb_root=root / "production-kb",
@@ -331,7 +330,6 @@ def local_dependency_profile_isolates_state_and_external_boundaries() -> None:
     assert_false(config.transcript_sync_enabled)
     assert_eq(config.gmail_transport, None)
     assert_false(config.gmail_sync_enabled)
-    assert_false(config.gmail_purge_enabled)
     assert_eq(config.readwise_api_key, "")
     assert_false(config.readwise_sync_enabled)
     assert_false(config.readwise_reader_sync_enabled)

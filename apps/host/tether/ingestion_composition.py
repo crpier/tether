@@ -21,7 +21,6 @@ from tether.gmail import (
     GmailSyncService,
     GoogleGmailAuthService,
 )
-from tether.gmail_purge import GmailPurgeSweepService
 from tether.host_config import AppConfig
 from tether.host_resources import HostBootstrap, ephemeral_pi_config
 from tether.ingestion_lifecycle import (
@@ -30,7 +29,6 @@ from tether.ingestion_lifecycle import (
     IngestionLifecycle,
 )
 from tether.model_selection import AgentModelCatalog
-from tether.proposals import ProposalService
 from tether.reader import ReaderClient, ReaderSyncService
 from tether.readwise import ReadwiseClient, ReadwiseSyncService
 from tether.readwise_http import (
@@ -455,61 +453,6 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
     )
 
 
-async def compose_gmail_purge(  # noqa: PLR0913 - composition requires each dependency
-    *,
-    bootstrap: HostBootstrap,
-    config: AppConfig,
-    database: Database,
-    ingestion_lifecycle: IngestionLifecycle,
-    kb_root: Path,
-    logger: Logger,
-    model_catalog: AgentModelCatalog,
-    proposal_service: ProposalService,
-) -> None:
-    """Compose the optional Gmail backlog-purge worker."""
-    if not config.gmail_purge_enabled or config.gmail_transport is None:
-        _ = ingestion_lifecycle.activate("gmail-purge")
-        return
-    triage_runner = EphemeralPiPromptRunner(
-        ephemeral_pi_config(
-            bootstrap,
-            config=config,
-            kb_root=kb_root,
-            run_kind="gmail_purge",
-            model=model_catalog.default_config,
-        )
-    )
-    sweep = GmailPurgeSweepService(
-        database=database,
-        client=GmailClient(transport=config.gmail_transport),
-        proposal_service=proposal_service,
-        triage_runner=triage_runner,
-        chunk_size=config.gmail_purge_chunk_size,
-    )
-
-    async def _boot_gmail_purge() -> IngestionBootOutcome:
-        report = await sweep.sweep(logger=logger)
-        if isinstance(report, Err):
-            logger.warning(
-                "Gmail purge boot sweep failed",
-                failure=type(report.error).__name__,
-                operation=report.error.operation,
-            )
-            if isinstance(report.error, GmailAuthenticationFailure):
-                return IngestionBootOutcome.STOP
-        return IngestionBootOutcome.REPEAT
-
-    async def _repeat_gmail_purge() -> None:
-        await sweep.sync_forever(
-            interval_seconds=config.gmail_purge_interval_seconds, logger=logger
-        )
-
-    _ = ingestion_lifecycle.activate(
-        "gmail-purge",
-        CallbackIngestionWorker(_boot_gmail_purge, _repeat_gmail_purge),
-    )
-
-
 async def compose_ebook_stats(
     *,
     config: AppConfig,
@@ -554,7 +497,6 @@ class IngestionDependencies:
     kb_root: Path
     logger: Logger
     model_catalog: AgentModelCatalog
-    proposal_service: ProposalService
     todo_service: TodoService
     tracer: Tracer
     trigger_service: TriggerService
@@ -604,16 +546,6 @@ async def compose_ingestion(
         todo_service=dependencies.todo_service,
         gmail_client=dependencies.gmail_client,
         gmail_auth_service=dependencies.gmail_auth_service,
-    )
-    await compose_gmail_purge(
-        bootstrap=dependencies.bootstrap,
-        config=dependencies.config,
-        database=dependencies.database,
-        ingestion_lifecycle=dependencies.ingestion_lifecycle,
-        kb_root=dependencies.kb_root,
-        logger=dependencies.logger,
-        model_catalog=dependencies.model_catalog,
-        proposal_service=dependencies.proposal_service,
     )
     await compose_ebook_stats(
         config=dependencies.config,

@@ -36,9 +36,9 @@ GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 """Read-only access to a user's Gmail messages and labels."""
 
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
-"""Read/write access to labels and message state (archive, label, trash) — the
-scope the backlog-purge write path needs. It does not subsume message reads for
-listing purposes cleanly, so the auth config requests it alongside
+"""Read/write access to labels and message state for direct agent tools. It
+does not subsume message reads for listing purposes cleanly, so the auth config
+requests it alongside
 `GMAIL_READONLY_SCOPE`; a token minted before this scope was added fails a write
 with a `403` until the user re-runs `just gmail-auth` (see `docs/development.md`)."""
 

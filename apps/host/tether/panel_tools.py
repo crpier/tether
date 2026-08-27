@@ -7,12 +7,11 @@ params-to-envelope validation, and rule-driven domain-error translation
 shared with the REST routes; this module only names each tool's params model
 and mounts it.
 
-The agent can assemble a panel from the facet vocabulary it already invented
-(`create_panel`, informed by `facet_overview`), see what exists
-(`list_panels`), adjust one (`update_panel`), and scrap one (`delete_panel`) —
-Proposal-lite, like facet curation: presentation-only state the human can
-always delete. Executing a panel is left to the web surface; the agent
-searches the Commons directly instead of reading a panel back.
+The agent can assemble a panel with `create_panel`, see what exists with
+`list_panels`, adjust one with `update_panel`, and remove one with
+`delete_panel`. Panels are presentation-only state that the human can always
+delete. Executing a panel is left to the web surface; the agent searches the
+Commons directly instead of reading a panel back.
 """
 
 from __future__ import annotations

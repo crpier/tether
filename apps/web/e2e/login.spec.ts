@@ -157,61 +157,14 @@ test("unknown routes show not found without redirecting", async ({
   await expect(page.locator("#chat-title")).toBeHidden();
 });
 
-test("direct queue proposals route loads the queue tab", async ({
-  page,
-  login,
-}) => {
+test("the removed proposals route shows not found", async ({ page, login }) => {
   await login();
-  await page.goto("/proposals/queue", { waitUntil: "domcontentloaded" });
+  await page.goto("/proposals", { waitUntil: "domcontentloaded" });
 
-  await expect(
-    page.getByRole("heading", { exact: true, name: "Proposals" }),
-  ).toBeVisible();
-  await expect(page.getByRole("tab", { name: /Queue/u })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
   await expect(
     page.getByRole("heading", { level: 1, name: "Page not found" }),
-  ).toBeHidden();
-});
-
-test("direct decided proposals route loads the decided tab", async ({
-  page,
-  login,
-}) => {
-  await login();
-  await page.goto("/proposals/decided", { waitUntil: "domcontentloaded" });
-
-  await expect(
-    page.getByRole("heading", { exact: true, name: "Proposals" }),
   ).toBeVisible();
-  await expect(page.getByRole("tab", { name: /Decided/u })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Page not found" }),
-  ).toBeHidden();
-});
-
-test("direct grants proposals route loads the grants tab", async ({
-  page,
-  login,
-}) => {
-  await login();
-  await page.goto("/proposals/grants", { waitUntil: "domcontentloaded" });
-
-  await expect(
-    page.getByRole("heading", { exact: true, name: "Proposals" }),
-  ).toBeVisible();
-  await expect(page.getByRole("tab", { name: /Grants/u })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Page not found" }),
-  ).toBeHidden();
+  await expect(page.getByRole("link", { name: /^Proposals/u })).toBeHidden();
 });
 
 test("logs in and lands on pure chat, with the nav present", async ({
@@ -232,11 +185,11 @@ test("logs in and lands on pure chat, with the nav present", async ({
     page.locator('[role="log"][aria-label="Chat transcript"]'),
   ).toBeVisible();
 
-  // The nav's five destinations are reachable from chat (desktop sidebar by
+  // The nav's four destinations are reachable from chat (desktop sidebar by
   // default in the Playwright viewport).
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav).toBeVisible();
-  for (const label of ["Chat", "Proposals", "Inbox", "Browse", "Settings"]) {
+  for (const label of ["Chat", "Inbox", "Browse", "Settings"]) {
     await expect(
       nav.getByRole("link", { name: new RegExp(`^${label}`) }),
     ).toBeVisible();

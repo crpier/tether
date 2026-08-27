@@ -73,13 +73,12 @@ YouTube ingestion is optional; see [deployment.md](./deployment.md#youtube-inges
 and `.env.example`. Locally, `just youtube-auth` runs the browser OAuth flow and
 caches the token under `.tether/`.
 
-### Gmail: re-consent for the backlog-purge write scope
+### Gmail: re-consent for direct write tools
 
-The read-only ingestion gate needs only `gmail.readonly`. The backlog-purge
-sweep (`TETHER_GMAIL_PURGE_ENABLED=1`) additionally *proposes* mailbox writes
-(archive/label/trash), which need the `gmail.modify` scope. `just gmail-auth`
-now requests both scopes — but **a token minted before `gmail.modify` was added
-is not upgraded automatically**. Re-authorizing is the only manual dev step:
+The read-only ingestion gate needs only `gmail.readonly`. Direct archive,
+label, and Trash tools also need the `gmail.modify` scope. `just gmail-auth`
+requests both scopes, but **a token minted before `gmail.modify` was added is
+not upgraded automatically**. Re-authorizing is the only manual dev step:
 
 1. Delete the cached token: `rm .tether/gmail-oauth-token.json`.
 2. Re-run `just gmail-auth` and complete the Google consent screen, ticking the
@@ -87,11 +86,8 @@ is not upgraded automatically**. Re-authorizing is the only manual dev step:
    consent screen must show `gmail.modify` alongside `gmail.readonly`.
 3. Confirm the bootstrap prints "Authorized" and lists recent subjects.
 
-Until this is done, the purge executors fail *gracefully*: an approved
-`gmail.*` action whose token still lacks the scope resolves `outcome: failed`
-with a clear `gmail.modify scope missing (403)` detail — it never crashes the
-host. No mailbox write is ever permanent: `gmail.delete` moves the message to
-Trash, never `messages.delete`.
+Until this is done, direct Gmail write tools report the missing scope without
+crashing the host. Moving a message to Trash does not permanently delete it.
 
 ## Logs and session data
 
