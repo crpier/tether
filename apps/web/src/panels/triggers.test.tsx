@@ -913,6 +913,57 @@ describe("Triggers panel", () => {
     ).toHaveAttribute("href", `/chat?turn=${occurrence.turn?.id ?? ""}`);
   });
 
+  test("does not repeat a latest occurrence already represented by its reminder row", async () => {
+    const reminder = trigger({
+      payload: "review recent email",
+      latest_occurrence: {
+        action_kind: "prompt",
+        answer_message_id: null,
+        failure_code: null,
+        failure_summary: null,
+        id: "018f0000-0000-7000-8000-000000000321",
+        intended_fire_at: "2026-01-02T09:00:00Z",
+        model_profile: null,
+        payload: "review recent email",
+        push_attempts: 1,
+        push_error: null,
+        push_status: "delivered",
+        status: "succeeded",
+        target_conversation_id: conversation.id,
+        target_conversation_kind: "main",
+        target_conversation_name: "Main",
+        trigger_id: "018f0000-0000-7000-8000-0000000000aa",
+        trigger_version: 1,
+        turn: {
+          failure_code: null,
+          failure_summary: null,
+          id: "018f0000-0000-7000-8000-000000000322",
+          status: "succeeded",
+        },
+      },
+    });
+    const occurrence = reminder.latest_occurrence;
+    if (occurrence === null) {
+      throw new Error("expected occurrence fixture");
+    }
+    const host = new FakeHost({
+      authenticated: true,
+      triggers: [reminder],
+    });
+    host.triggers.storedOccurrences = [occurrence];
+    renderApp(host, undefined, {
+      path: `/browse/reminders?occurrence=${occurrence.id}`,
+    });
+
+    expect(
+      await screen.findByLabelText("Reminder: review recent email"),
+    ).toBeVisible();
+    expect(screen.getAllByText("review recent email")).toHaveLength(1);
+    expect(
+      screen.queryByRole("article", { name: "Scheduled occurrence" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("distinguishes a missing occurrence from a retryable load failure", async () => {
     const missingHost = new FakeHost({ authenticated: true });
     renderApp(missingHost, undefined, {

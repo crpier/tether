@@ -1,4 +1,5 @@
-import { A, useLocation } from "@solidjs/router";
+import { A, useLocation, useNavigate } from "@solidjs/router";
+import { ConversationList } from "@kitn.ai/ui/solid";
 import { createQuery } from "@tanstack/solid-query";
 import {
   For,
@@ -11,7 +12,7 @@ import {
 import type { JSX } from "solid-js";
 
 import { useHost } from "./app-context";
-import { conversationLabel } from "./host/chat";
+import { conversationHref, projectConversations } from "./kitn-chat-projection";
 import { cx } from "./lib/cva";
 import { queryKeys } from "./lib/query-keys";
 
@@ -126,71 +127,64 @@ function useNavItems(): NavItem[] {
 
 function ConversationNavigation() {
   const chat = useHost("chat");
+  const location = useLocation();
+  const navigate = useNavigate();
   const conversationsQuery = createQuery(() => ({
     queryFn: () => chat.listConversations(),
     queryKey: queryKeys.conversations,
   }));
+  const conversations = createMemo(() => conversationsQuery.data ?? []);
+  const summaries = createMemo(() => projectConversations(conversations()));
+  const activeId = createMemo(() => {
+    if (location.pathname === "/" || location.pathname === "/chat") {
+      return conversations().find((candidate) => candidate.kind === "main")?.id;
+    }
+    return location.pathname.startsWith("/chat/")
+      ? location.pathname.slice("/chat/".length)
+      : undefined;
+  });
 
   return (
     <section
       aria-label="Conversations"
-      class="mt-4 flex min-h-0 flex-1 flex-col px-2"
+      class="mt-4 flex min-h-0 flex-1 flex-col"
     >
-      <div class="text-sidebar-foreground/60 mb-1 flex items-center px-2 text-[11px] font-semibold uppercase tracking-wide">
-        <span>Conversations</span>
-        <A
-          aria-label="Create Conversation"
-          class="ml-auto text-base"
-          href="/chat?new=1"
-        >
-          +
-        </A>
-      </div>
-      <div class="min-h-0 space-y-1 overflow-y-auto">
-        <For each={conversationsQuery.data ?? []}>
-          {(conversation) => (
+      <ConversationList
+        activeId={activeId()}
+        class="min-h-0"
+        compact
+        conversations={summaries()}
+        footer={
+          <A
+            class="text-sidebar-foreground/60 px-3 py-2 text-xs"
+            href="/chat?archived=1"
+          >
+            Archived Conversations
+          </A>
+        }
+        groups={[]}
+        header={
+          <div class="text-sidebar-foreground/60 flex items-center px-3 py-2 text-[11px] font-semibold uppercase tracking-wide">
+            <span>Conversations</span>
             <A
-              aria-label={conversationLabel(
-                conversation,
-                conversationsQuery.data ?? [],
-              )}
-              class="text-sidebar-foreground/80 hover:bg-sidebar-accent flex min-h-9 items-center gap-2 rounded-md px-2 text-sm"
-              href={
-                conversation.kind === "main"
-                  ? "/chat"
-                  : `/chat/${conversation.id}`
-              }
+              aria-label="Create Conversation"
+              class="ml-auto text-base"
+              href="/chat?new=1"
             >
-              <span class="min-w-0 flex-1 truncate">
-                {conversationLabel(conversation, conversationsQuery.data ?? [])}
-              </span>
-              <Show when={conversation.has_unread}>
-                <span
-                  aria-label="Unread conversation"
-                  class="bg-sidebar-primary size-2 rounded-full"
-                />
-              </Show>
-              <Show
-                when={
-                  conversation.pending_turn_count > 0 ||
-                  conversation.running_turn_id !== null
-                }
-              >
-                <span
-                  aria-label="Working conversation"
-                  class="border-sidebar-primary inline-block size-3 animate-spin rounded-full border-2 border-t-transparent"
-                />
-              </Show>
+              +
             </A>
-          )}
-        </For>
-      </div>
-      <A
-        class="text-sidebar-foreground/60 mt-2 px-2 py-2 text-xs"
-        href="/chat?archived=1"
-      >
-        Archived Conversations
-      </A>
+          </div>
+        }
+        onNewChat={() => navigate("/chat?new=1")}
+        onSelect={(id) => {
+          const selected = conversations().find(
+            (candidate) => candidate.id === id,
+          );
+          if (selected !== undefined) {
+            navigate(conversationHref(selected));
+          }
+        }}
+      />
     </section>
   );
 }

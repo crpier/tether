@@ -146,6 +146,15 @@ export function TriggersPanel(props: { api: TriggersHost }) {
     (typeof searchParams.trigger === "string" ||
       typeof searchParams.conversation === "string") &&
     filteredTriggers().length === 0;
+  const occurrenceRepeatedByLatestReminder = () => {
+    const occurrence = occurrenceQuery.data;
+    return (
+      occurrence !== undefined &&
+      filteredTriggers().some(
+        (trigger) => trigger.latest_occurrence?.id === occurrence.id,
+      )
+    );
+  };
 
   const [recurrence, setRecurrence] = createSignal<TriggerRecurrence>("once");
   const [actionKind, setActionKind] =
@@ -583,7 +592,13 @@ export function TriggersPanel(props: { api: TriggersHost }) {
           </Button>
         </div>
       </Show>
-      <Show when={occurrenceQuery.data}>
+      <Show
+        when={
+          occurrenceRepeatedByLatestReminder()
+            ? undefined
+            : occurrenceQuery.data
+        }
+      >
         {(occurrence) => (
           <article
             aria-label="Scheduled occurrence"

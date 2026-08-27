@@ -1,5 +1,6 @@
-import type { ToolPart } from "@kitn.ai/ui/solid";
+import type { ConversationSummary, ToolPart } from "@kitn.ai/ui/solid";
 
+import { conversationLabel, type Conversation } from "./host/chat";
 import type { TimelineRow } from "./live-chat-turn";
 
 type MessageRole = "assistant" | "system" | "user";
@@ -71,6 +72,36 @@ function projectMessage(row: MessageRow): KitnTimelineItem {
     message: row,
     role,
   };
+}
+
+export function conversationHref(conversation: Conversation): string {
+  return conversation.kind === "main" ? "/chat" : `/chat/${conversation.id}`;
+}
+
+export function projectConversations(
+  conversations: readonly Conversation[],
+): ConversationSummary[] {
+  return conversations
+    .filter((conversation) => conversation.status === "active")
+    .map((conversation) => {
+      const statuses: string[] = [];
+      if (
+        conversation.pending_turn_count > 0 ||
+        conversation.running_turn_id !== null
+      ) {
+        statuses.push("Working");
+      }
+      if (conversation.has_unread) {
+        statuses.push("Unread");
+      }
+      return {
+        id: conversation.id,
+        messageCount: conversation.latest_message_seq,
+        title: conversationLabel(conversation, conversations),
+        trailing: statuses.length > 0 ? statuses.join(" · ") : undefined,
+        updatedAt: conversation.latest_activity ?? conversation.created_at,
+      };
+    });
 }
 
 export function projectTimelineRows(rows: TimelineRow[]): KitnTimelineItem[] {

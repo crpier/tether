@@ -216,6 +216,17 @@ describe("Chat view", () => {
     expect(assistant).toHaveAttribute("data-role", "assistant");
     expect(assistant).toHaveAttribute("data-message-id", "assistant-host-id");
     expect(composer).toHaveAttribute("data-prompt-input");
+    const transcript = screen.getByRole("log", { name: "Chat transcript" });
+    expect(transcript).toHaveAttribute("tabindex", "0");
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 1000 },
+      scrollTop: { configurable: true, value: 0, writable: true },
+    });
+    fireEvent.scroll(transcript);
+    expect(
+      screen.getByRole("button", { name: "Scroll to bottom" }),
+    ).toBeInTheDocument();
   });
 
   test("does not expose a destructive transcript reset", async () => {
@@ -289,10 +300,14 @@ describe("Chat view", () => {
       type: "chat",
     });
 
-    expect(await screen.findByText("63k context")).toHaveAttribute(
-      "title",
-      "63k of 200k tokens · 32% of pi working context",
-    );
+    const contextTrigger = await screen.findByRole("button", {
+      name: "31.6% Model context usage",
+    });
+    contextTrigger.focus();
+    expect(
+      await screen.findByRole("progressbar", { name: "Context usage" }),
+    ).toHaveAttribute("aria-valuenow", "63100");
+    expect(screen.getByText("63K / 200K")).toBeInTheDocument();
   });
 
   test("warns when pi working context nears capacity", async () => {
@@ -309,9 +324,11 @@ describe("Chat view", () => {
       type: "chat",
     });
 
-    expect(await screen.findByText("182k context")).toHaveClass(
-      "text-destructive",
-    );
+    expect(
+      await screen.findByRole("button", {
+        name: "91% Model context usage",
+      }),
+    ).toHaveClass("text-destructive");
   });
 
   test("hides a confirmed zero skill count", async () => {
@@ -514,22 +531,17 @@ describe("Chat view", () => {
     expect(writeText).toHaveBeenCalledWith("Keep this text");
   });
 
-  test("quotes a transcript message into the composer", async () => {
+  test("omits the unused quote action", async () => {
     const host = new FakeHost({
       authenticated: true,
-      messages: [
-        message({ content: "First line\nSecond line", role: "assistant" }),
-      ],
+      messages: [message({ content: "Keep this concise", role: "assistant" })],
     });
     renderApp(host);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Quote message" }),
-    );
-
+    await screen.findByText("Keep this concise");
     expect(
-      textarea(screen.getByRole("textbox", { name: "Message" })),
-    ).toHaveValue("> First line\n> Second line\n\n");
+      screen.queryByRole("button", { name: "Quote message" }),
+    ).not.toBeInTheDocument();
   });
 
   test("records explicit product feedback from a settled user message", async () => {
@@ -541,9 +553,16 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true, messages: [source] });
     renderApp(host);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Record product feedback" }),
-    );
+    const feedbackButton = await screen.findByRole("button", {
+      name: "Record product feedback",
+    });
+    const copyButton = screen.getByRole("button", { name: "Copy message" });
+    expect(feedbackButton).toHaveTextContent(/^$/);
+    expect(feedbackButton.querySelector("svg")).toBeInTheDocument();
+    expect(copyButton).toHaveTextContent(/^$/);
+    expect(copyButton.querySelector("svg")).toBeInTheDocument();
+    expect(feedbackButton.parentElement).toHaveClass("absolute", "right-2");
+    fireEvent.click(feedbackButton);
     fireEvent.input(
       screen.getByRole("textbox", { name: "Expected behavior" }),
       {
@@ -696,6 +715,9 @@ describe("Chat view", () => {
     });
 
     expect(await screen.findByText("Searched Gmail · 2 results")).toBeVisible();
+    expect(
+      screen.getAllByText("Completed")[0]?.closest(".chat-tool-trace-complete"),
+    ).not.toBeNull();
     expect(screen.getByText("Read email")).toBeVisible();
     const activity = screen.getByLabelText("Tool activity");
     expect(screen.getAllByLabelText("Tool activity")).toHaveLength(1);
@@ -1271,6 +1293,7 @@ describe("Chat view", () => {
     expect(
       within(context).getByText("Next message starts a fresh working session"),
     ).toBeInTheDocument();
+    expect(within(context).getByRole("separator")).toBeInTheDocument();
     expect(
       await within(context).findByRole("slider", { name: "Model profile" }),
     ).toBeInTheDocument();

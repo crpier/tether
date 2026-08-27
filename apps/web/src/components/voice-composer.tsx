@@ -2,6 +2,7 @@
 // microphone wiring and recording/transcription status while the page owns
 // the wider spoken loop. Starting it arms a hands-free recording immediately;
 // ending it abandons the current clip and returns the composer to text.
+import { AudioVisualizer } from "@kitn.ai/ui/solid";
 import {
   Show,
   createEffect,
@@ -11,6 +12,7 @@ import {
   type Accessor,
 } from "solid-js";
 
+import type { SpeechPlayerState } from "@/speech-player";
 import type {
   MinimalMediaRecorder,
   VoiceRecorderState,
@@ -58,6 +60,7 @@ export function VoiceComposerControls(props: {
   onRecordingStart: () => Promise<void>;
   onRecordingStop: () => void;
   onStartConversation: () => void;
+  playbackState: Accessor<SpeechPlayerState>;
   recordingCancelSignal: Accessor<number>;
   onTranscript: (transcript: string) => void;
   transcribe: (blob: Blob) => Promise<string>;
@@ -190,9 +193,13 @@ export function VoiceComposerControls(props: {
                 class="bg-muted absolute right-0 bottom-full z-10 mb-2 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 rounded-md border px-3 py-1.5 text-sm shadow-sm"
                 role="status"
               >
-                <span
-                  aria-hidden="true"
-                  class="inline-block size-2 animate-pulse rounded-full bg-red-500"
+                <AudioVisualizer
+                  class="text-red-500"
+                  color="currentColor"
+                  label="Microphone is listening"
+                  size="icon"
+                  state="listening"
+                  variant="bar"
                 />
                 <span>Listening…</span>
                 <span class="tabular-nums opacity-70">
@@ -202,6 +209,28 @@ export function VoiceComposerControls(props: {
             )}
           </Show>
         )}
+      </Show>
+      <Show
+        when={
+          props.active() &&
+          props.playbackState() === "playing" &&
+          state().kind === "idle"
+        }
+      >
+        <div
+          class="bg-muted absolute right-0 bottom-full z-10 mb-2 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 rounded-md border px-3 py-1.5 text-sm shadow-sm"
+          role="status"
+        >
+          <AudioVisualizer
+            class="text-primary"
+            color="currentColor"
+            label="Tether is speaking"
+            size="icon"
+            state="speaking"
+            variant="bar"
+          />
+          <span>Tether is speaking…</span>
+        </div>
       </Show>
       <Show when={state().kind === "uploading"}>
         <p

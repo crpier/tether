@@ -229,7 +229,7 @@ test("logs in and lands on pure chat, with the nav present", async ({
   await expect(chatTitle).toBeAttached();
   expect(await chatTitle.boundingBox()).toMatchObject({ height: 1, width: 1 });
   await expect(
-    page.locator('section[aria-label="Chat transcript"]'),
+    page.locator('[role="log"][aria-label="Chat transcript"]'),
   ).toBeVisible();
 
   // The nav's five destinations are reachable from chat (desktop sidebar by
