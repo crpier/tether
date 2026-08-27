@@ -18,6 +18,8 @@ from tether.health_connect.contracts import (
     HealthConnectBatchRead,
     HealthConnectBatchRequest,
     HealthConnectContractError,
+    HealthConnectStepAggregateSnapshotRead,
+    HealthConnectStepAggregateSnapshotRequest,
     HealthConnectSyncStateQuery,
     HealthConnectSyncStateRead,
     StartHealthConnectBaselineRequest,
@@ -268,6 +270,34 @@ async def complete_health_connect_baseline(
         deleted=report.deleted,
         installation_id=body.installation_id,
         request_id=body.request_id,
+    )
+    return JSONResponse(report.model_dump(mode="json"))
+
+
+@router.post(
+    "/api/telemetry/health-connect/step-aggregates",
+    response_model=HealthConnectStepAggregateSnapshotRead,
+)
+async def ingest_health_connect_step_aggregates(
+    request: Request, body: HealthConnectStepAggregateSnapshotRequest
+) -> Response:
+    """Persist Health Connect's source-priority-deduplicated step projection."""
+    ingestion = _runtime(request).health_connect_ingestion
+    outcome = await ingestion.ingest_step_aggregate_snapshot(body)
+    if isinstance(outcome, Err):
+        return JSONResponse(
+            {"detail": "request_id was reused for another step snapshot"},
+            status_code=409,
+        )
+    report = outcome.value
+    _runtime(request).logger.info(
+        "Health Connect canonical step snapshot accepted",
+        accepted=report.accepted,
+        deleted=report.deleted,
+        installation_id=body.installation_id,
+        replayed=report.replayed,
+        request_id=body.request_id,
+        skipped=report.skipped,
     )
     return JSONResponse(report.model_dump(mode="json"))
 

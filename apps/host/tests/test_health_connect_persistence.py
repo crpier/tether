@@ -24,7 +24,7 @@ def historical_migration_chain_is_byte_stable() -> None:
 
     assert_eq(
         hashlib.sha256(encoded).hexdigest(),
-        "2ed4942f648c2264949ebefcc1babc4350a6d59d9433a113a9c84ef4256c3463",
+        "d05e0266f15d2aeaf80331d10041f551089e30607c92dc17e554a72d34016f16",
     )
 
 

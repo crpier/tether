@@ -97,6 +97,11 @@ is shown in Settings. Unsupported devices retain text-share and voice capture.
 The section also shows running state, last success, and a sanitized last failure;
 raw values, notes, and opaque cursor tokens are never displayed or logged.
 
+Each successful sync also uploads Health Connect's hourly canonical step
+aggregate for the accessible recent window. Health Connect applies the user's
+Activity app priority before returning these buckets, so agent summaries do not
+sum overlapping phone and Fitbit records. Raw step records are still retained.
+
 The host must include the Health Connect API from
 [`docs/health-connect-wire-v3.md`](../../docs/health-connect-wire-v3.md).
 
@@ -131,7 +136,7 @@ Troubleshooting:
 - No streaming STT, wake words, or on-device transcription.
 - No token issuance/login flow — you paste the static host token.
 - No retained audio: voice clips are deleted after a successful upload.
-- No health interpretation, charts, alerts, aggregation, or Health Connect writes.
+- No health interpretation, charts, alerts, or Health Connect writes. The only captured aggregate is Health Connect's canonical, source-priority step projection.
 - No capture offline queue; failed text/voice captures report failure directly.
 - Android verification uses phone/wear assemble, lint, and JVM unit tests.
 

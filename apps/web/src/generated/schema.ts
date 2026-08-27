@@ -1242,6 +1242,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/telemetry/health-connect/step-aggregates": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ingest Health Connect Step Aggregates
+     * @description Persist Health Connect's source-priority-deduplicated step projection.
+     */
+    post: operations["ingest_health_connect_step_aggregates_api_telemetry_health_connect_step_aggregates_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/telemetry/health-connect/sync-state": {
     parameters: {
       query?: never;
@@ -2605,19 +2625,11 @@ export interface components {
     };
     /**
      * HealthConnectDailyStepsSummary
-     * @description Step totals for one captured local date.
+     * @description Canonical Health Connect step total for one captured local date.
      */
     HealthConnectDailyStepsSummary: {
-      /** By Origin */
-      by_origin: components["schemas"]["HealthConnectStepOriginSummary"][];
       /** Date */
       date: string;
-      /** Duplicate Source Warning */
-      duplicate_source_warning: string | null;
-      /** Raw Total Count */
-      raw_total_count: number;
-      /** Record Count */
-      record_count: number;
       /** Total Count */
       total_count: number;
     };
@@ -3066,30 +3078,61 @@ export interface components {
       sample_count: number;
     };
     /**
-     * HealthConnectStepOriginSummary
-     * @description Step totals from one writing origin.
+     * HealthConnectStepAggregateBucket
+     * @description One source-priority-deduplicated Health Connect duration bucket.
      */
-    HealthConnectStepOriginSummary: {
-      /** Data Origin Package */
-      data_origin_package: string;
-      /** Record Count */
-      record_count: number;
-      /** Total Count */
-      total_count: number;
+    HealthConnectStepAggregateBucket: {
+      /** Count */
+      count: number;
+      /** End Time */
+      end_time: number;
+      /** Start Time */
+      start_time: number;
+      /** Zone Offset Seconds */
+      zone_offset_seconds: number;
+    };
+    /**
+     * HealthConnectStepAggregateSnapshotRead
+     * @description Safe ingestion counts for one canonical step snapshot.
+     */
+    HealthConnectStepAggregateSnapshotRead: {
+      /** Accepted */
+      accepted: number;
+      /** Deleted */
+      deleted: number;
+      /** Replayed */
+      replayed: boolean;
+      /** Skipped */
+      skipped: number;
+      /**
+       * Status
+       * @constant
+       */
+      status: "accepted";
+    };
+    /**
+     * HealthConnectStepAggregateSnapshotRequest
+     * @description Authoritative canonical step buckets over one bounded Health Connect read.
+     */
+    HealthConnectStepAggregateSnapshotRequest: {
+      /** Buckets */
+      buckets: components["schemas"]["HealthConnectStepAggregateBucket"][];
+      /** End Time */
+      end_time: number;
+      /** Installation Id */
+      installation_id: string;
+      /** Request Id */
+      request_id: string;
+      /** Start Time */
+      start_time: number;
     };
     /**
      * HealthConnectStepsSummary
-     * @description Compact step measurements in a requested time window.
+     * @description Canonical step measurements in a requested time window.
      */
     HealthConnectStepsSummary: {
-      /** By Origin */
-      by_origin: components["schemas"]["HealthConnectStepOriginSummary"][];
       /** Daily */
       daily: components["schemas"]["HealthConnectDailyStepsSummary"][];
-      /** Duplicate Source Warning */
-      duplicate_source_warning: string | null;
-      /** Raw Total Count */
-      raw_total_count: number;
       /** Record Count */
       record_count: number;
       /** Total Count */
@@ -6639,6 +6682,39 @@ export interface operations {
         };
         content: {
           "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  ingest_health_connect_step_aggregates_api_telemetry_health_connect_step_aggregates_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HealthConnectStepAggregateSnapshotRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthConnectStepAggregateSnapshotRead"];
         };
       };
       /** @description Validation Error */

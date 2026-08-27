@@ -22,6 +22,24 @@ object HealthConnectWireJson {
         .put("baseline_generation", request.generation)
         .put("ranges", rangesJson(request.scannedBounds))
 
+    fun stepAggregateSnapshotRequest(request: HealthConnectStepAggregateSnapshotRequest): JSONObject = JSONObject()
+        .put("installation_id", request.installationId)
+        .put("request_id", request.requestId)
+        .put("start_time", request.snapshot.startTimeEpochMillis)
+        .put("end_time", request.snapshot.endTimeEpochMillis)
+        .put(
+            "buckets",
+            JSONArray(
+                request.snapshot.buckets.map { bucket ->
+                    JSONObject()
+                        .put("start_time", bucket.startTimeEpochMillis)
+                        .put("end_time", bucket.endTimeEpochMillis)
+                        .put("zone_offset_seconds", bucket.zoneOffsetSeconds)
+                        .put("count", bucket.count)
+                },
+            ),
+        )
+
     fun batchRequest(request: HealthConnectBatchRequest): JSONObject = JSONObject()
         .put("contract_version", CONTRACT_VERSION)
         .put("installation_id", request.installationId)

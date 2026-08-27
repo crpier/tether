@@ -261,6 +261,41 @@ class HcGenericRecord[S = Pending](Model[S, "HcGenericRecord[Fetched]"]):
     payload_json: HcGenericRecord.Col[str | None] = Text(nullable=True)
 
 
+class HcStepAggregateSnapshot[S = Pending](
+    Model[S, "HcStepAggregateSnapshot[Fetched]"]
+):
+    """One accepted authoritative read of Health Connect's canonical steps."""
+
+    snapshot_id: HcStepAggregateSnapshot.GenCol[int] = Integer(
+        primary_key=True, auto_increment=True, default=PENDING_GENERATION
+    )
+    accepted_count: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
+    deleted_count: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
+    end_time: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
+    installation_id: HcStepAggregateSnapshot.Col[str] = Text(nullable=False)
+    payload_hash: HcStepAggregateSnapshot.Col[str] = Text(nullable=False)
+    received_at: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
+    request_id: HcStepAggregateSnapshot.Col[str] = Text(nullable=False, unique=True)
+    skipped_count: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
+    start_time: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False, index=True)
+
+
+class HcStepAggregateBucket[S = Pending](Model[S, "HcStepAggregateBucket[Fetched]"]):
+    """One append-only canonical step-bucket version or tombstone."""
+
+    version_id: HcStepAggregateBucket.GenCol[int] = Integer(
+        primary_key=True, auto_increment=True, default=PENDING_GENERATION
+    )
+    bucket_end: HcStepAggregateBucket.Col[int | None] = Integer(nullable=True)
+    bucket_start: HcStepAggregateBucket.Col[int] = Integer(nullable=False, index=True)
+    count: HcStepAggregateBucket.Col[int | None] = Integer(nullable=True)
+    is_deleted: HcStepAggregateBucket.Col[bool] = Integer(nullable=False)
+    payload_hash: HcStepAggregateBucket.Col[str] = Text(nullable=False)
+    received_at: HcStepAggregateBucket.Col[int] = Integer(nullable=False)
+    request_id: HcStepAggregateBucket.Col[str] = Text(nullable=False, index=True)
+    zone_offset_seconds: HcStepAggregateBucket.Col[int | None] = Integer(nullable=True)
+
+
 class HcHeartRateRecordCurrent[S = Pending](
     Model[S, "HcHeartRateRecordCurrent[Fetched]"]
 ):
@@ -350,6 +385,23 @@ class HcStepIntervalCurrent[S = Pending](Model[S, "HcStepIntervalCurrent[Fetched
         nullable=True
     )
     count: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
+
+
+class HcStepAggregateBucketCurrent[S = Pending](
+    Model[S, "HcStepAggregateBucketCurrent[Fetched]"]
+):
+    """Latest live Health Connect canonical value for one duration bucket."""
+
+    version_id: HcStepAggregateBucketCurrent.Col[int] = Integer(primary_key=True)
+    bucket_end: HcStepAggregateBucketCurrent.Col[int | None] = Integer(nullable=True)
+    bucket_start: HcStepAggregateBucketCurrent.Col[int] = Integer(nullable=False)
+    count: HcStepAggregateBucketCurrent.Col[int | None] = Integer(nullable=True)
+    payload_hash: HcStepAggregateBucketCurrent.Col[str] = Text(nullable=False)
+    received_at: HcStepAggregateBucketCurrent.Col[int] = Integer(nullable=False)
+    request_id: HcStepAggregateBucketCurrent.Col[str] = Text(nullable=False)
+    zone_offset_seconds: HcStepAggregateBucketCurrent.Col[int | None] = Integer(
+        nullable=True
+    )
 
 
 class HcExerciseSessionCurrent[S = Pending](
@@ -474,6 +526,8 @@ _MODELS = [
     HcExerciseEpisodeSummary,
     HcSleepEpisodeSummary,
     HcEpisodeCursor,
+    HcStepAggregateBucket,
+    HcStepAggregateSnapshot,
 ]
 _PARENT_MODELS = {
     "exercise": HcExerciseSession,
@@ -553,10 +607,26 @@ def health_connect_migrations() -> dict[str, str]:
         HcEpisodeCursor,
     ]
     episode_start = next_index
-    for offset, sql in enumerate(scaffold(episode_models).splitlines()):
+    episode_statements = scaffold(episode_models).splitlines()
+    for offset, sql in enumerate(episode_statements):
         migrations[f"{episode_start + offset:04d}_episode_summaries"] = (
             _create_if_not_exists(sql)
         )
+
+    step_aggregate_start = episode_start + len(episode_statements)
+    step_aggregate_statements = scaffold(
+        [HcStepAggregateSnapshot, HcStepAggregateBucket]
+    ).splitlines()
+    for offset, sql in enumerate(step_aggregate_statements):
+        migrations[f"{step_aggregate_start + offset:04d}_step_aggregates"] = (
+            _create_if_not_exists(sql)
+        )
+    step_aggregate_view_index = step_aggregate_start + len(step_aggregate_statements)
+    migrations[f"{step_aggregate_view_index:04d}_hc_step_aggregate_bucket_current"] = (
+        _create_if_not_exists(
+            'CREATE VIEW "hc_step_aggregate_bucket_current" AS SELECT parent.* FROM "hc_step_aggregate_bucket" parent WHERE parent."version_id" = (SELECT MAX(candidate."version_id") FROM "hc_step_aggregate_bucket" candidate WHERE candidate."bucket_start" = parent."bucket_start") AND parent."is_deleted" = 0'
+        )
+    )
     return migrations
 
 

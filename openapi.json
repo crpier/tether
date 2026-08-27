@@ -2515,37 +2515,11 @@
         "type": "object"
       },
       "HealthConnectDailyStepsSummary": {
-        "description": "Step totals for one captured local date.",
+        "description": "Canonical Health Connect step total for one captured local date.",
         "properties": {
-          "by_origin": {
-            "items": {
-              "$ref": "#/components/schemas/HealthConnectStepOriginSummary"
-            },
-            "title": "By Origin",
-            "type": "array"
-          },
           "date": {
             "title": "Date",
             "type": "string"
-          },
-          "duplicate_source_warning": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duplicate Source Warning"
-          },
-          "raw_total_count": {
-            "title": "Raw Total Count",
-            "type": "integer"
-          },
-          "record_count": {
-            "title": "Record Count",
-            "type": "integer"
           },
           "total_count": {
             "title": "Total Count",
@@ -2553,11 +2527,7 @@
           }
         },
         "required": [
-          "by_origin",
           "date",
-          "duplicate_source_warning",
-          "raw_total_count",
-          "record_count",
           "total_count"
         ],
         "title": "HealthConnectDailyStepsSummary",
@@ -3645,40 +3615,117 @@
         "title": "HealthConnectStageHeartRateRead",
         "type": "object"
       },
-      "HealthConnectStepOriginSummary": {
-        "description": "Step totals from one writing origin.",
+      "HealthConnectStepAggregateBucket": {
+        "additionalProperties": false,
+        "description": "One source-priority-deduplicated Health Connect duration bucket.",
         "properties": {
-          "data_origin_package": {
-            "title": "Data Origin Package",
-            "type": "string"
-          },
-          "record_count": {
-            "title": "Record Count",
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
             "type": "integer"
           },
-          "total_count": {
-            "title": "Total Count",
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          },
+          "zone_offset_seconds": {
+            "title": "Zone Offset Seconds",
             "type": "integer"
           }
         },
         "required": [
-          "data_origin_package",
-          "record_count",
-          "total_count"
+          "count",
+          "end_time",
+          "start_time",
+          "zone_offset_seconds"
         ],
-        "title": "HealthConnectStepOriginSummary",
+        "title": "HealthConnectStepAggregateBucket",
+        "type": "object"
+      },
+      "HealthConnectStepAggregateSnapshotRead": {
+        "additionalProperties": false,
+        "description": "Safe ingestion counts for one canonical step snapshot.",
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "status": {
+            "const": "accepted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted",
+          "deleted",
+          "replayed",
+          "skipped",
+          "status"
+        ],
+        "title": "HealthConnectStepAggregateSnapshotRead",
+        "type": "object"
+      },
+      "HealthConnectStepAggregateSnapshotRequest": {
+        "additionalProperties": false,
+        "description": "Authoritative canonical step buckets over one bounded Health Connect read.",
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/HealthConnectStepAggregateBucket"
+            },
+            "maxItems": 3000,
+            "title": "Buckets",
+            "type": "array"
+          },
+          "end_time": {
+            "title": "End Time",
+            "type": "integer"
+          },
+          "installation_id": {
+            "minLength": 1,
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "request_id": {
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "buckets",
+          "end_time",
+          "installation_id",
+          "request_id",
+          "start_time"
+        ],
+        "title": "HealthConnectStepAggregateSnapshotRequest",
         "type": "object"
       },
       "HealthConnectStepsSummary": {
-        "description": "Compact step measurements in a requested time window.",
+        "description": "Canonical step measurements in a requested time window.",
         "properties": {
-          "by_origin": {
-            "items": {
-              "$ref": "#/components/schemas/HealthConnectStepOriginSummary"
-            },
-            "title": "By Origin",
-            "type": "array"
-          },
           "daily": {
             "items": {
               "$ref": "#/components/schemas/HealthConnectDailyStepsSummary"
@@ -3686,21 +3733,6 @@
             "title": "Daily",
             "type": "array"
           },
-          "duplicate_source_warning": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duplicate Source Warning"
-          },
-          "raw_total_count": {
-            "title": "Raw Total Count",
-            "type": "integer"
-          },
           "record_count": {
             "title": "Record Count",
             "type": "integer"
@@ -3711,10 +3743,7 @@
           }
         },
         "required": [
-          "by_origin",
           "daily",
-          "duplicate_source_warning",
-          "raw_total_count",
           "record_count",
           "total_count"
         ],
@@ -9801,6 +9830,45 @@
           }
         },
         "summary": "Health Dream Now"
+      }
+    },
+    "/api/telemetry/health-connect/step-aggregates": {
+      "post": {
+        "description": "Persist Health Connect's source-priority-deduplicated step projection.",
+        "operationId": "ingest_health_connect_step_aggregates_api_telemetry_health_connect_step_aggregates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealthConnectStepAggregateSnapshotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthConnectStepAggregateSnapshotRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Health Connect Step Aggregates"
       }
     },
     "/api/telemetry/health-connect/sync-state": {

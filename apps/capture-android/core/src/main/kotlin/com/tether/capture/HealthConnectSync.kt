@@ -171,6 +171,18 @@ data class HealthConnectScanBounds(
     val endTimeEpochMillis: Long,
 )
 
+data class HealthConnectStepAggregateBucket(
+    val startTimeEpochMillis: Long,
+    val endTimeEpochMillis: Long,
+    val zoneOffsetSeconds: Int,
+    val count: Long,
+)
+
+data class HealthConnectStepAggregateSnapshot(
+    val startTimeEpochMillis: Long,
+    val endTimeEpochMillis: Long,
+    val buckets: List<HealthConnectStepAggregateBucket>,
+)
 
 data class HealthConnectChanges(
     val records: List<HealthConnectRecord>,
@@ -183,6 +195,8 @@ class HealthConnectChangesTokenExpiredException : RuntimeException("Health Conne
 
 interface HealthConnectSource {
     suspend fun getChangesToken(recordTypes: Set<HealthConnectRecordType>): String
+
+    suspend fun readStepAggregateSnapshot(): HealthConnectStepAggregateSnapshot
 
     suspend fun scanBaseline(
         recordTypes: Set<HealthConnectRecordType>,
@@ -220,6 +234,12 @@ data class HealthConnectBatchRequest(
     val deletions: List<HealthConnectDeletion>,
 )
 
+data class HealthConnectStepAggregateSnapshotRequest(
+    val installationId: String,
+    val requestId: String,
+    val snapshot: HealthConnectStepAggregateSnapshot,
+)
+
 data class CompleteBaselineRequest(
     val installationId: String,
     val recordTypes: Set<HealthConnectRecordType>,
@@ -244,6 +264,8 @@ interface HealthConnectHost {
     suspend fun startBaseline(request: StartBaselineRequest): HostSyncCursor
 
     suspend fun uploadBatch(request: HealthConnectBatchRequest): BatchUploadResult
+
+    suspend fun uploadStepAggregateSnapshot(request: HealthConnectStepAggregateSnapshotRequest)
 
     suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor
 }
@@ -279,7 +301,7 @@ class HealthConnectSyncCoordinator(
 ) {
     suspend fun syncOnce(): HealthConnectSyncResult {
         val cursor = host.getSyncState(installationId, recordTypes)
-        return try {
+        val recordSync = try {
             when (cursor.state) {
                 HostSyncState.Initial -> runBaseline()
                 HostSyncState.Baseline -> resumeBaseline(cursor)
@@ -288,6 +310,18 @@ class HealthConnectSyncCoordinator(
         } catch (_: HealthConnectChangesTokenExpiredException) {
             runBaseline()
         }
+        if (recordSync != HealthConnectSyncResult.Success || HealthConnectRecordType.STEPS !in recordTypes) {
+            return recordSync
+        }
+        val snapshot = health.readStepAggregateSnapshot()
+        host.uploadStepAggregateSnapshot(
+            HealthConnectStepAggregateSnapshotRequest(
+                installationId = installationId,
+                requestId = stableRequestId("step-aggregates:$installationId:${snapshot.identityKey()}"),
+                snapshot = snapshot,
+            ),
+        )
+        return HealthConnectSyncResult.Success
     }
 
     private suspend fun runBaseline(): HealthConnectSyncResult {
@@ -427,6 +461,14 @@ class HealthConnectSyncCoordinator(
 
     private fun List<HealthConnectDeletion>.deletionIdentityKey(): String = joinToString(",") { deletion ->
         "${deletion.recordType.wireName}:${deletion.recordId}"
+    }
+
+    private fun HealthConnectStepAggregateSnapshot.identityKey(): String = buildString {
+        append("$startTimeEpochMillis:$endTimeEpochMillis")
+        buckets.forEach { bucket ->
+            append(":${bucket.startTimeEpochMillis}:${bucket.endTimeEpochMillis}")
+            append(":${bucket.zoneOffsetSeconds}:${bucket.count}")
+        }
     }
 
     private fun Map<HealthConnectRecordType, HealthConnectScanBounds>.identityKey(): String =

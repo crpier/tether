@@ -52,6 +52,14 @@ class HealthConnectHostHttpClient(
         }
     }
 
+    override suspend fun uploadStepAggregateSnapshot(request: HealthConnectStepAggregateSnapshotRequest) {
+        val httpRequest = jsonPost(
+            path = "api/telemetry/health-connect/step-aggregates",
+            body = HealthConnectWireJson.stepAggregateSnapshotRequest(request),
+        )
+        executeJson(httpRequest)
+    }
+
     override suspend fun completeBaseline(request: CompleteBaselineRequest): HostSyncCursor {
         val httpRequest = jsonPost(
             path = "api/telemetry/health-connect/sync-state/baselines/complete",

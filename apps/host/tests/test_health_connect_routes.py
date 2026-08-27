@@ -32,6 +32,7 @@ SYNC_STATE_PATH = "/api/telemetry/health-connect/sync-state"
 BASELINE_PATH = f"{SYNC_STATE_PATH}/baselines"
 BATCH_PATH = "/api/telemetry/health-connect/batches"
 BASELINE_COMPLETE_PATH = f"{BASELINE_PATH}/complete"
+STEP_AGGREGATES_PATH = "/api/telemetry/health-connect/step-aggregates"
 FIXTURE_ROOT = Path(__file__).parent / "fixtures/health_connect/v2"
 AUTHORIZATION = {"Authorization": f"Bearer {API_TOKEN}"}
 
@@ -90,6 +91,61 @@ def health_connect_client(
     )
     with TestClient(app) as client:
         yield client
+
+
+@test()
+def canonical_step_snapshot_replay_is_idempotent() -> None:
+    """A lost response can retry one platform aggregate without another version."""
+    snapshot: dict[str, object] = {
+        "buckets": [
+            {
+                "count": 321,
+                "end_time": 1_700_003_600_000,
+                "start_time": 1_700_000_000_000,
+                "zone_offset_seconds": 3_600,
+            }
+        ],
+        "end_time": 1_700_007_200_000,
+        "installation_id": "pixel-installation",
+        "request_id": "canonical-step-snapshot-1",
+        "start_time": 1_700_000_000_000,
+    }
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        first = client.post(STEP_AGGREGATES_PATH, headers=AUTHORIZATION, json=snapshot)
+        replay = client.post(STEP_AGGREGATES_PATH, headers=AUTHORIZATION, json=snapshot)
+
+    assert_eq(first.status_code, 200)
+    assert_eq(first.json()["replayed"], False)
+    assert_eq(replay.status_code, 200)
+    assert_eq(replay.json()["replayed"], True)
+
+
+@test()
+def canonical_step_snapshot_rejects_request_identity_reuse() -> None:
+    """One request ID cannot acknowledge a different platform aggregate."""
+    snapshot: dict[str, object] = {
+        "buckets": [],
+        "end_time": 1_700_007_200_000,
+        "installation_id": "pixel-installation",
+        "request_id": "canonical-step-snapshot-1",
+        "start_time": 1_700_000_000_000,
+    }
+    with (
+        TemporaryDirectory() as directory,
+        health_connect_client(Path(directory)) as client,
+    ):
+        first = client.post(STEP_AGGREGATES_PATH, headers=AUTHORIZATION, json=snapshot)
+        conflict = client.post(
+            STEP_AGGREGATES_PATH,
+            headers=AUTHORIZATION,
+            json={**snapshot, "end_time": 1_700_010_800_000},
+        )
+
+    assert_eq(first.status_code, 200)
+    assert_eq(conflict.status_code, 409)
 
 
 @test()

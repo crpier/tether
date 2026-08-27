@@ -23,6 +23,7 @@ FIXTURE_PATH = (
 )
 BASELINE_PATH = "/api/telemetry/health-connect/sync-state/baselines"
 BATCH_PATH = "/api/telemetry/health-connect/batches"
+STEP_AGGREGATES_PATH = "/api/telemetry/health-connect/step-aggregates"
 
 
 def _begin_health_plan_turn(client: Any, wording: str) -> None:
@@ -162,6 +163,23 @@ def ingest_duplicate_step_telemetry(client: Any) -> None:
                 ]
             },
             "deletions": [],
+        },
+    )
+    assert_eq(response.status_code, 200)
+
+
+def ingest_step_aggregate_snapshot(
+    client: Any, *, request_id: str, buckets: list[dict[str, int]]
+) -> None:
+    """Seed one authoritative canonical-step range through HTTP ingestion."""
+    response = client.post(
+        STEP_AGGREGATES_PATH,
+        json={
+            "buckets": buckets,
+            "end_time": 1_700_179_200_000,
+            "installation_id": "duplicate-step-installation",
+            "request_id": request_id,
+            "start_time": 1_699_920_000_000,
         },
     )
     assert_eq(response.status_code, 200)
@@ -866,21 +884,174 @@ def agent_can_summarize_typed_health_metrics_without_raw_records() -> None:
                 "total_duration_minutes": 480.0,
             },
             "steps": {
-                "by_origin": [
-                    {
-                        "data_origin_package": "com.example.phone",
-                        "record_count": 1,
-                        "total_count": 1234,
-                    }
-                ],
                 "daily": [],
-                "duplicate_source_warning": None,
-                "raw_total_count": 1234,
                 "record_count": 1,
                 "total_count": 1234,
             },
         },
     )
+
+
+@test()
+def summary_uses_health_connects_canonical_step_aggregate() -> None:
+    """The agent receives the platform total without raw-source bookkeeping."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        ingest_duplicate_step_telemetry(client)
+        response = client.post(
+            STEP_AGGREGATES_PATH,
+            json={
+                "installation_id": "duplicate-step-installation",
+                "request_id": "canonical-step-snapshot-1",
+                "start_time": 1_699_920_000_000,
+                "end_time": 1_700_179_200_000,
+                "buckets": [
+                    {
+                        "start_time": 1_700_000_000_000,
+                        "end_time": 1_700_003_600_000,
+                        "zone_offset_seconds": 3_600,
+                        "count": 101,
+                    },
+                    {
+                        "start_time": 1_700_086_400_000,
+                        "end_time": 1_700_090_000_000,
+                        "zone_offset_seconds": 3_600,
+                        "count": 206,
+                    },
+                ],
+            },
+        )
+        assert_eq(response.status_code, 200)
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-17T00:00:00Z",
+            bucket="day",
+        )
+
+    assert_eq(
+        envelope["result"]["steps"],
+        {
+            "daily": [
+                {"date": "2023-11-14", "total_count": 101},
+                {"date": "2023-11-15", "total_count": 206},
+            ],
+            "record_count": 2,
+            "total_count": 307,
+        },
+    )
+
+
+@test()
+def newer_canonical_step_snapshot_revises_a_bucket() -> None:
+    """A fresh Health Connect aggregate replaces an earlier partial-hour value."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        bucket = {
+            "start_time": 1_700_000_000_000,
+            "end_time": 1_700_003_600_000,
+            "zone_offset_seconds": 3_600,
+            "count": 101,
+        }
+        ingest_step_aggregate_snapshot(
+            client, request_id="canonical-step-snapshot-1", buckets=[bucket]
+        )
+        ingest_step_aggregate_snapshot(
+            client,
+            request_id="canonical-step-snapshot-2",
+            buckets=[{**bucket, "count": 150}],
+        )
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-17T00:00:00Z",
+            bucket="day",
+        )
+
+    assert_eq(envelope["result"]["steps"]["total_count"], 150)
+
+
+@test()
+def older_canonical_step_snapshot_cannot_replace_newer_data() -> None:
+    """A delayed phone upload cannot roll the canonical projection backwards."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        bucket = {
+            "start_time": 1_700_000_000_000,
+            "end_time": 1_700_003_600_000,
+            "zone_offset_seconds": 3_600,
+            "count": 200,
+        }
+        common = {
+            "buckets": [bucket],
+            "installation_id": "duplicate-step-installation",
+            "start_time": 1_699_920_000_000,
+        }
+        newer = client.post(
+            STEP_AGGREGATES_PATH,
+            json={
+                **common,
+                "end_time": 1_700_179_200_000,
+                "request_id": "canonical-step-snapshot-newer",
+            },
+        )
+        assert_eq(newer.status_code, 200)
+        older = client.post(
+            STEP_AGGREGATES_PATH,
+            json={
+                **common,
+                "buckets": [{**bucket, "count": 100}],
+                "end_time": 1_700_090_000_000,
+                "request_id": "canonical-step-snapshot-older",
+            },
+        )
+        assert_eq(older.status_code, 200)
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-17T00:00:00Z",
+            bucket="day",
+        )
+
+    assert_eq(envelope["result"]["steps"]["total_count"], 200)
+
+
+@test()
+def newer_canonical_step_snapshot_removes_an_absent_bucket() -> None:
+    """An authoritative snapshot clears a bucket Health Connect removed."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        ingest_step_aggregate_snapshot(
+            client,
+            request_id="canonical-step-snapshot-1",
+            buckets=[
+                {
+                    "start_time": 1_700_000_000_000,
+                    "end_time": 1_700_003_600_000,
+                    "zone_offset_seconds": 3_600,
+                    "count": 101,
+                }
+            ],
+        )
+        ingest_step_aggregate_snapshot(
+            client, request_id="canonical-step-snapshot-2", buckets=[]
+        )
+
+        envelope = call_tool(
+            client,
+            "summarize_health_connect",
+            after="2023-11-14T00:00:00Z",
+            before="2023-11-17T00:00:00Z",
+            bucket="day",
+        )
+
+    assert_eq(envelope["result"]["steps"]["total_count"], 0)
 
 
 @test()
@@ -899,66 +1070,16 @@ def summary_deduplicates_overlapping_step_origins_by_local_day() -> None:
         )
 
     assert_eq(envelope["success"], True)
-    assert_eq(envelope["result"]["steps"]["raw_total_count"], 603)
-    assert_eq(envelope["result"]["steps"]["total_count"], 305)
-    assert_true(envelope["result"]["steps"]["duplicate_source_warning"] is not None)
     assert_eq(
-        envelope["result"]["steps"]["by_origin"],
-        [
-            {
-                "data_origin_package": "android",
-                "record_count": 2,
-                "total_count": 300,
-            },
-            {
-                "data_origin_package": "com.fitbit.FitbitMobile",
-                "record_count": 2,
-                "total_count": 303,
-            },
-        ],
-    )
-    assert_eq(
-        envelope["result"]["steps"]["daily"],
-        [
-            {
-                "by_origin": [
-                    {
-                        "data_origin_package": "android",
-                        "record_count": 1,
-                        "total_count": 100,
-                    },
-                    {
-                        "data_origin_package": "com.fitbit.FitbitMobile",
-                        "record_count": 1,
-                        "total_count": 98,
-                    },
-                ],
-                "date": "2023-11-14",
-                "duplicate_source_warning": "Multiple step origins overlap; total_count uses the largest origin for this day and raw_total_count is the simple sum.",
-                "raw_total_count": 198,
-                "record_count": 2,
-                "total_count": 100,
-            },
-            {
-                "by_origin": [
-                    {
-                        "data_origin_package": "android",
-                        "record_count": 1,
-                        "total_count": 200,
-                    },
-                    {
-                        "data_origin_package": "com.fitbit.FitbitMobile",
-                        "record_count": 1,
-                        "total_count": 205,
-                    },
-                ],
-                "date": "2023-11-15",
-                "duplicate_source_warning": "Multiple step origins overlap; total_count uses the largest origin for this day and raw_total_count is the simple sum.",
-                "raw_total_count": 405,
-                "record_count": 2,
-                "total_count": 205,
-            },
-        ],
+        envelope["result"]["steps"],
+        {
+            "daily": [
+                {"date": "2023-11-14", "total_count": 100},
+                {"date": "2023-11-15", "total_count": 205},
+            ],
+            "record_count": 4,
+            "total_count": 305,
+        },
     )
 
 

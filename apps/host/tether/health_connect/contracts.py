@@ -319,6 +319,74 @@ class HealthConnectBatchRequest(HealthConnectWireModel):
     deletions: list[HealthConnectDeletion] = Field(max_length=10_000)
 
 
+class HealthConnectStepAggregateBucket(HealthConnectWireModel):
+    """One source-priority-deduplicated Health Connect duration bucket."""
+
+    count: int = Field(ge=0)
+    end_time: int
+    start_time: int
+    zone_offset_seconds: int
+
+    @model_validator(mode="after")
+    def ordered_time_window(self) -> Self:
+        """Require one positive duration bucket."""
+        if self.start_time >= self.end_time:
+            raise HealthConnectStepAggregateRangeError
+        return self
+
+
+class HealthConnectStepAggregateRangeError(ValueError):
+    """A canonical step snapshot or bucket has invalid time bounds."""
+
+    def __init__(self) -> None:
+        super().__init__("step aggregate time ranges must be ordered and contained")
+
+
+class HealthConnectStepAggregateOverlapError(ValueError):
+    """A canonical step snapshot contains overlapping duration buckets."""
+
+    def __init__(self) -> None:
+        super().__init__("step aggregate buckets must not overlap")
+
+
+class HealthConnectStepAggregateSnapshotRequest(HealthConnectWireModel):
+    """Authoritative canonical step buckets over one bounded Health Connect read."""
+
+    buckets: list[HealthConnectStepAggregateBucket] = Field(max_length=3_000)
+    end_time: int
+    installation_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    start_time: int
+
+    @model_validator(mode="after")
+    def valid_snapshot(self) -> Self:
+        """Keep reconciliation bounded to ordered, non-overlapping buckets."""
+        if self.start_time >= self.end_time:
+            raise HealthConnectStepAggregateRangeError
+        prior_end: int | None = None
+        for bucket in sorted(self.buckets, key=lambda item: item.start_time):
+            if (
+                bucket.start_time < self.start_time
+                or bucket.end_time > self.end_time
+                or (prior_end is not None and bucket.start_time < prior_end)
+            ):
+                if prior_end is not None and bucket.start_time < prior_end:
+                    raise HealthConnectStepAggregateOverlapError
+                raise HealthConnectStepAggregateRangeError
+            prior_end = bucket.end_time
+        return self
+
+
+class HealthConnectStepAggregateSnapshotRead(HealthConnectWireModel):
+    """Safe ingestion counts for one canonical step snapshot."""
+
+    accepted: int
+    deleted: int
+    replayed: bool
+    skipped: int
+    status: Literal["accepted"]
+
+
 class AuthoritativeScanRange(HealthConnectWireModel):
     """Exact time range scanned authoritatively by Health Connect."""
 

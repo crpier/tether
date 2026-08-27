@@ -77,23 +77,16 @@ class HealthConnectStepOriginSummary(BaseModel):
 
 
 class HealthConnectDailyStepsSummary(BaseModel):
-    """Step totals for one captured local date."""
+    """Canonical Health Connect step total for one captured local date."""
 
-    by_origin: list[HealthConnectStepOriginSummary]
     date: str
-    duplicate_source_warning: str | None
-    raw_total_count: int
-    record_count: int
     total_count: int
 
 
 class HealthConnectStepsSummary(BaseModel):
-    """Compact step measurements in a requested time window."""
+    """Canonical step measurements in a requested time window."""
 
-    by_origin: list[HealthConnectStepOriginSummary]
     daily: list[HealthConnectDailyStepsSummary]
-    duplicate_source_warning: str | None
-    raw_total_count: int
     record_count: int
     total_count: int
 
