@@ -74,7 +74,7 @@ describe("MemoriesPanel", () => {
     const disclosure = await screen.findByText("2 Evidence sources");
     expect(disclosure.closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText(supporting)).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "source" }));
+    fireEvent.click(await screen.findByRole("button", { name: "source" }));
     expect(onOpenEvidence).toHaveBeenCalledWith(cited);
   });
 

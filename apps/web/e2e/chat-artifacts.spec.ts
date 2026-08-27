@@ -107,6 +107,38 @@ async function mockArtifactConversation(page: Page): Promise<void> {
   });
 }
 
+test("artifact viewer stays usable at phone width", async ({ page, login }) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await mockArtifactConversation(page);
+  await login();
+
+  await page
+    .getByLabel("Tether message")
+    .locator("[data-widget='artifact']")
+    .getByRole("button", { name: "Open" })
+    .click();
+
+  const overlay = page.getByRole("dialog", { name: "Artifact viewer" });
+  const frame = overlay.locator("iframe");
+  await expect(frame).toBeVisible();
+  const box = await overlay.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(780);
+  await expect(
+    overlay.getByRole("textbox", { name: "Address" }),
+  ).toHaveAttribute("readonly", "");
+
+  await overlay.getByRole("button", { name: "Reload" }).click();
+  await expect(
+    frame.contentFrame().getByText("What multiplexes async IO?"),
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(overlay).not.toBeAttached();
+});
+
 test("an artifact fence renders a card, opens an overlay, and mounts a sandboxed iframe", async ({
   page,
   login,

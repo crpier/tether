@@ -204,6 +204,29 @@ describe("ArtifactOverlay", () => {
     expect(api.postArtifactEventCalls).toHaveLength(0);
   });
 
+  test("Escape closes the artifact viewer", async () => {
+    const api = new FakeArtifactsHost();
+    const onClose = vi.fn();
+    api.storedArtifacts = [
+      artifact({ id: "018f0000-0000-7000-8000-0000000005ed" }),
+    ];
+    render(() => (
+      <ArtifactOverlay
+        api={api}
+        artifact={{
+          id: "018f0000-0000-7000-8000-0000000005ed",
+          title: "Quiz",
+        }}
+        onClose={onClose}
+      />
+    ));
+    await screen.findByRole("dialog", { name: "Artifact viewer" });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   test("closing tears down the overlay; reopening re-fetches", async () => {
     const api = new FakeArtifactsHost();
     const pointer = {

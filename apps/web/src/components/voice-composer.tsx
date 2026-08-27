@@ -2,11 +2,11 @@
 // microphone wiring and recording/transcription status while the page owns
 // the wider spoken loop. Starting it arms a hands-free recording immediately;
 // ending it abandons the current clip and returns the composer to text.
-import { AudioVisualizer } from "@kitn.ai/ui/solid";
 import {
   Show,
   createEffect,
   createSignal,
+  lazy,
   onCleanup,
   onMount,
   type Accessor,
@@ -20,6 +20,12 @@ import type {
 import { VoiceRecorder } from "@/voice-recorder";
 import { watchForSpeechEnd } from "@/speech-end-watcher";
 import { Button } from "@/components/ui/button";
+
+const VoiceVisualizer = lazy(() =>
+  import("./voice-visualizer").then((module) => ({
+    default: module.VoiceVisualizer,
+  })),
+);
 
 function elapsedLabel(startedAt: number, nowMs: number): string {
   const seconds = Math.max(0, Math.round((nowMs - startedAt) / 1000));
@@ -193,13 +199,10 @@ export function VoiceComposerControls(props: {
                 class="bg-muted absolute right-0 bottom-full z-10 mb-2 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 rounded-md border px-3 py-1.5 text-sm shadow-sm"
                 role="status"
               >
-                <AudioVisualizer
+                <VoiceVisualizer
                   class="text-red-500"
-                  color="currentColor"
                   label="Microphone is listening"
-                  size="icon"
                   state="listening"
-                  variant="bar"
                 />
                 <span>Listening…</span>
                 <span class="tabular-nums opacity-70">
@@ -221,13 +224,10 @@ export function VoiceComposerControls(props: {
           class="bg-muted absolute right-0 bottom-full z-10 mb-2 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 rounded-md border px-3 py-1.5 text-sm shadow-sm"
           role="status"
         >
-          <AudioVisualizer
+          <VoiceVisualizer
             class="text-primary"
-            color="currentColor"
             label="Tether is speaking"
-            size="icon"
             state="speaking"
-            variant="bar"
           />
           <span>Tether is speaking…</span>
         </div>

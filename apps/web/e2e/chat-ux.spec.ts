@@ -95,13 +95,11 @@ test("chat session controls and message actions work together", async ({
     });
   });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("slider", { name: "Model profile" }).waitFor();
+  await page.getByRole("combobox", { name: "Model profile" }).waitFor();
 
-  await page.getByRole("button", { name: "Search transcript" }).click();
-  await page
-    .getByRole("searchbox", { name: "Search transcript" })
-    .fill("selector");
-  await expect(page.getByText("1 match")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Search transcript" }),
+  ).toHaveCount(0);
 
   await expect(page.getByRole("button", { name: "Quote message" })).toHaveCount(
     0,

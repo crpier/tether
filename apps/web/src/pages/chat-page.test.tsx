@@ -270,7 +270,7 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
 
-    await screen.findByRole("slider", { name: "Model profile" });
+    await screen.findByRole("combobox", { name: "Model profile" });
 
     expect(bus.statusRequests).toEqual([conversation.id]);
   });
@@ -279,7 +279,7 @@ describe("Chat view", () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
     await screen.findByRole("heading", { name: "Tether chat" });
-    await screen.findByRole("slider", { name: "Model profile" });
+    await screen.findByRole("combobox", { name: "Model profile" });
 
     bus.emit({
       context_percent: 24,
@@ -313,7 +313,7 @@ describe("Chat view", () => {
   test("warns when pi working context nears capacity", async () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
-    await screen.findByRole("slider", { name: "Model profile" });
+    await screen.findByRole("combobox", { name: "Model profile" });
 
     bus.emit({
       context_percent: 91,
@@ -1281,7 +1281,7 @@ describe("Chat view", () => {
     });
   });
 
-  test("puts the model slider beside working-session status", async () => {
+  test("puts the model selector beside working-session status", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
@@ -1295,10 +1295,10 @@ describe("Chat view", () => {
     ).toBeInTheDocument();
     expect(within(context).getByRole("separator")).toBeInTheDocument();
     expect(
-      await within(context).findByRole("slider", { name: "Model profile" }),
+      await within(context).findByRole("combobox", { name: "Model profile" }),
     ).toBeInTheDocument();
     expect(
-      within(composer).queryByRole("slider", { name: "Model profile" }),
+      within(composer).queryByRole("combobox", { name: "Model profile" }),
     ).not.toBeInTheDocument();
     expect(
       within(composer).getByRole("textbox", { name: "Message" }),
@@ -1313,54 +1313,46 @@ describe("Chat view", () => {
     ).toBeInTheDocument();
   });
 
-  test("presents model profiles without exposing model or effort details", async () => {
+  test("shows the selected model name in a compact selector", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
+    const selector = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    expect(slider).toHaveAttribute("min", "0");
-    expect(slider).toHaveAttribute("max", "4");
-    expect(slider).toHaveAttribute("step", "1");
-    expect(slider).toHaveValue("0");
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
-    expect(screen.queryAllByText(/GPT-5\.6|thinking/)).toHaveLength(0);
+    expect(selector).toHaveValue("gpt-5.6-luna");
+    expect(selector).toHaveDisplayValue("GPT-5.6 Luna · no thinking");
+    expect(selector).toHaveClass("truncate");
   });
 
   test("selecting a profile persists it without moving the transcript", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
     const transcript = await screen.findByLabelText("Chat transcript");
-    const slider = await screen.findByRole("slider", {
+    const selector = await screen.findByRole("combobox", {
       name: "Model profile",
     });
     transcript.scrollTop = 123;
 
-    fireEvent.input(slider, { target: { value: "4" } });
-    expect(host.chat.selectedModel).toBeUndefined();
-
-    fireEvent.change(slider, { target: { value: "4" } });
+    fireEvent.change(selector, { target: { value: "gpt-5.6-sol" } });
 
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-sol");
     });
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 5 of 5");
+    expect(selector).toHaveDisplayValue("GPT-5.6 Sol · medium thinking");
     expect(transcript.scrollTop).toBe(123);
   });
 
   test("serializes rapid profile commits and keeps the latest selection", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);
-    const slider = await screen.findByRole("slider", {
+    const selector = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    fireEvent.input(slider, { target: { value: "4" } });
-    fireEvent.change(slider, { target: { value: "4" } });
-    fireEvent.input(slider, { target: { value: "0" } });
-    fireEvent.change(slider, { target: { value: "0" } });
+    fireEvent.change(selector, { target: { value: "gpt-5.6-sol" } });
+    fireEvent.change(selector, { target: { value: "gpt-5.6-luna" } });
 
     await waitFor(() => {
       expect(host.chat.selectedModel).toBe("gpt-5.6-luna");
@@ -1375,12 +1367,12 @@ describe("Chat view", () => {
     };
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
+    const selector = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    expect(slider).toHaveValue("0");
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 5");
+    expect(selector).toHaveValue("gpt-5.6-luna");
+    expect(selector).toHaveDisplayValue("GPT-5.6 Luna · no thinking");
   });
 
   test("shows a fixed profile when the catalog has one entry", async () => {
@@ -1404,16 +1396,16 @@ describe("Chat view", () => {
       });
     renderApp(host);
 
-    const slider = await screen.findByRole("slider", {
+    const selector = await screen.findByRole("combobox", {
       name: "Model profile",
     });
 
-    expect(slider).toBeDisabled();
-    expect(slider).toHaveAttribute("max", "0");
-    expect(slider).toHaveAttribute("aria-valuetext", "Profile 1 of 1");
+    expect(selector).toBeDisabled();
+    expect(selector).toHaveValue("local");
+    expect(selector).toHaveDisplayValue("Local deterministic model");
   });
 
-  test("reports an empty model catalog without rendering a slider", async () => {
+  test("reports an empty model catalog without rendering a selector", async () => {
     const host = new FakeHost({ authenticated: true });
     host.chat.listModels = () =>
       Promise.resolve({ default_model: null, models: [] });
@@ -1423,63 +1415,26 @@ describe("Chat view", () => {
       await screen.findByText("No model profiles available."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("slider", { name: "Model profile" }),
+      screen.queryByRole("combobox", { name: "Model profile" }),
     ).not.toBeInTheDocument();
   });
 
-  test("searches the loaded transcript without hiding unmatched messages", async () => {
+  test("does not mount transcript search", async () => {
     const host = new FakeHost({
       authenticated: true,
       messages: [
         message({ content: "ordinary text", role: "assistant", seq: 1 }),
-        message({ content: "the hidden needle", role: "assistant", seq: 2 }),
       ],
     });
     renderApp(host);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Search transcript" }),
-    );
-    fireEvent.input(
-      screen.getByRole("searchbox", { name: "Search transcript" }),
-      {
-        target: { value: "needle" },
-      },
-    );
-
-    expect(await screen.findByText("1 match")).toBeInTheDocument();
-    expect(screen.getByText("ordinary text")).toBeInTheDocument();
+    expect(await screen.findByText("ordinary text")).toBeInTheDocument();
     expect(
-      screen.getByText("the hidden needle").closest("[data-search-match]"),
-    ).toHaveAttribute("data-search-match", "active");
-  });
-
-  test("loads older transcript pages when search opens", async () => {
-    const host = new FakeHost({
-      authenticated: true,
-      messages: Array.from({ length: 31 }, (_, index) =>
-        message({
-          content: index === 0 ? "old needle" : `message ${index.toString()}`,
-          role: "assistant",
-          seq: index + 1,
-        }),
-      ),
-    });
-    renderApp(host);
-    await screen.findByText("message 30");
-    expect(screen.queryByText("old needle")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Search transcript" }));
-    fireEvent.input(
-      screen.getByRole("searchbox", { name: "Search transcript" }),
-      {
-        target: { value: "needle" },
-      },
-    );
-
-    expect(await screen.findByText("old needle")).toBeInTheDocument();
-    expect(screen.getByText("1 match")).toBeInTheDocument();
-    expect(host.chat.listMessagesCalls).toHaveLength(2);
+      screen.queryByRole("button", { name: "Search transcript" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("searchbox", { name: "Search transcript" }),
+    ).not.toBeInTheDocument();
   });
 
   test("only fetches the latest page of history by default", async () => {
@@ -1541,6 +1496,32 @@ describe("Chat view", () => {
     // near-top scroll must not trigger another fetch.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(host.chat.listMessagesCalls.length).toBe(callsAfterInitialLoad);
+  });
+
+  test("shows recovered Pi session boundaries inside settled history", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({
+          content: "Earlier answer",
+          created_at: "2026-01-01T00:00:00Z",
+          role: "assistant",
+          seq: 1,
+        }),
+        message({
+          content: "Later question",
+          created_at: "2026-01-01T00:10:00Z",
+          role: "user",
+          seq: 2,
+        }),
+      ],
+    });
+    renderApp(host);
+
+    expect(await screen.findByText("Later question")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Historical Pi session boundary"),
+    ).toBeInTheDocument();
   });
 
   test("shows a fresh-session hint when there is no prior activity", async () => {

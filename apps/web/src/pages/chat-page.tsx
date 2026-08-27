@@ -27,10 +27,12 @@ import {
   For,
   Match,
   Show,
+  Suspense,
   Switch,
   createEffect,
   createMemo,
   createSignal,
+  lazy,
   onCleanup,
   onMount,
   untrack,
@@ -57,12 +59,9 @@ import type { KitnTimelineItem } from "../kitn-chat-projection";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
 import { willStartFreshSession } from "../session-freshness";
-import { ArtifactOverlay } from "../components/artifact-viewer";
-import { MessageContent } from "../components/message-content";
 import { VoiceComposerControls } from "../components/voice-composer";
 import type { ArtifactPointer } from "../components/widgets/artifact-widget";
 import { queryKeys } from "../lib/query-keys";
-import { formatToolResult } from "../lib/tool-result";
 import { Button } from "@/components/ui/button";
 import {
   TextField,
@@ -70,6 +69,17 @@ import {
   TextFieldLabel,
   TextFieldTextArea,
 } from "@/components/ui/text-field";
+
+const LazyArtifactOverlay = lazy(() =>
+  import("../components/artifact-viewer").then((module) => ({
+    default: module.ArtifactOverlay,
+  })),
+);
+const LazyMessageContent = lazy(() =>
+  import("../components/message-content").then((module) => ({
+    default: module.MessageContent,
+  })),
+);
 
 function messageLabel(role: ChatRole): string {
   switch (role) {
@@ -130,25 +140,15 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       modelsQuery.data?.default_model ??
       "",
   );
-  const selectedIndex = createMemo(() => {
-    const index = (modelsQuery.data?.models ?? []).findIndex(
-      (model) => model.id === selectedModel(),
-    );
-    return Math.max(0, index);
-  });
-  const [sliderIndex, setSliderIndex] = createSignal(0);
-  const profilePosition = createMemo(
-    () =>
-      `Profile ${(sliderIndex() + 1).toString()} of ${(modelsQuery.data?.models.length ?? 1).toString()}`,
-  );
+  const [visibleModel, setVisibleModel] = createSignal("");
 
   let requestedModel = "";
   let persistingModel = false;
 
   createEffect(() => {
-    setSliderIndex(selectedIndex());
     if (!persistingModel) {
       requestedModel = selectedModel();
+      setVisibleModel(selectedModel());
     }
   });
 
@@ -166,6 +166,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       });
     } catch (error) {
       requestedModel = selectedModel();
+      setVisibleModel(selectedModel());
       throw error;
     } finally {
       persistingModel = false;
@@ -180,6 +181,7 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
       return;
     }
     requestedModel = model;
+    setVisibleModel(model);
     if (!persistingModel) {
       void persistRequestedModel();
     }
@@ -188,9 +190,8 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
   return (
     <div
       aria-label="Model"
-      class="w-32 shrink-0 sm:w-36"
+      class="w-full min-w-0 sm:w-auto sm:max-w-64 sm:shrink"
       role="group"
-      title={profilePosition()}
     >
       <Show
         fallback={
@@ -202,29 +203,23 @@ function ModelSelector(props: { api: ChatHost; conversation: Conversation }) {
         }
         when={(modelsQuery.data?.models.length ?? 0) > 0}
       >
-        <input
+        <select
           aria-label="Model profile"
-          aria-valuetext={profilePosition()}
-          class="accent-primary h-6 w-full cursor-pointer disabled:cursor-default"
+          class="border-input bg-background h-8 w-full truncate rounded-md border px-2 text-xs disabled:cursor-default"
           disabled={
             modelsQuery.isLoading || (modelsQuery.data?.models.length ?? 0) < 2
           }
-          max={(modelsQuery.data?.models.length ?? 1) - 1}
-          min="0"
           onChange={(event) => {
-            const profile =
-              modelsQuery.data?.models[event.currentTarget.valueAsNumber];
-            if (profile !== undefined) {
-              persistModel(profile.id);
-            }
+            persistModel(event.currentTarget.value);
           }}
-          onInput={(event) => {
-            setSliderIndex(event.currentTarget.valueAsNumber);
-          }}
-          step="1"
-          type="range"
-          value={sliderIndex()}
-        />
+          value={visibleModel()}
+        >
+          <For each={modelsQuery.data?.models ?? []}>
+            {(profile) => (
+              <option value={profile.id}>{profile.display_name}</option>
+            )}
+          </For>
+        </select>
       </Show>
     </div>
   );
@@ -360,21 +355,6 @@ const TOOL_LABELS: Partial<
   web_search: { done: "Searched the web", running: "Searching the web…" },
 };
 
-function displayRowText(row: DisplayRow): string {
-  if (row.kind === "message") {
-    return row.message.text;
-  }
-  if (row.kind === "reasoning") {
-    return row.reasoning.text;
-  }
-  return row.tools
-    .map(
-      ({ row: tool }) =>
-        `${toolText(tool)} ${formatToolDetail(tool.args)} ${formatToolResult(tool.result)}`,
-    )
-    .join(" ");
-}
-
 function toolResultPayload(
   value: unknown,
 ): Record<string, unknown> | undefined {
@@ -416,30 +396,6 @@ function toolText(row: ToolRow): string {
   return Array.isArray(messages)
     ? `${label} · ${messages.length.toString()} results`
     : label;
-}
-
-// Render a tool's args/result for the transcript. Strings pass through; objects
-// pretty-print as JSON. Empty objects and nullish values collapse to "" so the
-// caller can hide the block entirely rather than show a bare `{}`.
-function formatToolDetail(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 0
-  ) {
-    return "";
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "[unserializable]";
-  }
 }
 
 // Elapsed-time label that ticks via a text node mutation rather than a signal,
@@ -689,6 +645,16 @@ function MessageRow(props: {
 }) {
   return (
     <Switch>
+      <Match when={props.row.kind === "session-boundary"}>
+        <Checkpoint
+          aria-label="Historical Pi session boundary"
+          class="text-muted-foreground text-xs"
+          role="separator"
+        >
+          <CheckpointIcon />
+          <span>New Pi session</span>
+        </Checkpoint>
+      </Match>
       <Match when={props.row.kind === "tool-group" && props.row}>
         {(group) => {
           const toolIds = createMemo(() =>
@@ -819,12 +785,20 @@ function MessageRow(props: {
                 }
                 when={message().role === "assistant"}
               >
-                <MessageContent
-                  onOpenArtifact={props.onOpenArtifact}
-                  onOpenEvidence={props.onOpenEvidence}
-                  streaming={message().streaming}
-                  text={message().text}
-                />
+                <Suspense
+                  fallback={
+                    <KitnMessageContent class="chat-message-plain">
+                      {message().text}
+                    </KitnMessageContent>
+                  }
+                >
+                  <LazyMessageContent
+                    onOpenArtifact={props.onOpenArtifact}
+                    onOpenEvidence={props.onOpenEvidence}
+                    streaming={message().streaming}
+                    text={message().text}
+                  />
+                </Suspense>
               </Show>
               <Show when={!message().streaming && message().role !== "tool"}>
                 <MessageActions
@@ -853,19 +827,16 @@ const NEAR_TOP_THRESHOLD_PX = 100;
 function MessageRows(props: {
   focusRowId?: string;
   rows: TimelineRow[];
-  searchEnabled: boolean;
+  sessionGapSeconds: number;
   working: boolean;
   startedAt: number | null;
   stopped: boolean;
   historyReady: boolean;
   /** Whether this text was spoken this session (🔊 chip, #546). */
   isSpoken: (text: string) => boolean;
-  // Triggers a fetch of the next-older page; a no-op if one is already in
-  // flight or history is exhausted. Returns whether a fetch actually started,
-  // so the caller only arms its scroll-position restore when rows are really
-  // about to prepend.
+  // Triggers the next-older page near the top. Kitn's container preserves the
+  // visible anchor while the fetched rows prepend.
   onNearTop: () => boolean;
-  onSearchOpen: () => Promise<void>;
   onCopy: (text: string) => void;
   onOpenArtifact: (artifact: ArtifactPointer) => void;
   onOpenEvidence: (uri: string) => void;
@@ -877,23 +848,12 @@ function MessageRows(props: {
 }) {
   let viewport: HTMLElement | undefined;
   let root: HTMLDivElement | undefined;
-  const [searchOpen, setSearchOpen] = createSignal(false);
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const [activeMatch, setActiveMatch] = createSignal(0);
-  const displayRows = createMemo(() => projectTimelineRows(props.rows));
-  const displayRowIds = createMemo(() => displayRows().map((row) => row.id));
-  const matchingIds = createMemo(() => {
-    const query = searchQuery().trim().toLocaleLowerCase();
-    if (query.length === 0) {
-      return [];
-    }
-    return displayRows()
-      .filter((row) => displayRowText(row).toLocaleLowerCase().includes(query))
-      .map((row) => row.id);
-  });
-  const activeMatchId = createMemo<string | undefined>(() =>
-    matchingIds().at(activeMatch() % Math.max(matchingIds().length, 1)),
+  const displayRows = createMemo(() =>
+    projectTimelineRows(props.rows, {
+      sessionGapSeconds: props.sessionGapSeconds,
+    }),
   );
+  const displayRowIds = createMemo(() => displayRows().map((row) => row.id));
   const rowElements = new Map<string, HTMLDivElement>();
   createEffect(() => {
     const focusRowId = props.focusRowId;
@@ -907,21 +867,6 @@ function MessageRows(props: {
       });
     }
   });
-  createEffect(() => {
-    const matchId = activeMatchId();
-    const element =
-      matchId === undefined ? undefined : rowElements.get(matchId);
-    if (viewport !== undefined && element !== undefined) {
-      viewport.scrollTop = Math.max(
-        0,
-        element.offsetTop - viewport.clientHeight / 2,
-      );
-    }
-  });
-  createEffect(() => {
-    void searchQuery();
-    setActiveMatch(0);
-  });
   onMount(() => {
     viewport = root?.querySelector<HTMLElement>("[role='log']") ?? undefined;
   });
@@ -933,88 +878,6 @@ function MessageRows(props: {
       }}
       class="relative flex min-h-0 flex-1 flex-col gap-2"
     >
-      <Show when={props.searchEnabled}>
-        <Show
-          fallback={
-            <Button
-              aria-label="Search transcript"
-              class="absolute top-2 right-2 z-10 shadow-sm"
-              onClick={() => {
-                setSearchOpen(true);
-                void props.onSearchOpen();
-              }}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              Search
-            </Button>
-          }
-          when={searchOpen()}
-        >
-          <div class="bg-card flex shrink-0 items-center gap-2 rounded-lg border p-2 shadow-sm">
-            <input
-              aria-label="Search transcript"
-              autofocus
-              class="border-input min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1 text-sm"
-              onInput={(event) => {
-                setSearchQuery(event.currentTarget.value);
-              }}
-              placeholder="Search transcript"
-              type="search"
-              value={searchQuery()}
-            />
-            <span
-              class="text-muted-foreground min-w-14 text-right text-xs"
-              role="status"
-            >
-              {matchingIds().length.toString()}{" "}
-              {matchingIds().length === 1 ? "match" : "matches"}
-            </span>
-            <Button
-              aria-label="Previous transcript match"
-              disabled={matchingIds().length < 2}
-              onClick={() => {
-                setActiveMatch(
-                  (current) =>
-                    (current - 1 + matchingIds().length) % matchingIds().length,
-                );
-              }}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              ↑
-            </Button>
-            <Button
-              aria-label="Next transcript match"
-              disabled={matchingIds().length < 2}
-              onClick={() => {
-                setActiveMatch(
-                  (current) => (current + 1) % matchingIds().length,
-                );
-              }}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              ↓
-            </Button>
-            <Button
-              aria-label="Close transcript search"
-              onClick={() => {
-                setSearchOpen(false);
-                setSearchQuery("");
-              }}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              ✕
-            </Button>
-          </div>
-        </Show>
-      </Show>
       <ChatContainer
         aria-label={props.historyReady ? "Chat transcript" : undefined}
         class="bg-card relative flex-1 rounded-xl border shadow-sm"
@@ -1030,22 +893,11 @@ function MessageRows(props: {
             {(_id, index) => (
               <Show when={displayRows()[index()]}>
                 {(row) => {
-                  const matches = () => matchingIds().includes(row().id);
-                  const active = () =>
-                    matches() && activeMatchId() === row().id;
                   return (
                     <div
                       ref={(element) => {
                         rowElements.set(row().id, element);
                       }}
-                      class={
-                        active()
-                          ? "rounded-lg ring-2 ring-primary/60"
-                          : undefined
-                      }
-                      data-search-match={
-                        active() ? "active" : matches() ? "match" : undefined
-                      }
                     >
                       <MessageRow
                         isSpoken={props.isSpoken}
@@ -1630,7 +1482,6 @@ export function ChatPage() {
     highestSettledSeq,
     historyIncomplete,
     historyReady,
-    loadAllMessages,
     loadOlderMessages,
     loadedSkillCount,
     queuedPrompts,
@@ -2068,12 +1919,11 @@ export function ChatPage() {
                 interpretation,
               );
             }}
-            onSearchOpen={loadAllMessages}
             onUndoArchive={(messageId) =>
               api.undoGmailArchive(messageId).then(() => undefined)
             }
             rows={rows()}
-            searchEnabled={conversation()?.status === "active"}
+            sessionGapSeconds={conversation()?.session_gap_seconds ?? 300}
             startedAt={startedAt()}
             stopped={stopped()}
             working={working()}
@@ -2081,7 +1931,7 @@ export function ChatPage() {
           <Show when={conversation()?.status === "active"}>
             <div
               aria-label="Composer context"
-              class="flex shrink-0 items-center gap-2"
+              class="flex shrink-0 flex-wrap items-center gap-2"
               role="group"
             >
               <Show when={conversation()}>
@@ -2092,7 +1942,7 @@ export function ChatPage() {
                   />
                 )}
               </Show>
-              <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <div class="flex min-w-full flex-1 flex-wrap items-center gap-2 sm:min-w-0">
                 <Show when={historyIncomplete() && !generating()}>
                   <p class="text-muted-foreground text-xs" role="status">
                     Previous turn did not finish. Send a new message to recover.
@@ -2365,13 +2215,17 @@ export function ChatPage() {
           </Show>
         </Show>
       </div>
-      <ArtifactOverlay
-        api={artifacts}
-        artifact={openArtifact()}
-        onClose={() => {
-          setOpenArtifact(null);
-        }}
-      />
+      <Show when={openArtifact()}>
+        {(artifact) => (
+          <LazyArtifactOverlay
+            api={artifacts}
+            artifact={artifact()}
+            onClose={() => {
+              setOpenArtifact(null);
+            }}
+          />
+        )}
+      </Show>
     </section>
   );
 }

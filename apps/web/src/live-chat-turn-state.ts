@@ -12,6 +12,7 @@ export type ChatRole = "user" | "scheduled" | "assistant" | "tool";
 export type StoredRole = ChatRole | "reasoning";
 
 export interface StoredMessage {
+  createdAt?: string;
   id: string;
   role: StoredRole;
   content: string;
@@ -24,6 +25,7 @@ export interface StoredMessage {
 
 export type TimelineRow =
   | {
+      createdAt?: string;
       kind: "message";
       id: string;
       role: ChatRole;
@@ -31,8 +33,10 @@ export type TimelineRow =
       toolName: string | null;
       streaming: boolean;
       turn?: Message["turn"];
+      turnId?: string | null;
     }
   | {
+      createdAt?: string;
       kind: "reasoning";
       id: string;
       text: string;
@@ -40,14 +44,17 @@ export type TimelineRow =
       // True once the producing turn has finished: the cue to compact the
       // trace. Live reasoning stays expanded (`done: false`) while generating.
       done: boolean;
+      turnId?: string | null;
     }
   | {
+      createdAt?: string;
       kind: "tool";
       id: string;
       toolName: string;
       status: "running" | "done";
       args: unknown;
       result: unknown;
+      turnId?: string | null;
     };
 
 type LiveRow =
@@ -282,12 +289,14 @@ export function deriveRows(
   const rows: TimelineRow[] = stored.map((message) => {
     if (message.role === "reasoning") {
       return {
+        createdAt: message.createdAt,
         kind: "reasoning",
         id: message.id,
         text: message.content,
         streaming: false,
         // Settled history is always a finished turn, so it renders compact.
         done: true,
+        turnId: message.turnId,
       };
     }
     if (message.role === "tool") {
@@ -296,15 +305,18 @@ export function deriveRows(
       // of collapsing to a bare "used X" line once persisted (see
       // `MessageRow`'s "tool" branch in chat-page.tsx).
       return {
+        createdAt: message.createdAt,
         kind: "tool",
         id: message.id,
         toolName: message.toolName ?? message.content,
         status: "done",
         args: message.toolArgs ?? null,
         result: message.toolResult ?? null,
+        turnId: message.turnId,
       };
     }
     return {
+      createdAt: message.createdAt,
       kind: "message",
       id: message.id,
       role: message.role,
@@ -312,6 +324,7 @@ export function deriveRows(
       toolName: message.toolName ?? null,
       streaming: false,
       turn: message.turn,
+      turnId: message.turnId,
     };
   });
   const activeUserIsStored = stored.some(

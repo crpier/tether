@@ -71,7 +71,7 @@ test("listening starts after its cue and stopping capture emits the stop cue", a
   finishStartCue?.();
   await screen.findByText("Listening…");
   expect(
-    screen.getByRole("img", { name: "Microphone is listening" }),
+    await screen.findByRole("img", { name: "Microphone is listening" }),
   ).toBeInTheDocument();
   expect(FakeMediaRecorder.instances).toHaveLength(1);
 
@@ -105,7 +105,7 @@ test("voice playback uses Kitn speaking presentation", async () => {
 
   expect(await screen.findByText("Tether is speaking…")).toBeInTheDocument();
   expect(
-    screen.getByRole("img", { name: "Tether is speaking" }),
+    await screen.findByRole("img", { name: "Tether is speaking" }),
   ).toBeInTheDocument();
 });
 
