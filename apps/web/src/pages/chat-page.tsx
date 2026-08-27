@@ -9,7 +9,6 @@ import {
   ContextContent,
   ContextContentHeader,
   ContextTrigger,
-  ConversationList,
   Message as KitnMessage,
   MessageActions as KitnMessageActions,
   MessageContent as KitnMessageContent,
@@ -50,11 +49,7 @@ import {
 } from "../host/chat";
 import { ApiError } from "../host/error";
 import { createConversationMode } from "../conversation-mode";
-import {
-  conversationHref,
-  projectConversations,
-  projectTimelineRows,
-} from "../kitn-chat-projection";
+import { projectTimelineRows } from "../kitn-chat-projection";
 import type { KitnTimelineItem } from "../kitn-chat-projection";
 import { createLiveChatTurn } from "../live-chat-turn";
 import type { ChatRole, TimelineRow } from "../live-chat-turn";
@@ -998,115 +993,6 @@ function ConversationNotFound() {
   );
 }
 
-function ConversationPicker(props: {
-  conversations: Conversation[];
-  onClose: () => void;
-}) {
-  const navigate = useNavigate();
-  const params = useParams<{ conversationId?: string }>();
-  const summaries = createMemo(() => projectConversations(props.conversations));
-  const activeId = createMemo(
-    () =>
-      params.conversationId ??
-      props.conversations.find((candidate) => candidate.kind === "main")?.id,
-  );
-  let dialog: HTMLDivElement | undefined;
-  const previouslyFocused = document.activeElement;
-
-  onMount(() => {
-    const focusable = () =>
-      Array.from(
-        dialog?.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        props.onClose();
-        return;
-      }
-      if (event.key !== "Tab") {
-        return;
-      }
-      const elements = focusable();
-      if (elements.length === 0) {
-        event.preventDefault();
-        dialog?.focus();
-        return;
-      }
-      const first = elements[0];
-      const last = elements.at(-1);
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    queueMicrotask(() => focusable()[0]?.focus());
-    onCleanup(() => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (previouslyFocused instanceof HTMLElement) {
-        previouslyFocused.focus();
-      }
-    });
-  });
-
-  return (
-    <>
-      <div class="fixed inset-0 z-40 bg-black/40" />
-      <div
-        ref={(element) => {
-          dialog = element;
-        }}
-        aria-label="Choose conversation"
-        aria-modal="true"
-        class="bg-background fixed inset-3 z-50 flex max-h-[calc(100dvh-1.5rem)] flex-col rounded-lg border p-4 shadow-xl"
-        role="dialog"
-        tabindex={-1}
-      >
-        <ConversationList
-          activeId={activeId()}
-          class="min-h-0 flex-1"
-          compact
-          conversations={summaries()}
-          groups={[]}
-          header={
-            <div class="flex items-center justify-between px-3 py-2">
-              <h2 class="font-semibold">Choose conversation</h2>
-              <Button
-                aria-label="Close conversation picker"
-                onClick={props.onClose}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                Close
-              </Button>
-            </div>
-          }
-          onNewChat={() => {
-            props.onClose();
-            navigate("/chat?new=1");
-          }}
-          onSelect={(id) => {
-            const selected = props.conversations.find(
-              (candidate) => candidate.id === id,
-            );
-            if (selected !== undefined) {
-              props.onClose();
-              navigate(conversationHref(selected));
-            }
-          }}
-        />
-      </div>
-    </>
-  );
-}
-
 function ConversationHeader(props: {
   api: ChatHost;
   conversation: Conversation;
@@ -1556,7 +1442,6 @@ export function ChatPage() {
     });
   });
 
-  const [pickerOpen, setPickerOpen] = createSignal(false);
   const [archivedRestoreError, setArchivedRestoreError] =
     createSignal<string>();
   const [restoringArchivedId, setRestoringArchivedId] = createSignal<string>();
@@ -1844,26 +1729,6 @@ export function ChatPage() {
             conversation() !== undefined
           }
         >
-          <div class="flex shrink-0 items-center gap-2 lg:hidden">
-            <Button
-              aria-label="Choose conversation"
-              onClick={() => setPickerOpen(true)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Conversations
-            </Button>
-            <A class="text-primary ml-auto text-sm" href="/chat?new=1">
-              New
-            </A>
-          </div>
-          <Show when={pickerOpen()}>
-            <ConversationPicker
-              conversations={conversationsQuery.data ?? []}
-              onClose={() => setPickerOpen(false)}
-            />
-          </Show>
           <Show when={conversation()}>
             {(current) => (
               <ConversationHeader
@@ -1877,14 +1742,6 @@ export function ChatPage() {
               />
             )}
           </Show>
-          <div class="flex shrink-0 justify-end gap-3 text-xs">
-            <A class="text-primary" href="/chat?new=1">
-              New Conversation
-            </A>
-            <A class="text-muted-foreground" href="/chat?archived=1">
-              Archived
-            </A>
-          </div>
           <Show when={focusedTurnError()}>
             {(turnError) => (
               <div

@@ -139,7 +139,7 @@ async function serveLongChat(
   );
 }
 
-test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
+test("phone width: sidebar drawer owns navigation and Conversations", async ({
   page,
   login,
 }) => {
@@ -149,19 +149,29 @@ test("phone width: bottom tab bar, chat is full-width, sidebar hidden", async ({
   const transcript = page.locator('[role="log"][aria-label="Chat transcript"]');
   await transcript.waitFor({ state: "visible" });
 
-  // The desktop sidebar is not shown at this width…
-  await expect(page.locator("aside")).toBeHidden();
-  // …while the bottom tab bar is, reachable within the viewport.
-  const bottomNav = page.getByRole("navigation", {
-    name: "Main navigation (compact)",
-  });
-  const tabsBox = await boundingBox(bottomNav);
-  expect(tabsBox.x).toBeGreaterThanOrEqual(0);
-  expect(tabsBox.x + tabsBox.width).toBeLessThanOrEqual(PHONE.width + 1);
-  await expect(bottomNav.getByRole("link", { name: "Health" })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation (compact)" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Choose conversation" }),
+  ).toHaveCount(0);
 
-  // Chat is a full-width column. Model controls sit after the transcript, by
-  // the composer, rather than above a long mobile conversation.
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  const drawer = page.getByRole("dialog", { name: "Navigation sidebar" });
+  await expect(drawer).toHaveAttribute("aria-modal", "true");
+  await expect(
+    drawer.getByRole("navigation", { name: "Main navigation" }),
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("region", { name: "Conversations" }),
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("link", { name: "Create Conversation" }),
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("link", { name: "Archived Conversations" }),
+  ).toBeVisible();
+
   const chat = await boundingBox(transcript);
   expect(chat.width).toBeGreaterThan(PHONE.width * 0.8);
   const modelSelector = await boundingBox(
@@ -194,22 +204,68 @@ test("phone chat contains wide code and tables without page overflow", async ({
   ).toBeLessThanOrEqual(1);
 });
 
-test("phone Conversation picker is modal and Escape restores its trigger", async ({
+test("phone sidebar closes on Escape and restores its trigger", async ({
   page,
   login,
 }) => {
   await page.setViewportSize(PHONE);
   await login();
 
-  const trigger = page.getByRole("button", { name: "Choose conversation" });
+  const trigger = page.getByRole("button", { name: "Open sidebar" });
   await trigger.focus();
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Choose conversation" });
+  const dialog = page.getByRole("dialog", { name: "Navigation sidebar" });
   await expect(dialog).toHaveAttribute("aria-modal", "true");
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await page.mouse.click(PHONE.width - 4, 100);
+  await expect(dialog).toHaveCount(0);
+});
+
+test("phone sidebar opens from a right swipe at the left edge", async ({
+  page,
+  login,
+}) => {
+  await page.setViewportSize(PHONE);
+  await login();
+
+  await page.evaluate(() => {
+    const pointer = {
+      bubbles: true,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: "touch",
+    };
+    window.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        ...pointer,
+        clientX: 8,
+        clientY: 300,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        ...pointer,
+        clientX: 88,
+        clientY: 304,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointerup", {
+        ...pointer,
+        clientX: 88,
+        clientY: 304,
+      }),
+    );
+  });
+
+  await expect(
+    page.getByRole("dialog", { name: "Navigation sidebar" }),
+  ).toBeVisible();
 });
 
 for (const viewport of [PHONE, DESKTOP]) {
@@ -497,15 +553,10 @@ for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
     const composer = page.getByRole("textbox", { name: "Message" });
     await expect(composer).toBeVisible();
 
-    const navTop = (
-      await boundingBox(
-        page.getByRole("navigation", { name: "Main navigation (compact)" }),
-      )
-    ).y;
     const sendBox = await boundingBox(
       page.getByRole("button", { exact: true, name: "Send" }),
     );
-    expect(sendBox.y + sendBox.height).toBeLessThanOrEqual(navTop);
+    expect(sendBox.y + sendBox.height).toBeLessThanOrEqual(viewport.height);
 
     await expect
       .poll(async () =>
@@ -539,16 +590,16 @@ for (const viewport of [PHONE, TABLET_BELOW_DESKTOP]) {
   });
 }
 
-test("phone width: every Browse tab stays fully readable", async ({
-  page,
-  login,
-}) => {
+test("phone sidebar closes after selecting Browse", async ({ page, login }) => {
   await page.setViewportSize(PHONE);
   await login();
-  await page
-    .getByRole("navigation", { name: "Main navigation (compact)" })
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  const drawer = page.getByRole("dialog", { name: "Navigation sidebar" });
+  await drawer
+    .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: /^Browse/ })
     .click();
+  await expect(drawer).toHaveCount(0);
 
   const browseViews = page.getByRole("tablist", { name: "Browse view" });
   await browseViews.waitFor({ state: "visible" });
@@ -571,20 +622,35 @@ test("phone width: primary navigation and tabs are 44px touch targets", async ({
   await page.setViewportSize(PHONE);
   await login();
 
-  const bottomNav = page.getByRole("navigation", {
-    name: "Main navigation (compact)",
+  const openSidebar = page.getByRole("button", { name: "Open sidebar" });
+  expect((await boundingBox(openSidebar)).height).toBeGreaterThanOrEqual(44);
+  await openSidebar.click();
+  const drawer = page.getByRole("dialog", { name: "Navigation sidebar" });
+  expect(
+    (await boundingBox(drawer.getByRole("button", { name: "Close sidebar" })))
+      .height,
+  ).toBeGreaterThanOrEqual(44);
+  const navigation = drawer.getByRole("navigation", {
+    name: "Main navigation",
   });
+  const conversations = drawer.getByRole("region", { name: "Conversations" });
+  for (const label of ["Create Conversation", "Archived Conversations"]) {
+    expect(
+      (await boundingBox(conversations.getByRole("link", { name: label })))
+        .height,
+    ).toBeGreaterThanOrEqual(44);
+  }
   for (const label of ["Chat", "Health", "Browse", "Settings"]) {
     expect(
       (
         await boundingBox(
-          bottomNav.getByRole("link", { name: new RegExp(`^${label}`) }),
+          navigation.getByRole("link", { name: new RegExp(`^${label}`) }),
         )
       ).height,
     ).toBeGreaterThanOrEqual(44);
   }
 
-  await bottomNav.getByRole("link", { name: /^Browse/ }).click();
+  await navigation.getByRole("link", { name: /^Browse/ }).click();
   const browseViews = page.getByRole("tablist", { name: "Browse view" });
   for (const label of ["Memories", "Bucket", "Todos", "Reminders", "Panels"]) {
     expect(
@@ -607,7 +673,7 @@ test("desktop width: left sidebar visible, bottom tabs hidden", async ({
   await expect(sidebar).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Main navigation (compact)" }),
-  ).toBeHidden();
+  ).toHaveCount(0);
 
   const chat = await boundingBox(transcript);
   const sidebarBox = await boundingBox(sidebar);

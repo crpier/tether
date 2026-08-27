@@ -4,6 +4,7 @@ import { createQuery } from "@tanstack/solid-query";
 import {
   For,
   Show,
+  createEffect,
   createMemo,
   createSignal,
   onCleanup,
@@ -94,7 +95,7 @@ function ConversationNavigation() {
         conversations={summaries()}
         footer={
           <A
-            class="text-sidebar-foreground/60 px-3 py-2 text-xs"
+            class="text-sidebar-foreground/60 flex min-h-11 items-center px-3 text-xs"
             href="/chat?archived=1"
           >
             Archived Conversations
@@ -106,7 +107,7 @@ function ConversationNavigation() {
             <span>Conversations</span>
             <A
               aria-label="Create Conversation"
-              class="ml-auto text-base"
+              class="ml-auto inline-flex size-11 items-center justify-center text-base"
               href="/chat?new=1"
             >
               +
@@ -204,39 +205,210 @@ function DesktopSidebar(props: { items: NavItem[] }) {
   );
 }
 
-function MobileBottomTabs(props: { items: NavItem[] }) {
+function MobileSidebar(props: { items: NavItem[] }) {
+  const [open, setOpen] = createSignal(false);
   const location = useLocation();
+  let drawer: HTMLElement | undefined;
+  let swipeStart: { pointerId: number; x: number; y: number } | undefined;
+  let previousLocation = `${location.pathname}${location.search}`;
+
+  createEffect(() => {
+    const currentLocation = `${location.pathname}${location.search}`;
+    if (currentLocation !== previousLocation) {
+      previousLocation = currentLocation;
+      setOpen(false);
+    }
+  });
+
+  onMount(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        open() ||
+        event.pointerType !== "touch" ||
+        !event.isPrimary ||
+        event.clientX > 24
+      ) {
+        return;
+      }
+      swipeStart = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      const start = swipeStart;
+      if (start?.pointerId !== event.pointerId) {
+        return;
+      }
+      const horizontalDistance = event.clientX - start.x;
+      const verticalDistance = Math.abs(event.clientY - start.y);
+      if (horizontalDistance >= 56 && horizontalDistance > verticalDistance) {
+        swipeStart = undefined;
+        setOpen(true);
+      } else if (
+        verticalDistance > 32 &&
+        verticalDistance > horizontalDistance
+      ) {
+        swipeStart = undefined;
+      }
+    };
+    const finishSwipe = (event: PointerEvent) => {
+      if (swipeStart?.pointerId === event.pointerId) {
+        swipeStart = undefined;
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, { capture: true });
+    window.addEventListener("pointermove", onPointerMove, { capture: true });
+    window.addEventListener("pointerup", finishSwipe, { capture: true });
+    window.addEventListener("pointercancel", finishSwipe, { capture: true });
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onPointerDown, {
+        capture: true,
+      });
+      window.removeEventListener("pointermove", onPointerMove, {
+        capture: true,
+      });
+      window.removeEventListener("pointerup", finishSwipe, { capture: true });
+      window.removeEventListener("pointercancel", finishSwipe, {
+        capture: true,
+      });
+    });
+  });
+
+  createEffect(() => {
+    if (!open()) {
+      return;
+    }
+    const previouslyFocused = document.activeElement;
+    const focusable = () =>
+      Array.from(
+        drawer?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") {
+        return;
+      }
+      const elements = focusable();
+      if (elements.length === 0) {
+        event.preventDefault();
+        drawer?.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    queueMicrotask(() => focusable()[0]?.focus());
+    onCleanup(() => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previouslyFocused instanceof HTMLElement) {
+        previouslyFocused.focus();
+      }
+    });
+  });
+
   return (
-    <nav
-      aria-label="Main navigation (compact)"
-      class="border-sidebar-border bg-sidebar text-sidebar-foreground fixed inset-x-0 bottom-0 z-40 flex border-t lg:hidden"
-    >
-      <For each={props.items}>
-        {(item) => {
-          const active = createMemo(() =>
-            item.path === "/chat"
-              ? location.pathname === "/" ||
-                location.pathname.startsWith("/chat")
-              : location.pathname === item.path,
-          );
-          return (
-            <A
-              aria-label={item.label}
-              class={cx(
-                "relative flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
-                active()
-                  ? "text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/70",
-              )}
-              end={item.path === "/"}
-              href={item.path}
+    <>
+      <header class="border-sidebar-border bg-sidebar text-sidebar-foreground flex h-11 shrink-0 items-center border-b px-2">
+        <button
+          aria-label="Open sidebar"
+          class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground inline-flex size-11 items-center justify-center rounded-md text-xl"
+          onClick={() => setOpen(true)}
+          type="button"
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+        <span class="ml-2 text-sm font-bold tracking-wide">Tether</span>
+      </header>
+      <Show when={!open()}>
+        <div
+          aria-hidden="true"
+          class="fixed top-11 bottom-0 left-0 z-30 w-4 touch-pan-y"
+        />
+      </Show>
+      <Show when={open()}>
+        <button
+          aria-hidden="true"
+          class="fixed inset-0 z-40 bg-black/50"
+          onClick={() => setOpen(false)}
+          tabindex={-1}
+          type="button"
+        />
+        <aside
+          ref={(element) => {
+            drawer = element;
+          }}
+          aria-label="Navigation sidebar"
+          aria-modal="true"
+          class="border-sidebar-border bg-sidebar text-sidebar-foreground fixed inset-y-0 left-0 z-50 flex w-[min(20rem,88vw)] flex-col border-r shadow-xl"
+          role="dialog"
+          tabindex={-1}
+        >
+          <div class="flex h-11 shrink-0 items-center border-b px-3">
+            <span class="text-sm font-bold tracking-wide">Tether</span>
+            <button
+              aria-label="Close sidebar"
+              class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ml-auto inline-flex size-11 items-center justify-center rounded-md text-lg"
+              onClick={() => setOpen(false)}
+              type="button"
             >
-              <span>{item.label}</span>
-            </A>
-          );
-        }}
-      </For>
-    </nav>
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+          <nav
+            aria-label="Main navigation"
+            class="flex flex-col gap-1 px-2 py-2"
+          >
+            <For each={props.items}>
+              {(item) => {
+                const active = createMemo(() =>
+                  item.path === "/chat"
+                    ? location.pathname === "/" ||
+                      location.pathname.startsWith("/chat")
+                    : location.pathname === item.path,
+                );
+                return (
+                  <A
+                    aria-label={item.label}
+                    class={cx(
+                      "flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium",
+                      active()
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                    )}
+                    href={item.path}
+                  >
+                    <span
+                      aria-hidden="true"
+                      class="bg-sidebar-primary/20 inline-flex size-5 shrink-0 items-center justify-center rounded text-[11px] font-bold"
+                    >
+                      {item.label.charAt(0)}
+                    </span>
+                    <span>{item.label}</span>
+                  </A>
+                );
+              }}
+            </For>
+          </nav>
+          <ConversationNavigation />
+        </aside>
+      </Show>
+    </>
   );
 }
 
@@ -249,12 +421,12 @@ export function Shell(props: { children?: JSX.Element }) {
       <Show when={isDesktop()}>
         <DesktopSidebar items={items} />
       </Show>
-      <main class="flex min-w-0 flex-1 flex-col overflow-y-auto pb-16 lg:pb-0">
+      <main class="flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <Show when={!isDesktop()}>
+          <MobileSidebar items={items} />
+        </Show>
         {props.children}
       </main>
-      <Show when={!isDesktop()}>
-        <MobileBottomTabs items={items} />
-      </Show>
     </div>
   );
 }

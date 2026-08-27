@@ -431,7 +431,7 @@ describe("Conversation navigation", () => {
     ).toBeVisible();
   });
 
-  test("mobile Conversation picker traps focus, closes on Escape, and restores focus", async () => {
+  test("mobile sidebar traps focus, closes on Escape, and restores focus", async () => {
     useMobileLayout();
     const garden = scoped("018f0000-0000-7000-8000-000000000107", "Garden");
     const host = new FakeHost({ authenticated: true });
@@ -439,23 +439,25 @@ describe("Conversation navigation", () => {
     renderApp(host, undefined, { path: "/chat" });
 
     const trigger = await screen.findByRole("button", {
-      name: "Choose conversation",
+      name: "Open sidebar",
     });
     trigger.focus();
     fireEvent.click(trigger);
-    const picker = screen.getByRole("dialog", { name: "Choose conversation" });
-    expect(picker).toHaveAttribute("aria-modal", "true");
+    const sidebar = screen.getByRole("dialog", {
+      name: "Navigation sidebar",
+    });
+    expect(sidebar).toHaveAttribute("aria-modal", "true");
     fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
       expect(
-        screen.queryByRole("dialog", { name: "Choose conversation" }),
+        screen.queryByRole("dialog", { name: "Navigation sidebar" }),
       ).not.toBeInTheDocument();
     });
     expect(trigger).toHaveFocus();
   });
 
-  test("mobile Conversation picker closes after selecting a Scoped Conversation", async () => {
+  test("mobile sidebar closes after selecting a Scoped Conversation", async () => {
     useMobileLayout();
     const garden = scoped("018f0000-0000-7000-8000-000000000107", "Garden");
     const host = new FakeHost({ authenticated: true });
@@ -463,16 +465,20 @@ describe("Conversation navigation", () => {
     renderApp(host, undefined, { path: "/chat" });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Choose conversation" }),
+      await screen.findByRole("button", { name: "Open sidebar" }),
     );
-    const picker = screen.getByRole("dialog", { name: "Choose conversation" });
-    fireEvent.click(within(picker).getByRole("button", { name: /^Garden\b/ }));
+    const sidebar = screen.getByRole("dialog", {
+      name: "Navigation sidebar",
+    });
+    fireEvent.click(
+      await within(sidebar).findByRole("button", { name: /^Garden\b/ }),
+    );
 
     await waitFor(() => {
       expect(window.location.pathname).toBe(`/chat/${garden.id}`);
     });
     expect(
-      screen.queryByRole("dialog", { name: "Choose conversation" }),
+      screen.queryByRole("dialog", { name: "Navigation sidebar" }),
     ).not.toBeInTheDocument();
   });
 

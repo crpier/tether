@@ -1477,7 +1477,7 @@ def websocket_persists_assistant_message_from_streamed_deltas() -> None:
 
     messages = response.json()
     assert_eq(
-        [frame.get("event") for frame in frames],
+        [frame.get("event") for frame in frames if frame.get("type") == "chat"],
         [
             "turn_queued",
             "user_message",
