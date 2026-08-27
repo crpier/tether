@@ -49,6 +49,10 @@ const WIDGET_MESSAGE_TEXT = [
     },
   }),
   "```",
+  "",
+  "```ts",
+  "const answer: number = 42;",
+  "```",
 ].join("\n");
 
 async function mockWidgetConversation(page: Page): Promise<void> {
@@ -131,4 +135,25 @@ test("a settled assistant message renders table, mermaid, and vega-lite widgets"
   // Vega-Lite: vega-embed's SVG render root, actions menu disabled.
   await expect(message.locator("[data-widget='vega-lite'] svg")).toBeVisible();
   await expect(message.locator(".vega-actions")).toHaveCount(0);
+});
+
+test("a settled assistant code fence displays distinct syntax colors", async ({
+  page,
+  login,
+}) => {
+  await mockWidgetConversation(page);
+  await login();
+
+  const tokens = page.locator(
+    "[aria-label='Tether message'] pre.shiki code.language-ts .line > span",
+  );
+  await expect(tokens.first()).toBeVisible();
+  await expect
+    .poll(async () => {
+      const colors = await tokens.evaluateAll((elements) =>
+        elements.map((element) => getComputedStyle(element).color),
+      );
+      return new Set(colors).size;
+    })
+    .toBeGreaterThan(1);
 });
