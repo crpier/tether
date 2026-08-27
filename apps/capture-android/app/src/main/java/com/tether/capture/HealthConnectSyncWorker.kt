@@ -4,8 +4,6 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -14,12 +12,17 @@ class HealthConnectSyncWorker(
     appContext: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result = syncMutex.withLock {
+    override suspend fun doWork(): Result = when (val run = syncGuard.runIfIdle { sync() }) {
+        HealthConnectSyncRun.AlreadyRunning -> Result.success()
+        is HealthConnectSyncRun.Completed -> run.value
+    }
+
+    private suspend fun sync(): Result {
         val repository = SettingsRepository(applicationContext)
         val settings = repository.load()
         if (!settings.isConfigured()) {
             repository.markHealthConnectFailure("Configure the Tether host before syncing")
-            return@withLock Result.failure()
+            return Result.failure()
         }
 
         val healthStatus = HealthConnectStatusReader(
@@ -34,15 +37,15 @@ class HealthConnectSyncWorker(
                     "Health Connect is unavailable on this device"
                 },
             )
-            return@withLock Result.failure()
+            return Result.failure()
         }
         if (!available.permissions.canReadAnyRecord) {
             repository.markHealthConnectFailure("Health permissions changed; grant access again")
-            return@withLock Result.failure()
+            return Result.failure()
         }
 
         repository.markHealthConnectRunning(true)
-        try {
+        return try {
             val installationId = repository.healthConnectStatus().installationId
             val source = AndroidHealthConnectSource.fromContext(
                 context = applicationContext,
@@ -55,6 +58,7 @@ class HealthConnectSyncWorker(
                 health = source,
                 host = HealthConnectHostHttpClient(settings.hostUrl, settings.token),
                 requestIds = UuidRequestIds,
+                baselineCheckpoints = repository,
             )
             when (val result = coordinator.syncOnce()) {
                 HealthConnectSyncResult.Success -> {
@@ -89,7 +93,7 @@ class HealthConnectSyncWorker(
     }
 
     companion object {
-        private val syncMutex = Mutex()
+        private val syncGuard = HealthConnectSyncGuard()
         val ALL_RECORD_TYPES: Set<HealthConnectRecordType> = HealthConnectRecordType.entries.toCollection(linkedSetOf())
     }
 }
