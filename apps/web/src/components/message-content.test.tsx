@@ -61,7 +61,7 @@ describe("MessageContent", () => {
       />
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: "source" }));
+    fireEvent.click(screen.getByRole("button", { name: "(source)" }));
 
     expect(onOpenEvidence).toHaveBeenCalledWith(uri);
   });
@@ -76,27 +76,32 @@ describe("MessageContent", () => {
       />
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: "source" }));
+    fireEvent.click(screen.getByRole("button", { name: "(source)" }));
 
     expect(onOpenEvidence).toHaveBeenCalledWith(uri);
   });
 
-  test("raw Health Evidence references are inspectable", () => {
+  test("Tether Evidence links hide raw references behind a compact label", () => {
     const onOpenEvidence = vi.fn();
     const uri = "tether://health-connect/exercise/exercise-1@v42";
-    render(() => (
+    const { container } = render(() => (
       <MessageContent
         onOpenEvidence={onOpenEvidence}
-        text={`Raw ${uri}\n\nCode \`${uri}\``}
+        text={`Linked [exercise trace](${uri})\n\nRaw ${uri}\n\nCode \`${uri}\``}
       />
     ));
 
-    const references = screen.getAllByRole("button", { name: uri });
-    expect(references).toHaveLength(2);
-    fireEvent.click(references[0]);
-    fireEvent.click(references[1]);
+    const references = screen.getAllByRole("button", { name: "(source)" });
+    expect(references).toHaveLength(3);
+    expect(container).not.toHaveTextContent(uri);
+    for (const reference of references) {
+      expect(reference).not.toHaveAttribute("title", uri);
+      fireEvent.click(reference);
+    }
+    expect(onOpenEvidence).toHaveBeenCalledTimes(3);
     expect(onOpenEvidence).toHaveBeenNthCalledWith(1, uri);
     expect(onOpenEvidence).toHaveBeenNthCalledWith(2, uri);
+    expect(onOpenEvidence).toHaveBeenNthCalledWith(3, uri);
   });
 
   test("autolinks also get the new-tab attributes", () => {

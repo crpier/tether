@@ -118,7 +118,7 @@ describe("Dreaming panel", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("conversation-id/run-id.md")).toBeInTheDocument();
     fireEvent.click(
-      within(changes).getAllByRole("button", { name: "source" })[1],
+      within(changes).getAllByRole("button", { name: "(source)" })[1],
     );
     expect(
       await screen.findByRole("dialog", { name: "Evidence inspector" }),

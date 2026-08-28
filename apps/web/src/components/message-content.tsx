@@ -176,9 +176,7 @@ function EvidenceText(props: { text: string }) {
     <For each={evidenceTextParts(props.text)}>
       {(part) =>
         part.evidence ? (
-          <EvidenceLink onOpen={openEvidence} uri={part.text}>
-            {part.text}
-          </EvidenceLink>
+          <EvidenceLink onOpen={openEvidence} uri={part.text} />
         ) : (
           part.text
         )
@@ -196,13 +194,7 @@ function InlineToken(props: { token: MarkedToken }) {
     case "codespan": {
       const openEvidence = useContext(OpenEvidenceContext);
       return isEvidenceUri(token.text) && openEvidence !== undefined ? (
-        <EvidenceLink
-          class={`${inlineCodeClass} font-mono`}
-          onOpen={openEvidence}
-          uri={token.text}
-        >
-          {token.text}
-        </EvidenceLink>
+        <EvidenceLink onOpen={openEvidence} uri={token.text} />
       ) : (
         <code class={inlineCodeClass}>{token.text}</code>
       );
@@ -235,11 +227,7 @@ function InlineToken(props: { token: MarkedToken }) {
     case "link": {
       const openEvidence = useContext(OpenEvidenceContext);
       if (isEvidenceUri(token.href) && openEvidence !== undefined) {
-        return (
-          <EvidenceLink onOpen={openEvidence} uri={token.href}>
-            <InlineTokens tokens={markdownTokens(token.tokens)} />
-          </EvidenceLink>
-        );
+        return <EvidenceLink onOpen={openEvidence} uri={token.href} />;
       }
       const href = sanitizeElementAttribute("a", "href", token.href);
       return (

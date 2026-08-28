@@ -76,6 +76,18 @@ async def dreaming_preserves_user_authority_over_assistant_conclusions() -> None
 
 
 @test()
+async def agent_outputs_use_compact_markdown_for_tether_evidence_links() -> None:
+    """Every generated-text context hides exact Evidence URIs behind source."""
+    for prompt in (
+        CONVERSATION_SYSTEM_PROMPT,
+        DREAMING_SYSTEM_PROMPT,
+        TASK_SYSTEM_PROMPT,
+    ):
+        assert_in("[source](tether://...)", prompt)
+        assert_in("Never use raw HTML for Evidence links", prompt)
+
+
+@test()
 async def dreaming_uses_second_person_for_user_facing_memory() -> None:
     """The stable Dreaming persona carries the Memory voice invariant."""
     prompt = system_prompt_for("dreaming")

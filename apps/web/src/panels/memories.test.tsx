@@ -46,9 +46,12 @@ describe("MemoriesPanel", () => {
     renderPanel(host);
 
     const panel = screen.getByRole("region", { name: "Memory Topics" });
+    const travel = await within(panel).findByLabelText(
+      "Memory Topic: Travel preferences",
+    );
     expect(
-      await within(panel).findByLabelText("Memory Topic: Travel preferences"),
-    ).toHaveTextContent("Prefers aisle seats.");
+      await within(travel).findByText("Prefers aisle seats."),
+    ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /edit/i }),
     ).not.toBeInTheDocument();
@@ -72,9 +75,18 @@ describe("MemoriesPanel", () => {
     renderPanel(host, onOpenEvidence);
 
     const disclosure = await screen.findByText("2 Evidence sources");
+    const topicCard = screen.getByLabelText("Memory Topic: Sleep");
+    expect(await within(topicCard).findByText("Sleep varied.")).toBeVisible();
     expect(disclosure.closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText(supporting)).not.toBeVisible();
-    fireEvent.click(await screen.findByRole("button", { name: "source" }));
+    expect(topicCard).not.toHaveTextContent(cited);
+    expect(topicCard).not.toHaveTextContent(supporting);
+
+    fireEvent.click(disclosure);
+    const sources = within(topicCard).getAllByRole("button", {
+      name: "(source)",
+    });
+    expect(sources).toHaveLength(3);
+    fireEvent.click(sources[0]);
     expect(onOpenEvidence).toHaveBeenCalledWith(cited);
   });
 
