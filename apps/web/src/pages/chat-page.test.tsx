@@ -732,7 +732,7 @@ describe("Chat view", () => {
     });
     renderApp(host);
 
-    fireEvent.click(await screen.findByRole("button", { name: "source" }));
+    fireEvent.click(await screen.findByRole("button", { name: "(source)" }));
 
     const inspector = await screen.findByRole("dialog", {
       name: "Evidence inspector",

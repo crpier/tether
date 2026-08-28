@@ -791,6 +791,8 @@ async def production_executor_instructs_curator_to_use_second_person() -> None:
     assert "Address the user as `you` and `your`" in runner.prompts[0]
     assert "Begin every Claim with `You` or `Your`" in runner.prompts[0]
     assert 'Never call them "the user"' in runner.prompts[0]
+    assert "[source](tether://...)" in runner.prompts[0]
+    assert "Never use raw HTML for Evidence links" in runner.prompts[0]
 
 
 @test()
@@ -1928,6 +1930,8 @@ async def maintenance_executor_instructs_curator_to_use_second_person() -> None:
     assert "Address the user as `you` and `your`" in curator.prompts[0]
     assert "Begin every Claim with `You` or `Your`" in curator.prompts[0]
     assert "Rewrite existing third-person user references" in curator.prompts[0]
+    assert "[source](tether://...)" in curator.prompts[0]
+    assert "Never use raw HTML for Evidence links" in curator.prompts[0]
 
 
 @test()

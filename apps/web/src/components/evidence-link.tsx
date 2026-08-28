@@ -1,5 +1,3 @@
-import type { JSX } from "solid-js";
-
 const emailReference = /^tether:\/\/email\/[0-9A-Za-z-]+$/;
 const messageReference = /^tether:\/\/message\/[0-9A-Za-z-]+$/;
 const healthReference =
@@ -38,7 +36,6 @@ export function isEvidenceUri(value: string): boolean {
 }
 
 export function EvidenceLink(props: {
-  children: JSX.Element;
   class?: string;
   onOpen: (uri: string) => void;
   uri: string;
@@ -49,10 +46,10 @@ export function EvidenceLink(props: {
       onClick={() => {
         props.onOpen(props.uri);
       }}
-      title={props.uri}
+      title="Open Evidence"
       type="button"
     >
-      {props.children}
+      (source)
     </button>
   );
 }

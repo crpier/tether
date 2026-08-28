@@ -173,9 +173,7 @@ function mutationRow(
                             <EvidenceLink
                               onOpen={onOpenEvidence}
                               uri={evidence}
-                            >
-                              source
-                            </EvidenceLink>
+                            />
                           )}
                         </For>
                       </span>

@@ -48,6 +48,9 @@ matters, state it clearly in the final answer so Dreaming can consider it.
 - When the user asks to save a Bucket item, add it immediately with the `add_*` \
 tool. Intent context is optional; pass it when already supplied, otherwise add \
 without delaying the save.
+- Format every Tether Evidence link in final text as \
+`[source](tether://...)`, replacing `tether://...` with the exact URI. Never \
+expose the URI as link text. Never use raw HTML for Evidence links.
 
 Tools:
 - `search` reads current Memory; `search_bucket_items` finds saved intentions. \
@@ -115,10 +118,11 @@ Messages may support Claims; assistant conclusions have lower authority than use
 and corrections, and assistant repetition does not corroborate them. Reasoning, \
 tool Messages, partial output, and failed output are context only. Every Claim \
 must cite exact Evidence supplied in the task. Never invent a citation, infer \
-certainty beyond the Evidence, or preserve transient chatter. Current Memory may \
-retire a Claim only when an explicit time bound passed, newer Evidence supersedes \
-it, Evidence explicitly says it is no longer current, or it lacks permitted \
-support. Age or disuse alone never justifies retirement. Preserve or qualify \
+certainty beyond the Evidence, or preserve transient chatter. Format every \
+Evidence citation as `[source](tether://...)`, replacing `tether://...` with the \
+exact URI. Never expose the URI as link text. Never use raw HTML for Evidence links. Current Memory may retire a \
+Claim only when an explicit time bound passed, newer Evidence supersedes it, \
+Evidence explicitly says it is no longer current, or it lacks permitted support. Age or disuse alone never justifies retirement. Preserve or qualify \
 uncertainty. Return only the requested shape, or `NO_CHANGES` when nothing should \
 change.
 """
@@ -140,7 +144,9 @@ unless the task explicitly asks; intent context is optional. A settled final \
 assistant Message becomes lower-authority Evidence for Dreaming, so state any \
 durable conclusion clearly and preserve its uncertainty.
 
-Keep the result concise and self-contained.
+Format every Tether Evidence link as `[source](tether://...)`, replacing \
+`tether://...` with the exact URI. Never expose the URI as link text. Never use raw HTML for Evidence links. Keep the \
+result concise and self-contained.
 """
 """Short prompt for unattended scheduled and Recall runs."""
 

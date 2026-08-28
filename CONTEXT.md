@@ -23,7 +23,7 @@ Dreaming's removal of a Claim from current Memory when its explicit time bound h
 _Avoid_: forgetting, deletion, suppression, expiry by age
 
 **Evidence**:
-Canonical durable source material that may support a Claim, such as a user Message, a settled final assistant Message, or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Assistant conclusions have lower authority than user assertions and corrections; repetition by the assistant does not corroborate or strengthen them.
+Canonical durable source material that may support a Claim, such as a user Message, a settled final assistant Message, or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Human-facing Evidence links appear as compact `(source)` labels instead of exposing their opaque references. Assistant conclusions have lower authority than user assertions and corrections; repetition by the assistant does not corroborate or strengthen them.
 _Avoid_: Memory, tool trajectory, reasoning
 
 **Dreaming**:

@@ -78,7 +78,9 @@ export function MemoriesPanel(props: {
                 <div class="mt-2">
                   <Suspense
                     fallback={
-                      <p class="whitespace-pre-wrap text-sm">{topic.body}</p>
+                      <p class="text-muted-foreground text-sm">
+                        Loading Topic…
+                      </p>
                     }
                   >
                     <LazyMessageContent
@@ -96,13 +98,11 @@ export function MemoriesPanel(props: {
                     <ul class="mt-2 max-h-52 space-y-1 overflow-y-auto pl-2">
                       <For each={topic.evidence}>
                         {(evidence) => (
-                          <li class="text-muted-foreground break-all font-mono">
+                          <li class="text-muted-foreground">
                             <EvidenceLink
                               onOpen={props.onOpenEvidence}
                               uri={evidence}
-                            >
-                              {evidence}
-                            </EvidenceLink>
+                            />
                           </li>
                         )}
                       </For>

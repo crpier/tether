@@ -914,7 +914,7 @@ Rules:
 - Omit transient requests, implementation chatter, and unsupported assertions.
 - Address the user as `you` and `your`. Begin every Claim with `You` or `Your`. Never call them "the user" or use third-person pronouns for them.
 - Return Markdown only, grouped under `##` Topic headings.
-- Every Claim is one `- ` bullet with an inline exact `tether://` source citation.
+- Every Claim is one `- ` bullet with an inline `[source](tether://...)` citation, replacing `tether://...` with the exact supplied URI. Never expose the URI as link text. Never use raw HTML for Evidence links.
 - Use only exact Evidence URIs below. Preserve uncertainty and corrections.
 - Return `NO_CHANGES` when no durable Claim is supported.
 
@@ -1526,7 +1526,8 @@ Rules:
 - Preserve every supported idea unless it qualifies for retirement. Age or disuse alone never qualifies.
 - Retire a Claim only when its explicit time bound passed, newer Evidence supersedes it, Evidence explicitly says it is no longer current, or it lacks permitted support.
 - When uncertain, preserve or qualify the Claim and set `review_after`; never guess.
-- Every evidence citation and retirement basis must be copied verbatim from the supplied Evidence; never invent or alter a `tether://` URI.
+- In Topic documents, format every Evidence citation as `[source](tether://...)`, replacing `tether://...` with the exact supplied URI. Never expose the URI as link text. Never use raw HTML for Evidence links.
+- Every Evidence URI and retirement basis must be copied verbatim from the supplied Evidence; never invent or alter a `tether://` URI.
 - Return either exactly `NO_CHANGES` or zero or more resulting documents followed by a retirement ledger when any Claim is removed:
 
 === <workspace-relative/path.md> ===
