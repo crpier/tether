@@ -39,6 +39,17 @@ async def every_run_kind_resolves_to_a_tether_prompt() -> None:
 
 
 @test()
+async def user_facing_runs_get_the_plain_writing_contract() -> None:
+    """Interactive and unattended replies avoid formulaic agent prose."""
+    for kind in ("conversation", "scheduled", "recall", "gmail", "titling"):
+        prompt = system_prompt_for(kind)
+
+        assert_in("Writing style (apply to every user-facing response)", prompt)
+        assert_in("plain, direct, and concrete", prompt)
+        assert_in("Before sending, reread the response", prompt)
+
+
+@test()
 async def both_prompts_state_the_tether_identity() -> None:
     """Every run kind's prompt names the Tether persona."""
     for prompt in (CONVERSATION_SYSTEM_PROMPT, TASK_SYSTEM_PROMPT):
