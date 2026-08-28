@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import NoReturn, Protocol, Self, cast
+from typing import TYPE_CHECKING, NoReturn, Protocol, Self, cast
 
 from pydantic import BaseModel, Field, model_validator
 from snekok import Ok
 from starlette.requests import Request
 from starlette.routing import Route
 
+from tether.active_user_evidence import (
+    ActiveUserEvidenceError,
+    resolve_active_user_evidence,
+)
 from tether.capabilities import bind_params
 from tether.capability_contracts import CapabilityOutcome, ErrorRule
+from tether.email_evidence import EmailEvidenceService
 from tether.gmail.client import (
     GmailAuthenticationFailure,
     GmailClient,
@@ -22,6 +27,11 @@ from tether.gmail.client import (
 from tether.structured_logging import get_request_logger
 from tether.tool_runtime import ToolSpec
 
+if TYPE_CHECKING:
+    from tether.agent_trace_recorder import AgentTraceRecorder
+    from tether.conversations import ConversationService
+    from tether.dreaming import DreamingService
+
 
 class _GmailToolsRuntime(Protocol):
     """The slice of the host runtime this module uses.
@@ -31,7 +41,11 @@ class _GmailToolsRuntime(Protocol):
     either direction would close a static import cycle (ADR-0025).
     """
 
+    conversation_service: ConversationService
+    dreaming_service: DreamingService
     gmail_client: GmailClient | None
+    email_evidence_service: EmailEvidenceService
+    trace_recorder: AgentTraceRecorder
 
 
 def _runtime(request: Request) -> _GmailToolsRuntime:
@@ -57,6 +71,10 @@ class GmailToolsLabelError(Exception):
 
 class GmailToolsUpstreamError(Exception):
     """Surface an upstream contract break or transport failure."""
+
+
+class GmailEvidencePromotionError(Exception):
+    """Refuse email promotion without fresh authorization and read provenance."""
 
 
 _GMAIL_AUTH_ERROR = "Gmail authentication expired or was revoked; please re-authorize"
@@ -140,8 +158,19 @@ class ReadGmailMessageParams(BaseModel):
     )
 
 
+class PromoteGmailEvidenceParams(BaseModel):
+    """Promote one active-turn Gmail read under explicit remember authorization."""
+
+    claim_hint: str = Field(min_length=1, max_length=1_000)
+    message_id: str = Field(min_length=1)
+
+
 GMAIL_TOOL_ERRORS: tuple[ErrorRule, ...] = (
-    ErrorRule((GmailToolsLabelError,), "invalid_input", 400),
+    ErrorRule(
+        (GmailEvidencePromotionError, GmailToolsLabelError),
+        "invalid_input",
+        400,
+    ),
     ErrorRule((GmailToolsNotConfiguredError,), "upstream_error", 503),
     ErrorRule((GmailToolsNotFoundError,), "not_found", 404),
     ErrorRule((GmailToolsAuthError, GmailToolsUpstreamError), "upstream_error", 502),
@@ -331,6 +360,59 @@ async def _list_gmail_labels(request: Request) -> CapabilityOutcome:
     )
 
 
+async def _promote_gmail_evidence(
+    request: Request, claim_hint: str, message_id: str
+) -> CapabilityOutcome:
+    """Promote a source only after this interactive turn read it successfully."""
+    runtime = _runtime(request)
+    try:
+        authorizing_message = await resolve_active_user_evidence(
+            conversation_service=runtime.conversation_service,
+            trace_recorder=runtime.trace_recorder,
+            session_id=request.state.session_id,
+        )
+    except ActiveUserEvidenceError as error:
+        message = "email promotion requires fresh interactive user Evidence"
+        raise GmailEvidencePromotionError(message) from error
+    run = runtime.trace_recorder.current_run(request.state.session_id)
+    read_in_active_turn = False
+    for call in () if run is None else run.tool_calls:
+        summarized_result = call.result
+        if not isinstance(summarized_result, dict):
+            continue
+        result_fields = cast("dict[str, object]", summarized_result)
+        if (
+            call.tool == "read_gmail_message"
+            and call.success
+            and call.args.get("message_id") == message_id
+            and result_fields.get("message_id") == message_id
+        ):
+            read_in_active_turn = True
+            break
+    if not read_in_active_turn:
+        message = "email promotion requires a successful active-turn Gmail read"
+        raise GmailEvidencePromotionError(message)
+    gmail_source = await _require_client(request).get_raw_message(message_id)
+    if isinstance(gmail_source, Ok):
+        source = gmail_source.value
+    else:
+        _translate_failure(gmail_source.error, not_found_if_404=True)
+    if source.message_id != message_id:
+        message = "Gmail promotion fetch returned a different message identity"
+        raise GmailToolsUpstreamError(message)
+    promoted = await runtime.email_evidence_service.promote(
+        source,
+        authorizing_message=authorizing_message,
+        claim_hint=claim_hint,
+    )
+    runtime.dreaming_service.request_immediate_assimilation(
+        authorizing_message.conversation_id
+    )
+    return CapabilityOutcome(
+        result={"message_id": promoted.message_id, "uri": promoted.uri}
+    )
+
+
 async def _read_gmail_message(
     request: Request, message_id: str, max_chars: int
 ) -> CapabilityOutcome:
@@ -371,6 +453,12 @@ GMAIL_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "read_gmail_message",
         ReadGmailMessageParams,
         bind_params(_read_gmail_message),
+        GMAIL_TOOL_ERRORS,
+    ),
+    ToolSpec(
+        "promote_gmail_evidence",
+        PromoteGmailEvidenceParams,
+        bind_params(_promote_gmail_evidence),
         GMAIL_TOOL_ERRORS,
     ),
     ToolSpec(

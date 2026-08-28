@@ -5,13 +5,14 @@ from tempfile import TemporaryDirectory
 from typing import cast
 from uuid import UUID
 
-from snekql.sqlite import Database, insert
+from snekql.sqlite import Database, Fetched, insert
 from snektest import assert_eq, assert_true, test
 from starlette.applications import Starlette
 
 from tests.surfaces import login, surface_client
 from tether.app_runtime import app_runtime
 from tether.conversation_model import MessageDraft
+from tether.email_evidence_store import EmailEvidenceSnapshot
 from tether.health_connect.persistence import (
     HcExerciseLap,
     HcExerciseSegment,
@@ -22,6 +23,28 @@ from tether.health_connect.persistence import (
 
 _BASE_MILLIS = 1_700_000_000_000
 _HOUR_MILLIS = 3_600_000
+
+
+async def _seed_email_evidence(
+    database: Database,
+) -> EmailEvidenceSnapshot[Fetched]:
+    """Insert one promoted source as setup for Evidence inspection."""
+    async with database.transaction(mode="immediate") as transaction:
+        return await transaction.execute(
+            insert(
+                EmailEvidenceSnapshot(
+                    body_chars=39,
+                    body_text="The apartment is booked for 12-18 June.",
+                    body_truncated=False,
+                    content_hash="known-source-hash",
+                    date_header="Tue, 7 Apr 2026 09:30:00 +0000",
+                    from_header="Alice <alice@example.com>",
+                    gmail_message_id="m1",
+                    subject="Lisbon booking",
+                    thread_id="t1",
+                )
+            ).returning()
+        )
 
 
 async def _seed_exercise(database: Database) -> int:
@@ -201,6 +224,38 @@ def message_reference_resolves_to_its_original_evidence() -> None:
     assert_eq(payload["role"], "user")
     assert_eq(payload["content"], "I prefer aisle seats on overnight flights.")
     assert_true(payload["occurred_at"].endswith("Z"))
+
+
+@test()
+def email_reference_resolves_the_immutable_local_snapshot() -> None:
+    """An email citation remains inspectable through its host-owned source."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        portal = client.portal
+        assert portal is not None
+        snapshot = portal.call(
+            _seed_email_evidence,
+            runtime.conversation_service.database,
+        )
+
+        uri = f"tether://email/{snapshot.id}"
+        response = client.get("/api/evidence", params={"uri": uri})
+
+    assert_eq(response.status_code, 200)
+    payload = response.json()
+    assert_eq(payload["kind"], "email")
+    assert_eq(payload["uri"], uri)
+    assert_eq(payload["gmail_message_id"], "m1")
+    assert_eq(payload["thread_id"], "t1")
+    assert_eq(payload["from_header"], "Alice <alice@example.com>")
+    assert_eq(payload["date_header"], "Tue, 7 Apr 2026 09:30:00 +0000")
+    assert_eq(payload["subject"], "Lisbon booking")
+    assert_eq(payload["body_chars"], 39)
+    assert_eq(payload["body_text"], "The apartment is booked for 12-18 June.")
+    assert_eq(payload["body_truncated"], False)
+    assert_eq(payload["content_hash"], "known-source-hash")
+    assert_true(payload["captured_at"].endswith("Z"))
 
 
 @test()

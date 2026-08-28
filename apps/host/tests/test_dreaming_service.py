@@ -57,6 +57,11 @@ from tether.dreaming_store import (
     DreamRun,
     create_dreaming_schema,
 )
+from tether.email_evidence_store import (
+    EmailEvidencePromotion,
+    EmailEvidenceSnapshot,
+    create_email_evidence_schema,
+)
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
 
@@ -87,6 +92,7 @@ async def conversation_fixture() -> AsyncGenerator[
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_conversation_schema(db)
     await create_dreaming_schema(db)
+    await create_email_evidence_schema(db)
     conversation_service = ConversationService(db)
     conversation = (await conversation_service.list_conversations())[0]
     yield conversation_service, DreamingService(db), conversation.id
@@ -652,6 +658,119 @@ async def production_executor_curates_evidence_into_claims() -> None:
 
 
 @test()
+async def production_executor_accepts_promoted_email_citation() -> None:
+    """Dreaming may support a nominated Claim with its exact email snapshot."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    authorizing_message = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="Remember the dates from the booking email.",
+    )
+    async with conversation_service.database.transaction(mode="immediate") as tx:
+        snapshot = await tx.execute(
+            insert(
+                EmailEvidenceSnapshot(
+                    body_chars=39,
+                    body_text="The apartment is booked for 12-18 June.",
+                    body_truncated=False,
+                    content_hash="source-hash",
+                    date_header="Tue, 7 Apr 2026 09:30:00 +0000",
+                    from_header="Alice <alice@example.com>",
+                    gmail_message_id="m1",
+                    subject="Lisbon booking",
+                    thread_id="t1",
+                )
+            ).returning()
+        )
+        _ = await tx.execute(
+            insert(
+                EmailEvidencePromotion(
+                    authorizing_conversation_id=conversation_id,
+                    authorizing_message_id=cast("UUID7", authorizing_message.id),
+                    authorizing_message_seq=authorizing_message.seq,
+                    claim_hint="The Lisbon apartment is booked for 12-18 June.",
+                    snapshot_id=snapshot.id,
+                )
+            )
+        )
+    run = await dreaming_service.queue_manual_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    email_uri = f"tether://email/{snapshot.id}"
+
+    class _Runner:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def run(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return (
+                "## Travel\n\n- Lisbon apartment booked for 12-18 June. "
+                f"[source]({email_uri})"
+            )
+
+    with TemporaryDirectory() as workspace_root:
+        runner = _Runner()
+        result = await ConversationWindowDreamingExecutor(
+            conversation_service,
+            workspace_root=Path(workspace_root),
+            curation_runner=runner,
+        )(run, logger=test_logger())
+
+        assert_eq(result.status, "success")
+        document = (
+            Path(workspace_root) / str(conversation_id) / f"{run.id}.md"
+        ).read_text(encoding="utf-8")
+
+    assert_eq(len(runner.prompts), 1)
+    assert "The apartment is booked for 12-18 June." in runner.prompts[0]
+    assert "The Lisbon apartment is booked for 12-18 June." in runner.prompts[0]
+    assert email_uri in document
+
+
+@test()
+async def production_executor_rejects_unpromoted_email_citation() -> None:
+    """Gmail context cannot support a Claim without a promoted snapshot."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="Search my email for the booking.",
+    )
+    run = await dreaming_service.queue_manual_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+
+    class _Runner:
+        async def run(self, prompt: str) -> str:
+            return (
+                "## Travel\n\n- Lisbon apartment booked for June. "
+                "[source](tether://email/019f0000-0000-7000-8000-000000000099)"
+            )
+
+    with TemporaryDirectory() as workspace_root:
+        result = await ConversationWindowDreamingExecutor(
+            conversation_service,
+            workspace_root=Path(workspace_root),
+            curation_runner=_Runner(),
+        )(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert result.error is not None
+    assert "outside bounded supporting Evidence" in result.error
+
+
+@test()
 async def production_executor_rejects_unsupported_claim_citations() -> None:
     """Dreaming cannot write a Claim citing anything outside its Evidence bounds."""
     conversation_service, dreaming_service, conversation_id = await _fixture()
@@ -686,7 +805,7 @@ async def production_executor_rejects_unsupported_claim_citations() -> None:
 
         assert_eq(result.status, "failed")
         assert result.error is not None
-        assert "outside bounded user Evidence" in result.error
+        assert "outside bounded supporting Evidence" in result.error
         assert not (root / str(conversation_id) / f"{run.id}.md").exists()
 
 
@@ -721,7 +840,7 @@ async def production_executor_requires_a_citation_for_every_claim() -> None:
 
     assert_eq(result.status, "failed")
     assert result.error is not None
-    assert "must cite bounded user Evidence" in result.error
+    assert "must cite bounded supporting Evidence" in result.error
 
 
 @test()

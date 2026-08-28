@@ -82,6 +82,10 @@ import {
   read_gmail_messageTool,
 } from "./read_gmail_message.js";
 import {
+  registerPromoteGmailEvidenceTool,
+  promote_gmail_evidenceTool,
+} from "./promote_gmail_evidence.js";
+import {
   registerListGmailLabelsTool,
   list_gmail_labelsTool,
 } from "./list_gmail_labels.js";
@@ -216,6 +220,7 @@ export const tetherToolSources = [
   sourceForTool(archive_gmail_messageTool),
   sourceForTool(search_gmailTool),
   sourceForTool(read_gmail_messageTool),
+  sourceForTool(promote_gmail_evidenceTool),
   sourceForTool(list_gmail_labelsTool),
   sourceForTool(trash_gmail_messageTool),
   sourceForTool(update_gmail_labelsTool),
@@ -277,6 +282,7 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerArchiveGmailMessageTool(pi);
   registerSearchGmailTool(pi);
   registerReadGmailMessageTool(pi);
+  registerPromoteGmailEvidenceTool(pi);
   registerListGmailLabelsTool(pi);
   registerTrashGmailMessageTool(pi);
   registerUpdateGmailLabelsTool(pi);

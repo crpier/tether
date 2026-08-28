@@ -2391,6 +2391,43 @@ export interface components {
       title: string | null;
     };
     /**
+     * EmailEvidenceRead
+     * @description Browser-safe representation of one promoted email source.
+     */
+    EmailEvidenceRead: {
+      /** Body Chars */
+      body_chars: number;
+      /** Body Text */
+      body_text: string;
+      /** Body Truncated */
+      body_truncated: boolean;
+      /**
+       * Captured At
+       * Format: date-time
+       */
+      captured_at: string;
+      /** Content Hash */
+      content_hash: string;
+      /** Date Header */
+      date_header: string;
+      /** From Header */
+      from_header: string;
+      /** Gmail Message Id */
+      gmail_message_id: string;
+      /**
+       * Kind
+       * @default email
+       * @constant
+       */
+      kind: "email";
+      /** Subject */
+      subject: string;
+      /** Thread Id */
+      thread_id: string;
+      /** Uri */
+      uri: string;
+    };
+    /**
      * EssayGradeProposalRead
      * @description The model's proposed essay grade, for the human to confirm or override.
      *
@@ -5881,6 +5918,7 @@ export interface operations {
         };
         content: {
           "application/json":
+            | components["schemas"]["EmailEvidenceRead"]
             | components["schemas"]["ExerciseEvidenceRead"]
             | components["schemas"]["MessageEvidenceRead"]
             | components["schemas"]["SleepEvidenceRead"];

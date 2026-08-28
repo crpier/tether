@@ -1646,6 +1646,77 @@
         "title": "EbookDocumentRead",
         "type": "object"
       },
+      "EmailEvidenceRead": {
+        "description": "Browser-safe representation of one promoted email source.",
+        "properties": {
+          "body_chars": {
+            "title": "Body Chars",
+            "type": "integer"
+          },
+          "body_text": {
+            "title": "Body Text",
+            "type": "string"
+          },
+          "body_truncated": {
+            "title": "Body Truncated",
+            "type": "boolean"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "date_header": {
+            "title": "Date Header",
+            "type": "string"
+          },
+          "from_header": {
+            "title": "From Header",
+            "type": "string"
+          },
+          "gmail_message_id": {
+            "title": "Gmail Message Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "email",
+            "default": "email",
+            "title": "Kind",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body_chars",
+          "body_text",
+          "body_truncated",
+          "captured_at",
+          "content_hash",
+          "date_header",
+          "from_header",
+          "gmail_message_id",
+          "subject",
+          "thread_id",
+          "uri"
+        ],
+        "title": "EmailEvidenceRead",
+        "type": "object"
+      },
       "EssayGradeProposalRead": {
         "description": "The model's proposed essay grade, for the human to confirm or override.\n\n`proposed_correct` is `null` when the model was unavailable \u2014 the rubric is\nstill revealed so the human can grade unaided. Nothing is scheduled by a\nproposal; only the confirmed answer reaches SM-2 (ADR 0004).",
         "properties": {
@@ -8802,6 +8873,9 @@
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EmailEvidenceRead"
+                    },
                     {
                       "$ref": "#/components/schemas/ExerciseEvidenceRead"
                     },

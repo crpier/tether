@@ -13,12 +13,14 @@ from snekql.sqlite import Database, Fetched, select
 
 from tether.conversation_model import MessageRole
 from tether.conversation_store import Message
+from tether.email_evidence import EmailEvidence, EmailEvidenceService
 from tether.health_connect import (
     HealthConnectEvidence,
     HealthConnectEvidenceResolver,
 )
 
 _MESSAGE_URI = re.compile(r"tether://message/(?P<message_id>[0-9A-Fa-f-]+)")
+_EMAIL_URI = re.compile(r"tether://email/(?P<snapshot_id>[0-9A-Fa-f-]+)")
 _EXERCISE_URI = re.compile(
     r"tether://health-connect/exercise/(?P<record_uid>[^@/\s]+)@v(?P<version_id>[1-9][0-9]*)"
 )
@@ -55,15 +57,22 @@ class EvidenceResolver:
         self,
         database: Database,
         health_connect: HealthConnectEvidenceResolver,
+        email: EmailEvidenceService,
     ) -> None:
         self._database = database
+        self._email = email
         self._health_connect = health_connect
 
-    async def resolve(self, uri: str) -> HealthConnectEvidence | MessageEvidence:
+    async def resolve(
+        self, uri: str
+    ) -> EmailEvidence | HealthConnectEvidence | MessageEvidence:
         """Return the exact source named by `uri`, or a typed lookup failure."""
         message_match = _MESSAGE_URI.fullmatch(uri)
         if message_match is not None:
             return await self._resolve_message(uri, message_match.group("message_id"))
+        email_match = _EMAIL_URI.fullmatch(uri)
+        if email_match is not None:
+            return await self._resolve_email(uri, email_match.group("snapshot_id"))
         exercise_match = _EXERCISE_URI.fullmatch(uri)
         if exercise_match is not None:
             return await self._resolve_health_connect(
@@ -81,6 +90,16 @@ class EvidenceResolver:
                 version_id=int(sleep_match.group("version_id")),
             )
         raise InvalidEvidenceReferenceError(uri)
+
+    async def _resolve_email(self, uri: str, raw_snapshot_id: str) -> EmailEvidence:
+        try:
+            snapshot_id = UUID(raw_snapshot_id)
+        except ValueError as error:
+            raise InvalidEvidenceReferenceError(uri) from error
+        evidence = await self._email.resolve(snapshot_id, uri=uri)
+        if evidence is None:
+            raise EvidenceNotFoundError(uri)
+        return evidence
 
     async def _resolve_message(self, uri: str, raw_message_id: str) -> MessageEvidence:
         try:

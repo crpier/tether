@@ -44,6 +44,7 @@ from tether.dreaming_store import (
     DreamRunKind,
     DreamRunTerminalStatus,
 )
+from tether.email_evidence import EmailEvidenceService
 from tether.memory_workspace import MemoryWorkspace
 from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
@@ -647,6 +648,20 @@ class DreamingCurationRunner(Protocol):
     async def run(self, prompt: str) -> str: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _ConversationDreamEvidence:
+    """Normalized source supplied to one Conversation Dream run."""
+
+    claim_hint: str | None
+    content: str
+    occurred_at: datetime
+    role: str
+    seq: PositiveInt
+    source_kind: Literal["email", "message"]
+    supports_claim: bool
+    uri: str
+
+
 class ConversationWindowDreamingExecutor:
     """Apply one Dreaming window to the canonical Memory workspace."""
 
@@ -661,6 +676,9 @@ class ConversationWindowDreamingExecutor:
         self.conversation_service: ConversationService = conversation_service
         self.workspace_root: Path = workspace_root
         self.curation_runner: DreamingCurationRunner | None = curation_runner
+        self.email_evidence_service: EmailEvidenceService = EmailEvidenceService(
+            conversation_service.database
+        )
         self.mutation_coordinator: DreamingMutationCoordinator = (
             mutation_coordinator
             if mutation_coordinator is not None
@@ -770,7 +788,7 @@ class ConversationWindowDreamingExecutor:
         self,
         *,
         run: DreamRun[Fetched],
-        evidence: list[Message[Fetched]],
+        evidence: list[_ConversationDreamEvidence],
         workspace_path: AsyncPath,
         logger: Logger,
         curated_body: str | None = None,
@@ -779,7 +797,7 @@ class ConversationWindowDreamingExecutor:
         if not await workspace_path.parent.exists():
             await workspace_path.parent.mkdir(parents=True, exist_ok=True)
 
-        evidence_uris = self._message_uris(evidence)
+        evidence_uris = self._evidence_uris(evidence)
         existing_document: str | None = None
         existing_frontmatter: dict[str, Any] = {}
         if await workspace_path.exists():
@@ -789,7 +807,7 @@ class ConversationWindowDreamingExecutor:
             existing_evidence: list[object] = []
             if isinstance(raw_evidence, list):
                 existing_evidence = cast("list[object]", raw_evidence)
-            existing_uris = set(self._message_uris_from_frontmatter(existing_evidence))
+            existing_uris = set(self._evidence_uris_from_frontmatter(existing_evidence))
             if set(evidence_uris).issubset(existing_uris):
                 logger.debug(
                     "Dream run document is unchanged",
@@ -835,31 +853,38 @@ class ConversationWindowDreamingExecutor:
 
     @staticmethod
     def _render_curation_prompt(
-        run: DreamRun[Fetched], evidence: list[Message[Fetched]]
+        run: DreamRun[Fetched], evidence: list[_ConversationDreamEvidence]
     ) -> str:
         """Render exact bounded Evidence for unattended Claim curation."""
         evidence_blocks = "\n\n".join(
             "\n".join(
                 (
-                    f"seq: {message.seq}",
-                    f"role: {message.role}",
-                    f"created_at: {message.created_at.isoformat()}",
-                    f"uri: tether://message/{message.id}",
+                    f"seq: {source.seq}",
+                    f"kind: {source.source_kind}",
+                    f"role: {source.role}",
+                    f"created_at: {source.occurred_at.isoformat()}",
+                    f"uri: {source.uri}",
+                    *(
+                        (f"claim_hint: {source.claim_hint}",)
+                        if source.claim_hint is not None
+                        else ()
+                    ),
                     "content:",
-                    message.content,
+                    source.content,
                 )
             )
-            for message in evidence
+            for source in evidence
         )
         return f"""Curate durable, user-centric Claims from this bounded Conversation Evidence.
 
 Rules:
-- Only user Messages support Claims about the user.
-- Assistant, reasoning, and tool Messages are context only.
+- User Messages and promoted Email Evidence may support Claims.
+- Assistant, reasoning, tool Messages, and email claim hints are context only.
+- Email Evidence proves what the sender communicated, not that every assertion is true.
 - Omit transient requests, implementation chatter, and assistant-authored facts.
 - Return Markdown only, grouped under `##` Topic headings.
-- Every Claim is one `- ` bullet with an inline `[source](tether://message/<id>)` citation.
-- Use only exact Message URIs below. Preserve uncertainty and corrections.
+- Every Claim is one `- ` bullet with an inline exact `tether://` source citation.
+- Use only exact Evidence URIs below. Preserve uncertainty and corrections.
 - Return `NO_CHANGES` when no durable Claim is supported.
 
 run_id: {run.id}
@@ -871,34 +896,35 @@ evidence_end_seq: {run.evidence_end_seq}
 
     @staticmethod
     def _validate_curated_body(
-        curated_body: str, evidence: list[Message[Fetched]]
+        curated_body: str, evidence: list[_ConversationDreamEvidence]
     ) -> str | None:
         """Refuse citations that cannot support Claims in this bounded run."""
-        user_evidence_uris = {
-            f"tether://message/{message.id}"
-            for message in evidence
-            if message.role == "user"
+        supported_evidence_uris = {
+            source.uri for source in evidence if source.supports_claim
         }
         claim_lines = [
             line for line in curated_body.splitlines() if line.startswith("- ")
         ]
         if not claim_lines or any(
-            not re.search(r"tether://message/[0-9A-Za-z-]+", claim)
+            not re.search(r"tether://(?:message|email)/[0-9A-Za-z-]+", claim)
             for claim in claim_lines
         ):
-            return "every curated Claim must cite bounded user Evidence"
-        cited_uris = set(re.findall(r"tether://message/[0-9A-Za-z-]+", curated_body))
-        unsupported = sorted(cited_uris - user_evidence_uris)
+            return "every curated Claim must cite bounded supporting Evidence"
+        cited_uris = set(
+            re.findall(r"tether://(?:message|email)/[0-9A-Za-z-]+", curated_body)
+        )
+        unsupported = sorted(cited_uris - supported_evidence_uris)
         if unsupported:
-            return "curated Claim cites outside bounded user Evidence: " + ", ".join(
-                unsupported
+            return (
+                "curated Claim cites outside bounded supporting Evidence: "
+                + ", ".join(unsupported)
             )
         return None
 
     @staticmethod
     def _render_curated_document(
         run: DreamRun[Fetched],
-        evidence: list[Message[Fetched]],
+        evidence: list[_ConversationDreamEvidence],
         curated_body: str,
     ) -> str:
         """Wrap curated Claims in canonical Topic frontmatter."""
@@ -917,7 +943,7 @@ evidence_end_seq: {run.evidence_end_seq}
             "conversation": str(run.conversation_id),
             "evidence_start_seq": run.evidence_start_seq,
             "evidence_end_seq": run.evidence_end_seq,
-            "evidence": ConversationWindowDreamingExecutor._message_uris(evidence),
+            "evidence": ConversationWindowDreamingExecutor._evidence_uris(evidence),
         }
         return (
             "---\n"
@@ -931,12 +957,12 @@ evidence_end_seq: {run.evidence_end_seq}
         self,
         *,
         run: DreamRun[Fetched],
-        evidence: list[Message[Fetched]],
+        evidence: list[_ConversationDreamEvidence],
         existing_document: str | None,
         previous_frontmatter: dict[str, Any],
     ) -> str:
         """Render a cumulative, deterministic draft from previous corpus + new window."""
-        new_uris = self._message_uris(evidence)
+        new_uris = self._evidence_uris(evidence)
         merged_evidence = self._merge_evidence(
             previous_frontmatter,
             new_uris,
@@ -991,15 +1017,15 @@ evidence_end_seq: {run.evidence_end_seq}
         return frontmatter_data, body
 
     @staticmethod
-    def _message_uris(messages: list[Message[Fetched]]) -> list[str]:
-        return [f"tether://message/{message.id}" for message in messages]
+    def _evidence_uris(evidence: list[_ConversationDreamEvidence]) -> list[str]:
+        return list(dict.fromkeys(source.uri for source in evidence))
 
     @staticmethod
-    def _message_uris_from_frontmatter(raw_values: list[object]) -> list[str]:
+    def _evidence_uris_from_frontmatter(raw_values: list[object]) -> list[str]:
         return [
             raw_value
             for raw_value in raw_values
-            if isinstance(raw_value, str) and raw_value.startswith("tether://message/")
+            if isinstance(raw_value, str) and raw_value.startswith("tether://")
         ]
 
     @staticmethod
@@ -1027,7 +1053,7 @@ evidence_end_seq: {run.evidence_end_seq}
     @staticmethod
     def _render_run_section(
         run: DreamRun[Fetched],
-        evidence: list[Message[Fetched]],
+        evidence: list[_ConversationDreamEvidence],
     ) -> str:
         lines = [
             "## Dream slice",
@@ -1037,11 +1063,19 @@ evidence_end_seq: {run.evidence_end_seq}
             f"- kind: {run.kind}",
             "- messages:",
             *(
-                f"  - {message.seq} {message.role} {message.created_at.isoformat()} tether://message/{message.id}"
-                for message in evidence
+                " ".join(
+                    (
+                        "  -",
+                        str(source.seq),
+                        source.role,
+                        source.occurred_at.isoformat(),
+                        source.uri,
+                    )
+                )
+                for source in evidence
             ),
             "",
-            *(message.content for message in evidence),
+            *(source.content for source in evidence),
             "",
         ]
         return "\n".join(lines)
@@ -1050,8 +1084,10 @@ evidence_end_seq: {run.evidence_end_seq}
     def _contains_run_payload(document: str, run_id: UUID) -> bool:
         return re.search(rf"run_id:\s*{re.escape(str(run_id))}", document) is not None
 
-    async def _fetch_evidence(self, run: DreamRun[Fetched]) -> list[Message[Fetched]]:
-        """Return persisted messages bounded by run window bounds."""
+    async def _fetch_evidence(
+        self, run: DreamRun[Fetched]
+    ) -> list[_ConversationDreamEvidence]:
+        """Return Messages and promoted email sources bounded by the run window."""
         if run.evidence_end_seq < run.evidence_start_seq:
             return []
         messages = await self.conversation_service.fetch_messages(
@@ -1059,9 +1095,51 @@ evidence_end_seq: {run.evidence_end_seq}
             before_seq=run.evidence_end_seq + 1,
             limit=run.evidence_end_seq - run.evidence_start_seq + 1,
         )
-        return [
+        bounded_messages = [
             message for message in messages if message.seq >= run.evidence_start_seq
         ]
+        evidence = [
+            _ConversationDreamEvidence(
+                claim_hint=None,
+                content=message.content,
+                occurred_at=message.created_at,
+                role=message.role,
+                seq=message.seq,
+                source_kind="message",
+                supports_claim=message.role == "user",
+                uri=f"tether://message/{message.id}",
+            )
+            for message in bounded_messages
+        ]
+        promoted_email = (
+            await self.email_evidence_service.fetch_for_conversation_window(
+                UUID(str(run.conversation_id)),
+                start_seq=run.evidence_start_seq,
+                end_seq=run.evidence_end_seq,
+            )
+        )
+        evidence.extend(
+            _ConversationDreamEvidence(
+                claim_hint=source.claim_hint,
+                content="\n".join(
+                    (
+                        f"From: {source.from_header}",
+                        f"Date: {source.date_header}",
+                        f"Subject: {source.subject}",
+                        "",
+                        source.body_text,
+                    )
+                ),
+                occurred_at=source.captured_at,
+                role="external_source",
+                seq=source.authorizing_message_seq,
+                source_kind="email",
+                supports_claim=True,
+                uri=source.uri,
+            )
+            for source in promoted_email
+        )
+        return sorted(evidence, key=lambda source: (source.seq, source.source_kind))
 
 
 _MAINTENANCE_MIN_FILES = 1

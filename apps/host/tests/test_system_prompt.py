@@ -60,6 +60,15 @@ async def explicit_remembering_queues_dreaming_instead_of_editing_memory() -> No
 
 
 @test()
+async def email_promotion_requires_explicit_authorization_and_prior_read() -> None:
+    """The foreground agent promotes selected email before mutating its source."""
+    assert_in("`promote_gmail_evidence`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("explicitly asks to remember", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("after `read_gmail_message`", CONVERSATION_SYSTEM_PROMPT)
+    assert_in("before archiving, labelling, or trashing", CONVERSATION_SYSTEM_PROMPT)
+
+
+@test()
 async def the_conversation_prompt_records_only_explicit_product_feedback() -> None:
     """Product observations require an explicit request, never inference."""
     assert_in("record_product_observation", CONVERSATION_SYSTEM_PROMPT)

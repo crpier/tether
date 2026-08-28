@@ -26,6 +26,10 @@ _Avoid_: forgetting, deletion, suppression, expiry by age
 Canonical durable source material that may support a Claim, such as a user Message or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Assistant output may explain Evidence in context but cannot independently support a Claim about the user.
 _Avoid_: Memory, summary, inference
 
+**Email Evidence snapshot**:
+One bounded, immutable local copy of a specific email selected after the agent read it in an active interactive turn and the user explicitly authorized remembering an email-derived fact. Its stable `tether://email/<id>` reference remains inspectable if the remote message changes or disappears. Ordinary Gmail searches, reads, ingestion records, assistant summaries, and claim hints are not Email Evidence snapshots.
+_Avoid_: Gmail record, mailbox Evidence, assistant summary
+
 **Dreaming**:
 The automatic behavior that assimilates settled Evidence and maintains current Memory without a per-item approval inbox. A terminal interactive Conversation turn queues assimilation whenever it appended a user Message, even if agent execution failed or was cancelled; a scheduled turn alone does not. Dreaming is incremental, bounded, evidence-linked, correctable, and inspectable.
 _Avoid_: reflection, review, extraction
@@ -111,7 +115,7 @@ A session state that excludes sensitivity-marked Memory from display and proacti
 _Avoid_: private mode, incognito, safe mode
 
 **Ingestion gate**:
-A scheduled sync that brings canonical external Evidence in without a chat turn (Readwise, Gmail, Health Connect, ebooks). Dreaming may later assimilate appropriate settled Evidence into Memory.
+A scheduled sync that brings external source records into Tether without a chat turn. Readwise, Health Connect, and ebook records may enter as canonical Evidence under their source policies. Gmail ingestion records remain triage and audit state unless explicit Email Evidence promotion snapshots selected source material. Dreaming may later assimilate appropriate settled Evidence into Memory.
 _Avoid_: sync job, importer, connector
 
 **Integration**:

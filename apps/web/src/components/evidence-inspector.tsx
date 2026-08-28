@@ -29,6 +29,24 @@ function label(value: string): string {
 function EvidenceDetails(props: { evidence: Evidence }) {
   return (
     <Switch>
+      <Match when={props.evidence.kind === "email" && props.evidence}>
+        {(evidence) => (
+          <div class="space-y-3">
+            <p class="text-muted-foreground text-xs">
+              {evidence().from_header} · {evidence().date_header}
+            </p>
+            <p class="bg-muted whitespace-pre-wrap break-words rounded-md border p-3 text-sm">
+              {evidence().body_text}
+            </p>
+            <Show when={evidence().body_truncated}>
+              <p class="text-muted-foreground text-xs">
+                Source text truncated to {evidence().body_text.length} of{" "}
+                {evidence().body_chars} characters.
+              </p>
+            </Show>
+          </div>
+        )}
+      </Match>
       <Match when={props.evidence.kind === "message" && props.evidence}>
         {(evidence) => (
           <div class="space-y-3">
@@ -135,6 +153,8 @@ function EvidenceDetails(props: { evidence: Evidence }) {
 
 function evidenceTitle(evidence: Evidence): string {
   switch (evidence.kind) {
+    case "email":
+      return evidence.subject || "Email message";
     case "message":
       return "Conversation message";
     case "health_connect_sleep":

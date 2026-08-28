@@ -2,6 +2,7 @@ import type { components } from "../generated";
 import { requireData, type RestContext } from "./transport";
 
 export type Evidence =
+  | components["schemas"]["EmailEvidenceRead"]
   | components["schemas"]["ExerciseEvidenceRead"]
   | components["schemas"]["MessageEvidenceRead"]
   | components["schemas"]["SleepEvidenceRead"];

@@ -797,6 +797,30 @@
       }
     },
     {
+      "endpoint": "/internal/tools/promote_gmail_evidence",
+      "name": "promote_gmail_evidence",
+      "params_model": "PromoteGmailEvidenceParams",
+      "schema": {
+        "description": "Promote one active-turn Gmail read under explicit remember authorization.",
+        "properties": {
+          "claim_hint": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Claim Hint",
+            "type": "string"
+          },
+          "message_id": {
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": ["claim_hint", "message_id"],
+        "title": "PromoteGmailEvidenceParams",
+        "type": "object"
+      }
+    },
+    {
       "endpoint": "/internal/tools/list_gmail_labels",
       "name": "list_gmail_labels",
       "params_model": "ListGmailLabelsParams",

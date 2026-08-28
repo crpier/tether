@@ -64,6 +64,7 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "archive_gmail_message",
             "search_gmail",
             "read_gmail_message",
+            "promote_gmail_evidence",
             "list_gmail_labels",
             "trash_gmail_message",
             "update_gmail_labels",

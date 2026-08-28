@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from tether.conversation_model import MessageRole
+from tether.email_evidence import EmailEvidence
 from tether.evidence import (
     EvidenceNotFoundError,
     EvidenceResolver,
@@ -46,6 +47,27 @@ class MessageEvidenceRead(BaseModel):
             seq=evidence.seq,
             uri=evidence.uri,
         )
+
+
+class EmailEvidenceRead(BaseModel):
+    """Browser-safe representation of one promoted email source."""
+
+    kind: Literal["email"] = "email"
+    body_chars: int
+    body_text: str
+    body_truncated: bool
+    captured_at: datetime
+    content_hash: str
+    date_header: str
+    from_header: str
+    gmail_message_id: str
+    subject: str
+    thread_id: str
+    uri: str
+
+    @classmethod
+    def from_evidence(cls, evidence: EmailEvidence) -> EmailEvidenceRead:
+        return cls.model_validate(evidence, from_attributes=True)
 
 
 class ExerciseEvidenceRead(BaseModel):
@@ -126,11 +148,22 @@ router = APIRouter()
 
 @router.get(
     "/api/evidence",
-    response_model=ExerciseEvidenceRead | MessageEvidenceRead | SleepEvidenceRead,
+    response_model=(
+        EmailEvidenceRead
+        | ExerciseEvidenceRead
+        | MessageEvidenceRead
+        | SleepEvidenceRead
+    ),
 )
 async def resolve_evidence(
     request: Request, uri: str
-) -> ExerciseEvidenceRead | MessageEvidenceRead | SleepEvidenceRead | Response:
+) -> (
+    EmailEvidenceRead
+    | ExerciseEvidenceRead
+    | MessageEvidenceRead
+    | SleepEvidenceRead
+    | Response
+):
     """Resolve one stable Evidence reference for in-app inspection."""
     try:
         evidence = await _resolver(request).resolve(uri)
@@ -140,6 +173,8 @@ async def resolve_evidence(
         )
     except EvidenceNotFoundError:
         return JSONResponse({"detail": "Evidence is unavailable"}, status_code=404)
+    if isinstance(evidence, EmailEvidence):
+        return EmailEvidenceRead.from_evidence(evidence)
     if isinstance(evidence, MessageEvidence):
         return MessageEvidenceRead.from_evidence(evidence)
     if isinstance(evidence, HealthConnectExerciseEvidence):
@@ -148,6 +183,7 @@ async def resolve_evidence(
 
 
 __all__ = [
+    "EmailEvidenceRead",
     "ExerciseEvidenceRead",
     "MessageEvidenceRead",
     "SleepEvidenceRead",
