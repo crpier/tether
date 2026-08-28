@@ -1170,6 +1170,8 @@ _MESSAGE_URI_PATTERN = re.compile(
 _FILE_SEPARATOR_PATTERN = re.compile(r"^===\s+(\S+)\s+===\s*$", re.MULTILINE)
 _RETIREMENT_SEPARATOR = "=== RETIREMENTS ==="
 _SOURCE_CITATION_PATTERN = re.compile(r"\s*\[source\]\(tether://[^)]+\)", re.IGNORECASE)
+_CITATION_ALIAS_PREFIX = "citation:E"
+_CITATION_ALIAS_PATTERN = re.compile(r"citation:[^\s)\]>,\"']*")
 
 MaintenanceRetirementReason = Literal[
     "expired",
@@ -1207,6 +1209,65 @@ class MaintenanceDreamingAgent:
 
 class _MaintenanceError(Exception):
     """A consolidated response violated a maintenance invariant."""
+
+
+@dataclass(frozen=True, slots=True)
+class _MaintenanceCitationAliases:
+    """Hide canonical Evidence identifiers behind short curator references."""
+
+    canonical_by_alias: dict[str, str]
+
+    @classmethod
+    def from_inputs(
+        cls,
+        batch: list[tuple[str, str]],
+        evidence: list[Message[Fetched]],
+    ) -> _MaintenanceCitationAliases:
+        """Assign deterministic aliases to every Evidence URI in the bounded input."""
+        canonical_uris = dict.fromkeys(
+            uri
+            for _, content in batch
+            for uri in _EVIDENCE_URI_PATTERN.findall(content)
+        )
+        canonical_uris.update(
+            {f"tether://message/{message.id}": None for message in evidence}
+        )
+        return cls(
+            canonical_by_alias={
+                f"{_CITATION_ALIAS_PREFIX}{index}": uri
+                for index, uri in enumerate(canonical_uris, start=1)
+            }
+        )
+
+    def obscure(self, text: str) -> str:
+        """Replace canonical identifiers before text crosses the agent seam."""
+        alias_by_canonical = {
+            canonical: alias for alias, canonical in self.canonical_by_alias.items()
+        }
+        return _EVIDENCE_URI_PATTERN.sub(
+            lambda match: alias_by_canonical.get(match.group(), match.group()),
+            text,
+        )
+
+    def resolve(self, text: str) -> str:
+        """Restore known aliases and reject references outside the bounded input."""
+        if _EVIDENCE_URI_PATTERN.search(text):
+            message = (
+                "maintenance output contains a canonical Evidence URI; "
+                "use a citation alias"
+            )
+            raise _MaintenanceError(message)
+        for match in _CITATION_ALIAS_PATTERN.finditer(text):
+            alias = match.group()
+            if alias not in self.canonical_by_alias:
+                message = (
+                    f"maintenance output contains an unknown citation alias: {alias}"
+                )
+                raise _MaintenanceError(message)
+        return _CITATION_ALIAS_PATTERN.sub(
+            lambda match: self.canonical_by_alias[match.group()],
+            text,
+        )
 
 
 def maintenance_group_run_id(folder: str) -> UUID7:
@@ -1265,9 +1326,15 @@ class MaintenanceDreamingExecutor:
                 error="maintenance requires a consolidation runner",
             )
         evidence = await self._fetch_message_evidence(batch)
+        citations = _MaintenanceCitationAliases.from_inputs(batch, evidence)
         response = (
             await agent.curator.run(
-                self._render_prompt(batch, evidence=evidence, now=current_time)
+                self._render_prompt(
+                    batch,
+                    citations=citations,
+                    evidence=evidence,
+                    now=current_time,
+                )
             )
         ).strip()
         if response == "NO_CHANGES":
@@ -1283,7 +1350,9 @@ class MaintenanceDreamingExecutor:
                 status="no_op" if voice_error is None else "failed",
                 error=voice_error,
             )
+        aliased_response = response
         try:
+            response = citations.resolve(response)
             transition = self._parse_response(response)
             needs_semantic_verification = self._validate_transition(
                 batch,
@@ -1295,10 +1364,13 @@ class MaintenanceDreamingExecutor:
         verification_error = (
             await self._verify_retirements(
                 agent,
-                batch,
-                evidence=evidence,
-                now=current_time,
-                response=response,
+                prompt=self._render_verification_prompt(
+                    batch,
+                    citations=citations,
+                    evidence=evidence,
+                    now=current_time,
+                    response=aliased_response,
+                ),
             )
             if transition.retirements or needs_semantic_verification
             else None
@@ -1327,23 +1399,11 @@ class MaintenanceDreamingExecutor:
     async def _verify_retirements(
         self,
         agent: MaintenanceDreamingAgent,
-        batch: list[tuple[str, str]],
         *,
-        evidence: list[Message[Fetched]],
-        now: datetime,
-        response: str,
+        prompt: str,
     ) -> str | None:
         """Require semantic verification before any Claim leaves current Memory."""
-        verdict = (
-            await agent.verifier.run(
-                self._render_verification_prompt(
-                    batch,
-                    evidence=evidence,
-                    now=now,
-                    response=response,
-                )
-            )
-        ).strip()
+        verdict = (await agent.verifier.run(prompt)).strip()
         if verdict == "APPROVED":
             return None
         return f"transition verifier rejected retirement: {verdict}"
@@ -1482,17 +1542,19 @@ class MaintenanceDreamingExecutor:
         self,
         batch: list[tuple[str, str]],
         *,
+        citations: _MaintenanceCitationAliases,
         evidence: list[Message[Fetched]],
         now: datetime,
     ) -> str:
         """Render current state, its source Evidence, and temporal policy."""
         blocks = "\n\n".join(
-            f"<<< {relative}\n{content}\n>>>" for relative, content in batch
+            f"<<< {relative}\n{citations.obscure(content)}\n>>>"
+            for relative, content in batch
         )
         evidence_blocks = "\n\n".join(
             "\n".join(
                 (
-                    f"uri: tether://message/{message.id}",
+                    f"citation: {citations.obscure(f'tether://message/{message.id}')}",
                     f"role: {message.role}",
                     f"created_at: {_as_utc(message.created_at).isoformat()}",
                     "content:",
@@ -1526,8 +1588,8 @@ Rules:
 - Preserve every supported idea unless it qualifies for retirement. Age or disuse alone never qualifies.
 - Retire a Claim only when its explicit time bound passed, newer Evidence supersedes it, Evidence explicitly says it is no longer current, or it lacks permitted support.
 - When uncertain, preserve or qualify the Claim and set `review_after`; never guess.
-- In Topic documents, format every Evidence citation as `[source](tether://...)`, replacing `tether://...` with the exact supplied URI. Never expose the URI as link text. Never use raw HTML for Evidence links.
-- Every Evidence URI and retirement basis must be copied verbatim from the supplied Evidence; never invent or alter a `tether://` URI.
+- In Topic documents, format every Evidence citation as `[source](citation:E1)`, replacing `citation:E1` with the exact supplied citation alias. Never expose an alias as link text. Never use raw HTML for Evidence links.
+- Every Evidence citation and retirement basis must use an exact supplied `citation:E<number>` alias; never invent or alter an alias.
 - Return either exactly `NO_CHANGES` or zero or more resulting documents followed by a retirement ledger when any Claim is removed:
 
 === <workspace-relative/path.md> ===
@@ -1541,25 +1603,27 @@ title: <Topic title>
 - claim: <exact old Claim text without the leading dash or source citation>
   reason: <expired|superseded|explicitly_no_longer_current|unsupported>
   basis:
-    - <exact supplied Evidence URI>
+    - <exact supplied citation alias>
 """
 
     def _render_verification_prompt(
         self,
         batch: list[tuple[str, str]],
         *,
+        citations: _MaintenanceCitationAliases,
         evidence: list[Message[Fetched]],
         now: datetime,
         response: str,
     ) -> str:
         """Ask a separate pass to reject semantically unsafe retirement."""
         current_documents = "\n\n".join(
-            f"<<< {relative}\n{content}\n>>>" for relative, content in batch
+            f"<<< {relative}\n{citations.obscure(content)}\n>>>"
+            for relative, content in batch
         )
         evidence_blocks = "\n\n".join(
             "\n".join(
                 (
-                    f"uri: tether://message/{message.id}",
+                    f"citation: {citations.obscure(f'tether://message/{message.id}')}",
                     f"role: {message.role}",
                     f"created_at: {_as_utc(message.created_at).isoformat()}",
                     "content:",

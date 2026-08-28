@@ -1813,7 +1813,7 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
             "---\n\n",
             "## Gaming\n\n",
             "- You like co-op shooters such as Roboquest. ",
-            f"[source]({first_uri}) [source]({second_uri})\n",
+            "[source](citation:E1) [source](citation:E2)\n",
         )
     )
     executor = MaintenanceDreamingExecutor(
@@ -1845,6 +1845,230 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
         assert all(mutation.status == "acknowledged" for mutation in mutations)
         progress = await tx.fetch_all(select(DreamMaintenanceProgress).all())
         assert_eq([row.path for row in progress], [f"{conversation_id}/gaming.md"])
+
+
+@test()
+async def maintenance_executor_resolves_short_citation_aliases() -> None:
+    """Curators handle short aliases while Memory retains canonical Evidence URIs."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    evidence = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I like Roboquest.",
+    )
+    canonical_uri = f"tether://message/{evidence.id}"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "gaming.md",
+        title="Gaming",
+        body=f"- You like Roboquest. [source]({canonical_uri})",
+        uris=(canonical_uri,),
+    )
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=evidence.seq,
+                )
+            )
+        )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    curator = _ConsolidationRunner(
+        "".join(
+            (
+                f"=== {conversation_id}/gaming.md ===\n",
+                "---\n",
+                "title: Gaming\n",
+                "evidence:\n",
+                "- citation:E1\n",
+                "---\n\n",
+                "- You like Roboquest. [source](citation:E1)\n",
+            )
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=curator,
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "success")
+    assert "citation:E1" in curator.prompts[0]
+    assert "tether://" not in curator.prompts[0]
+    contents = topic.read_text(encoding="utf-8")
+    assert canonical_uri in contents
+    assert "citation:E1" not in contents
+
+
+@test()
+async def maintenance_executor_keeps_multi_digit_aliases_unambiguous() -> None:
+    """Alias resolution does not treat `citation:E1` as a prefix of `citation:E10`."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    canonical_uris = tuple(
+        f"tether://health-connect/record/{record}"
+        for record in (*"abcdefghi", "target")
+    )
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "health.md",
+        title="Health",
+        body=f"- Your latest measurement is recorded. [source]({canonical_uris[-1]})",
+        uris=canonical_uris,
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    proposed = "".join(
+        (
+            f"=== {conversation_id}/health.md ===\n",
+            "---\n",
+            "title: Health\n",
+            "---\n\n",
+            "- Your latest measurement is recorded. [source](citation:E10)\n",
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(proposed),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "success")
+    contents = topic.read_text(encoding="utf-8")
+    assert canonical_uris[-1] in contents
+    assert "citation:E10" not in contents
+
+
+@test(
+    [
+        Param(value="citation:E999", name="unknown"),
+        Param(value="citation:", name="empty"),
+        Param(value="citation:not-an-alias", name="malformed"),
+    ]
+)
+async def maintenance_executor_rejects_unknown_citation_aliases(value: str) -> None:
+    """Unknown and malformed aliases fail closed without changing current Memory."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    canonical_uri = "tether://health-connect/record/weight-1"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "health.md",
+        title="Health",
+        body=f"- Your weight is stable. [source]({canonical_uri})",
+        uris=(canonical_uri,),
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    proposed = "".join(
+        (
+            f"=== {conversation_id}/health.md ===\n",
+            "---\n",
+            "title: Health\n",
+            "---\n\n",
+            f"- Your weight is stable. [source]({value})\n",
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(proposed),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(
+        result.error,
+        f"maintenance output contains an unknown citation alias: {value}",
+    )
+    assert_eq(topic.read_text(encoding="utf-8"), original)
+
+
+@test()
+async def maintenance_executor_rejects_canonical_citations_from_curator() -> None:
+    """Curator output must reference bounded Evidence through its short alias."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    canonical_uri = "tether://health-connect/record/weight-1"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "health.md",
+        title="Health",
+        body=f"- Your weight is stable. [source]({canonical_uri})",
+        uris=(canonical_uri,),
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    proposed = "".join(
+        (
+            f"=== {conversation_id}/health.md ===\n",
+            "---\n",
+            "title: Health\n",
+            "---\n\n",
+            f"- Your weight is stable. [source]({canonical_uri})\n",
+        )
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(proposed),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(
+        result.error,
+        "maintenance output contains a canonical Evidence URI; use a citation alias",
+    )
+    assert_eq(topic.read_text(encoding="utf-8"), original)
 
 
 @test()
@@ -1930,7 +2154,7 @@ async def maintenance_executor_instructs_curator_to_use_second_person() -> None:
     assert "Address the user as `you` and `your`" in curator.prompts[0]
     assert "Begin every Claim with `You` or `Your`" in curator.prompts[0]
     assert "Rewrite existing third-person user references" in curator.prompts[0]
-    assert "[source](tether://...)" in curator.prompts[0]
+    assert "[source](citation:E1)" in curator.prompts[0]
     assert "Never use raw HTML for Evidence links" in curator.prompts[0]
 
 
@@ -2017,8 +2241,8 @@ async def maintenance_executor_marks_no_changes_and_records_progress() -> None:
 
 
 @test()
-async def maintenance_executor_supplies_dated_canonical_evidence() -> None:
-    """The curator receives dated source Evidence rather than Memory prose alone."""
+async def maintenance_executor_supplies_dated_aliased_evidence() -> None:
+    """The curator receives dated Evidence without opaque canonical identifiers."""
     conversation_service, service, conversation_id, root = await load_fixture(
         maintenance_fixture()
     )
@@ -2077,7 +2301,8 @@ async def maintenance_executor_supplies_dated_canonical_evidence() -> None:
     assert_eq(result.status, "no_op")
     assert_eq(len(curator.prompts), 1)
     assert "current_time: 2026-09-15T12:00:00+00:00" in curator.prompts[0]
-    assert f"uri: tether://message/{evidence_id}" in curator.prompts[0]
+    assert "citation: citation:E1" in curator.prompts[0]
+    assert f"tether://message/{evidence_id}" not in curator.prompts[0]
     assert "role: user" in curator.prompts[0]
     assert "created_at: 2026-08-01T09:00:00+00:00" in curator.prompts[0]
     assert "I am avoiding coffee this week." in curator.prompts[0]
@@ -2147,7 +2372,8 @@ async def maintenance_executor_supplies_newer_user_evidence() -> None:
     result = await executor(run, logger=test_logger())
 
     assert_eq(result.status, "no_op")
-    assert f"uri: tether://message/{newer_evidence.id}" in curator.prompts[0]
+    assert "citation: citation:E2" in curator.prompts[0]
+    assert f"tether://message/{newer_evidence.id}" not in curator.prompts[0]
     assert "I eat fish now." in curator.prompts[0]
 
 
@@ -2176,7 +2402,7 @@ async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
             turn_id=turn.id,
         )
     )
-    newer_evidence = await _append(
+    _ = await _append(
         conversation_service,
         conversation_id=conversation_id,
         role="user",
@@ -2212,13 +2438,12 @@ async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
                 "---\n",
                 "title: Diet\n",
                 "---\n\n",
-                "- You eat fish now. ",
-                f"[source](tether://message/{newer_evidence.id})\n\n",
+                "- You eat fish now. [source](citation:E2)\n\n",
                 "=== RETIREMENTS ===\n",
                 '- claim: "You are vegetarian."\n',
                 "  reason: superseded\n",
                 "  basis:\n",
-                f"    - tether://message/{newer_evidence.id}\n",
+                "    - citation:E2\n",
             )
         )
     )
@@ -2291,7 +2516,7 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
                 '- claim: "You are avoiding coffee this week."\n',
                 "  reason: expired\n",
                 "  basis:\n",
-                f"    - tether://message/{evidence_id}\n",
+                "    - citation:E1\n",
             )
         )
     )
@@ -2311,6 +2536,8 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
     assert_eq(result.status, "success")
     assert not topic.exists()
     assert_eq(len(verifier.prompts), 1)
+    assert "citation:E1" in verifier.prompts[0]
+    assert "tether://" not in verifier.prompts[0]
     async with conversation_service.database.transaction() as transaction:
         deletion = await transaction.fetch_one_or_none(
             select(DreamingMutation)
@@ -2352,7 +2579,7 @@ async def rejected_retirement_leaves_current_memory_unchanged() -> None:
                 '- claim: "Sister is Ana."\n',
                 "  reason: expired\n",
                 "  basis:\n",
-                f"    - {evidence_uri}\n",
+                "    - citation:E1\n",
             )
         )
     )
@@ -2474,7 +2701,7 @@ async def maintenance_executor_accepts_final_assistant_support() -> None:
             "---\n",
             "title: Coffee\n",
             "---\n\n",
-            f"- You love black coffee. [source]({assistant_uri})\n",
+            "- You love black coffee. [source](citation:E1)\n",
         )
     )
     executor = MaintenanceDreamingExecutor(
@@ -2675,9 +2902,8 @@ async def maintenance_covers_non_conversation_folders_like_health() -> None:
         "---\n"
         "title: Exercise\n"
         "---\n\n"
-        "- You run weekly. [source](tether://health-connect/exercise/e51e4ead@v1)\n"
-        "- You lift twice weekly. [source](tether://health-connect/exercise/"
-        "014eeb5e@v241)\n"
+        "- You run weekly. [source](citation:E1)\n"
+        "- You lift twice weekly. [source](citation:E2)\n"
     )
     executor = MaintenanceDreamingExecutor(
         service.database,
