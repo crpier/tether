@@ -15,11 +15,14 @@ export function evidenceTextParts(value: string): EvidenceTextPart[] {
   let start = 0;
   for (const match of value.matchAll(embeddedReference)) {
     const index = match.index;
-    if (index > start) {
-      parts.push({ evidence: false, text: value.slice(start, index) });
+    const bracketed =
+      value[index - 1] === "[" && value[index + match[0].length] === "]";
+    const textEnd = bracketed ? index - 1 : index;
+    if (textEnd > start) {
+      parts.push({ evidence: false, text: value.slice(start, textEnd) });
     }
     parts.push({ evidence: true, text: match[0] });
-    start = index + match[0].length;
+    start = index + match[0].length + (bracketed ? 1 : 0);
   }
   if (start < value.length) {
     parts.push({ evidence: false, text: value.slice(start) });
