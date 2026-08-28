@@ -26,8 +26,6 @@ one end-to-end check against the *real* `BucketItemIndex`. No model download.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,10 +50,7 @@ from tether.bucket_item_index import (
     BucketItemDocument,
     BucketItemIndex,
 )
-from tether.bucket_item_reconciler import (
-    BucketItemReconciler,
-    BucketItemReconcileReport,
-)
+from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_item_store import BucketItem, create_bucket_item_schema
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, Vector
 from tether.search_projection.metadata import (
@@ -315,52 +310,6 @@ async def reconcile_keeps_live_index_compaction_out_of_the_hot_path() -> None:
     _ = await h.reconciler.reconcile(logger=_logger())
 
     assert_eq(h.index.optimize_calls, 0)
-
-
-@test()
-async def reconcile_forever_runs_passes_until_cancelled() -> None:
-    """The periodic loop keeps reconciling until cancelled.
-
-    Cancellation must land while the loop is parked in its inter-pass sleep,
-    never mid-pass: a real `snekql` transaction's `__aenter__` acquires a
-    connection before it starts `BEGIN`, and has no `except CancelledError`
-    handler to release it if cancellation lands on that awaited `BEGIN` (only
-    `except Exception`, deliberately, so cancellation isn't swallowed) — so a
-    cancel delivered mid-transaction leaks the pooled connection and the
-    fixture's teardown `db.close()` then hangs until it times out
-    (`DatabaseCloseTimeoutError`). Counting completed passes via a wrapper that
-    increments only after the real
-    `reconcile()` awaitable (and all its transactions) has returned — matches
-    the safe pattern `test_reconcile_loop.py` uses: the only await between the
-    signal and the next tick is `asyncio.sleep`, which cancels cleanly with no
-    connection held.
-    """
-    h = await load_fixture(harness())
-    _ = await _add_bucket_item(h.database, "Blade Runner")
-
-    passes = 0
-    real_reconcile = h.reconciler.reconcile
-
-    async def _counting_reconcile(*, logger: Logger) -> BucketItemReconcileReport:
-        nonlocal passes
-        report = await real_reconcile(logger=logger)
-        passes += 1
-        return report
-
-    h.reconciler.reconcile = _counting_reconcile
-
-    task = asyncio.create_task(
-        h.reconciler.reconcile_forever(interval_seconds=0.001, logger=_logger())
-    )
-    for _ in range(1000):  # bounded wait so a broken loop fails fast, never hangs
-        if passes >= 1:
-            break
-        await asyncio.sleep(0.001)
-    _ = task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-
-    assert_true(passes >= 1)
 
 
 @test()

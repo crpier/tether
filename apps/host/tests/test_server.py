@@ -1,7 +1,6 @@
 """Host server configuration and process entrypoint tests."""
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -34,7 +33,6 @@ from starlette.testclient import TestClient
 from tether import server
 from tether.app_runtime import app_runtime
 from tether.gmail.client import GmailNetworkFailure, GmailResponse
-from tether.host_resources import shutdown_background_tasks
 from tether.model_selection import AgentModelConfig
 from tether.server import (
     AppConfig,
@@ -546,6 +544,33 @@ def app_lifespan_installs_a_complete_typed_runtime() -> None:
 
 
 @test()
+def recovered_dispatch_waits_for_request_serving_readiness() -> None:
+    """Recovered durable work starts only after the app can serve tool calls."""
+    with TemporaryDirectory() as directory:
+        app = server.create_app(
+            config=AppConfig(
+                app_password="test-app-password",
+                database_path=":memory:",
+                kb_root=directory,
+                session_secret="test-session-secret",
+            )
+        )
+
+        with TestClient(app) as client:
+            runtime = app_runtime(app)
+            scheduler_ready = runtime.background_runtime.readiness("scheduler")
+            assert_false(scheduler_ready.is_set())
+
+            response = client.get("/api/auth/session")
+            portal = client.portal
+            if portal is not None:
+                portal.call(scheduler_ready.wait)
+
+            assert_eq(response.status_code, 200)
+            assert_true(scheduler_ready.is_set())
+
+
+@test()
 def app_lifespan_closes_transcript_provider_resources() -> None:
     """Application shutdown closes reusable transcript HTTP resources."""
 
@@ -654,9 +679,7 @@ def app_lifespan_closes_gmail_transport_after_its_worker_stops() -> None:
         with TestClient(app) as client:
             portal = client.portal
             if portal is not None:
-                portal.call(
-                    app_runtime(app).ingestion_lifecycle.readiness("gmail").wait
-                )
+                portal.call(app_runtime(app).background_runtime.readiness("gmail").wait)
 
         assert_eq(transport.list_calls, 1)
         assert_eq(transport.close_calls, 1)
@@ -1046,72 +1069,3 @@ def app_config_from_settings_threads_the_block_pause_bounds() -> None:
         config.transcript_acquisition_config.block_pause_cap,
         timedelta(seconds=222),
     )
-
-
-@test()
-async def shutdown_awaits_tasks_that_honor_cancellation() -> None:
-    """A task that responds to cancellation promptly is awaited and finished."""
-    started = asyncio.Event()
-
-    async def cooperative() -> None:
-        started.set()
-        await asyncio.sleep(10)
-
-    task = asyncio.create_task(cooperative(), name="cooperative")
-    await started.wait()
-
-    await shutdown_background_tasks(
-        [task],
-        logger=structlog.stdlib.get_logger("test.server.shutdown"),
-        grace_seconds=1.0,
-    )
-
-    assert_true(task.done())
-    assert_true(task.cancelled())
-
-
-@test()
-async def shutdown_does_not_block_on_a_task_that_ignores_cancellation() -> None:
-    """A task that doesn't unwind promptly on cancel is abandoned, not awaited.
-
-    Regression test for the `just dev` shutdown hang: the boot lifespan awaited
-    every background task to fully finish before returning, with no bound. A
-    task whose current await doesn't propagate `CancelledError` right away
-    (in production, the YouTube/transcript sync loops mid a synchronous
-    `asyncio.to_thread` upstream call) could keep shutdown — and the whole
-    `uvicorn --reload` process tree under `just dev` — waiting for however
-    long that took (observed: up to ~2 minutes). Shutdown must bound the wait
-    instead.
-    """
-    swallowed_once = False
-
-    async def stubborn() -> None:
-        nonlocal swallowed_once
-        while True:
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                if swallowed_once:
-                    raise
-                swallowed_once = True
-
-    task = asyncio.create_task(stubborn(), name="stubborn")
-    await asyncio.sleep(0)  # let it reach the first sleep
-
-    before = time.monotonic()
-    await shutdown_background_tasks(
-        [task],
-        logger=structlog.stdlib.get_logger("test.server.shutdown"),
-        grace_seconds=0.2,
-    )
-    elapsed = time.monotonic() - before
-
-    # Bounded by the grace period, not the task's full unresponsive stretch.
-    assert_true(elapsed < 1.0)
-    assert_false(task.done())
-
-    # Second cancel actually lands (the fake only swallows the first one);
-    # drain it so it doesn't outlive the test.
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.wait_for(task, timeout=1.0)

@@ -10,10 +10,16 @@ from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
+from anyio import create_task_group
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from tether.app_runtime import AppRuntime, install_app_runtime
+from tether.background_runtime import (
+    BackgroundBootOutcome,
+    BackgroundFailurePolicy,
+    BackgroundSchedule,
+)
 from tether.evidence import EvidenceResolver
 from tether.gmail import (
     GoogleGmailAuthService,
@@ -96,7 +102,6 @@ async def _compose_app_runtime(
     ingestion_resources = await resources.enter_async_context(
         contextlib.AsyncExitStack()
     )
-    _ = resources.push_async_callback(host.ingestion_lifecycle.stop)
     gmail_client = ReauthorizableGmailClient()
     if dependencies.config.gmail_transport is not None:
         gmail_client.connect(dependencies.config.gmail_transport)
@@ -112,11 +117,11 @@ async def _compose_app_runtime(
     )
     youtube = await compose_ingestion(
         IngestionDependencies(
+            background_runtime=host.background_runtime,
             bootstrap=dependencies.bootstrap,
             config=dependencies.config,
             database=host.database,
             event_hub=core.event_hub,
-            ingestion_lifecycle=host.ingestion_lifecycle,
             kb_root=host.kb_root,
             logger=host.logger,
             model_catalog=core.model_catalog,
@@ -134,6 +139,7 @@ async def _compose_app_runtime(
         AppRuntime(
             app_password=dependencies.config.app_password,
             artifact_service=core.artifact_service,
+            background_runtime=host.background_runtime,
             attachment_service=core.attachment_service,
             bucket_item_search_service=core.bucket_item_search_service,
             bucket_item_service=core.bucket_item_service,
@@ -153,7 +159,6 @@ async def _compose_app_runtime(
             health_distillation_service=core.health_distillation_service,
             health_moment_service=core.health_moment_service,
             health_plan_service=core.health_plan_service,
-            ingestion_lifecycle=host.ingestion_lifecycle,
             kosync_auth=core.kosync_auth,
             kosync_service=core.kosync_service,
             logger=host.logger,
@@ -187,15 +192,30 @@ async def _compose_app_runtime(
             youtube_service=youtube.service,
         ),
     )
+    _ = host.background_runtime.register_periodic(
+        "scheduler",
+        core.scheduler.tick,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.FAIL_HOST,
+            initial_delay_seconds=dependencies.config.scheduler_tick_seconds,
+            interval_seconds=dependencies.config.scheduler_tick_seconds,
+        ),
+        boot=lambda: _boot_recovered_dispatch(
+            core,
+            serving_ready=app.state.serving_ready,
+            tool_base_url=dependencies.config.tool_base_url,
+        ),
+    )
+    _ = await resources.enter_async_context(host.background_runtime)
     return core
 
 
-async def _dispatch_when_tool_http_is_ready(
+async def _boot_recovered_dispatch(
     core: CoreServices,
     *,
     serving_ready: asyncio.Event,
     tool_base_url: str,
-) -> None:
+) -> BackgroundBootOutcome:
     """Keep recovered pi work behind the host's serving socket readiness."""
     parsed_url = urlsplit(tool_base_url)
     host = parsed_url.hostname or "127.0.0.1"
@@ -219,43 +239,24 @@ async def _dispatch_when_tool_http_is_ready(
             await writer.wait_closed()
             return
 
-    readiness_tasks = {
-        asyncio.create_task(serving_ready.wait()),
-        asyncio.create_task(wait_for_socket()),
-    }
-    try:
-        _ = await asyncio.wait(
-            readiness_tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    finally:
-        for task in readiness_tasks:
-            if not task.done():
-                _ = task.cancel()
-        for task in readiness_tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+    ready = asyncio.Event()
+
+    async def wait_for_serving_request() -> None:
+        _ = await serving_ready.wait()
+        _ = ready.set()
+
+    async def wait_for_tool_socket() -> None:
+        await wait_for_socket()
+        _ = ready.set()
+
+    async with create_task_group() as readiness:
+        _ = readiness.start_soon(wait_for_serving_request)
+        _ = readiness.start_soon(wait_for_tool_socket)
+        _ = await ready.wait()
+        readiness.cancel_scope.cancel()
     _ = await core.conversation_turns.dispatch_recovered()
     await core.scheduler.dispatch_recovered()
-    await core.scheduler.run_forever()
-
-
-async def _stop_recovered_dispatch(
-    core: CoreServices,
-    task: asyncio.Task[None],
-) -> None:
-    """Stop readiness and scheduler loops before database resources unwind."""
-    core.scheduler.stop_intake()
-    if task.done():
-        if not task.cancelled():
-            _ = task.exception()
-        return
-    try:
-        _ = await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-    except TimeoutError:
-        _ = task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+    return BackgroundBootOutcome.REPEAT
 
 
 def app_lifespan(
@@ -279,7 +280,7 @@ def app_lifespan(
             ):
                 if isinstance(configured_resource, AsyncClosable):
                     _ = resources.push_async_callback(configured_resource.aclose)
-            core = await _compose_app_runtime(
+            _ = await _compose_app_runtime(
                 app,
                 _RuntimeDependencies(
                     bootstrap=bootstrap,
@@ -288,18 +289,6 @@ def app_lifespan(
                     telemetry_settings=telemetry_settings,
                 ),
                 resources=resources,
-            )
-            recovered_dispatch = asyncio.create_task(
-                _dispatch_when_tool_http_is_ready(
-                    core,
-                    serving_ready=serving_ready,
-                    tool_base_url=config.tool_base_url,
-                )
-            )
-            _ = resources.push_async_callback(
-                _stop_recovered_dispatch,
-                core,
-                recovered_dispatch,
             )
             yield
 

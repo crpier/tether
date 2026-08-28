@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,8 +13,8 @@ from snekql.sqlite import Config, Database
 
 from tether.agent_trace_model import RunKind
 from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.background_runtime import BackgroundRuntime
 from tether.host_config import AppConfig
-from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.logging_config import QUIET_LOGGERS, Logger, configure_logging
 from tether.model_selection import AgentModelConfig
 from tether.scheduler import EphemeralPiConfig
@@ -27,9 +26,6 @@ from tether.tts import TtsClient
 
 HOST_QUIET_LOGGERS = (*QUIET_LOGGERS, "aiosqlite", "snekql", "httpcore2")
 """Dependency loggers whose debug chatter obscures host application events."""
-
-_BACKGROUND_TASK_SHUTDOWN_GRACE_SECONDS = 5.0
-"""Maximum wait for background tasks to honor cancellation during shutdown."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,8 +43,8 @@ class HostBootstrap:
 class HostResources:
     """Infrastructure owned for one application lifetime."""
 
+    background_runtime: BackgroundRuntime
     database: Database
-    ingestion_lifecycle: IngestionLifecycle
     kb_root: Path
     logger: Logger
     telemetry: Telemetry
@@ -115,8 +111,8 @@ async def acquire_host_resources(
         _open_databases(config)
     )
     return HostResources(
+        background_runtime=BackgroundRuntime(logger),
         database=database,
-        ingestion_lifecycle=IngestionLifecycle(logger),
         kb_root=kb_root,
         logger=logger,
         telemetry=telemetry,
@@ -149,25 +145,3 @@ def ephemeral_pi_config(
         trace_recorder=bootstrap.trace_recorder,
         run_kind=run_kind,
     )
-
-
-async def shutdown_background_tasks(
-    tasks: Sequence[asyncio.Task[None]],
-    *,
-    logger: Logger,
-    grace_seconds: float = _BACKGROUND_TASK_SHUTDOWN_GRACE_SECONDS,
-) -> None:
-    """Cancel tasks and bound the wait for cancellation-resistant work."""
-    for task in tasks:
-        _ = task.cancel()
-    if not tasks:
-        return
-    done, pending = await asyncio.wait(tasks, timeout=grace_seconds)
-    for task in pending:
-        logger.warning(
-            "Background task did not stop within the shutdown grace period; abandoning it",
-            task=task.get_name(),
-        )
-    for task in done:
-        with contextlib.suppress(asyncio.CancelledError):
-            await task

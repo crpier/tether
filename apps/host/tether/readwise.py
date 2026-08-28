@@ -342,18 +342,6 @@ class ReadwiseSyncService:
             )
         )
 
-    async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
-        """Run periodic passes until cancellation."""
-        while True:
-            await asyncio.sleep(interval_seconds)
-            report = await self.sync(logger=logger)
-            if isinstance(report, Err):
-                logger.warning(
-                    "Readwise sync pass failed",
-                    failure=type(report.error).__name__,
-                    operation=report.error.operation,
-                )
-
     async def _apply_highlight(
         self,
         book: ReadwiseBook,

@@ -46,7 +46,6 @@ from tether.dreaming_store import (
     DreamRunTerminalStatus,
 )
 from tether.memory_workspace import MemoryWorkspace, MemoryWorkspaceTopic
-from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
 
@@ -2477,42 +2476,6 @@ class DreamingService:
         )
         return run
 
-    async def scan_forever(
-        self, *, interval_seconds: float = 60.0, logger: Logger
-    ) -> None:
-        """Queue assimilation runs for settled evidence on a fixed interval.
-
-        The correctness backstop for post-turn queueing: assimilation used to
-        depend on the *next* chat turn noticing settled evidence, so any quiet
-        stretch left Memory stale indefinitely. A failed pass is logged and
-        swallowed; the next tick retries.
-        """
-        await run_reconcile_loop(
-            lambda: self.queue_settled_assimilation_runs(
-                logger=logger,
-                now=datetime.now(UTC),
-            ),
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=interval_seconds,
-            logger=logger,
-            failure_message="Dream assimilation scan failed",
-        )
-
-    async def maintenance_forever(
-        self, *, interval_seconds: float = 86_400.0, logger: Logger
-    ) -> None:
-        """Queue periodic semantic maintenance for current Topic groups."""
-        await run_reconcile_loop(
-            lambda: self.queue_maintenance_runs(
-                logger=logger,
-                now=datetime.now(UTC),
-            ),
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=interval_seconds,
-            logger=logger,
-            failure_message="Dream maintenance scan failed",
-        )
-
     async def _queue_for_all_conversations(
         self,
         *,
@@ -2832,13 +2795,6 @@ class DreamingService:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class DreamingWorkerConfig:
-    """Tuning knobs for the Dreaming worker loop."""
-
-    poll_interval_seconds: float = 5.0
-
-
 class DreamingWorker:
     """Execute queued Dream runs via an injected callback."""
 
@@ -2847,13 +2803,10 @@ class DreamingWorker:
         dreaming_service: DreamingService,
         executor: DreamRunExecutor,
         logger: Logger,
-        *,
-        config: DreamingWorkerConfig | None = None,
     ) -> None:
         self.dreaming_service: DreamingService = dreaming_service
         self.executor: DreamRunExecutor = executor
         self.logger: Logger = logger
-        self.config: DreamingWorkerConfig = config or DreamingWorkerConfig()
 
     async def run_once(self) -> DreamRun[Fetched] | None:
         """Process one queued Dream run and settle it terminally if one exists."""
@@ -2888,18 +2841,12 @@ class DreamingWorker:
             error=result.error,
         )
 
-    async def run_forever(self) -> None:
-        """Continuously claim and complete Dream runs until cancellation."""
-        await asyncio.sleep(self.config.poll_interval_seconds)
-        while True:
-            made_progress = False
-            while True:
-                completed = await self.run_once()
-                if completed is None:
-                    break
-                made_progress = True
-            if not made_progress:
-                await asyncio.sleep(self.config.poll_interval_seconds)
+    async def drain(self) -> int:
+        """Complete every currently queued Dream run and return the count."""
+        completed_count = 0
+        while await self.run_once() is not None:
+            completed_count += 1
+        return completed_count
 
 
 def window_size(max_messages_per_run: int, start_seq: PositiveInt) -> int:
@@ -2920,7 +2867,6 @@ __all__ = [
     "DreamingMutationCoordinator",
     "DreamingService",
     "DreamingWorker",
-    "DreamingWorkerConfig",
     "DreamingWorkspaceReconcileResult",
     "MaintenanceDreamingAgent",
     "MaintenanceDreamingExecutor",

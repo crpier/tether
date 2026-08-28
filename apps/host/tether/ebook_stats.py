@@ -92,17 +92,6 @@ class EbookStatsSyncService:
         )
         return Ok(report)
 
-    async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
-        """Run interval passes until cancellation, retrying after pass defects."""
-        while True:
-            await asyncio.sleep(interval_seconds)
-            try:
-                _ = await self.sync(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Ebook statistics sync pass failed")
-
     async def _parse_snapshot(self, source: AsyncPath) -> ParsedStatistics:
         """Copy the potentially live source, parse off-thread, then remove it."""
         contents = await source.read_bytes()

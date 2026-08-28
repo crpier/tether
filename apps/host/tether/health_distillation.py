@@ -13,7 +13,6 @@ Evidence URIs are canonical and stable:
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -36,7 +35,6 @@ from tether.health_connect import (
     HcExerciseEpisodeSummary,
     HcSleepEpisodeSummary,
 )
-from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
 
 _EXERCISE_URI_PATTERN = r"tether://health-connect/exercise/[^@\s\)]+@v[0-9]+"
@@ -140,26 +138,6 @@ class HealthDistillationService:
                 sleep_through_version_id=min(sleep_through or 0, sleep_since + cap),
             )
             return await transaction.execute(insert(run).returning())
-
-    async def scan_forever(
-        self, *, interval_seconds: float = 60.0, logger: Logger
-    ) -> None:
-        """Queue consolidation runs when new summaries exist, on an interval.
-
-        Correctness backstop for post-sync triggers: a failed pass is logged
-        and swallowed; the next tick retries.
-        """
-
-        async def _scan_once() -> list[HealthDreamRun[Fetched]]:
-            return await self.drain_backlog()
-
-        await run_reconcile_loop(
-            _scan_once,
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=interval_seconds,
-            logger=logger,
-            failure_message="Health distillation scan failed",
-        )
 
     async def queue_explicit_run(
         self, *, start: datetime, end: datetime
@@ -590,7 +568,6 @@ class HealthDreamingWorker:
     service: HealthDistillationService
     executor: HealthDreamRunExecutor
     logger: Logger
-    poll_interval_seconds: float = 5.0
 
     async def run_once(self) -> HealthDreamRun[Fetched] | None:
         """Process one queued run terminally; return it, or None when idle."""
@@ -620,18 +597,12 @@ class HealthDreamingWorker:
             error=result.error,
         )
 
-    async def run_forever(self) -> None:
-        """Continuously claim and complete health runs until cancellation."""
-        await asyncio.sleep(self.poll_interval_seconds)
-        while True:
-            made_progress = False
-            while True:
-                completed = await self.run_once()
-                if completed is None:
-                    break
-                made_progress = True
-            if not made_progress:
-                await asyncio.sleep(self.poll_interval_seconds)
+    async def drain(self) -> int:
+        """Complete every currently queued Health run and return the count."""
+        completed_count = 0
+        while await self.run_once() is not None:
+            completed_count += 1
+        return completed_count
 
 
 def _datetime_from_millis(value: int) -> datetime:

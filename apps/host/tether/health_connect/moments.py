@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from datetime import datetime, timedelta
+from typing import Literal, Protocol, cast
 from uuid import UUID, uuid7
 
 import structlog
@@ -43,10 +43,6 @@ from tether.health_connect.telemetry_values import (
     render_exercise_type,
 )
 from tether.notification_delivery import PushNotification
-from tether.search_projection.loop import run_reconcile_loop
-
-if TYPE_CHECKING:
-    from tether.structured_logging import Logger
 
 _logger = structlog.stdlib.get_logger("tether.health_moments")
 
@@ -525,20 +521,6 @@ class HealthMomentWorker:
             briefed=dispatch.briefed,
             created=reconciliation.created,
             pushed=dispatch.pushed,
-        )
-
-    async def run_forever(self, *, interval_seconds: float, logger: Logger) -> None:
-        """Retry the idempotent pipeline after each bounded interval."""
-
-        async def _pass() -> HealthMomentTickReport:
-            return await self.tick(now=datetime.now(UTC))
-
-        await run_reconcile_loop(
-            _pass,
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=interval_seconds,
-            logger=logger,
-            failure_message="Health moment reconciliation failed",
         )
 
 

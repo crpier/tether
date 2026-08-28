@@ -19,12 +19,12 @@ from snekql.sqlite import Config, Database
 from snektest import assert_true, test
 
 from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.background_runtime import BackgroundRuntime
 from tether.gmail.client import GmailNetworkFailure, GmailResponse
 from tether.gmail.store import create_gmail_schema
 from tether.host_config import AppConfig
 from tether.host_resources import HostBootstrap
 from tether.ingestion_composition import compose_gmail
-from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.local_dependencies import LocalSttTransport, LocalTtsTransport
 from tether.model_selection import AgentModelCatalog
 from tether.stt import SttClient
@@ -148,13 +148,14 @@ async def _wire(config: AppConfig) -> asyncio.Event:
     await create_todo_schema(db)
     await create_gmail_schema(db)
     logger = structlog.stdlib.get_logger("test.gmail_boot")
-    ingestion_lifecycle = IngestionLifecycle(logger)
+    background_runtime = BackgroundRuntime(logger)
     tracer = trace.NoOpTracerProvider().get_tracer("test.gmail_boot")
     try:
         async with TemporaryDirectory() as kb_root:
             trigger_service = TriggerService(database=db, tracer=tracer)
             todo_service = TodoService(database=db, tracer=tracer)
             await compose_gmail(
+                background_runtime=background_runtime,
                 bootstrap=HostBootstrap(
                     session_registry=SessionRegistry(),
                     stt_client=SttClient(
@@ -170,18 +171,17 @@ async def _wire(config: AppConfig) -> asyncio.Event:
                 ),
                 config=config,
                 database=db,
-                ingestion_lifecycle=ingestion_lifecycle,
                 kb_root=Path(kb_root),
                 logger=logger,
                 model_catalog=AgentModelCatalog(default_model=None, models=()),
                 trigger_service=trigger_service,
                 todo_service=todo_service,
             )
-            readiness = ingestion_lifecycle.readiness("gmail")
-            await asyncio.wait_for(readiness.wait(), timeout=1)
+            readiness = background_runtime.readiness("gmail")
+            async with background_runtime:
+                await asyncio.wait_for(readiness.wait(), timeout=1)
             return readiness
     finally:
-        await ingestion_lifecycle.stop(grace_seconds=0.1)
         await db.close()
 
 

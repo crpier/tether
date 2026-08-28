@@ -1,7 +1,6 @@
 """Service behavior for Dreaming orchestration cursoring and run queueing."""
 
 import asyncio
-import contextlib
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,7 +43,6 @@ from tether.dreaming import (
     DreamingMutationCoordinator,
     DreamingService,
     DreamingWorker,
-    DreamingWorkerConfig,
     DreamRunExecutionResult,
     HttpDreamingMutationAcknowledger,
     KindDispatchingDreamExecutor,
@@ -540,7 +538,6 @@ async def run_worker_marks_callback_failure() -> None:
         dreaming_service,
         _explode,
         logger=test_logger(),
-        config=DreamingWorkerConfig(poll_interval_seconds=0.0),
     )
     completed = await worker.run_once()
 
@@ -579,51 +576,11 @@ async def run_worker_sets_running_run_to_success() -> None:
             DreamRunExecutionResult(status="success", error=None),
         ),
         logger=test_logger(),
-        config=DreamingWorkerConfig(poll_interval_seconds=0.0),
     )
     completed = await worker.run_once()
 
     assert completed is not None
     assert_eq(completed.status, "success")
-
-
-@test()
-async def worker_waits_one_poll_interval_before_claiming_at_startup() -> None:
-    """Startup leaves the worker cancellable before its first DB transaction."""
-    conversation_service, dreaming_service, conversation_id = await _fixture()
-    message = await _append(
-        conversation_service,
-        conversation_id=conversation_id,
-        role="user",
-        content="queued before startup",
-    )
-    await _retime(
-        message.id,
-        database=conversation_service.database,
-        when=datetime.now(UTC) - timedelta(minutes=50),
-    )
-    run = await dreaming_service.queue_manual_run(
-        conversation_id,
-        logger=test_logger(),
-        now=datetime.now(UTC),
-    )
-    assert run is not None
-    callback = _Callback(DreamRunExecutionResult(status="success", error=None))
-    worker = DreamingWorker(
-        dreaming_service,
-        callback,
-        logger=test_logger(),
-        config=DreamingWorkerConfig(poll_interval_seconds=0.1),
-    )
-
-    task = asyncio.create_task(worker.run_forever())
-    try:
-        await asyncio.sleep(0.02)
-        assert_eq(callback.calls, 0)
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
 
 
 @test()
