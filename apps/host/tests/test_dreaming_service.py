@@ -2538,6 +2538,14 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
     assert_eq(len(verifier.prompts), 1)
     assert "citation:E1" in verifier.prompts[0]
     assert "tether://" not in verifier.prompts[0]
+    assert (
+        "Citation aliases intentionally replace canonical Evidence URIs"
+        in (verifier.prompts[0])
+    )
+    assert (
+        "Accept `[source](citation:E1)` as a valid Evidence link"
+        in (verifier.prompts[0])
+    )
     async with conversation_service.database.transaction() as transaction:
         deletion = await transaction.fetch_one_or_none(
             select(DreamingMutation)

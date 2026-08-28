@@ -1645,6 +1645,9 @@ Canonical Conversation Evidence:
 Proposed transition:
 {response}
 
+Citation aliases intentionally replace canonical Evidence URIs in this verification task.
+Accept `[source](citation:E1)` as a valid Evidence link when `citation:E1` is supplied above. Do not require canonical identifiers or reject a transition merely because it uses citation aliases.
+
 Return exactly `APPROVED` only when all three checks pass:
 - coverage: every prior Claim's supported meaning remains in a resulting Claim or has an explicit retirement;
 - preservation: no still-supported Claim is dropped or distorted;
