@@ -139,11 +139,9 @@ async def rebuild_preserves_topics_with_non_conversation_evidence() -> None:
                 "health/activity.md",
                 """---
 title: Activity
-evidence:
-  - tether://health-connect/exercise/session-1
 ---
 
-- Runs twice a week.
+- Runs twice a week. [source](tether://health-connect/exercise/session-1)
 """,
             )
 
@@ -155,6 +153,36 @@ evidence:
             assert_eq(response.status_code, 200)
             assert_true(topic_path.exists())
             assert_eq(response.json()["preserved_topics"], 1)
+
+
+@test()
+async def rebuild_preserves_topics_with_mixed_evidence() -> None:
+    """One non-Message citation keeps an otherwise conversational Topic intact."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory))
+        with TestClient(app) as client:
+            _login(client)
+            topic_path = await _record_topic(
+                cast("Starlette", client.app),
+                "purchases.md",
+                """---
+title: Purchases
+evidence:
+  - tether://message/019f0927-4fa0-70fa-9847-3edc96296ecf
+---
+
+- Bought a lamp. [source](tether://email/message-1)
+""",
+            )
+
+            response = client.post(
+                "/api/memory-rebuilds",
+                json={"confirmation": "rebuild-conversation-memory"},
+            )
+
+            assert_eq(response.status_code, 200)
+            assert_eq(response.json()["preserved_topics"], 1)
+            assert_true(topic_path.exists())
 
 
 @test()
@@ -185,6 +213,33 @@ evidence:
             assert_eq(response.status_code, 200)
             assert_eq(response.json()["tombstoned_topics"], 1)
             assert_eq(client.get("/api/memory-topics").json(), [])
+
+
+@test()
+async def rebuild_tombstones_body_only_conversation_topics() -> None:
+    """Maintenance output with Message citations only is Conversation-derived."""
+    with TemporaryDirectory() as directory:
+        app = _make_app(Path(directory))
+        with TestClient(app) as client:
+            _login(client)
+            _ = await _record_topic(
+                cast("Starlette", client.app),
+                "preferences.md",
+                """---
+title: Preferences
+---
+
+- Likes aisle seats. [source](tether://message/019f0927-4fa0-70fa-9847-3edc96296ecf)
+""",
+            )
+
+            response = client.post(
+                "/api/memory-rebuilds",
+                json={"confirmation": "rebuild-conversation-memory"},
+            )
+
+            assert_eq(response.status_code, 200)
+            assert_eq(response.json()["tombstoned_topics"], 1)
 
 
 @test()
