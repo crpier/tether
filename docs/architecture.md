@@ -51,7 +51,7 @@ Three needs, two sinks. **Logs** (agent introspection + system health): **struct
 
 ## Operations
 
-**Backup/restore** runs outside Compose as a host systemd timer. It creates independent consistent `VACUUM INTO` snapshots of `tether.sqlite3` and `telemetry.sqlite3`, then sends both snapshots, `/data/kb/memory`, `/data/kb/pi-sessions`, and the production `.env` through one restic client-side-encrypted backup to Backblaze B2. Restic retains seven daily and four weekly snapshots; healthchecks.io supplies the dead-man's-switch. SQLite remains the source of truth. Provider credentials under `/srv/tether/pi-agent` and OAuth files outside `/data/kb` are not currently covered and must be reauthorized or protected separately. See [deployment.md](./deployment.md#backups) for the exact restore drill and current coverage.
+**Backup/restore** runs outside Compose as a host systemd timer. It creates independent consistent `VACUUM INTO` snapshots of `tether.sqlite3` and `telemetry.sqlite3`, then sends both snapshots, `/data/kb/memory`, `/data/kb/uploads`, `/data/kb/pi-sessions`, and the production `.env` through one restic client-side-encrypted backup to Backblaze B2. Restic retains seven daily and four weekly snapshots; healthchecks.io supplies the dead-man's-switch. SQLite remains the source of truth. Provider credentials under `/srv/tether/pi-agent` and OAuth files outside `/data/kb` are not currently covered and must be reauthorized or protected separately. See [deployment.md](./deployment.md#backups) for the exact restore drill and current coverage.
 
 ## Security
 

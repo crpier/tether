@@ -1,5 +1,6 @@
 import { ApiError } from "../../host/error";
 import type {
+  Attachment,
   ChatHost,
   Conversation,
   ConversationTurn,
@@ -38,6 +39,7 @@ export class FakeChatHost implements ChatHost {
   transcribeAudioCalls: Blob[] = [];
   transcribeAudioRejections: ApiError[] = [];
   undoGmailArchiveCalls: string[] = [];
+  uploadAttachmentCalls: File[] = [];
   nextTranscript = "";
 
   constructor(messages: Message[] = []) {
@@ -217,6 +219,18 @@ export class FakeChatHost implements ChatHost {
       return Promise.reject(forced);
     }
     return Promise.resolve(this.nextTranscript);
+  }
+
+  uploadAttachment(conversationId: string, file: File): Promise<Attachment> {
+    void conversationId;
+    this.uploadAttachmentCalls.push(file);
+    return Promise.resolve({
+      filename: file.name,
+      id: "018f0000-0000-7000-8000-000000000099",
+      kind: file.type.startsWith("image/") ? "image" : "document",
+      mime_type: file.type,
+      size_bytes: file.size,
+    });
   }
 
   private allConversations(): Conversation[] {

@@ -15,6 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from tether.agent_run import record_run
 from tether.agent_trace_model import RunCorrelation
+from tether.attachments import AttachmentPrompt
 from tether.chat_frames import (
     ChatFrame,
     ErrorFrame,
@@ -118,6 +119,7 @@ class InteractiveTurnRequest:
     conversation_id: UUID
     prompt: str
     request_id: UUID
+    attachment_ids: tuple[UUID, ...] = ()
     reply_mode: ReplyMode = "text"
 
 
@@ -262,6 +264,11 @@ class ConversationTurns:
         occurrence_id = (
             request.occurrence_id if isinstance(request, ScheduledTurnRequest) else None
         )
+        attachment_ids = (
+            request.attachment_ids
+            if isinstance(request, InteractiveTurnRequest)
+            else ()
+        )
         async with self.dependencies.conversation_service.database.transaction(
             mode="immediate"
         ) as transaction:
@@ -387,9 +394,24 @@ class ConversationTurns:
                         )
                     ).returning()
                 )
+                await self.dependencies.attachment_service.bind_to_turn(
+                    transaction,
+                    attachment_ids=attachment_ids,
+                    conversation_id=conversation.id,
+                    turn_id=existing.id,
+                )
             else:
+                bound_attachments = (
+                    await self.dependencies.attachment_service.fetch_for_turn(
+                        transaction,
+                        existing.id,
+                    )
+                )
                 self._validate_duplicate(
                     existing,
+                    attachment_ids=tuple(
+                        attachment.id for attachment in bound_attachments
+                    ),
                     request=request,
                     origin=origin,
                     reply_mode=reply_mode,
@@ -419,6 +441,7 @@ class ConversationTurns:
         self,
         turn: ConversationTurn[Fetched],
         *,
+        attachment_ids: tuple[UUID, ...],
         request: ConversationTurnRequest,
         origin: str,
         reply_mode: str,
@@ -436,8 +459,14 @@ class ConversationTurns:
                 )
             )
         )
+        requested_attachment_ids = (
+            request.attachment_ids
+            if isinstance(request, InteractiveTurnRequest)
+            else ()
+        )
         if (
-            turn.conversation_id != request.conversation_id
+            attachment_ids != requested_attachment_ids
+            or turn.conversation_id != request.conversation_id
             or turn.scheduled_occurrence_id
             != (
                 request.occurrence_id
@@ -1003,6 +1032,9 @@ class ConversationTurns:
             if message is None:
                 return False
             self._schedule_titling(turn, message)
+            attachment_prompt = (
+                await self.dependencies.attachment_service.prompt_for_turn(turn.id)
+            )
             self._publish_navigation_state_later(include_messages=True)
             await sink.send(
                 UserMessageFrame(
@@ -1036,7 +1068,10 @@ class ConversationTurns:
                 await runtime.apply_model(selected_model)
             _ = runtime.drain_events()
             prompt_response = await self._accept_with_retry(
-                turn, runtime, lease_id=lease_id
+                turn,
+                runtime,
+                attachment_prompt=attachment_prompt,
+                lease_id=lease_id,
             )
             if prompt_response is None:
                 await self._send_terminal(await self._fetch_turn(turn.id), sink)
@@ -1098,7 +1133,11 @@ class ConversationTurns:
         message: Message[Fetched],
     ) -> None:
         """Fire-and-forget auto-titling from the first interactive message."""
-        if turn.origin != "interactive" or self.dependencies.titler is None:
+        if (
+            turn.origin != "interactive"
+            or not message.content
+            or self.dependencies.titler is None
+        ):
             return
         self.dependencies.titler.schedule(
             conversation_id=turn.conversation_id,
@@ -1144,6 +1183,11 @@ class ConversationTurns:
                         turn_id=turn.id,
                     ),
                 )
+            )
+            await self.dependencies.attachment_service.link_to_message(
+                transaction,
+                message_id=message.id,
+                turn_id=turn.id,
             )
             matched = await transaction.execute(
                 update(ConversationTurn)
@@ -1262,6 +1306,7 @@ class ConversationTurns:
         turn: ConversationTurn[Fetched],
         runtime: ChatPiRuntime,
         *,
+        attachment_prompt: AttachmentPrompt,
         lease_id: UUID,
     ) -> dict[str, Any] | None:
         """Retry only typed known-preaccept transients, at most twice."""
@@ -1280,21 +1325,27 @@ class ConversationTurns:
                 if turn.origin == "health"
                 else _SCHEDULED_CONTEXT.format(prompt=canonical_prompt)
             )
+            if attachment_prompt.document_context:
+                pi_prompt = f"{pi_prompt}\n\n{attachment_prompt.document_context}"
             if not await self._prompt_attempt_is_executable(
                 turn.id,
                 lease_id=lease_id,
             ):
                 return None
             try:
-                return await runtime.client.request(
-                    "prompt",
-                    message=prompt_with_time_context(
+                prompt_fields: dict[str, Any] = {
+                    "message": prompt_with_time_context(
                         pi_prompt,
                         now=now,
                         timezone_name=local_timezone_name(now),
                         reply_mode=cast("ReplyMode", turn.reply_mode),
-                    ),
-                )
+                    )
+                }
+                if attachment_prompt.images:
+                    prompt_fields["images"] = [
+                        image.wire() for image in attachment_prompt.images
+                    ]
+                return await runtime.client.request("prompt", **prompt_fields)
             except PiPreacceptTransientError:
                 if retries >= _MAX_PREACCEPT_RETRIES:
                     raise

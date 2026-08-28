@@ -13,6 +13,7 @@ from opentelemetry.trace import Tracer
 from snekql.sqlite import Database
 
 from tether.artifacts import ArtifactService
+from tether.attachments import AttachmentService
 from tether.bucket_item_index import BucketItemIndex
 from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_item_search import BucketItemSearchService
@@ -509,6 +510,7 @@ class CoreServices:
     """Request-serving services composed before optional ingestion adapters."""
 
     artifact_service: ArtifactService
+    attachment_service: AttachmentService
     bucket_item_search_service: BucketItemSearchService
     bucket_item_service: BucketItemService
     conversation_runtime_registry: ConversationRuntimeRegistry
@@ -659,6 +661,10 @@ async def compose_core_services(
     )
     conversation_turns = ConversationTurns(
         ChatTurnDependencies(
+            attachment_service=AttachmentService(
+                host.database,
+                host.kb_root / "uploads",
+            ),
             conversation_service=conversation_service,
             dreaming_enabled=config.dreaming_enabled,
             dreaming_service=dreaming_service,
@@ -847,6 +853,7 @@ async def compose_core_services(
     )
     return CoreServices(
         artifact_service=presentation.artifact_service,
+        attachment_service=conversation_turns.dependencies.attachment_service,
         bucket_item_search_service=bucket_item_search,
         bucket_item_service=bucket_item_service,
         conversation_runtime_registry=runtime_registry,

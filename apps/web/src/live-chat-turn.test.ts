@@ -15,6 +15,7 @@ function durableTurn(
   overrides: Partial<ConversationTurn> = {},
 ): ConversationTurn {
   return {
+    attachments: [],
     completed_at: null,
     conversation_id: "conversation-1",
     created_at: "2026-01-01T00:00:00Z",
@@ -33,6 +34,7 @@ function durableTurn(
 
 function message(content: string, seq: number): Message {
   return {
+    attachments: [],
     content,
     conversation_id: "conversation-1",
     created_at: "2026-01-01T00:00:00Z",

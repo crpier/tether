@@ -56,6 +56,7 @@ export interface ChatBus {
     content: string,
     replyMode: ReplyMode,
     requestId: string,
+    attachmentIds?: readonly string[],
   ): void;
 }
 
@@ -156,9 +157,18 @@ export const createBrowserChatBus: CreateChatBus = (handlers) => {
         }),
       );
     },
-    sendPrompt(conversationId, content, replyMode, requestId) {
+    sendPrompt(
+      conversationId,
+      content,
+      replyMode,
+      requestId,
+      attachmentIds = [],
+    ) {
       sendSerialized(
         JSON.stringify({
+          ...(attachmentIds.length === 0
+            ? {}
+            : { attachment_ids: attachmentIds }),
           content,
           conversation_id: conversationId,
           reply_mode: replyMode,

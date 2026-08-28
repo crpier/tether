@@ -229,6 +229,66 @@ describe("Chat view", () => {
     ).toBeInTheDocument();
   });
 
+  test("renders persisted image and document attachments", async () => {
+    const host = new FakeHost({
+      authenticated: true,
+      messages: [
+        message({
+          attachments: [
+            {
+              filename: "pixel.png",
+              id: "018f0000-0000-7000-8000-000000000097",
+              kind: "image",
+              mime_type: "image/png",
+              size_bytes: 10,
+            },
+            {
+              filename: "brief.pdf",
+              id: "018f0000-0000-7000-8000-000000000098",
+              kind: "document",
+              mime_type: "application/pdf",
+              size_bytes: 20,
+            },
+          ],
+          content: "Please read these.",
+          role: "user",
+        }),
+      ],
+    });
+    renderApp(host);
+
+    const image = await screen.findByRole("img", { name: "pixel.png" });
+    const document = screen.getByRole("link", { name: "brief.pdf" });
+
+    expect(image).toHaveAttribute(
+      "src",
+      "/api/attachments/018f0000-0000-7000-8000-000000000097",
+    );
+    expect(document).toHaveAttribute(
+      "href",
+      "/api/attachments/018f0000-0000-7000-8000-000000000098",
+    );
+  });
+
+  test("uploads and sends an image-only attachment", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+    const file = new File(["image-body"], "pixel.png", { type: "image/png" });
+
+    fireEvent.change(await screen.findByLabelText("Attach files"), {
+      target: { files: [file] },
+    });
+    await screen.findByText("pixel.png");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(host.chat.uploadAttachmentCalls).toEqual([file]);
+      expect(bus.sent[0]?.attachmentIds).toEqual([
+        "018f0000-0000-7000-8000-000000000099",
+      ]);
+    });
+  });
+
   test("does not expose a destructive transcript reset", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host);

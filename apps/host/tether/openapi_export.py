@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI
 
 from tether.artifact_routes import router as artifact_router
+from tether.attachment_routes import router as attachment_router
 from tether.auth_routes import router as auth_router
 from tether.bucket_routes import router as bucket_router
 from tether.capture_routes import router as capture_router
@@ -37,6 +38,7 @@ from tether.youtube import routes_router as youtube_router
 _EXPECTED_ARGUMENT_COUNT = 2
 _PUBLIC_ROUTERS = (
     auth_router,
+    attachment_router,
     memory_router,
     evidence_router,
     capture_router,

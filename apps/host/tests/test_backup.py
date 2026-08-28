@@ -67,6 +67,7 @@ if [[ "$*" == *"exec -T host python3 -c"*"/data/kb"* ]]; then
         "${fixture_dir}/memory/travel" \
         "${fixture_dir}/memory/.obsidian" \
         "${fixture_dir}/pi-sessions" \
+        "${fixture_dir}/uploads" \
         "${fixture_dir}/index" \
         "${fixture_dir}/transcript-index" \
         "${fixture_dir}/bucket-item-index"
@@ -75,6 +76,7 @@ if [[ "$*" == *"exec -T host python3 -c"*"/data/kb"* ]]; then
     printf 'hidden\n' > "${fixture_dir}/memory/.hidden.md"
     printf 'editor\n' > "${fixture_dir}/memory/.obsidian/workspace.md"
     printf 'session\n' > "${fixture_dir}/pi-sessions/session.jsonl"
+    printf 'attachment\n' > "${fixture_dir}/uploads/01900000-0000-7000-8000-000000000001"
     printf 'derived\n' > "${fixture_dir}/index/chunk.lance"
     printf 'derived\n' > "${fixture_dir}/transcript-index/chunk.lance"
     printf 'derived\n' > "${fixture_dir}/bucket-item-index/chunk.lance"
@@ -166,6 +168,7 @@ def test_backup_snapshots_both_sqlite_sources_of_truth() -> None:
             "kb/memory/00000000-0000-0000-0000-000000000001.md",
             "kb/memory/travel/preferences.md",
             "kb/pi-sessions/session.jsonl",
+            "kb/uploads/01900000-0000-7000-8000-000000000001",
             "telemetry.sqlite3",
             "tether.sqlite3",
         ],

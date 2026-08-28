@@ -565,6 +565,7 @@ describe("Conversation navigation", () => {
     const host = new FakeHost({ authenticated: true });
     host.chat.storedTurns = [
       {
+        attachments: [],
         completed_at: "2026-01-01T00:00:01Z",
         conversation_id: conversation.id,
         created_at: "2026-01-01T00:00:00Z",

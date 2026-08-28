@@ -3,7 +3,7 @@
 // this file is implementation so transport and rendering can change freely.
 
 import type { ChatFrame } from "./chat-bus";
-import type { Message } from "./host/chat";
+import type { Attachment, Message } from "./host/chat";
 
 export type ChatRole = "user" | "health" | "scheduled" | "assistant" | "tool";
 
@@ -12,6 +12,7 @@ export type ChatRole = "user" | "health" | "scheduled" | "assistant" | "tool";
 export type StoredRole = ChatRole | "reasoning";
 
 export interface StoredMessage {
+  attachments?: Attachment[];
   createdAt?: string;
   id: string;
   role: StoredRole;
@@ -25,6 +26,7 @@ export interface StoredMessage {
 
 export type TimelineRow =
   | {
+      attachments?: Attachment[];
       createdAt?: string;
       kind: "message";
       id: string;
@@ -89,6 +91,7 @@ export interface LiveTurn {
   startedAt: number | null;
   endedAt: number | null;
   error: string | null;
+  userAttachments: Attachment[];
   userText: string | null;
   messageIndex: number;
   counter: number;
@@ -103,6 +106,7 @@ export function emptyTurn(): LiveTurn {
     startedAt: null,
     endedAt: null,
     error: null,
+    userAttachments: [],
     userText: null,
     messageIndex: -1,
     counter: 0,
@@ -117,12 +121,14 @@ export function startTurn(
   text: string,
   now: number,
   turnId?: string,
+  attachments: Attachment[] = [],
 ): LiveTurn {
   return {
     ...emptyTurn(),
     generating: true,
     turnId: turnId ?? null,
     startedAt: now,
+    userAttachments: attachments,
     userText: text,
   };
 }
@@ -316,6 +322,7 @@ export function deriveRows(
       };
     }
     return {
+      attachments: message.attachments,
       createdAt: message.createdAt,
       kind: "message",
       id: message.id,
@@ -335,6 +342,7 @@ export function deriveRows(
   );
   if (turn.userText !== null && !activeUserIsStored) {
     rows.push({
+      attachments: turn.userAttachments,
       kind: "message",
       id: "live-user",
       role: "user",
@@ -390,6 +398,7 @@ function rowContentEqual(a: TimelineRow, b: TimelineRow): boolean {
       const other = b as Extract<TimelineRow, { kind: "message" }>;
       return (
         a.role === other.role &&
+        JSON.stringify(a.attachments) === JSON.stringify(other.attachments) &&
         a.text === other.text &&
         a.toolName === other.toolName &&
         a.streaming === other.streaming &&

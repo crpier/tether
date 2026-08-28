@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 from uuid import UUID, uuid4, uuid7
 
 import structlog
 from opentelemetry import trace
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from snekql.sqlite import Config, Database, Fetched, insert, update
 from snektest import (
     assert_eq,
+    assert_in,
     assert_isinstance,
     assert_raises,
     assert_true,
@@ -21,6 +28,8 @@ from snektest import (
     test,
 )
 
+from tether.attachment_store import create_attachment_schema
+from tether.attachments import AttachmentService, AttachmentSubmissionError
 from tether.chat_frames import (
     AgentEndFrame,
     ChatFrame,
@@ -52,6 +61,32 @@ from tether.pi_turn_events import AgentEnded, MessageSettled, TurnEvent
 from tether.trigger_schedule import OnceTriggerSpec
 from tether.trigger_store import create_trigger_schema
 from tether.triggers import ScheduledPromptSnapshot, TriggerService
+
+
+def pdf_with_text(text: str) -> bytes:
+    """Build a valid one-page PDF carrying an extractable text layer."""
+    output = BytesIO()
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    font = DictionaryObject(
+        {
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/Type"): NameObject("/Font"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): writer._add_object(font)}
+            )
+        }
+    )
+    content = DecodedStreamObject()
+    content.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
+    page[NameObject("/Contents")] = writer._add_object(content)
+    writer.write(output)
+    return output.getvalue()
 
 
 class RecordingPublisher:
@@ -128,11 +163,13 @@ class AcceptingClient:
 
     def __init__(self) -> None:
         self.commands: list[str] = []
+        self.prompt_fields: list[dict[str, Any]] = []
         self.prompt_messages: list[str] = []
 
     async def request(self, command_type: str, **fields: Any) -> dict[str, Any]:
         self.commands.append(command_type)
         if command_type == "prompt":
+            self.prompt_fields.append(fields)
             self.prompt_messages.append(str(fields["message"]))
         return {"success": True}
 
@@ -321,14 +358,20 @@ async def conversation_turns_fixture() -> AsyncGenerator[
 ]:
     database = await Database.initialize(backend=Config(database=":memory:"))
     await create_conversation_schema(database)
+    await create_attachment_schema(database)
     await create_trigger_schema(database)
     service = ConversationService(
         database=database,
         model_catalog=AgentModelCatalog(default_model=None, models=()),
     )
     registry = RuntimeRegistry(SuccessfulRuntime())
+    attachment_directory = TemporaryDirectory()
     turns = CancelBeforeSuccessSettlementTurns(
         ChatTurnDependencies(
+            attachment_service=AttachmentService(
+                database,
+                Path(attachment_directory.name),
+            ),
             conversation_service=service,
             dreaming_enabled=False,
             dreaming_service=cast("Any", DisabledDreaming()),
@@ -343,6 +386,127 @@ async def conversation_turns_fixture() -> AsyncGenerator[
     finally:
         await turns.shutdown()
         await database.close()
+        attachment_directory.cleanup()
+
+
+@test()
+async def attachment_cannot_cross_Conversation_identity() -> None:
+    """A staged file can only join a turn in its owning Conversation."""
+    turns, service, _ = await load_fixture(conversation_turns_fixture())
+    main = await service.fetch_main_conversation()
+    scoped = await service.create_scoped_conversation(scope_brief="Other work")
+    attachment = await turns.dependencies.attachment_service.create(
+        main.id,
+        filename="notes.txt",
+        declared_mime_type="text/plain",
+        content=b"main only",
+    )
+
+    with assert_raises(AttachmentSubmissionError):
+        _ = await turns.submit(
+            InteractiveTurnRequest(
+                attachment_ids=(attachment.id,),
+                conversation_id=scoped.id,
+                prompt="Cross the streams",
+                request_id=uuid7(),
+            ),
+            RecordingSink(),
+        )
+
+
+@test()
+async def text_attachment_content_reaches_the_agent_with_its_user_message() -> None:
+    """A submitted document becomes bounded agent context for the owning turn."""
+    turns, service, registry = await load_fixture(conversation_turns_fixture())
+    conversation = await service.fetch_main_conversation()
+    attachment = await turns.dependencies.attachment_service.create(
+        conversation.id,
+        filename="notes.md",
+        declared_mime_type="text/markdown",
+        content=b"Remember the blue suitcase.",
+    )
+
+    ticket = await turns.submit(
+        InteractiveTurnRequest(
+            attachment_ids=(attachment.id,),
+            conversation_id=conversation.id,
+            prompt="What should I pack?",
+            request_id=uuid7(),
+        ),
+        RecordingSink(),
+    )
+    _ = await turns.wait(ticket.turn_id)
+
+    assert_in("notes.md", registry.runtime.client.prompt_messages[0])
+    assert_in(
+        "Remember the blue suitcase.",
+        registry.runtime.client.prompt_messages[0],
+    )
+
+
+@test()
+async def pdf_text_layer_reaches_the_agent_with_its_user_message() -> None:
+    """Embedded PDF text becomes bounded agent context for the owning turn."""
+    turns, service, registry = await load_fixture(conversation_turns_fixture())
+    conversation = await service.fetch_main_conversation()
+    attachment = await turns.dependencies.attachment_service.create(
+        conversation.id,
+        filename="brief.pdf",
+        declared_mime_type="application/pdf",
+        content=pdf_with_text("Bring the blue suitcase"),
+    )
+
+    ticket = await turns.submit(
+        InteractiveTurnRequest(
+            attachment_ids=(attachment.id,),
+            conversation_id=conversation.id,
+            prompt="What should I bring?",
+            request_id=uuid7(),
+        ),
+        RecordingSink(),
+    )
+    _ = await turns.wait(ticket.turn_id)
+
+    assert_in(
+        "Bring the blue suitcase",
+        registry.runtime.client.prompt_messages[0],
+    )
+
+
+@test()
+async def image_attachment_reaches_pi_as_native_image_content() -> None:
+    """An attached image crosses RPC in pi's exact multimodal input shape."""
+    turns, service, registry = await load_fixture(conversation_turns_fixture())
+    conversation = await service.fetch_main_conversation()
+    image_bytes = b"\x89PNG\r\n\x1a\nimage-body"
+    attachment = await turns.dependencies.attachment_service.create(
+        conversation.id,
+        filename="pixel.png",
+        declared_mime_type="image/png",
+        content=image_bytes,
+    )
+
+    ticket = await turns.submit(
+        InteractiveTurnRequest(
+            attachment_ids=(attachment.id,),
+            conversation_id=conversation.id,
+            prompt="What is this?",
+            request_id=uuid7(),
+        ),
+        RecordingSink(),
+    )
+    _ = await turns.wait(ticket.turn_id)
+
+    assert_eq(
+        registry.runtime.client.prompt_fields[0]["images"],
+        [
+            {
+                "data": base64.b64encode(image_bytes).decode("ascii"),
+                "mimeType": "image/png",
+                "type": "image",
+            }
+        ],
+    )
 
 
 @test()
@@ -376,6 +540,7 @@ async def titling_turns_fixture() -> AsyncGenerator[
 ]:
     database = await Database.initialize(backend=Config(database=":memory:"))
     await create_conversation_schema(database)
+    await create_attachment_schema(database)
     await create_trigger_schema(database)
     service = ConversationService(
         database,
@@ -384,6 +549,7 @@ async def titling_turns_fixture() -> AsyncGenerator[
     titler = RecordingTitler()
     turns = ConversationTurns(
         ChatTurnDependencies(
+            attachment_service=AttachmentService(database, Path()),
             conversation_service=service,
             dreaming_enabled=False,
             dreaming_service=cast("Any", DisabledDreaming()),
@@ -1088,6 +1254,7 @@ async def pending_turn_keeps_its_exact_model_configuration_across_restart() -> N
     recovered_registry = RuntimeRegistry(recovered_runtime)
     recovered_turns = ConversationTurns(
         ChatTurnDependencies(
+            attachment_service=turns.dependencies.attachment_service,
             conversation_service=service,
             dreaming_enabled=False,
             dreaming_service=cast("Any", DisabledDreaming()),

@@ -98,6 +98,7 @@ export function dreamRun(overrides: Partial<DreamRun> = {}): DreamRun {
 
 export function message(overrides: Partial<Message>): Message {
   return {
+    attachments: [],
     content: "",
     conversation_id: conversation.id,
     created_at: "2026-01-01T00:00:00Z",

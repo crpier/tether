@@ -91,6 +91,11 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
     sessions_path = root / "pi-sessions"
     if sessions_path.is_dir():
         archive.add(sessions_path, arcname=sessions_path.name)
+    uploads_path = root / "uploads"
+    if uploads_path.is_dir():
+        for upload_path in sorted(uploads_path.iterdir()):
+            if upload_path.is_file() and not upload_path.is_symlink():
+                archive.add(upload_path, arcname=str(upload_path.relative_to(root)))
 ' /data/kb | tar -C "${workdir}/kb" -xf -
 }
 
@@ -102,7 +107,8 @@ snapshot_database "/data/tether.sqlite3" "${tether_container_snapshot}" "tether.
 snapshot_database "/data/telemetry.sqlite3" "${telemetry_container_snapshot}" "telemetry.sqlite3"
 
 # 2. KB source data. Derived Lance indexes are rebuildable and can exceed the
-# host's tmpfs, so stream only Markdown and retained pi sessions into staging.
+# host's tmpfs, so stream only Markdown, Message attachments, and retained pi
+# sessions into staging.
 copy_kb_source_data
 
 # 3. .env: the app secrets, so a total-loss recovery doesn't depend on

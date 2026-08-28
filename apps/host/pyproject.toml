@@ -17,6 +17,7 @@ dependencies = [
     "opentelemetry-sdk>=1.43.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
+    "pypdf>=6.9.0",
     "python-multipart>=0.0.20",
     "pywebpush>=2.3.0",
     "pyyaml>=6.0.3",

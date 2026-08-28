@@ -17,6 +17,7 @@ from snekql.sqlite import Fetched
 from tether.agent_run import record_run
 from tether.agent_trace_model import RunCorrelation
 from tether.agent_trace_recorder import AgentTraceRecorder
+from tether.attachments import AttachmentService
 from tether.chat_frames import (
     AgentEndFrame,
     ChatFrame,
@@ -134,6 +135,7 @@ class ConversationTurnQueue:
 class ChatTurnDependencies:
     """Explicit collaborators required to execute and settle one chat turn."""
 
+    attachment_service: AttachmentService
     conversation_service: ConversationService
     dreaming_service: DreamingService
     dreaming_enabled: bool
