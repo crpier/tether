@@ -1401,7 +1401,8 @@
             "enum": [
               "assimilation",
               "maintenance",
-              "manual"
+              "manual",
+              "rebuild"
             ],
             "title": "Kind",
             "type": "string"
@@ -4419,6 +4420,56 @@
           "filename"
         ],
         "title": "MatchEbookFilenameRequest",
+        "type": "object"
+      },
+      "MemoryRebuildRead": {
+        "description": "Immediate preparation outcome for one Conversation Memory rebuild.",
+        "properties": {
+          "preserved_topics": {
+            "title": "Preserved Topics",
+            "type": "integer"
+          },
+          "queued_runs": {
+            "title": "Queued Runs",
+            "type": "integer"
+          },
+          "rebuild_run_id": {
+            "format": "uuid7",
+            "title": "Rebuild Run Id",
+            "type": "string"
+          },
+          "reset_cursors": {
+            "title": "Reset Cursors",
+            "type": "integer"
+          },
+          "tombstoned_topics": {
+            "title": "Tombstoned Topics",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "preserved_topics",
+          "queued_runs",
+          "rebuild_run_id",
+          "reset_cursors",
+          "tombstoned_topics"
+        ],
+        "title": "MemoryRebuildRead",
+        "type": "object"
+      },
+      "MemoryRebuildRequest": {
+        "description": "Explicit operator confirmation for rebuilding Conversation Memory.",
+        "properties": {
+          "confirmation": {
+            "const": "rebuild-conversation-memory",
+            "title": "Confirmation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation"
+        ],
+        "title": "MemoryRebuildRequest",
         "type": "object"
       },
       "MemoryTopicRead": {
@@ -9039,6 +9090,45 @@
           }
         },
         "summary": "Read Health Overview"
+      }
+    },
+    "/api/memory-rebuilds": {
+      "post": {
+        "description": "Rebuild Conversation-derived Memory after explicit confirmation.",
+        "operationId": "rebuild_conversation_memory_api_memory_rebuilds_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryRebuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRebuildRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rebuild Conversation Memory"
       }
     },
     "/api/memory-topics": {

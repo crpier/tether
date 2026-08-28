@@ -45,7 +45,7 @@ from tether.dreaming_store import (
     DreamRunKind,
     DreamRunTerminalStatus,
 )
-from tether.memory_workspace import MemoryWorkspace
+from tether.memory_workspace import MemoryWorkspace, MemoryWorkspaceTopic
 from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
@@ -72,6 +72,25 @@ class DreamingWorkspaceReconcileResult:
 
 class DreamRunNotFoundError(Exception):
     """Raised when a run cannot be resolved for completion."""
+
+
+class ConversationMemoryRebuildBusyError(Exception):
+    """Raised when active Dreaming work prevents a Memory rebuild."""
+
+
+class ConversationMemoryRebuildError(Exception):
+    """Raised when Memory rebuild preparation cannot complete safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationMemoryRebuildResult:
+    """Recorded preparation outcome for one Conversation Memory rebuild."""
+
+    preserved_topics: int
+    queued_runs: int
+    rebuild_run_id: UUID7
+    reset_cursors: int
+    tombstoned_topics: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -1927,6 +1946,7 @@ class DreamingService:
         tracer: Tracer | None = None,
         workspace_root: Path | None = None,
         maintenance_interval: timedelta = _MAINTENANCE_INTERVAL,
+        mutation_coordinator: DreamingMutationCoordinator | None = None,
     ) -> None:
         self.database: Database = database
         self.settle_window: timedelta = settle_window
@@ -1934,7 +1954,15 @@ class DreamingService:
         self.tracer: Tracer | None = tracer
         self.workspace_root: Path | None = workspace_root
         self.maintenance_interval: timedelta = maintenance_interval
+        self.mutation_coordinator: DreamingMutationCoordinator | None = (
+            mutation_coordinator
+            if mutation_coordinator is not None
+            else DreamingMutationCoordinator(database, workspace_root)
+            if workspace_root is not None
+            else None
+        )
         self._immediate_assimilation_requests: set[UUID] = set()
+        self._orchestration_lock: asyncio.Lock = asyncio.Lock()
 
     def request_immediate_assimilation(self, conversation_id: UUID) -> None:
         """Mark one active Conversation for post-turn settle-window bypass."""
@@ -1946,6 +1974,110 @@ class DreamingService:
             return False
         self._immediate_assimilation_requests.remove(conversation_id)
         return True
+
+    async def rebuild_conversation_memory(
+        self,
+        *,
+        logger: Logger,
+        now: datetime,
+    ) -> ConversationMemoryRebuildResult:
+        """Tombstone current Message-only Topics before replaying Conversations."""
+        coordinator = self.mutation_coordinator
+        if self.workspace_root is None or coordinator is None:
+            message = "Memory rebuild requires a configured workspace"
+            raise ConversationMemoryRebuildError(message)
+
+        async with self._orchestration_lock:
+            async with self.database.transaction() as transaction:
+                active_run = await transaction.fetch_one_or_none(
+                    select(DreamRun)
+                    .where(DreamRun.status.in_("queued", "running"))
+                    .order_by(DreamRun.created_at.asc())
+                    .limit(1)
+                )
+            if active_run is not None:
+                raise ConversationMemoryRebuildBusyError(active_run.id)
+
+            scan = await MemoryWorkspace(self.workspace_root).scan()
+            conversation_topics = [
+                topic
+                for topic in scan.topics
+                if topic.evidence
+                and all(uri.startswith("tether://message/") for uri in topic.evidence)
+            ]
+            async with self.database.transaction(mode="immediate") as transaction:
+                rebuild_run = await transaction.execute(
+                    insert(
+                        DreamRun(
+                            conversation_id=maintenance_group_run_id(
+                                "conversation-memory-rebuild"
+                            ),
+                            kind="rebuild",
+                            status="running",
+                            evidence_start_seq=1,
+                            evidence_end_seq=1,
+                        )
+                    ).returning()
+                )
+            try:
+                await self._tombstone_conversation_topics(
+                    coordinator,
+                    conversation_topics,
+                    rebuild_run,
+                )
+            except Exception as error:
+                _ = await self.complete_run(
+                    rebuild_run.id,
+                    status="failed",
+                    logger=logger,
+                    now=now,
+                    error=f"{type(error).__name__}: {error}",
+                )
+                if isinstance(error, ConversationMemoryRebuildError):
+                    raise
+                message = f"Memory rebuild failed: {type(error).__name__}: {error}"
+                raise ConversationMemoryRebuildError(message) from error
+
+            async with self.database.transaction(mode="immediate") as transaction:
+                cursors = await transaction.fetch_all(
+                    select(DreamConversationCursor).all()
+                )
+                _ = await transaction.execute(
+                    delete(DreamConversationCursor).where(
+                        DreamConversationCursor.last_assimilated_seq.gte(0)
+                    )
+                )
+                for topic in conversation_topics:
+                    relative_path = topic.path.relative_to(
+                        self.workspace_root
+                    ).as_posix()
+                    _ = await transaction.execute(
+                        delete(DreamMaintenanceProgress).where(
+                            DreamMaintenanceProgress.path.eq(relative_path)
+                        )
+                    )
+            _ = await self.complete_run(
+                rebuild_run.id,
+                status="success",
+                logger=logger,
+                now=now,
+            )
+        queued_runs = await self.queue_pending_manual_runs(logger=logger, now=now)
+        logger.info(
+            "Prepared Conversation Memory rebuild",
+            rebuild_run_id=str(rebuild_run.id),
+            preserved_topics=len(scan.topics) - len(conversation_topics),
+            queued_runs=len(queued_runs),
+            reset_cursors=len(cursors),
+            tombstoned_topics=len(conversation_topics),
+        )
+        return ConversationMemoryRebuildResult(
+            preserved_topics=len(scan.topics) - len(conversation_topics),
+            queued_runs=len(queued_runs),
+            rebuild_run_id=rebuild_run.id,
+            reset_cursors=len(cursors),
+            tombstoned_topics=len(conversation_topics),
+        )
 
     async def queue_manual_run(
         self,
@@ -2045,6 +2177,40 @@ class DreamingService:
                 queued.append(run)
         return queued
 
+    async def _tombstone_conversation_topics(
+        self,
+        coordinator: DreamingMutationCoordinator,
+        topics: list[MemoryWorkspaceTopic],
+        rebuild_run: DreamRun[Fetched],
+    ) -> None:
+        """Record every destructive rebuild change before cursor reset."""
+        assert self.workspace_root is not None
+        async with coordinator.mutation_scope():
+            for topic in topics:
+                await AsyncPath(topic.path).unlink()
+                relative_path = topic.path.relative_to(self.workspace_root)
+                tool_call_id = str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"{rebuild_run.id}:{relative_path.as_posix()}",
+                    )
+                )
+                _ = await coordinator.record_mutation(
+                    run_id=rebuild_run.id,
+                    tool_call_id=tool_call_id,
+                    actor="dream",
+                    operation="delete",
+                    workspace_path=topic.path,
+                    payload="Conversation Memory rebuild",
+                )
+                settlement = await coordinator.settle(
+                    rebuild_run.id,
+                    tool_call_id,
+                )
+                if not settlement.acknowledged:
+                    message = settlement.error or "mutation was not acknowledged"
+                    raise ConversationMemoryRebuildError(message)
+
     async def _maintenance_groups(self) -> list[tuple[str, UUID]]:
         """List current workspace groups and their maintenance run identities.
 
@@ -2095,6 +2261,25 @@ class DreamingService:
         force: bool,
     ) -> DreamRun[Fetched] | None:
         """Queue a maintenance run when the folder group is eligible."""
+        async with self._orchestration_lock:
+            return await self._queue_maintenance_run_locked(
+                folder,
+                conversation_id,
+                logger=logger,
+                now=now,
+                force=force,
+            )
+
+    async def _queue_maintenance_run_locked(
+        self,
+        folder: str,
+        conversation_id: UUID,
+        *,
+        logger: Logger,
+        now: datetime,
+        force: bool,
+    ) -> DreamRun[Fetched] | None:
+        """Resolve and insert maintenance while rebuild preparation is excluded."""
         if self.workspace_root is None:
             return None
         folder_path = self.workspace_root / folder if folder else self.workspace_root
@@ -2288,7 +2473,10 @@ class DreamingService:
             )
             return claimed
 
-        async with self.database.transaction(mode="immediate") as tx:
+        async with (
+            self._orchestration_lock,
+            self.database.transaction(mode="immediate") as tx,
+        ):
             return await _claim(tx)
 
     async def complete_run(
@@ -2324,7 +2512,10 @@ class DreamingService:
                 .set(DreamRun.updated_at.to(resolved_now))
                 .where(DreamRun.id.eq(run_id))
             )
-            if status in {"success", "no_op"} and run.kind != "maintenance":
+            if status in {"success", "no_op"} and run.kind not in {
+                "maintenance",
+                "rebuild",
+            }:
                 await self._advance_cursor(
                     tx, run.conversation_id, run.evidence_end_seq
                 )
@@ -2356,6 +2547,25 @@ class DreamingService:
         now: datetime,
     ) -> DreamRun[Fetched] | None:
         """Insert or reuse a run for one conversation, or noop if nothing ready."""
+        async with self._orchestration_lock:
+            return await self._queue_run_locked(
+                conversation_id,
+                logger=logger,
+                explicit=explicit,
+                kind=kind,
+                now=now,
+            )
+
+    async def _queue_run_locked(
+        self,
+        conversation_id: UUID,
+        *,
+        logger: Logger,
+        explicit: bool,
+        kind: DreamRunKind,
+        now: datetime,
+    ) -> DreamRun[Fetched] | None:
+        """Resolve and insert a run while rebuild preparation is excluded."""
         window = await self._resolve_window(
             conversation_id,
             explicit=explicit,
@@ -2597,6 +2807,9 @@ def window_size(max_messages_per_run: int, start_seq: PositiveInt) -> int:
 
 
 __all__ = [
+    "ConversationMemoryRebuildBusyError",
+    "ConversationMemoryRebuildError",
+    "ConversationMemoryRebuildResult",
     "ConversationWindowDreamingExecutor",
     "DreamRunExecutionResult",
     "DreamRunExecutor",

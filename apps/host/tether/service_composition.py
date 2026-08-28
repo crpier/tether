@@ -646,6 +646,7 @@ async def compose_core_services(
     _ = resources.push_async_callback(provider_auth_service.shutdown)
     dreaming_service = DreamingService(
         host.database,
+        mutation_coordinator=dreaming_mutation_coordinator,
         tracer=host.telemetry.tracer,
         workspace_root=memory_workspace_root(host.kb_root),
     )

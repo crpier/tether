@@ -18,7 +18,7 @@ from snekql.sqlite import (
     UtcDatetime,
 )
 
-DreamRunKind = Literal["assimilation", "maintenance", "manual"]
+DreamRunKind = Literal["assimilation", "maintenance", "manual", "rebuild"]
 """Supported orchestration flavors for a Dream run."""
 
 DreamRunStatus = Literal["queued", "running", "success", "no_op", "failed"]
