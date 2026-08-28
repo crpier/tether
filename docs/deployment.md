@@ -316,6 +316,18 @@ The deploy rebuilds and pushes `:<git-sha>` + `:latest`, then runs `pull && up
 -d` on the VM. The `data`/`model-cache` volumes are untouched. Verify HTTPS
 login/chat after every release.
 
+## Rebuild Conversation Memory
+
+Use this only when a Dreaming policy change must apply retroactively to retained Conversations. Run and verify a production backup first. The authenticated `POST /api/memory-rebuilds` action requires this exact JSON body:
+
+```json
+{"confirmation":"rebuild-conversation-memory"}
+```
+
+The host refuses the request while any Dream run is queued or running. A successful request records tombstones for every Message-only Topic, preserves Topics containing non-Conversation Evidence, clears Conversation assimilation progress, and queues the first bounded replay window for every eligible Conversation. Canonical Evidence and Dream history remain intact.
+
+Watch `GET /api/dream-runs` until the queued work drains. Call `POST /api/dream-now` after each drain until it returns an empty list; long Conversations require several bounded windows. Then call `POST /api/dream-maintenance-now` and inspect the resulting Dream runs and current Topics. Repeat maintenance when a Topic group still has unconsolidated files. Verify Memory Search and production logs before declaring the rebuild complete.
+
 ## Rollback
 
 ```sh

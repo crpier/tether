@@ -31,8 +31,12 @@ The automatic behavior that assimilates settled Evidence and maintains current M
 _Avoid_: reflection, review, extraction
 
 **Dream run**:
-One bounded execution of Dreaming over immutable Evidence bounds or a bounded set of due Topics. A successful no-op is still a completed Dream run.
+One bounded execution of Dreaming over immutable Evidence bounds, a bounded set of due Topics, or one recorded Memory rebuild transition. A successful no-op is still a completed Dream run.
 _Avoid_: consolidation run, reflection run
+
+**Memory rebuild**:
+An explicit re-derivation of Conversation-supported current Memory from retained canonical Evidence under the current Dreaming policy. It replaces generated Conversation-derived state while preserving Topics backed by non-Conversation Evidence, canonical Evidence itself, and Dream history.
+_Avoid_: Memory deletion, Conversation deletion, Evidence reset
 
 **Suppression**:
 A user instruction that selected retained Evidence must not produce or recreate Memory. It is policy over Evidence, not a hidden or deleted Topic.

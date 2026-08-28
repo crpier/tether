@@ -1,15 +1,21 @@
-"""Read-only HTTP surfaces over Dreaming-maintained Memory Topics."""
+"""HTTP surfaces for reading and operationally rebuilding current Memory."""
 
 from __future__ import annotations
 
 import hmac
-from typing import Any, Protocol
+from datetime import UTC, datetime
+from typing import Any, Literal, Protocol
 
 from fastapi import APIRouter
-from pydantic import BaseModel, PositiveInt
+from pydantic import UUID7, BaseModel, PositiveInt
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from tether.dreaming import (
+    ConversationMemoryRebuildBusyError,
+    ConversationMemoryRebuildError,
+    DreamingService,
+)
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER, SessionRegistry
 
@@ -51,9 +57,27 @@ class MemoryTopicRead(BaseModel):
     title: str
 
 
+class MemoryRebuildRequest(BaseModel):
+    """Explicit operator confirmation for rebuilding Conversation Memory."""
+
+    confirmation: Literal["rebuild-conversation-memory"]
+
+
+class MemoryRebuildRead(BaseModel):
+    """Immediate preparation outcome for one Conversation Memory rebuild."""
+
+    preserved_topics: int
+    queued_runs: int
+    rebuild_run_id: UUID7
+    reset_cursors: int
+    tombstoned_topics: int
+
+
 class _MemoryRuntime(Protocol):
     """Runtime dependencies required by read-only Memory surfaces."""
 
+    dreaming_enabled: bool
+    dreaming_service: DreamingService
     logger: Logger
     memory_workspace_service: Any
     session_registry: SessionRegistry
@@ -112,6 +136,39 @@ async def search_memory_topics(
         )
         for topic in topics
     ]
+
+
+@router.post("/api/memory-rebuilds", response_model=MemoryRebuildRead)
+async def rebuild_conversation_memory(
+    request: Request,
+    body: MemoryRebuildRequest,
+) -> Response:
+    """Rebuild Conversation-derived Memory after explicit confirmation."""
+    _ = body
+    runtime = _runtime(request)
+    if not runtime.dreaming_enabled:
+        return JSONResponse({"detail": "dreaming not enabled"}, status_code=404)
+    try:
+        rebuild = await runtime.dreaming_service.rebuild_conversation_memory(
+            logger=runtime.logger,
+            now=datetime.now(UTC),
+        )
+    except ConversationMemoryRebuildBusyError as error:
+        return JSONResponse(
+            {"detail": f"active Dream run prevents rebuild: {error}"},
+            status_code=409,
+        )
+    except ConversationMemoryRebuildError as error:
+        return JSONResponse({"detail": str(error)}, status_code=500)
+    return JSONResponse(
+        MemoryRebuildRead(
+            preserved_topics=rebuild.preserved_topics,
+            queued_runs=rebuild.queued_runs,
+            rebuild_run_id=rebuild.rebuild_run_id,
+            reset_cursors=rebuild.reset_cursors,
+            tombstoned_topics=rebuild.tombstoned_topics,
+        ).model_dump(mode="json")
+    )
 
 
 @router.get(

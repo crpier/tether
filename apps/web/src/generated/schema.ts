@@ -808,6 +808,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/memory-rebuilds": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rebuild Conversation Memory
+     * @description Rebuild Conversation-derived Memory after explicit confirmation.
+     */
+    post: operations["rebuild_conversation_memory_api_memory_rebuilds_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memory-topics": {
     parameters: {
       query?: never;
@@ -2276,7 +2296,7 @@ export interface components {
        * Kind
        * @enum {string}
        */
-      kind: "assimilation" | "maintenance" | "manual";
+      kind: "assimilation" | "maintenance" | "manual" | "rebuild";
       /**
        * Mutation Count
        * @default 0
@@ -3491,6 +3511,36 @@ export interface components {
     MatchEbookFilenameRequest: {
       /** Filename */
       filename: string;
+    };
+    /**
+     * MemoryRebuildRead
+     * @description Immediate preparation outcome for one Conversation Memory rebuild.
+     */
+    MemoryRebuildRead: {
+      /** Preserved Topics */
+      preserved_topics: number;
+      /** Queued Runs */
+      queued_runs: number;
+      /**
+       * Rebuild Run Id
+       * Format: uuid7
+       */
+      rebuild_run_id: string;
+      /** Reset Cursors */
+      reset_cursors: number;
+      /** Tombstoned Topics */
+      tombstoned_topics: number;
+    };
+    /**
+     * MemoryRebuildRequest
+     * @description Explicit operator confirmation for rebuilding Conversation Memory.
+     */
+    MemoryRebuildRequest: {
+      /**
+       * Confirmation
+       * @constant
+       */
+      confirmation: "rebuild-conversation-memory";
     };
     /**
      * MemoryTopicRead
@@ -6027,6 +6077,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HealthOverviewRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  rebuild_conversation_memory_api_memory_rebuilds_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MemoryRebuildRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MemoryRebuildRead"];
         };
       };
       /** @description Validation Error */
