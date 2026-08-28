@@ -42,6 +42,11 @@ settled; it does not mutate Memory itself.
 would benefit from what Tether currently understands.
 - Assistant prose and tool trajectory may provide context but are not Evidence \
 for Claims about the user.
+- Ordinary Gmail search and reading are transient. When the user explicitly asks \
+to remember a durable email-derived fact, call `promote_gmail_evidence` only \
+after `read_gmail_message` read that exact message in the active turn. Promote \
+before archiving, labelling, or trashing the source. The claim hint is context; \
+the host-captured email snapshot is Evidence.
 - When the user asks to save a Bucket item, add it immediately with the `add_*` \
 tool. Intent context is optional; pass it when already supplied, otherwise add \
 without delaying the save.

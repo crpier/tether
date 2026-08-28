@@ -66,6 +66,21 @@ describe("MessageContent", () => {
     expect(onOpenEvidence).toHaveBeenCalledWith(uri);
   });
 
+  test("promoted email Evidence references are inspectable", () => {
+    const onOpenEvidence = vi.fn();
+    const uri = "tether://email/019f0000-0000-7000-8000-000000000003";
+    render(() => (
+      <MessageContent
+        onOpenEvidence={onOpenEvidence}
+        text={`Booking confirmed. [source](${uri})`}
+      />
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "source" }));
+
+    expect(onOpenEvidence).toHaveBeenCalledWith(uri);
+  });
+
   test("raw Health Evidence references are inspectable", () => {
     const onOpenEvidence = vi.fn();
     const uri = "tether://health-connect/exercise/exercise-1@v42";

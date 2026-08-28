@@ -106,8 +106,8 @@ _GMAIL_MIGRATIONS: dict[str, str] = {
         '"key" TEXT PRIMARY KEY NOT NULL, "value" TEXT NOT NULL'
         ") STRICT"
     ),
-    # Gmail messages are canonical Evidence after #507. Preserve source bytes
-    # and triage context locally, then discard the obsolete Memory-row link.
+    # Preserve source bytes and triage context as ingestion audit state.
+    # Explicit promotion owns the separate path into citeable Evidence.
     "021_gmail_from_header": (
         'ALTER TABLE "gmail_message_record" ADD COLUMN "from_header" '
         "TEXT NOT NULL DEFAULT ''"

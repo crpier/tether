@@ -1,10 +1,11 @@
 import type { JSX } from "solid-js";
 
+const emailReference = /^tether:\/\/email\/[0-9A-Za-z-]+$/;
 const messageReference = /^tether:\/\/message\/[0-9A-Za-z-]+$/;
 const healthReference =
   /^tether:\/\/health-connect\/(?:exercise|sleep)\/[0-9A-Za-z-]+@v[1-9][0-9]*$/;
 const embeddedReference =
-  /tether:\/\/(?:message\/[0-9A-Za-z-]+|health-connect\/(?:exercise|sleep)\/[0-9A-Za-z-]+@v[1-9][0-9]*)/g;
+  /tether:\/\/(?:email\/[0-9A-Za-z-]+|message\/[0-9A-Za-z-]+|health-connect\/(?:exercise|sleep)\/[0-9A-Za-z-]+@v[1-9][0-9]*)/g;
 
 export interface EvidenceTextPart {
   evidence: boolean;
@@ -29,7 +30,11 @@ export function evidenceTextParts(value: string): EvidenceTextPart[] {
 }
 
 export function isEvidenceUri(value: string): boolean {
-  return messageReference.test(value) || healthReference.test(value);
+  return (
+    emailReference.test(value) ||
+    messageReference.test(value) ||
+    healthReference.test(value)
+  );
 }
 
 export function EvidenceLink(props: {

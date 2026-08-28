@@ -807,6 +807,7 @@ export default function inspectTools(pi) {
             "list_triggers",
             "list_unlabeled_ebooks",
             "match_ebook_filename",
+            "promote_gmail_evidence",
             "propose_essay_grade",
             "query_health_connect",
             "queue_memory_assimilation",

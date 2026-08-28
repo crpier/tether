@@ -23,6 +23,40 @@ describe("EvidenceInspector", () => {
     );
   });
 
+  test("shows the exact promoted email behind a citation", async () => {
+    const emailUri = "tether://email/019f0000-0000-7000-8000-000000000003";
+    const api = new FakeEvidenceHost([
+      {
+        body_chars: 50_100,
+        body_text: "The apartment is booked for 12-18 June.",
+        body_truncated: true,
+        captured_at: "2026-08-22T09:30:00Z",
+        content_hash: "source-hash",
+        date_header: "Tue, 7 Apr 2026 09:30:00 +0000",
+        from_header: "Alice <alice@example.com>",
+        gmail_message_id: "m1",
+        kind: "email",
+        subject: "Lisbon booking",
+        thread_id: "t1",
+        uri: emailUri,
+      },
+    ]);
+
+    render(() => (
+      <EvidenceInspector api={api} onClose={() => undefined} uri={emailUri} />
+    ));
+
+    const inspector = await screen.findByRole("dialog", {
+      name: "Evidence inspector",
+    });
+    expect(inspector).toHaveTextContent("Lisbon booking");
+    expect(inspector).toHaveTextContent("Alice <alice@example.com>");
+    expect(inspector).toHaveTextContent(
+      "The apartment is booked for 12-18 June.",
+    );
+    expect(inspector).toHaveTextContent("Source text truncated");
+  });
+
   test("shows the exact conversation message behind a citation", async () => {
     const onClose = vi.fn();
     const api = new FakeEvidenceHost([

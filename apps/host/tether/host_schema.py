@@ -8,6 +8,7 @@ from tether.bucket_item_store import create_bucket_item_schema
 from tether.conversation_store import create_conversation_schema
 from tether.dreaming_store import create_dreaming_schema
 from tether.ebook_stats_store import create_ebook_stats_schema
+from tether.email_evidence_store import create_email_evidence_schema
 from tether.gmail import create_gmail_schema
 from tether.health_connect import create_health_moment_schema, create_health_plan_schema
 from tether.kosync_store import create_kosync_schema
@@ -47,3 +48,4 @@ async def create_host_schema(database: Database) -> None:
     await create_kosync_schema(database)
     await create_ebook_stats_schema(database)
     await create_gmail_schema(database)
+    await create_email_evidence_schema(database)
