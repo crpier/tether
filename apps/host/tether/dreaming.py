@@ -2002,8 +2002,11 @@ class DreamingService:
             conversation_topics = [
                 topic
                 for topic in scan.topics
-                if topic.evidence
-                and all(uri.startswith("tether://message/") for uri in topic.evidence)
+                if (
+                    evidence_uris := set(topic.evidence)
+                    | set(_EVIDENCE_URI_PATTERN.findall(topic.body))
+                )
+                and all(uri.startswith("tether://message/") for uri in evidence_uris)
             ]
             async with self.database.transaction(mode="immediate") as transaction:
                 rebuild_run = await transaction.execute(
