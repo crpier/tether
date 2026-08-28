@@ -57,9 +57,27 @@ _DREAM_MAX_MESSAGES = 200
 """Default max transcript rows per Dream run."""
 _FRONTMATTER_SEPARATOR = "\n---\n"
 _FRONTMATTER_PART_COUNT = 2
+_SECOND_PERSON_CLAIM_PATTERN = re.compile(r"^- (?:you|your)\b", re.IGNORECASE)
 
 _ACK_PATH = "/internal/dream-runs/{run_id}/mutations/{tool_call_id}/ack"
 """Dream mutation callback route on the same host."""
+
+
+def _memory_claim_voice_error(documents: Iterable[str]) -> str | None:
+    """Require every user-facing Claim to begin in second person."""
+    for document in documents:
+        body = document
+        if document.startswith("---\n"):
+            parts = document.split(_FRONTMATTER_SEPARATOR, 1)
+            if len(parts) == _FRONTMATTER_PART_COUNT:
+                body = parts[1]
+        if any(
+            not _SECOND_PERSON_CLAIM_PATTERN.search(line)
+            for line in body.splitlines()
+            if line.startswith("- ")
+        ):
+            return "Memory Claims must address the user as you or your"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -894,6 +912,7 @@ Rules:
 - Preserve uncertainty in assistant conclusions instead of converting inference to fact.
 - Scheduled, Health, reasoning, tool, partial, and failed Messages are context only.
 - Omit transient requests, implementation chatter, and unsupported assertions.
+- Address the user as `you` and `your`. Begin every Claim with `You` or `Your`. Never call them "the user" or use third-person pronouns for them.
 - Return Markdown only, grouped under `##` Topic headings.
 - Every Claim is one `- ` bullet with an inline exact `tether://` source citation.
 - Use only exact Evidence URIs below. Preserve uncertainty and corrections.
@@ -917,6 +936,8 @@ evidence_end_seq: {run.evidence_end_seq}
         claim_lines = [
             line for line in curated_body.splitlines() if line.startswith("- ")
         ]
+        if voice_error := _memory_claim_voice_error((curated_body,)):
+            return voice_error
         if not claim_lines or any(
             not re.search(r"tether://message/[0-9A-Za-z-]+", claim)
             for claim in claim_lines
@@ -1250,13 +1271,18 @@ class MaintenanceDreamingExecutor:
             )
         ).strip()
         if response == "NO_CHANGES":
-            await self._mark_maintained(batch)
-            logger.info(
-                "Maintenance found nothing to consolidate",
-                run_id=str(run.id),
-                files=len(batch),
+            voice_error = _memory_claim_voice_error(content for _, content in batch)
+            if voice_error is None:
+                await self._mark_maintained(batch)
+                logger.info(
+                    "Maintenance found nothing to consolidate",
+                    run_id=str(run.id),
+                    files=len(batch),
+                )
+            return DreamRunExecutionResult(
+                status="no_op" if voice_error is None else "failed",
+                error=voice_error,
             )
-            return DreamRunExecutionResult(status="no_op")
         try:
             transition = self._parse_response(response)
             needs_semantic_verification = self._validate_transition(
@@ -1494,6 +1520,8 @@ Rules:
 - User Messages outrank assistant conclusions; explicit user corrections supersede them.
 - Assistant repetition does not corroborate or strengthen an agent-derived conclusion.
 - Preserve uncertainty in assistant conclusions instead of converting inference to fact.
+- Address the user as `you` and `your`. Begin every Claim with `You` or `Your`; never call them "the user" or use third-person pronouns for them.
+- Rewrite existing third-person user references into second person without changing their meaning or citations.
 - Unify related fragments into fewer larger Topic files with meaningful titles and stable kebab-case `.md` paths.
 - Preserve every supported idea unless it qualifies for retirement. Age or disuse alone never qualifies.
 - Retire a Claim only when its explicit time bound passed, newer Evidence supersedes it, Evidence explicitly says it is no longer current, or it lacks permitted support.
@@ -1721,6 +1749,10 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
         evidence: list[Message[Fetched]],
     ) -> bool:
         """Reject invalid transitions and flag semantic rewrites for verification."""
+        if voice_error := _memory_claim_voice_error(
+            document for _, document in transition.documents
+        ):
+            raise _MaintenanceError(voice_error)
         supported = {
             uri for _, content in batch for uri in cls._evidence_uris(content)
         } | {f"tether://message/{message.id}" for message in evidence}
