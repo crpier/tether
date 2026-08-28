@@ -14,7 +14,6 @@ from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from tether.app_runtime import AppRuntime, install_app_runtime
-from tether.email_evidence import EmailEvidenceService
 from tether.evidence import EvidenceResolver
 from tether.gmail import (
     GoogleGmailAuthService,
@@ -111,7 +110,6 @@ async def _compose_app_runtime(
         dependencies.config.gmail_auth_backend,
         on_authorized=_activate_gmail_client,
     )
-    email_evidence_service = EmailEvidenceService(host.database)
     youtube = await compose_ingestion(
         IngestionDependencies(
             bootstrap=dependencies.bootstrap,
@@ -147,7 +145,6 @@ async def _compose_app_runtime(
             evidence_resolver=EvidenceResolver(
                 host.database,
                 HealthConnectEvidenceResolver(host.telemetry_database),
-                email_evidence_service,
             ),
             health_connect_ingestion=HealthConnectIngestion(host.telemetry_database),
             health_connect_telemetry=HealthConnectTelemetry.from_database(
@@ -169,7 +166,6 @@ async def _compose_app_runtime(
             public_origin=dependencies.config.public_origin,
             gmail_client=gmail_client,
             gmail_auth_service=gmail_auth_service,
-            email_evidence_service=email_evidence_service,
             push_service=core.push_service,
             dreaming_enabled=dependencies.config.dreaming_enabled,
             recall_service=core.recall_service,

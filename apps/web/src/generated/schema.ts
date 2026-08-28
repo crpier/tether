@@ -2392,7 +2392,7 @@ export interface components {
     };
     /**
      * EmailEvidenceRead
-     * @description Browser-safe representation of one promoted email source.
+     * @description Browser-safe representation of one retained historical email source.
      */
     EmailEvidenceRead: {
       /** Body Chars */

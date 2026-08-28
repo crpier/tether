@@ -1647,7 +1647,7 @@
         "type": "object"
       },
       "EmailEvidenceRead": {
-        "description": "Browser-safe representation of one promoted email source.",
+        "description": "Browser-safe representation of one retained historical email source.",
         "properties": {
           "body_chars": {
             "title": "Body Chars",

@@ -50,7 +50,7 @@ class MessageEvidenceRead(BaseModel):
 
 
 class EmailEvidenceRead(BaseModel):
-    """Browser-safe representation of one promoted email source."""
+    """Browser-safe representation of one retained historical email source."""
 
     kind: Literal["email"] = "email"
     body_chars: int

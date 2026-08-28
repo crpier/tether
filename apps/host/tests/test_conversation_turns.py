@@ -706,6 +706,30 @@ async def health_submission_keeps_verified_context_distinct_from_user_evidence()
 
 
 @test()
+async def succeeded_health_answer_queues_dreaming() -> None:
+    """A settled unattended assistant conclusion reaches Dreaming."""
+    turns, service, _ = await load_fixture(conversation_turns_fixture())
+    conversation = await service.fetch_main_conversation()
+    dreaming = RecordingDreaming()
+    object.__setattr__(turns.dependencies, "dreaming_enabled", True)
+    object.__setattr__(turns.dependencies, "dreaming_service", dreaming)
+
+    ticket = await turns.submit(
+        HealthTurnRequest(
+            conversation_id=conversation.id,
+            moment_id=uuid7(),
+            prompt="Primary sleep settled at 07:30.",
+        ),
+        RecordingSink(),
+    )
+    result = await turns.wait(ticket.turn_id)
+    _ = await asyncio.wait_for(dreaming.queued_event.wait(), timeout=0.2)
+
+    assert_eq(result.status, "succeeded")
+    assert_eq(dreaming.queued, [conversation.id])
+
+
+@test()
 async def deleted_trigger_cannot_create_a_stale_scheduled_turn() -> None:
     """Occurrence and live-trigger validation shares the turn insertion transaction."""
     turns, service, registry = await load_fixture(conversation_turns_fixture())
@@ -1013,6 +1037,43 @@ async def startup_repair_queues_a_terminal_turn_with_durable_user_evidence() -> 
             content="committed before crash",
             conversation_id=conversation.id,
             role="user",
+            turn_id=settled.id,
+        )
+    )
+
+    _ = await turns.repair(datetime.now(UTC))
+    _ = await asyncio.wait_for(dreaming.queued_event.wait(), timeout=0.2)
+
+    assert_eq(dreaming.queued, [conversation.id])
+
+
+@test()
+async def startup_repair_queues_a_settled_unattended_conclusion() -> None:
+    """A crash after unattended settlement cannot skip assistant Evidence."""
+    turns, service, _ = await load_fixture(conversation_turns_fixture())
+    conversation = await service.fetch_main_conversation()
+    dreaming = RecordingDreaming()
+    object.__setattr__(turns.dependencies, "dreaming_enabled", True)
+    object.__setattr__(turns.dependencies, "dreaming_service", dreaming)
+    async with service.database.transaction(mode="immediate") as transaction:
+        settled = await transaction.execute(
+            insert(
+                ConversationTurn(
+                    completed_at=datetime.now(UTC),
+                    conversation_id=conversation.id,
+                    origin="health",
+                    prompt_snapshot="Primary sleep settled.",
+                    scope_revision_snapshot=1,
+                    status="succeeded",
+                    turn_seq=1,
+                )
+            ).returning()
+        )
+    _ = await service.append_message(
+        MessageDraft(
+            content="Sleep duration has increased across the last three episodes.",
+            conversation_id=conversation.id,
+            role="assistant",
             turn_id=settled.id,
         )
     )

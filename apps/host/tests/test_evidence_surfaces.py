@@ -12,6 +12,7 @@ from starlette.applications import Starlette
 from tests.surfaces import login, surface_client
 from tether.app_runtime import app_runtime
 from tether.conversation_model import MessageDraft
+from tether.conversation_store import ConversationTurn
 from tether.email_evidence_store import EmailEvidenceSnapshot
 from tether.health_connect.persistence import (
     HcExerciseLap,
@@ -224,6 +225,143 @@ def message_reference_resolves_to_its_original_evidence() -> None:
     assert_eq(payload["role"], "user")
     assert_eq(payload["content"], "I prefer aisle seats on overnight flights.")
     assert_true(payload["occurred_at"].endswith("Z"))
+
+
+@test()
+def final_assistant_reference_resolves_to_its_conclusion() -> None:
+    """An eligible assistant citation opens the exact settled conclusion."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
+        portal = client.portal
+        assert portal is not None
+
+        async def seed_conclusion() -> tuple[UUID, UUID]:
+            async with runtime.conversation_service.database.transaction() as tx:
+                turn = await tx.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=conversation_id,
+                            origin="scheduled",
+                            status="succeeded",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+            conclusion = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="Recent viewing favors long-form technical interviews.",
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    turn_id=turn.id,
+                )
+            )
+            return turn.id, conclusion.id
+
+        _, conclusion_id = portal.call(seed_conclusion)
+        uri = f"tether://message/{conclusion_id}"
+        response = client.get("/api/evidence", params={"uri": uri})
+
+    assert_eq(response.status_code, 200)
+    payload = response.json()
+    assert_eq(payload["kind"], "message")
+    assert_eq(payload["uri"], uri)
+    assert_eq(payload["role"], "assistant")
+    assert_eq(
+        payload["content"],
+        "Recent viewing favors long-form technical interviews.",
+    )
+
+
+@test()
+def failed_assistant_reference_is_not_evidence() -> None:
+    """Partial assistant output from a failed turn cannot support Memory."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
+        portal = client.portal
+        assert portal is not None
+
+        async def seed_partial_output() -> UUID:
+            async with runtime.conversation_service.database.transaction() as tx:
+                turn = await tx.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=conversation_id,
+                            origin="health",
+                            status="failed",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+            message = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="This conclusion was interrupted.",
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    turn_id=turn.id,
+                )
+            )
+            return message.id
+
+        message_id = portal.call(seed_partial_output)
+        response = client.get(
+            "/api/evidence",
+            params={"uri": f"tether://message/{message_id}"},
+        )
+
+    assert_eq(response.status_code, 404)
+
+
+@test()
+def earlier_assistant_reference_is_not_evidence() -> None:
+    """Only the last assistant Message in a succeeded turn is authoritative."""
+    with TemporaryDirectory() as directory, surface_client(Path(directory)) as client:
+        login(client)
+        runtime = app_runtime(cast("Starlette", client.app))
+        conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
+        portal = client.portal
+        assert portal is not None
+
+        async def seed_two_answers() -> UUID:
+            async with runtime.conversation_service.database.transaction() as tx:
+                turn = await tx.execute(
+                    insert(
+                        ConversationTurn(
+                            conversation_id=conversation_id,
+                            origin="interactive",
+                            status="succeeded",
+                            turn_seq=1,
+                        )
+                    ).returning()
+                )
+            earlier = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="I will inspect the source first.",
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    turn_id=turn.id,
+                )
+            )
+            _ = await runtime.conversation_service.append_message(
+                MessageDraft(
+                    content="The final source-backed conclusion.",
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    turn_id=turn.id,
+                )
+            )
+            return earlier.id
+
+        earlier_id = portal.call(seed_two_answers)
+        response = client.get(
+            "/api/evidence",
+            params={"uri": f"tether://message/{earlier_id}"},
+        )
+
+    assert_eq(response.status_code, 404)
 
 
 @test()

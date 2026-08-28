@@ -8,18 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
-from uuid import UUID, uuid7
 
 from snekok import Ok, Result
 from snekql.sqlite import Database, select
-from snektest import assert_eq, assert_true, test
+from snektest import assert_eq, test
 from starlette.applications import Starlette
-from starlette.testclient import TestClient
 
-from tests.surfaces import SESSION, call_tool, login, surface_client
-from tether.agent_trace_model import RunCorrelation
+from tests.surfaces import call_tool, login, surface_client
 from tether.app_runtime import app_runtime
-from tether.conversation_model import MessageDraft
 from tether.email_evidence_store import EmailEvidenceSnapshot
 from tether.gmail.client import GmailNetworkFailure, GmailResponse
 
@@ -129,35 +125,6 @@ async def _email_snapshot_count(database: Database) -> int:
     """Count retained email Evidence for default-promotion policy assertions."""
     async with database.transaction() as transaction:
         return len(await transaction.fetch_all(select(EmailEvidenceSnapshot).all()))
-
-
-def _begin_interactive_turn(client: TestClient, content: str) -> UUID:
-    """Open a foreground run whose initiating user Message carries `content`."""
-    login(client)
-    runtime = app_runtime(cast("Starlette", client.app))
-    conversation_id = UUID(client.get("/api/conversations").json()[0]["id"])
-    turn_id = uuid7()
-    portal = client.portal
-    assert portal is not None
-    _ = portal.call(
-        runtime.conversation_service.append_message,
-        MessageDraft(
-            content=content,
-            conversation_id=conversation_id,
-            role="user",
-            turn_id=turn_id,
-        ),
-    )
-    _ = runtime.trace_recorder.begin_run(
-        session_id=SESSION,
-        kind="conversation",
-        correlation=RunCorrelation(
-            conversation_id=str(conversation_id),
-            origin="interactive",
-            turn_id=str(turn_id),
-        ),
-    )
-    return conversation_id
 
 
 def gmail_raw_response(raw: str, *, message_id: str = "m1") -> GmailResponse:
@@ -651,118 +618,6 @@ def read_gmail_message_maps_404_to_not_found_and_403_to_auth() -> None:
 
 
 @test()
-def active_turn_can_promote_a_gmail_message_read_in_that_turn() -> None:
-    """An authorized foreground read can become immutable email Evidence."""
-    raw = "\n".join(
-        (
-            "From: Alice <alice@example.com>",
-            "Date: Tue, 7 Apr 2026 09:30:00 +0000",
-            "Subject: Lisbon booking",
-            "Content-Type: text/plain; charset=utf-8",
-            "",
-            "The apartment is booked for 12-18 June.",
-        )
-    )
-    response = Ok(
-        GmailResponse(
-            status_code=200,
-            payload={
-                "id": "m1",
-                "threadId": "t1",
-                "raw": base64.urlsafe_b64encode(raw.encode("utf-8"))
-                .decode("ascii")
-                .rstrip("="),
-            },
-        )
-    )
-    transport = ScriptedGmailTransport(responses=[response, response])
-
-    with (
-        TemporaryDirectory() as directory,
-        surface_client(Path(directory), gmail_transport=transport) as client,
-    ):
-        conversation_id = _begin_interactive_turn(
-            client,
-            "Find the booking email and remember the dates.",
-        )
-        _ = call_tool(client, "read_gmail_message", message_id="m1")
-
-        promoted = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The Lisbon apartment is booked for 12-18 June.",
-        )
-        runtime = app_runtime(cast("Starlette", client.app))
-        queued = runtime.dreaming_service.consume_immediate_assimilation_request(
-            conversation_id
-        )
-
-    assert_eq(promoted["success"], True)
-    assert_eq(queued, True)
-    assert_eq(promoted["result"]["message_id"], "m1")
-    assert_true(promoted["result"]["uri"].startswith("tether://email/"))
-    assert_eq(transport.raw_calls, ["m1", "m1"])
-
-
-@test()
-def promoted_email_snapshot_reports_its_content_bound() -> None:
-    """Inspection marks retained source text that exceeded the local bound."""
-    raw = "From: Alice\nSubject: Long update\n\n" + "x" * 50_100
-    response = Ok(gmail_raw_response(raw))
-    transport = ScriptedGmailTransport(responses=[response, response])
-
-    with (
-        TemporaryDirectory() as directory,
-        surface_client(Path(directory), gmail_transport=transport) as client,
-    ):
-        _begin_interactive_turn(client, "Remember the durable fact in this email.")
-        _ = call_tool(client, "read_gmail_message", message_id="m1")
-        promoted = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The long update contains a durable fact.",
-        )
-
-        resolved = client.get(
-            "/api/evidence",
-            params={"uri": promoted["result"]["uri"]},
-        )
-
-    assert_eq(resolved.status_code, 200)
-    assert_eq(resolved.json()["body_chars"], 50_100)
-    assert_eq(len(resolved.json()["body_text"]), 50_000)
-    assert_eq(resolved.json()["body_truncated"], True)
-
-
-@test()
-def gmail_identity_alone_cannot_promote_unread_source() -> None:
-    """A model-supplied message id cannot replace active-turn read provenance."""
-    transport = ScriptedGmailTransport()
-
-    with (
-        TemporaryDirectory() as directory,
-        surface_client(Path(directory), gmail_transport=transport) as client,
-    ):
-        _begin_interactive_turn(
-            client,
-            "Remember the dates in the booking email.",
-        )
-
-        promoted = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The booking runs from 12-18 June.",
-        )
-
-    assert_eq(promoted["success"], False)
-    assert_eq(promoted["error"]["code"], "invalid_input")
-    assert_eq(transport.raw_calls, [])
-
-
-@test()
 def ordinary_gmail_read_creates_no_email_evidence() -> None:
     """Reading email without explicit promotion retains no citeable snapshot."""
     transport = ScriptedGmailTransport(
@@ -783,101 +638,6 @@ def ordinary_gmail_read_creates_no_email_evidence() -> None:
         )
 
     assert_eq(snapshot_count, 0)
-
-
-@test()
-def duplicate_email_promotion_reuses_the_same_evidence() -> None:
-    """Repeated promotion of unchanged source content is idempotent."""
-    raw = "From: Alice\nSubject: Booking\n\nBooked for 12-18 June."
-    response = Ok(gmail_raw_response(raw))
-    transport = ScriptedGmailTransport(responses=[response, response, response])
-
-    with (
-        TemporaryDirectory() as directory,
-        surface_client(Path(directory), gmail_transport=transport) as client,
-    ):
-        _begin_interactive_turn(client, "Remember the booking dates.")
-        _ = call_tool(client, "read_gmail_message", message_id="m1")
-        first = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The booking is for 12-18 June.",
-        )
-        second = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The booking is for 12-18 June.",
-        )
-
-    assert_eq(first["success"], True)
-    assert_eq(second["success"], True)
-    assert_eq(second["result"]["uri"], first["result"]["uri"])
-
-
-@test()
-def mailbox_mutation_after_promotion_does_not_break_email_citation() -> None:
-    """A promoted local snapshot survives a later remote Trash mutation."""
-    raw = "From: Alice\nSubject: Booking\n\nBooked for 12-18 June."
-    response = Ok(gmail_raw_response(raw))
-    transport = ScriptedGmailTransport(
-        message_response=Ok(gmail_message_response(labels=["INBOX"])),
-        responses=[response, response],
-    )
-
-    with (
-        TemporaryDirectory() as directory,
-        surface_client(Path(directory), gmail_transport=transport) as client,
-    ):
-        _begin_interactive_turn(client, "Remember the booking dates, then trash it.")
-        _ = call_tool(client, "read_gmail_message", message_id="m1")
-        promoted = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The booking is for 12-18 June.",
-        )
-        _ = call_tool(client, "trash_gmail_message", message_id="m1")
-
-        resolved = client.get(
-            "/api/evidence",
-            params={"uri": promoted["result"]["uri"]},
-        )
-
-    assert_eq(resolved.status_code, 200)
-    assert_eq(resolved.json()["body_text"], "Booked for 12-18 June.")
-    assert_eq(transport.trash_calls, ["m1"])
-
-
-@test()
-def scheduled_gmail_read_cannot_authorize_email_promotion() -> None:
-    """An unattended run cannot turn an ordinary Gmail read into Evidence."""
-    transport = ScriptedGmailTransport(
-        responses=[Ok(gmail_raw_response("From: Alice\n\nBooked for June."))]
-    )
-
-    with (
-        TemporaryDirectory() as directory,
-        surface_client(Path(directory), gmail_transport=transport) as client,
-    ):
-        runtime = app_runtime(cast("Starlette", client.app))
-        _ = runtime.trace_recorder.begin_run(
-            session_id=SESSION,
-            kind="scheduled",
-            correlation=RunCorrelation(origin="scheduled", turn_id=str(uuid7())),
-        )
-        _ = call_tool(client, "read_gmail_message", message_id="m1")
-        promoted = call_tool(
-            client,
-            "promote_gmail_evidence",
-            message_id="m1",
-            claim_hint="The booking is for June.",
-        )
-
-    assert_eq(promoted["success"], False)
-    assert_eq(promoted["error"]["code"], "invalid_input")
-    assert_eq(transport.raw_calls, ["m1"])
 
 
 @test()

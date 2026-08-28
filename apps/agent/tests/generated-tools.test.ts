@@ -53,7 +53,6 @@ describe("generated tool extension", () => {
       "archive_gmail_message",
       "search_gmail",
       "read_gmail_message",
-      "promote_gmail_evidence",
       "list_gmail_labels",
       "trash_gmail_message",
       "update_gmail_labels",
@@ -87,7 +86,7 @@ describe("generated tool extension", () => {
       "list_product_observations",
       "execute_tools",
     ]);
-    expect(tetherToolSources).toHaveLength(59);
+    expect(tetherToolSources).toHaveLength(58);
   });
 
   test("makes every generated schema discoverable by confined code", async () => {

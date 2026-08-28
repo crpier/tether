@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import UUID7, PositiveInt
 from snekql.sqlite import Database, Fetched, select
 
+from tether.conversation_evidence import fetch_claim_supporting_message_ids
 from tether.conversation_model import MessageRole
 from tether.conversation_store import Message
 from tether.email_evidence import EmailEvidence, EmailEvidenceService
@@ -57,10 +58,9 @@ class EvidenceResolver:
         self,
         database: Database,
         health_connect: HealthConnectEvidenceResolver,
-        email: EmailEvidenceService,
     ) -> None:
         self._database = database
-        self._email = email
+        self._email = EmailEvidenceService(database)
         self._health_connect = health_connect
 
     async def resolve(
@@ -110,7 +110,13 @@ class EvidenceResolver:
             message: Message[Fetched] | None = await transaction.fetch_one_or_none(
                 select(Message).where(Message.id.eq(message_id))
             )
-        if message is None or message.role != "user":
+        if message is None:
+            raise EvidenceNotFoundError(uri)
+        supporting_ids = await fetch_claim_supporting_message_ids(
+            self._database,
+            [message],
+        )
+        if message.id not in supporting_ids:
             raise EvidenceNotFoundError(uri)
         return MessageEvidence(
             content=message.content,

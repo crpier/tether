@@ -23,15 +23,11 @@ Dreaming's removal of a Claim from current Memory when its explicit time bound h
 _Avoid_: forgetting, deletion, suppression, expiry by age
 
 **Evidence**:
-Canonical durable source material that may support a Claim, such as a user Message or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Assistant output may explain Evidence in context but cannot independently support a Claim about the user.
-_Avoid_: Memory, summary, inference
-
-**Email Evidence snapshot**:
-One bounded, immutable local copy of a specific email selected after the agent read it in an active interactive turn and the user explicitly authorized remembering an email-derived fact. Its stable `tether://email/<id>` reference remains inspectable if the remote message changes or disappears. Ordinary Gmail searches, reads, ingestion records, assistant summaries, and claim hints are not Email Evidence snapshots.
-_Avoid_: Gmail record, mailbox Evidence, assistant summary
+Canonical durable source material that may support a Claim, such as a user Message, a settled final assistant Message, or a scoped verified external record. Stable `tether://` references identify exact Evidence and resolve through Tether's inspector rather than through the browser as external links. Assistant conclusions have lower authority than user assertions and corrections; repetition by the assistant does not corroborate or strengthen them.
+_Avoid_: Memory, tool trajectory, reasoning
 
 **Dreaming**:
-The automatic behavior that assimilates settled Evidence and maintains current Memory without a per-item approval inbox. A terminal interactive Conversation turn queues assimilation whenever it appended a user Message, even if agent execution failed or was cancelled; a scheduled turn alone does not. Dreaming is incremental, bounded, evidence-linked, correctable, and inspectable.
+The automatic behavior that assimilates settled Evidence and maintains current Memory without a per-item approval inbox. A terminal Conversation turn queues assimilation when it appended a user Message or succeeded with a final assistant Message. Dreaming is incremental, bounded, evidence-linked, correctable, and inspectable.
 _Avoid_: reflection, review, extraction
 
 **Dream run**:
@@ -59,7 +55,7 @@ One durable execution accepted from an idempotent interactive request, a seriali
 _Avoid_: pi turn, agent run, Message
 
 **Message**:
-One canonical ordered transcript entry within a Conversation turn, including its speaker or execution role. User Messages are conversational Evidence. Scheduled Messages record a Scheduled occurrence; Health Messages record a Health moment. Both are context rather than fresh user Evidence and cannot authorize Product observation capture, email-to-Evidence promotion, or another capability requiring fresh active-turn user Evidence, though their turns retain ordinary tools. Because pi RPC accepts prompts only as user-role input, Tether wraps their canonical content with host-owned context instructions before execution while preserving the Message unchanged. Assistant, reasoning, and tool Messages are also context only unless they contain separately verified Evidence.
+One canonical ordered transcript entry within a Conversation turn, including its speaker or execution role. User Messages are conversational Evidence. The last assistant Message of a succeeded turn is also Evidence: it preserves an agent conclusion, but remains lower-authority than user Evidence. Earlier assistant Messages, failed or cancelled output, reasoning, and tool Messages are context only. Scheduled Messages record a Scheduled occurrence; Health Messages record a Health moment. Both are context rather than fresh user Evidence and cannot authorize capabilities requiring fresh active-turn user Evidence, though their turns retain ordinary tools. Because pi RPC accepts prompts only as user-role input, Tether wraps their canonical content with host-owned context instructions before execution while preserving the Message unchanged.
 _Avoid_: pi message, session entry, Conversation turn
 
 **Message attachment**:
@@ -115,7 +111,7 @@ A session state that excludes sensitivity-marked Memory from display and proacti
 _Avoid_: private mode, incognito, safe mode
 
 **Ingestion gate**:
-A scheduled sync that brings external source records into Tether without a chat turn. Readwise, Health Connect, and ebook records may enter as canonical Evidence under their source policies. Gmail ingestion records remain triage and audit state unless explicit Email Evidence promotion snapshots selected source material. Dreaming may later assimilate appropriate settled Evidence into Memory.
+A scheduled sync that brings external source records into Tether without a chat turn. Readwise, Health Connect, and ebook records may enter as canonical Evidence under their source policies. Gmail ingestion records remain triage and audit state; durable conclusions drawn from Gmail enter through settled final assistant Messages rather than source-specific promotion. Dreaming may later assimilate appropriate settled Evidence into Memory.
 _Avoid_: sync job, importer, connector
 
 **Integration**:
@@ -151,8 +147,8 @@ One durable, host-detected reason for the agent to reconsider settled Health Evi
 _Avoid_: alert, anomaly, Scheduled trigger, Distillation
 
 **Distillation**:
-An evidence-backed agent-derived Claim drawn from Telemetry or a Fusion (e.g. "sleep quality drops after late screen time"). Dreaming may incorporate it into a current Topic while its supporting records remain canonical Evidence.
-_Avoid_: summary, raw measurement
+An agent-derived Claim drawn from source material, such as a viewing pattern inferred from YouTube records or a Health correlation inferred from Telemetry or a Fusion. A settled final assistant Message can preserve the Distillation as inspectable Evidence for Dreaming; typed supporting records remain canonical where available but need no source-specific Memory promotion path.
+_Avoid_: raw measurement, tool result
 
 **Fusion**:
 Cross-source correlation across Evidence that produces a Distillation. The mechanism, not the output — the output is always a Distillation.
