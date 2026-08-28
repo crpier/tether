@@ -187,7 +187,7 @@ evidence:
 
 @test()
 async def rebuild_tombstones_conversation_derived_topics() -> None:
-    """Rebuild preparation removes current Topics supported only by Messages."""
+    """Rebuild removes old Conversation prose before second-person replay."""
     with TemporaryDirectory() as directory:
         app = _make_app(Path(directory))
         with TestClient(app) as client:
@@ -201,7 +201,7 @@ evidence:
   - tether://message/019f0927-4fa0-70fa-9847-3edc96296ecf
 ---
 
-- Likes aisle seats.
+- The user likes aisle seats.
 """,
             )
 

@@ -7,7 +7,7 @@ Tether is a personal operating system: memory is the substrate it is built on, n
 ## Language
 
 **Memory**:
-Tether's small, current, user-centric understanding carried across actions. Dreaming is its sole writer and continuously revises its Topics and Claims from canonical Evidence; prior Memory is state to improve, never independent Evidence. Human corrections enter as high-authority Evidence, not direct Memory edits.
+Tether's small, current, user-centric understanding carried across actions. Every user-facing Claim begins with _You_ or _Your_; Claims never call the human "the user," omit their subject, or use third-person pronouns for them. Dreaming is its sole writer and continuously revises its Topics and Claims from canonical Evidence; prior Memory is state to improve, never independent Evidence. Human corrections enter as high-authority Evidence, not direct Memory edits.
 _Avoid_: knowledge base, note collection, source record
 
 **Topic**:

@@ -76,6 +76,16 @@ async def dreaming_preserves_user_authority_over_assistant_conclusions() -> None
 
 
 @test()
+async def dreaming_uses_second_person_for_user_facing_memory() -> None:
+    """The stable Dreaming persona carries the Memory voice invariant."""
+    prompt = system_prompt_for("dreaming")
+
+    assert_in("Address the user as you and your", prompt)
+    assert_in("Begin every Claim with You or Your", prompt)
+    assert_in("never as the user", prompt)
+
+
+@test()
 async def the_conversation_prompt_records_only_explicit_product_feedback() -> None:
     """Product observations require an explicit request, never inference."""
     assert_in("record_product_observation", CONVERSATION_SYSTEM_PROMPT)

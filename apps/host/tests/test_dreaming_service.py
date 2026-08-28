@@ -23,6 +23,7 @@ from snekql.sqlite import (
     update,
 )
 from snektest import (
+    Param,
     assert_eq,
     assert_is_none,
     fixture,
@@ -703,7 +704,7 @@ async def production_executor_curates_evidence_into_claims() -> None:
             self.prompts.append(prompt)
             return (
                 "## Gaming\n\n"
-                f"- Likes Roboquest. [source](tether://message/{message.id})"
+                f"- You like Roboquest. [source](tether://message/{message.id})"
             )
 
     with TemporaryDirectory() as workspace_root:
@@ -727,7 +728,7 @@ async def production_executor_curates_evidence_into_claims() -> None:
         assert written.exists()
         document = written.read_text(encoding="utf-8")
         assert "title: Gaming" in document
-        assert "Likes Roboquest" in document
+        assert "You like Roboquest" in document
         assert "## Dream slice" not in document
 
         async with dreaming_service.database.transaction() as tx:
@@ -750,6 +751,46 @@ async def production_executor_curates_evidence_into_claims() -> None:
 
         repeat = await executor(run, logger=test_logger())
         assert_eq(repeat.status, "no_op")
+
+
+@test()
+async def production_executor_instructs_curator_to_use_second_person() -> None:
+    """The curation task states the user-facing Memory voice."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    _ = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I liked Roboquest",
+    )
+    run = await dreaming_service.queue_manual_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+
+    class _Runner:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def run(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "NO_CHANGES"
+
+    with TemporaryDirectory() as workspace_root:
+        runner = _Runner()
+        result = await ConversationWindowDreamingExecutor(
+            conversation_service,
+            workspace_root=Path(workspace_root),
+            curation_runner=runner,
+        )(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert "Address the user as `you` and `your`" in runner.prompts[0]
+    assert "Begin every Claim with `You` or `Your`" in runner.prompts[0]
+    assert 'Never call them "the user"' in runner.prompts[0]
 
 
 @test()
@@ -794,7 +835,7 @@ async def production_executor_accepts_final_assistant_message_citation() -> None
     class _Runner:
         async def run(self, prompt: str) -> str:
             return (
-                "## Learning\n\n- Uses YouTube mainly for industry sense-making. "
+                "## Learning\n\n- You use YouTube mainly for industry sense-making. "
                 f"[source](tether://message/{conclusion.id})"
             )
 
@@ -806,6 +847,52 @@ async def production_executor_accepts_final_assistant_message_citation() -> None
         )(run, logger=test_logger())
 
     assert_eq(result.status, "success")
+
+
+@test(
+    [
+        Param(value="Likes Roboquest.", name="omitted_subject"),
+        Param(value="The user likes Roboquest.", name="the_user"),
+        Param(value="He likes Roboquest.", name="he"),
+        Param(value="His favorite game is Roboquest.", name="his"),
+        Param(value="She likes Roboquest.", name="she"),
+        Param(value="Her favorite game is Roboquest.", name="her"),
+        Param(value="They like Roboquest.", name="they"),
+        Param(value="Their favorite game is Roboquest.", name="their"),
+    ]
+)
+async def production_executor_rejects_third_person_user_claims(value: str) -> None:
+    """Conversation curation cannot refer to the user in third person."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    message = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I liked Roboquest",
+    )
+    run = await dreaming_service.queue_manual_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+
+    class _Runner:
+        async def run(self, prompt: str) -> str:
+            return f"## Gaming\n\n- {value} [source](tether://message/{message.id})"
+
+    with TemporaryDirectory() as workspace_root:
+        root = Path(workspace_root)
+        result = await ConversationWindowDreamingExecutor(
+            conversation_service,
+            workspace_root=root,
+            curation_runner=_Runner(),
+        )(run, logger=test_logger())
+
+        assert_eq(result.status, "failed")
+        assert_eq(result.error, "Memory Claims must address the user as you or your")
+        assert not (root / str(conversation_id) / f"{run.id}.md").exists()
 
 
 @test()
@@ -829,7 +916,7 @@ async def production_executor_rejects_unsupported_claim_citations() -> None:
     class _Runner:
         async def run(self, prompt: str) -> str:
             return (
-                "## Gaming\n\n- Likes Roboquest. "
+                "## Gaming\n\n- You like Roboquest. "
                 "[source](tether://message/019f0000-0000-7000-8000-000000000099)"
             )
 
@@ -867,7 +954,7 @@ async def production_executor_requires_a_citation_for_every_claim() -> None:
 
     class _Runner:
         async def run(self, prompt: str) -> str:
-            return "## Gaming\n\n- Likes Roboquest."
+            return "## Gaming\n\n- You like Roboquest."
 
     with TemporaryDirectory() as workspace_root:
         result = await ConversationWindowDreamingExecutor(
@@ -1723,7 +1810,7 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
             "title: Gaming\n",
             "---\n\n",
             "## Gaming\n\n",
-            "- Likes co-op shooters such as Roboquest. ",
+            "- You like co-op shooters such as Roboquest. ",
             f"[source]({first_uri}) [source]({second_uri})\n",
         )
     )
@@ -1743,7 +1830,7 @@ async def maintenance_executor_merges_fragmented_topics() -> None:
     assert not second.exists()
     merged_path = root / str(conversation_id) / "gaming.md"
     assert merged_path.exists()
-    assert "Likes co-op shooters such as Roboquest" in merged_path.read_text(
+    assert "You like co-op shooters such as Roboquest" in merged_path.read_text(
         encoding="utf-8"
     )
 
@@ -1770,14 +1857,14 @@ async def maintenance_executor_prioritizes_a_due_topic() -> None:
             conversation_id,
             f"{name}.md",
             title=name.upper(),
-            body=f"- Stable Claim {name}.",
+            body=f"- You have stable Claim {name}.",
         )
     _ = _write_topic(
         root,
         conversation_id,
         "z.md",
         title="Due",
-        body="- Needs temporal review.",
+        body="- You need temporal review.",
         review_after="2026-08-01",
     )
     run = await service.queue_maintenance_run(
@@ -1804,16 +1891,101 @@ async def maintenance_executor_prioritizes_a_due_topic() -> None:
 
 
 @test()
+async def maintenance_executor_instructs_curator_to_use_second_person() -> None:
+    """Maintenance keeps the same user-facing voice as initial curation."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- You like Roboquest."
+    )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "b.md",
+        title="Gaming notes",
+        body="- You own a Switch.",
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    curator = _ConsolidationRunner("NO_CHANGES")
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=curator,
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "no_op")
+    assert "Address the user as `you` and `your`" in curator.prompts[0]
+    assert "Begin every Claim with `You` or `Your`" in curator.prompts[0]
+    assert "Rewrite existing third-person user references" in curator.prompts[0]
+
+
+@test()
+async def maintenance_executor_rejects_no_changes_for_mixed_claim_voice() -> None:
+    """A style violation remains work even when the curator returns no changes."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "a.md",
+        title="Gaming",
+        body="- The user likes Roboquest.",
+    )
+    _ = _write_topic(
+        root,
+        conversation_id,
+        "b.md",
+        title="Gaming notes",
+        body="- You own a Switch.",
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner("NO_CHANGES"),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(result.error, "Memory Claims must address the user as you or your")
+
+
+@test()
 async def maintenance_executor_marks_no_changes_and_records_progress() -> None:
     """NO_CHANGES leaves files alone but marks the batch maintained."""
     conversation_service, service, conversation_id, root = await load_fixture(
         maintenance_fixture()
     )
     first = _write_topic(
-        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+        root, conversation_id, "a.md", title="Gaming", body="- You like Roboquest."
     )
     second = _write_topic(
-        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+        root,
+        conversation_id,
+        "b.md",
+        title="Gaming notes",
+        body="- You own a Switch.",
     )
     run = await service.queue_maintenance_run(
         conversation_id,
@@ -1864,7 +2036,10 @@ async def maintenance_executor_supplies_dated_canonical_evidence() -> None:
         conversation_id,
         "coffee.md",
         title="Coffee",
-        body=(f"- Avoiding coffee this week. [source](tether://message/{evidence_id})"),
+        body=(
+            f"- You are avoiding coffee this week. "
+            f"[source](tether://message/{evidence_id})"
+        ),
         uris=(f"tether://message/{evidence_id}",),
     )
     async with conversation_service.database.transaction() as transaction:
@@ -1937,7 +2112,7 @@ async def maintenance_executor_supplies_newer_user_evidence() -> None:
         conversation_id,
         "diet.md",
         title="Diet",
-        body=(f"- Vegetarian. [source](tether://message/{old_evidence.id})"),
+        body=(f"- You are vegetarian. [source](tether://message/{old_evidence.id})"),
         uris=(f"tether://message/{old_evidence.id}",),
     )
     async with conversation_service.database.transaction() as transaction:
@@ -2008,7 +2183,7 @@ async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
         conversation_id,
         "diet.md",
         title="Diet",
-        body=(f"- Vegetarian. [source](tether://message/{old_evidence.id})"),
+        body=(f"- You are vegetarian. [source](tether://message/{old_evidence.id})"),
         uris=(f"tether://message/{old_evidence.id}",),
     )
     async with conversation_service.database.transaction() as transaction:
@@ -2033,10 +2208,10 @@ async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
                 "---\n",
                 "title: Diet\n",
                 "---\n\n",
-                "- Eats fish now. ",
+                "- You eat fish now. ",
                 f"[source](tether://message/{newer_evidence.id})\n\n",
                 "=== RETIREMENTS ===\n",
-                '- claim: "Vegetarian."\n',
+                '- claim: "You are vegetarian."\n',
                 "  reason: superseded\n",
                 "  basis:\n",
                 f"    - tether://message/{newer_evidence.id}\n",
@@ -2056,7 +2231,7 @@ async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
 
     assert_eq(result.status, "success")
     updated = topic.read_text(encoding="utf-8")
-    assert "Eats fish now." in updated
+    assert "You eat fish now." in updated
     assert "Vegetarian." not in updated
 
 
@@ -2084,7 +2259,10 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
         conversation_id,
         "coffee.md",
         title="Coffee",
-        body=(f"- Avoiding coffee this week. [source](tether://message/{evidence_id})"),
+        body=(
+            f"- You are avoiding coffee this week. "
+            f"[source](tether://message/{evidence_id})"
+        ),
         uris=(f"tether://message/{evidence_id}",),
     )
     async with conversation_service.database.transaction() as transaction:
@@ -2106,7 +2284,7 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
         "".join(
             (
                 "=== RETIREMENTS ===\n",
-                '- claim: "Avoiding coffee this week."\n',
+                '- claim: "You are avoiding coffee this week."\n',
                 "  reason: expired\n",
                 "  basis:\n",
                 f"    - tether://message/{evidence_id}\n",
@@ -2137,7 +2315,7 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
         )
     assert deletion is not None
     assert deletion.payload is not None
-    assert "Avoiding coffee this week." in deletion.payload
+    assert "You are avoiding coffee this week." in deletion.payload
     assert "reason: expired" in deletion.payload
 
 
@@ -2292,7 +2470,7 @@ async def maintenance_executor_accepts_final_assistant_support() -> None:
             "---\n",
             "title: Coffee\n",
             "---\n\n",
-            f"- Loves black coffee. [source]({assistant_uri})\n",
+            f"- You love black coffee. [source]({assistant_uri})\n",
         )
     )
     executor = MaintenanceDreamingExecutor(
@@ -2307,6 +2485,47 @@ async def maintenance_executor_accepts_final_assistant_support() -> None:
     result = await executor(run, logger=test_logger())
 
     assert_eq(result.status, "success")
+
+
+@test()
+async def maintenance_executor_rejects_third_person_user_claims() -> None:
+    """Maintenance cannot reintroduce mixed user-facing prose."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    _ = _write_topic(
+        root, conversation_id, "a.md", title="Gaming", body="- Likes Roboquest."
+    )
+    _ = _write_topic(
+        root, conversation_id, "b.md", title="Gaming notes", body="- Owns a Switch."
+    )
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    proposed = (
+        f"=== {conversation_id}/gaming.md ===\n"
+        "---\n"
+        "title: Gaming\n"
+        "---\n\n"
+        "- The user likes Roboquest.\n"
+        "- Owns a Switch.\n"
+    )
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(proposed),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(result.error, "Memory Claims must address the user as you or your")
 
 
 @test()
@@ -2337,7 +2556,7 @@ async def maintenance_executor_rejects_invented_citations() -> None:
         "---\n"
         "title: Gaming\n"
         "---\n\n"
-        "- Likes Roboquest. [source](tether://message/"
+        "- You like Roboquest. [source](tether://message/"
         "018f0000-0000-7000-8000-0000000000ffff)\n"
     )
     executor = MaintenanceDreamingExecutor(
@@ -2452,8 +2671,8 @@ async def maintenance_covers_non_conversation_folders_like_health() -> None:
         "---\n"
         "title: Exercise\n"
         "---\n\n"
-        "- Runs weekly. [source](tether://health-connect/exercise/e51e4ead@v1)\n"
-        "- Lifts twice weekly. [source](tether://health-connect/exercise/"
+        "- You run weekly. [source](tether://health-connect/exercise/e51e4ead@v1)\n"
+        "- You lift twice weekly. [source](tether://health-connect/exercise/"
         "014eeb5e@v241)\n"
     )
     executor = MaintenanceDreamingExecutor(
@@ -2508,7 +2727,7 @@ async def maintenance_executor_rejects_unsupported_health_citations() -> None:
         "---\n"
         "title: Exercise\n"
         "---\n\n"
-        "- Runs weekly. [source](tether://health-connect/exercise/fabricated@v9)\n"
+        "- You run weekly. [source](tether://health-connect/exercise/fabricated@v9)\n"
     )
     executor = MaintenanceDreamingExecutor(
         service.database,
