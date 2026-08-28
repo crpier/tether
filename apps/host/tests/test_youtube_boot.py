@@ -15,10 +15,10 @@ from opentelemetry import trace
 from snekql.sqlite import Config, Database
 from snektest import assert_false, assert_true, fixture, load_fixture, test
 
+from tether.background_runtime import BackgroundRuntime
 from tether.events import EventHub
 from tether.host_config import AppConfig
 from tether.ingestion_composition import YouTubeComponent, compose_youtube
-from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import (
     LikedPage,
@@ -55,12 +55,12 @@ class BlockingLikedApi(InMemoryYouTubeApi):
 @fixture
 async def wired_app(
     api: InMemoryYouTubeApi,
-) -> AsyncGenerator[tuple[YouTubeComponent, IngestionLifecycle]]:
+) -> AsyncGenerator[tuple[YouTubeComponent, BackgroundRuntime]]:
     """Compose YouTube over a fresh in-memory database with the given upstream."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
     logger = structlog.stdlib.get_logger("test.youtube_boot")
-    ingestion_lifecycle = IngestionLifecycle(logger)
+    background_runtime = BackgroundRuntime(logger)
     config = AppConfig(
         app_password="test-app-password",
         session_secret="test-session-secret",
@@ -69,17 +69,17 @@ async def wired_app(
     )
     component = await asyncio.wait_for(
         compose_youtube(
+            background_runtime=background_runtime,
             config=config,
             database=db,
             event_publisher=EventHub(),
-            ingestion_lifecycle=ingestion_lifecycle,
             logger=logger,
             tracer=trace.get_tracer("test"),
         ),
         timeout=1.0,
     )
-    yield component, ingestion_lifecycle
-    await ingestion_lifecycle.stop()
+    async with background_runtime:
+        yield component, background_runtime
     await db.close()
 
 

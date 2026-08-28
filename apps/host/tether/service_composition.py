@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -14,6 +13,11 @@ from snekql.sqlite import Database
 
 from tether.artifacts import ArtifactService
 from tether.attachments import AttachmentService
+from tether.background_runtime import (
+    BackgroundFailurePolicy,
+    BackgroundRuntime,
+    BackgroundSchedule,
+)
 from tether.bucket_item_index import BucketItemIndex
 from tether.bucket_item_reconciler import BucketItemReconciler
 from tether.bucket_item_search import BucketItemSearchService
@@ -49,12 +53,7 @@ from tether.health_distillation import (
     HealthDreamingWorker,
 )
 from tether.host_config import AppConfig
-from tether.host_resources import (
-    HostBootstrap,
-    HostResources,
-    ephemeral_pi_config,
-    shutdown_background_tasks,
-)
+from tether.host_resources import HostBootstrap, HostResources, ephemeral_pi_config
 from tether.kosync import KosyncService
 from tether.kosync_routes import KosyncAuth
 from tether.kosync_store import KosyncStore
@@ -448,39 +447,63 @@ async def _build_youtube_search(
     return searcher, reconciler
 
 
-def _reconcile_loop_tasks(
+def _register_core_periodic_work(
     *,
+    background_runtime: BackgroundRuntime,
+    config: AppConfig,
+    health_moment_worker: HealthMomentWorker,
+    runtime_registry: ConversationRuntimeRegistry,
+) -> None:
+    """Register process-local maintenance shared by every host profile."""
+    _ = background_runtime.register_periodic(
+        "conversation-runtime-reaper",
+        runtime_registry.reap_idle,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=60.0,
+            interval_seconds=60.0,
+        ),
+    )
+    _ = background_runtime.register_periodic(
+        "health-moments",
+        lambda: health_moment_worker.tick(now=datetime.now(UTC)),
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=config.health_episode_sweep_seconds,
+            interval_seconds=config.health_episode_sweep_seconds,
+        ),
+    )
+
+
+def _register_search_reconciliation(
+    *,
+    background_runtime: BackgroundRuntime,
     bucket_item_reconciler: BucketItemReconciler | None,
     youtube_search_reconciler: YouTubeSearchReconciler | None,
     interval_seconds: float,
     logger: Logger,
-) -> list[asyncio.Task[None]]:
-    """Periodic reconcile loops for the wired search indexes.
-
-    Each loop is the correctness backstop for its index by sweeping orphans.
-    Optional Lance compaction stays outside the live host because it can hold a
-    table indefinitely and block searches. The Bucket-item loop complements
-    its boot reconcile; the YouTube Search loop has no boot
-    pass, so it fills that index shortly after startup. Any loop is absent when
-    its index was not wired (no embedder)."""
-    tasks: list[asyncio.Task[None]] = []
+) -> None:
+    """Register correctness sweeps for each configured search index."""
     if bucket_item_reconciler is not None:
-        tasks.append(
-            asyncio.create_task(
-                bucket_item_reconciler.reconcile_forever(
-                    interval_seconds=interval_seconds, logger=logger
-                )
-            )
+        _ = background_runtime.register_periodic(
+            "bucket-item-search-reconcile",
+            lambda: bucket_item_reconciler.reconcile(logger=logger),
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.RETRY,
+                initial_delay_seconds=interval_seconds,
+                interval_seconds=interval_seconds,
+            ),
         )
     if youtube_search_reconciler is not None:
-        tasks.append(
-            asyncio.create_task(
-                youtube_search_reconciler.reconcile_forever(
-                    interval_seconds=interval_seconds, logger=logger
-                )
-            )
+        _ = background_runtime.register_periodic(
+            "youtube-search-reconcile",
+            lambda: youtube_search_reconciler.reconcile(logger=logger),
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.RETRY,
+                initial_delay_seconds=5.0,
+                interval_seconds=interval_seconds,
+            ),
         )
-    return tasks
 
 
 def _wire_web_search(config: AppConfig, database: Database) -> SearchProvider | None:
@@ -740,15 +763,12 @@ async def compose_core_services(
         service=health_moment_service,
         summarizer=HealthEpisodeSummarizer(host.telemetry_database),
     )
-    background_tasks = [
-        asyncio.create_task(runtime_registry.reap_idle_forever()),
-        asyncio.create_task(
-            health_moment_worker.run_forever(
-                interval_seconds=config.health_episode_sweep_seconds,
-                logger=host.logger,
-            )
-        ),
-    ]
+    _register_core_periodic_work(
+        background_runtime=host.background_runtime,
+        config=config,
+        health_moment_worker=health_moment_worker,
+        runtime_registry=runtime_registry,
+    )
     if config.dreaming_enabled:
         dreaming_runner = EphemeralPiPromptRunner(
             replace(
@@ -783,34 +803,52 @@ async def compose_core_services(
                 verifier=dreaming_runner,
             ),
         )
-        background_tasks.append(
-            asyncio.create_task(
-                DreamingWorker(
-                    dreaming_service,
-                    KindDispatchingDreamExecutor(
-                        {
-                            "assimilation": window_executor,
-                            "manual": window_executor,
-                            "maintenance": maintenance_executor,
-                        }
-                    ),
-                    logger=host.logger,
-                ).run_forever()
-            )
+        dreaming_worker = DreamingWorker(
+            dreaming_service,
+            KindDispatchingDreamExecutor(
+                {
+                    "assimilation": window_executor,
+                    "manual": window_executor,
+                    "maintenance": maintenance_executor,
+                }
+            ),
+            logger=host.logger,
+        )
+        _ = host.background_runtime.register_periodic(
+            "dreaming-worker",
+            dreaming_worker.drain,
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.FAIL_HOST,
+                initial_delay_seconds=5.0,
+                interval_seconds=5.0,
+            ),
         )
         # Post-turn queueing only fires on the next chat turn; this scan is
         # the backstop that assimilates settled evidence during quiet spells.
-        background_tasks.append(
-            asyncio.create_task(dreaming_service.scan_forever(logger=host.logger))
+        _ = host.background_runtime.register_periodic(
+            "dreaming-assimilation-scan",
+            lambda: dreaming_service.queue_settled_assimilation_runs(
+                logger=host.logger,
+                now=datetime.now(UTC),
+            ),
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.RETRY,
+                initial_delay_seconds=60.0,
+                interval_seconds=60.0,
+            ),
         )
         # Periodic maintenance keeps Topic structure and current Claims coherent.
-        background_tasks.append(
-            asyncio.create_task(
-                dreaming_service.maintenance_forever(
-                    interval_seconds=config.dream_maintenance_interval_seconds,
-                    logger=host.logger,
-                )
-            )
+        _ = host.background_runtime.register_periodic(
+            "dreaming-maintenance",
+            lambda: dreaming_service.queue_maintenance_runs(
+                logger=host.logger,
+                now=datetime.now(UTC),
+            ),
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.RETRY,
+                initial_delay_seconds=config.dream_maintenance_interval_seconds,
+                interval_seconds=config.dream_maintenance_interval_seconds,
+            ),
         )
         # Health consolidation (ADR-0016 bespoke sibling): bounded Distillations
         # over Health Connect episode summaries into the same Memory workspace.
@@ -828,28 +866,29 @@ async def compose_core_services(
             ),
             logger=host.logger,
         )
-        background_tasks.append(
-            asyncio.create_task(health_dreaming_worker.run_forever())
+        _ = host.background_runtime.register_periodic(
+            "health-dreaming-worker",
+            health_dreaming_worker.drain,
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.FAIL_HOST,
+                initial_delay_seconds=5.0,
+                interval_seconds=5.0,
+            ),
         )
-        background_tasks.append(
-            asyncio.create_task(
-                health_distillation_service.scan_forever(logger=host.logger)
-            )
+        _ = host.background_runtime.register_periodic(
+            "health-distillation-scan",
+            health_distillation_service.drain_backlog,
+            schedule=BackgroundSchedule(
+                failure_policy=BackgroundFailurePolicy.RETRY,
+                initial_delay_seconds=60.0,
+                interval_seconds=60.0,
+            ),
         )
-    # The periodic search-index reconcile loops (Memory + Bucket-item +
-    # transcript), each started only when its index was wired (an
-    # embedder was supplied).
-    background_tasks.extend(
-        _reconcile_loop_tasks(
-            bucket_item_reconciler=bucket_item_reconciler,
-            youtube_search_reconciler=youtube_search_reconciler,
-            interval_seconds=config.search_reconcile_seconds,
-            logger=host.logger,
-        )
-    )
-    _ = resources.push_async_callback(
-        shutdown_background_tasks,
-        background_tasks,
+    _register_search_reconciliation(
+        background_runtime=host.background_runtime,
+        bucket_item_reconciler=bucket_item_reconciler,
+        youtube_search_reconciler=youtube_search_reconciler,
+        interval_seconds=config.search_reconcile_seconds,
         logger=host.logger,
     )
     return CoreServices(

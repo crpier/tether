@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from snekql.sqlite import select
 
-from tether.search_projection.loop import run_reconcile_loop
 from tether.youtube.search_chunks import chunk_youtube_text
 from tether.youtube.search_index import ChunkDocument, chunk_id
 from tether.youtube.store import IngestedVideo
@@ -123,31 +122,6 @@ class YouTubeSearchReconciler:
             removed=report.removed,
         )
         return report
-
-    async def reconcile_forever(
-        self,
-        *,
-        interval_seconds: float,
-        logger: Logger,
-        initial_delay_seconds: float = 5.0,
-    ) -> None:
-        """Run `reconcile` on a fixed interval until cancelled.
-
-        The YouTube index has no boot reconcile (a cold pass re-embeds the
-        whole corpus and would block startup), so this loop is what fills and
-        maintains it — the first pass runs shortly after boot (`initial_delay_
-        seconds`, not a full interval) so transcripts become searchable quickly.
-        The short delay also keeps shutdown clean: a host that stops moments after
-        boot cancels this task while it is still sleeping, never mid-pass. A failed
-        pass is logged and swallowed so a transient error never kills the loop;
-        the next tick retries."""
-        await run_reconcile_loop(
-            lambda: self.reconcile(logger=logger),
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=initial_delay_seconds,
-            logger=logger,
-            failure_message="Periodic YouTube search reconcile failed; retrying next tick",
-        )
 
     async def _desired_chunks(self) -> list[_ChunkSpec]:
         """Re-derive the desired chunk set from every active video.

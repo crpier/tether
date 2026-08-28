@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -315,19 +314,6 @@ class YouTubeSyncService:
             if cursor is None:
                 return None, True
         return cursor, False
-
-    async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
-        """Run sync passes on the given interval until cancelled."""
-        while True:
-            await asyncio.sleep(interval_seconds)
-            try:
-                _ = await self.sync(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Mirror the search reconciler: keep the loop alive but preserve
-                # the traceback for the swallowed failure.
-                logger.exception("YouTube sync pass failed")
 
     def _apply_cutoff(
         self, videos: Sequence[RawYouTubeVideo]

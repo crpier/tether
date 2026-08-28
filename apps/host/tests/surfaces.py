@@ -57,7 +57,7 @@ def surface_client(
         runtime.session_registry.register(SESSION)
         portal = client.portal
         if portal is not None:
-            portal.call(runtime.ingestion_lifecycle.readiness("youtube-likes").wait)
+            portal.call(runtime.background_runtime.readiness("youtube-likes").wait)
         yield client
 
 

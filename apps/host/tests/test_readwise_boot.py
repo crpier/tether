@@ -12,9 +12,9 @@ from snekok import Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
+from tether.background_runtime import BackgroundRuntime
 from tether.host_config import AppConfig
 from tether.ingestion_composition import compose_reader, compose_readwise
-from tether.ingestion_lifecycle import IngestionLifecycle
 from tether.readwise_http import ReadwiseNetworkFailure, ReadwiseResponse
 from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger
@@ -82,8 +82,8 @@ class FakeReaderTransport:
 class ReadwiseBootEnvironment:
     """Dependencies shared by focused gate wiring tests."""
 
+    background_runtime: BackgroundRuntime
     database: Database
-    lifecycle: IngestionLifecycle
     logger: Logger
     resources: contextlib.AsyncExitStack
 
@@ -94,16 +94,15 @@ async def readwise_boot_environment() -> AsyncGenerator[ReadwiseBootEnvironment]
     database = await Database.initialize(backend=Config(database=":memory:"))
     await create_readwise_schema(database)
     logger = structlog.stdlib.get_logger("test.readwise_boot")
-    lifecycle = IngestionLifecycle(logger)
+    background_runtime = BackgroundRuntime(logger)
     resources = contextlib.AsyncExitStack()
     await resources.__aenter__()
     yield ReadwiseBootEnvironment(
+        background_runtime=background_runtime,
         database=database,
-        lifecycle=lifecycle,
         logger=logger,
         resources=resources,
     )
-    await lifecycle.stop(grace_seconds=0.1)
     await resources.aclose()
     await database.close()
 
@@ -114,14 +113,14 @@ async def a_disabled_readwise_gate_is_immediately_ready() -> None:
     environment = await load_fixture(readwise_boot_environment())
 
     await compose_readwise(
+        background_runtime=environment.background_runtime,
         config=AppConfig(app_password="pw", session_secret="secret"),
         database=environment.database,
-        ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
         resources=environment.resources,
     )
 
-    assert_true(environment.lifecycle.readiness("readwise").is_set())
+    assert_true(environment.background_runtime.readiness("readwise").is_set())
 
 
 @test()
@@ -130,6 +129,7 @@ async def an_authenticated_readwise_gate_completes_its_boot_sync() -> None:
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReadwiseTransport()
     await compose_readwise(
+        background_runtime=environment.background_runtime,
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -137,13 +137,13 @@ async def an_authenticated_readwise_gate_completes_its_boot_sync() -> None:
             readwise_transport=transport,
         ),
         database=environment.database,
-        ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
         resources=environment.resources,
     )
+    _ = await environment.resources.enter_async_context(environment.background_runtime)
 
     await asyncio.wait_for(
-        environment.lifecycle.readiness("readwise").wait(), timeout=1
+        environment.background_runtime.readiness("readwise").wait(), timeout=1
     )
 
     assert_eq(transport.token_calls, 1)
@@ -156,6 +156,7 @@ async def an_owned_readwise_transport_closes_once() -> None:
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReadwiseTransport()
     await compose_readwise(
+        background_runtime=environment.background_runtime,
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -163,14 +164,13 @@ async def an_owned_readwise_transport_closes_once() -> None:
             readwise_transport=transport,
         ),
         database=environment.database,
-        ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
         resources=environment.resources,
     )
+    _ = await environment.resources.enter_async_context(environment.background_runtime)
     await asyncio.wait_for(
-        environment.lifecycle.readiness("readwise").wait(), timeout=1
+        environment.background_runtime.readiness("readwise").wait(), timeout=1
     )
-    await environment.lifecycle.stop(grace_seconds=0.1)
 
     await environment.resources.aclose()
 
@@ -183,6 +183,7 @@ async def a_rejected_readwise_token_stops_before_export() -> None:
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReadwiseTransport(auth_status=401)
     await compose_readwise(
+        background_runtime=environment.background_runtime,
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -190,13 +191,13 @@ async def a_rejected_readwise_token_stops_before_export() -> None:
             readwise_transport=transport,
         ),
         database=environment.database,
-        ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
         resources=environment.resources,
     )
+    _ = await environment.resources.enter_async_context(environment.background_runtime)
 
     await asyncio.wait_for(
-        environment.lifecycle.readiness("readwise").wait(), timeout=1
+        environment.background_runtime.readiness("readwise").wait(), timeout=1
     )
 
     assert_eq(transport.token_calls, 1)
@@ -209,6 +210,7 @@ async def a_rejected_reader_token_stops_after_the_boot_request() -> None:
     environment = await load_fixture(readwise_boot_environment())
     transport = FakeReaderTransport(status_code=401)
     await compose_reader(
+        background_runtime=environment.background_runtime,
         config=AppConfig(
             app_password="pw",
             session_secret="secret",
@@ -216,13 +218,13 @@ async def a_rejected_reader_token_stops_after_the_boot_request() -> None:
             reader_transport=transport,
         ),
         database=environment.database,
-        ingestion_lifecycle=environment.lifecycle,
         logger=environment.logger,
         resources=environment.resources,
     )
+    _ = await environment.resources.enter_async_context(environment.background_runtime)
 
     await asyncio.wait_for(
-        environment.lifecycle.readiness("readwise-reader").wait(), timeout=1
+        environment.background_runtime.readiness("readwise-reader").wait(), timeout=1
     )
 
     assert_eq(transport.list_calls, 1)

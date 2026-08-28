@@ -199,7 +199,6 @@ class Scheduler:
         self.config: SchedulerConfig = config or SchedulerConfig()
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.concurrency)
         self._inflight: set[asyncio.Task[None]] = set()
-        self._stop_event: asyncio.Event = asyncio.Event()
         self._stopping: bool = False
 
     async def tick(self) -> list[ScheduledOccurrence[Fetched]]:
@@ -300,29 +299,6 @@ class Scheduler:
     def stop_intake(self) -> None:
         """Prevent ticks and reconciliation from launching more dispatch work."""
         self._stopping = True
-        self._stop_event.set()
-
-    async def run_forever(self) -> None:
-        """Run ticks on the configured interval until cancelled.
-
-        The interval is awaited before each tick (not after), so a process that
-        starts and stops quickly never fires a tick whose DB work would race the
-        shutdown that closes the connection pool.
-        """
-        while not self._stopping:
-            with contextlib.suppress(TimeoutError):
-                _ = await asyncio.wait_for(
-                    self._stop_event.wait(),
-                    timeout=self.config.tick_seconds,
-                )
-            if self._stopping:
-                return
-            try:
-                _ = await self.tick()
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                self.logger.warning("Scheduler tick failed", error=str(error))
 
     async def shutdown(self, *, drain_seconds: float = 1.0) -> None:
         """Bound waiter drain so a stuck dispatcher cannot deadlock host exit."""

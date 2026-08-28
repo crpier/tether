@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from tether.agent_trace_recorder import AgentTraceRecorder
     from tether.artifacts import ArtifactService
     from tether.attachments import AttachmentService
+    from tether.background_runtime import BackgroundRuntime
     from tether.bucket_item_search import BucketItemSearchService
     from tether.bucket_items import BucketItemService
     from tether.chat_engine import ConversationRuntimeRegistry
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
         HealthPlanService,
     )
     from tether.health_distillation import HealthDistillationService
-    from tether.ingestion_lifecycle import IngestionLifecycle
     from tether.kosync import KosyncService
     from tether.kosync_routes import KosyncAuth
     from tether.memory_workspace_service import MemoryWorkspaceService
@@ -57,6 +57,7 @@ class AppRuntime:
 
     app_password: str
     artifact_service: ArtifactService
+    background_runtime: BackgroundRuntime
     attachment_service: AttachmentService
     bucket_item_search_service: BucketItemSearchService
     bucket_item_service: BucketItemService
@@ -70,7 +71,6 @@ class AppRuntime:
     health_distillation_service: HealthDistillationService | None
     health_moment_service: HealthMomentService
     health_plan_service: HealthPlanService
-    ingestion_lifecycle: IngestionLifecycle
     kosync_auth: KosyncAuth
     gmail_client: GmailClient | None
     gmail_auth_service: GoogleGmailAuthService | None

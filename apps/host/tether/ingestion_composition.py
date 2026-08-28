@@ -12,6 +12,12 @@ from opentelemetry.trace import Tracer
 from snekok import Err
 from snekql.sqlite import Database
 
+from tether.background_runtime import (
+    BackgroundBootOutcome,
+    BackgroundFailurePolicy,
+    BackgroundRuntime,
+    BackgroundSchedule,
+)
 from tether.ebook_stats import EbookStatsSyncService
 from tether.ebook_stats_store import EbookStatsStore
 from tether.events import EventHub
@@ -23,11 +29,6 @@ from tether.gmail import (
 )
 from tether.host_config import AppConfig
 from tether.host_resources import HostBootstrap, ephemeral_pi_config
-from tether.ingestion_lifecycle import (
-    CallbackIngestionWorker,
-    IngestionBootOutcome,
-    IngestionLifecycle,
-)
 from tether.model_selection import AgentModelCatalog
 from tether.reader import ReaderClient, ReaderSyncService
 from tether.readwise import ReadwiseClient, ReadwiseSyncService
@@ -75,8 +76,8 @@ class _YouTubeWorkerDependencies:
     """Collaborators shared by the independently optional YouTube workers."""
 
     auth_service: YouTubeAuthService
+    background_runtime: BackgroundRuntime
     config: AppConfig
-    ingestion_lifecycle: IngestionLifecycle
     logger: Logger
     sync: YouTubeSyncService
     transcript_sync: TranscriptSyncService | None
@@ -104,10 +105,10 @@ def _build_youtube_client(
 
 async def compose_youtube(  # noqa: PLR0913 - composition requires each dependency
     *,
+    background_runtime: BackgroundRuntime,
     config: AppConfig,
     database: Database,
     event_publisher: EventHub,
-    ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     tracer: Tracer,
     youtube_search: YouTubeSearchService | None = None,
@@ -189,8 +190,8 @@ async def compose_youtube(  # noqa: PLR0913 - composition requires each dependen
     )
     worker_dependencies = _YouTubeWorkerDependencies(
         auth_service=auth_service,
+        background_runtime=background_runtime,
         config=config,
-        ingestion_lifecycle=ingestion_lifecycle,
         logger=logger,
         sync=sync,
         transcript_sync=transcript_sync,
@@ -207,90 +208,83 @@ def _activate_youtube_likes(
     dependencies: _YouTubeWorkerDependencies,
 ) -> asyncio.Event:
     """Run likes only while Google authorization is usable."""
-    worker: CallbackIngestionWorker | None = None
-    if (
+    if not (
         dependencies.config.youtube_api is not None
         and dependencies.config.youtube_sync_enabled
     ):
+        return dependencies.background_runtime.register_disabled("youtube-likes")
 
-        async def _boot() -> IngestionBootOutcome:
-            if not await dependencies.auth_service.available():
-                return IngestionBootOutcome.REPEAT
+    async def _boot() -> BackgroundBootOutcome:
+        if await dependencies.auth_service.available():
             _ = await dependencies.sync.maybe_sync(logger=dependencies.logger)
-            return IngestionBootOutcome.REPEAT
+        return BackgroundBootOutcome.REPEAT
 
-        async def _repeat() -> None:
-            while True:
-                await asyncio.sleep(dependencies.config.youtube_sync_interval_seconds)
-                if not await dependencies.auth_service.available():
-                    continue
-                try:
-                    _ = await dependencies.sync.sync(logger=dependencies.logger)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    dependencies.logger.exception("YouTube sync pass failed")
+    async def _sync() -> None:
+        if await dependencies.auth_service.available():
+            _ = await dependencies.sync.sync(logger=dependencies.logger)
 
-        worker = CallbackIngestionWorker(_boot, _repeat)
-    return dependencies.ingestion_lifecycle.activate("youtube-likes", worker)
+    return dependencies.background_runtime.register_periodic(
+        "youtube-likes",
+        _sync,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=dependencies.config.youtube_sync_interval_seconds,
+            interval_seconds=dependencies.config.youtube_sync_interval_seconds,
+        ),
+        boot=_boot,
+    )
 
 
 def _activate_youtube_transcripts(
     dependencies: _YouTubeWorkerDependencies,
 ) -> asyncio.Event:
     """Run transcript acquisition only when every provider seam is configured."""
-    worker: CallbackIngestionWorker | None = None
-    if (
+    if not (
         dependencies.transcript_sync is not None
         and dependencies.config.youtube_api is not None
         and dependencies.config.transcript_provider is not None
         and dependencies.config.transcript_sync_enabled
     ):
+        return dependencies.background_runtime.register_disabled("youtube-transcripts")
 
-        async def _boot() -> IngestionBootOutcome:
-            if not await dependencies.auth_service.available():
-                return IngestionBootOutcome.REPEAT
+    async def _boot() -> BackgroundBootOutcome:
+        if await dependencies.auth_service.available():
             assert dependencies.transcript_sync is not None
             _ = await dependencies.transcript_sync.sync(logger=dependencies.logger)
-            return IngestionBootOutcome.REPEAT
+        return BackgroundBootOutcome.REPEAT
 
-        async def _repeat() -> None:
+    async def _sync() -> None:
+        if await dependencies.auth_service.available():
             assert dependencies.transcript_sync is not None
-            while True:
-                await asyncio.sleep(
-                    dependencies.config.transcript_sync_interval_seconds
-                )
-                if not await dependencies.auth_service.available():
-                    continue
-                try:
-                    _ = await dependencies.transcript_sync.sync(
-                        logger=dependencies.logger
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    dependencies.logger.exception("YouTube transcript sync pass failed")
+            _ = await dependencies.transcript_sync.sync(logger=dependencies.logger)
 
-        worker = CallbackIngestionWorker(_boot, _repeat)
-    return dependencies.ingestion_lifecycle.activate(
+    return dependencies.background_runtime.register_periodic(
         "youtube-transcripts",
-        worker,
+        _sync,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=(
+                dependencies.config.transcript_sync_interval_seconds
+            ),
+            interval_seconds=dependencies.config.transcript_sync_interval_seconds,
+        ),
+        boot=_boot,
     )
 
 
 async def compose_readwise(
     *,
+    background_runtime: BackgroundRuntime,
     config: AppConfig,
     database: Database,
-    ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     resources: contextlib.AsyncExitStack,
 ) -> None:
-    """Compose the optional Readwise export adapter into Ingestion lifecycle."""
+    """Compose the optional Readwise export adapter into background work."""
     if not config.readwise_sync_enabled or (
         config.readwise_transport is None and not config.readwise_api_key
     ):
-        _ = ingestion_lifecycle.activate("readwise")
+        _ = background_runtime.register_disabled("readwise")
         return
     transport = config.readwise_transport or HttpReadwiseTransport(
         config.readwise_api_key
@@ -299,7 +293,7 @@ async def compose_readwise(
     client = ReadwiseClient(transport=transport)
     sync = ReadwiseSyncService(database=database, client=client)
 
-    async def _boot_readwise() -> IngestionBootOutcome:
+    async def _boot_readwise() -> BackgroundBootOutcome:
         token = await client.verify_token(logger=logger)
         if isinstance(token, Err):
             logger.warning(
@@ -308,9 +302,9 @@ async def compose_readwise(
                 operation=token.error.operation,
             )
             return (
-                IngestionBootOutcome.STOP
+                BackgroundBootOutcome.STOP
                 if isinstance(token.error, ReadwiseAuthenticationFailure)
-                else IngestionBootOutcome.REPEAT
+                else BackgroundBootOutcome.REPEAT
             )
         report = await sync.sync(logger=logger)
         if isinstance(report, Err):
@@ -319,31 +313,42 @@ async def compose_readwise(
                 failure=type(report.error).__name__,
                 operation=report.error.operation,
             )
-        return IngestionBootOutcome.REPEAT
+        return BackgroundBootOutcome.REPEAT
 
-    async def _repeat_readwise() -> None:
-        await sync.sync_forever(
-            interval_seconds=config.readwise_sync_interval_seconds, logger=logger
-        )
+    async def _sync_readwise() -> None:
+        report = await sync.sync(logger=logger)
+        if isinstance(report, Err):
+            logger.warning(
+                "Readwise sync pass failed",
+                failure=type(report.error).__name__,
+                operation=report.error.operation,
+            )
 
-    _ = ingestion_lifecycle.activate(
-        "readwise", CallbackIngestionWorker(_boot_readwise, _repeat_readwise)
+    _ = background_runtime.register_periodic(
+        "readwise",
+        _sync_readwise,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=config.readwise_sync_interval_seconds,
+            interval_seconds=config.readwise_sync_interval_seconds,
+        ),
+        boot=_boot_readwise,
     )
 
 
 async def compose_reader(
     *,
+    background_runtime: BackgroundRuntime,
     config: AppConfig,
     database: Database,
-    ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
     resources: contextlib.AsyncExitStack,
 ) -> None:
-    """Compose the optional Reader progress adapter into Ingestion lifecycle."""
+    """Compose the optional Reader progress adapter into background work."""
     if not config.readwise_reader_sync_enabled or (
         config.reader_transport is None and not config.readwise_api_key
     ):
-        _ = ingestion_lifecycle.activate("readwise-reader")
+        _ = background_runtime.register_disabled("readwise-reader")
         return
     transport = config.reader_transport or HttpReaderTransport(config.readwise_api_key)
     _ = resources.push_async_callback(transport.aclose)
@@ -352,7 +357,7 @@ async def compose_reader(
         client=ReaderClient(transport=transport),
     )
 
-    async def _boot_reader() -> IngestionBootOutcome:
+    async def _boot_reader() -> BackgroundBootOutcome:
         report = await sync.sync(logger=logger)
         if isinstance(report, Err):
             logger.warning(
@@ -361,26 +366,36 @@ async def compose_reader(
                 operation=report.error.operation,
             )
             if isinstance(report.error, ReadwiseAuthenticationFailure):
-                return IngestionBootOutcome.STOP
-        return IngestionBootOutcome.REPEAT
+                return BackgroundBootOutcome.STOP
+        return BackgroundBootOutcome.REPEAT
 
-    async def _repeat_reader() -> None:
-        await sync.sync_forever(
+    async def _sync_reader() -> None:
+        report = await sync.sync(logger=logger)
+        if isinstance(report, Err):
+            logger.warning(
+                "Reader sync pass failed",
+                failure=type(report.error).__name__,
+                operation=report.error.operation,
+            )
+
+    _ = background_runtime.register_periodic(
+        "readwise-reader",
+        _sync_reader,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=config.readwise_reader_sync_interval_seconds,
             interval_seconds=config.readwise_reader_sync_interval_seconds,
-            logger=logger,
-        )
-
-    _ = ingestion_lifecycle.activate(
-        "readwise-reader", CallbackIngestionWorker(_boot_reader, _repeat_reader)
+        ),
+        boot=_boot_reader,
     )
 
 
-async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count are intentional
+async def compose_gmail(  # noqa: PLR0913 - each param and branch count are intentional
     *,
+    background_runtime: BackgroundRuntime,
     bootstrap: HostBootstrap,
     config: AppConfig,
     database: Database,
-    ingestion_lifecycle: IngestionLifecycle,
     kb_root: Path,
     logger: Logger,
     model_catalog: AgentModelCatalog,
@@ -391,7 +406,7 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
 ) -> None:
     """Compose the optional Gmail ingestion worker."""
     if not config.gmail_sync_enabled:
-        _ = ingestion_lifecycle.activate("gmail")
+        _ = background_runtime.register_disabled("gmail")
         return
     client = gmail_client or (
         GmailClient(config.gmail_transport)
@@ -399,7 +414,7 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
         else None
     )
     if client is None:
-        _ = ingestion_lifecycle.activate("gmail")
+        _ = background_runtime.register_disabled("gmail")
         return
     triage_runner = EphemeralPiPromptRunner(
         ephemeral_pi_config(
@@ -419,9 +434,9 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
         triage_batch_size=config.gmail_triage_batch_size,
     )
 
-    async def _boot_gmail() -> IngestionBootOutcome:
+    async def _boot_gmail() -> BackgroundBootOutcome:
         if gmail_auth_service is not None and not await gmail_auth_service.available():
-            return IngestionBootOutcome.REPEAT
+            return BackgroundBootOutcome.REPEAT
         report = await sync.sync(logger=logger)
         if isinstance(report, Err):
             logger.warning(
@@ -430,58 +445,63 @@ async def compose_gmail(  # noqa: PLR0913, C901 - each param and branch count ar
                 operation=report.error.operation,
             )
             if isinstance(report.error, GmailAuthenticationFailure):
-                return IngestionBootOutcome.STOP
-        return IngestionBootOutcome.REPEAT
+                return BackgroundBootOutcome.STOP
+        return BackgroundBootOutcome.REPEAT
 
-    async def _repeat_gmail() -> None:
-        while True:
-            await asyncio.sleep(config.gmail_sync_interval_seconds)
-            if (
-                gmail_auth_service is not None
-                and not await gmail_auth_service.available()
-            ):
-                continue
-            try:
-                _ = await sync.sync(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Gmail sync pass failed")
+    async def _sync_gmail() -> None:
+        if gmail_auth_service is None or await gmail_auth_service.available():
+            report = await sync.sync(logger=logger)
+            if isinstance(report, Err):
+                logger.warning(
+                    "Gmail sync pass failed",
+                    failure=type(report.error).__name__,
+                    operation=report.error.operation,
+                )
 
-    _ = ingestion_lifecycle.activate(
-        "gmail", CallbackIngestionWorker(_boot_gmail, _repeat_gmail)
+    _ = background_runtime.register_periodic(
+        "gmail",
+        _sync_gmail,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=config.gmail_sync_interval_seconds,
+            interval_seconds=config.gmail_sync_interval_seconds,
+        ),
+        boot=_boot_gmail,
     )
 
 
 async def compose_ebook_stats(
     *,
+    background_runtime: BackgroundRuntime,
     config: AppConfig,
     database: Database,
-    ingestion_lifecycle: IngestionLifecycle,
     logger: Logger,
 ) -> None:
     """Compose the optional KOReader statistics-file ingestion worker."""
     if not config.ebook_statistics_db_path:
-        _ = ingestion_lifecycle.activate("ebook-statistics")
+        _ = background_runtime.register_disabled("ebook-statistics")
         return
     sync = EbookStatsSyncService(
         store=EbookStatsStore(database),
         statistics_db_path=Path(config.ebook_statistics_db_path),
     )
 
-    async def _boot_ebook_stats() -> IngestionBootOutcome:
+    async def _boot_ebook_stats() -> BackgroundBootOutcome:
         _ = await sync.sync(logger=logger)
-        return IngestionBootOutcome.REPEAT
+        return BackgroundBootOutcome.REPEAT
 
-    async def _repeat_ebook_stats() -> None:
-        await sync.sync_forever(
-            interval_seconds=config.ebook_statistics_sync_interval_seconds,
-            logger=logger,
-        )
+    async def _sync_ebook_stats() -> None:
+        _ = await sync.sync(logger=logger)
 
-    _ = ingestion_lifecycle.activate(
+    _ = background_runtime.register_periodic(
         "ebook-statistics",
-        CallbackIngestionWorker(_boot_ebook_stats, _repeat_ebook_stats),
+        _sync_ebook_stats,
+        schedule=BackgroundSchedule(
+            failure_policy=BackgroundFailurePolicy.RETRY,
+            initial_delay_seconds=config.ebook_statistics_sync_interval_seconds,
+            interval_seconds=config.ebook_statistics_sync_interval_seconds,
+        ),
+        boot=_boot_ebook_stats,
     )
 
 
@@ -489,11 +509,11 @@ async def compose_ebook_stats(
 class IngestionDependencies:
     """Explicit collaborators shared across optional ingestion adapters."""
 
+    background_runtime: BackgroundRuntime
     bootstrap: HostBootstrap
     config: AppConfig
     database: Database
     event_hub: EventHub
-    ingestion_lifecycle: IngestionLifecycle
     kb_root: Path
     logger: Logger
     model_catalog: AgentModelCatalog
@@ -512,33 +532,33 @@ async def compose_ingestion(
 ) -> YouTubeComponent:
     """Compose every optional source adapter into one lifecycle owner."""
     youtube = await compose_youtube(
+        background_runtime=dependencies.background_runtime,
         config=dependencies.config,
         database=dependencies.database,
         event_publisher=dependencies.event_hub,
-        ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
         tracer=dependencies.tracer,
         youtube_search=dependencies.youtube_search,
     )
     await compose_readwise(
+        background_runtime=dependencies.background_runtime,
         config=dependencies.config,
         database=dependencies.database,
-        ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
         resources=resources,
     )
     await compose_reader(
+        background_runtime=dependencies.background_runtime,
         config=dependencies.config,
         database=dependencies.database,
-        ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
         resources=resources,
     )
     await compose_gmail(
+        background_runtime=dependencies.background_runtime,
         bootstrap=dependencies.bootstrap,
         config=dependencies.config,
         database=dependencies.database,
-        ingestion_lifecycle=dependencies.ingestion_lifecycle,
         kb_root=dependencies.kb_root,
         logger=dependencies.logger,
         model_catalog=dependencies.model_catalog,
@@ -548,9 +568,9 @@ async def compose_ingestion(
         gmail_auth_service=dependencies.gmail_auth_service,
     )
     await compose_ebook_stats(
+        background_runtime=dependencies.background_runtime,
         config=dependencies.config,
         database=dependencies.database,
-        ingestion_lifecycle=dependencies.ingestion_lifecycle,
         logger=dependencies.logger,
     )
     return youtube

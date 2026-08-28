@@ -185,12 +185,6 @@ class ConversationRuntimeRegistry:
         for slot in expired:
             await slot.runtime.shutdown()
 
-    async def reap_idle_forever(self, *, interval_seconds: float = 60.0) -> None:
-        """Periodically reap idle runtimes until cancelled."""
-        while True:
-            await asyncio.sleep(interval_seconds)
-            await self.reap_idle()
-
     async def shutdown_all(self) -> None:
         """Terminate every live pi runtime owned by this process."""
         slots = list(self._runtimes.values())

@@ -52,7 +52,6 @@ from snekql.sqlite import select
 
 from tether.bucket_item_index import BucketItemDocument
 from tether.bucket_item_store import BucketItem, bucket_item_index_text
-from tether.search_projection.loop import run_reconcile_loop
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -197,26 +196,6 @@ class BucketItemReconciler:
             rebuilt=report.rebuilt,
         )
         return report
-
-    async def reconcile_forever(
-        self, *, interval_seconds: float, logger: Logger
-    ) -> None:
-        """Run `reconcile` on a fixed interval until cancelled.
-
-        This is the correctness backstop the latency hooks lean on: it sweeps
-        orphans a missed event left behind. The boot reconcile runs at wiring
-        time, so the first periodic pass waits a full interval rather than repeating it
-        immediately. A failed pass is logged and swallowed so a transient error
-        never kills the loop — the next tick retries."""
-        await run_reconcile_loop(
-            lambda: self.reconcile(logger=logger),
-            interval_seconds=interval_seconds,
-            initial_delay_seconds=interval_seconds,
-            logger=logger,
-            failure_message=(
-                "Periodic Bucket item search reconcile failed; retrying next tick"
-            ),
-        )
 
     async def index_item(self, item: BucketItem[Fetched], *, logger: Logger) -> None:
         """Make a single active Bucket item searchable now (the Add hook)."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -152,17 +151,6 @@ class TranscriptSyncService:
             retried=state.retried,
             transient_storm=state.transient_storm,
         )
-
-    async def sync_forever(self, *, interval_seconds: float, logger: Logger) -> None:
-        """Run transcript passes on an interval until cancelled."""
-        while True:
-            await asyncio.sleep(interval_seconds)
-            try:
-                _ = await self.sync(logger=logger)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Transcript sync pass failed")
 
     def _eligible_query(self, now: datetime):  # noqa: ANN202 (snekql query type is internal)
         """Select active videos eligible for automatic transcript acquisition."""

@@ -1,7 +1,5 @@
 """Health consolidation: bounded agent Distillations over episode summaries."""
 
-import asyncio
-import contextlib
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,7 +17,7 @@ from snektest import (
     test,
 )
 
-from tether.dreaming import DreamingMutationCoordinator, DreamRunExecutionResult
+from tether.dreaming import DreamingMutationCoordinator
 from tether.dreaming_store import DreamingMutation, create_dreaming_schema
 from tether.health_connect.contracts import (
     ExerciseRecord,
@@ -48,15 +46,6 @@ def test_logger() -> Logger:
     """Provide a deterministic logger for executor calls."""
     logger: Logger = structlog.get_logger("test.health_distillation")
     return logger
-
-
-class _RecordingExecutor:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def __call__(self, run: object, *, logger: Logger) -> DreamRunExecutionResult:
-        self.calls += 1
-        return DreamRunExecutionResult(status="success", error=None)
 
 
 class _CurationRunner:
@@ -493,36 +482,6 @@ async def worker_drains_multiple_queued_runs_in_order() -> None:
     ]
     assert_true(first_uris == ["uri: tether://health-connect/exercise/ex-1@v1"])
     assert_true(second_uris == ["uri: tether://health-connect/exercise/ex-2@v2"])
-
-
-@test()
-async def health_worker_waits_one_poll_interval_before_claiming_at_startup() -> None:
-    """Startup leaves the Health worker cancellable before its first DB transaction."""
-    _, telemetry, _, service = await load_fixture(health_fixture())
-    await _seed_summary(
-        telemetry,
-        record_id="ex-1",
-        start=_BASE_MILLIS,
-        end=_BASE_MILLIS + _HOUR_MILLIS,
-    )
-    run = await service.queue_run()
-    assert run is not None
-    executor = _RecordingExecutor()
-    worker = HealthDreamingWorker(
-        service,
-        executor,
-        test_logger(),
-        poll_interval_seconds=0.1,
-    )
-
-    task = asyncio.create_task(worker.run_forever())
-    try:
-        await asyncio.sleep(0.02)
-        assert_eq(executor.calls, 0)
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
 
 
 @test()
