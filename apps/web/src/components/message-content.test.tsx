@@ -104,6 +104,16 @@ describe("MessageContent", () => {
     expect(onOpenEvidence).toHaveBeenNthCalledWith(3, uri);
   });
 
+  test("legacy bracketed Evidence references render one compact label", () => {
+    const uri = "tether://message/019f0000-0000-7000-8000-000000000001";
+    const { container } = render(() => (
+      <MessageContent onOpenEvidence={vi.fn()} text={`Evidence [${uri}]`} />
+    ));
+
+    expect(container).toHaveTextContent("Evidence (source)");
+    expect(container).not.toHaveTextContent("[(source)]");
+  });
+
   test("autolinks also get the new-tab attributes", () => {
     const { container } = render(() => (
       <MessageContent text="https://example.org/path" />
