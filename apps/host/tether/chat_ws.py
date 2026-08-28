@@ -7,10 +7,11 @@ import contextlib
 from typing import Annotated, Literal, Protocol, cast
 from uuid import UUID
 
-from pydantic import BaseModel, StringConstraints, ValidationError
+from pydantic import BaseModel, Field, StringConstraints, ValidationError
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from tether.attachments import AttachmentSubmissionError
 from tether.auth_sessions import SESSION_COOKIE, verify_session_cookie
 from tether.chat_engine import ConversationRuntimeRegistry
 from tether.chat_frames import AbortAckFrame, ErrorFrame, InvalidateFrame, NotifyFrame
@@ -48,6 +49,7 @@ class InboundFrame(BaseModel):
     reply_mode: ReplyMode | None = None
     request_id: UUID | None = None
     turn_id: UUID | None = None
+    attachment_ids: tuple[UUID, ...] = Field(default=(), max_length=4)
 
 
 class _ChatRuntime(Protocol):
@@ -87,11 +89,11 @@ async def _handle_prompt(
     frame: InboundFrame,
 ) -> None:
     """Validate and translate one browser prompt submission."""
-    if frame.content is None:
+    if frame.content is None and not frame.attachment_ids:
         await _send_input_error(
             sink,
             conversation_id=frame.conversation_id,
-            detail="prompt content is required",
+            detail="prompt content or an attachment is required",
         )
         return
     if frame.request_id is None:
@@ -104,12 +106,19 @@ async def _handle_prompt(
     try:
         _ = await _runtime(websocket).conversation_turns.submit(
             InteractiveTurnRequest(
+                attachment_ids=frame.attachment_ids,
                 conversation_id=frame.conversation_id,
-                prompt=frame.content,
+                prompt=frame.content or "",
                 reply_mode=frame.reply_mode or "text",
                 request_id=frame.request_id,
             ),
             sink,
+        )
+    except AttachmentSubmissionError as error:
+        await _send_input_error(
+            sink,
+            conversation_id=frame.conversation_id,
+            detail=str(error),
         )
     except ConversationTurnConflictError:
         await _send_input_error(

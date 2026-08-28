@@ -3,6 +3,7 @@ import { ApiError } from "./error";
 import { requireData, type RestContext } from "./transport";
 
 export type AgentModel = components["schemas"]["AgentModelRead"];
+export type Attachment = components["schemas"]["AttachmentRead"];
 export type Conversation = components["schemas"]["ConversationRead"];
 export type ConversationTurn = components["schemas"]["ConversationTurnRead"];
 export type CreateConversation =
@@ -88,6 +89,7 @@ export interface ChatHost {
   undoGmailArchive(messageId: string): Promise<GmailUndo>;
   synthesizeSpeech(text: string, signal: AbortSignal): Promise<Blob>;
   transcribeAudio(blob: Blob): Promise<string>;
+  uploadAttachment(conversationId: string, file: File): Promise<Attachment>;
 }
 
 export function createChatHost(context: RestContext): ChatHost {
@@ -252,6 +254,25 @@ export function createChatHost(context: RestContext): ChatHost {
         });
       }
       return data.transcript;
+    },
+    async uploadAttachment(conversationId, file) {
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const response = await context.fetch(
+        `/api/conversations/${conversationId}/attachments`,
+        {
+          body,
+          credentials: "include",
+          method: "POST",
+        },
+      );
+      if (!response.ok) {
+        throw new ApiError(response.status, {
+          413: "That file is larger than 10 MB.",
+          422: "Tether supports images, PDFs, and UTF-8 text files.",
+        });
+      }
+      return (await response.json()) as Attachment;
     },
   };
 }

@@ -269,6 +269,47 @@
         "title": "ArtifactSummaryRead",
         "type": "object"
       },
+      "AttachmentKind": {
+        "enum": [
+          "document",
+          "image"
+        ],
+        "type": "string"
+      },
+      "AttachmentRead": {
+        "description": "Browser representation of one immutable Message attachment.",
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttachmentKind"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filename",
+          "id",
+          "kind",
+          "mime_type",
+          "size_bytes"
+        ],
+        "title": "AttachmentRead",
+        "type": "object"
+      },
       "AuthoritativeScanRange": {
         "additionalProperties": false,
         "description": "Exact time range scanned authoritatively by Health Connect.",
@@ -791,6 +832,13 @@
       "ConversationTurnRead": {
         "description": "Flat durable turn state used for queue restoration and deep links.",
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRead"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -879,6 +927,7 @@
           }
         },
         "required": [
+          "attachments",
           "completed_at",
           "conversation_id",
           "created_at",
@@ -4413,6 +4462,13 @@
       "MessageRead": {
         "description": "HTTP representation of a settled transcript row.",
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRead"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -4522,6 +4578,7 @@
           }
         },
         "required": [
+          "attachments",
           "content",
           "conversation_id",
           "created_at",
@@ -7371,6 +7428,45 @@
         "summary": "Get Artifact Version"
       }
     },
+    "/api/attachments/{attachment_id}": {
+      "get": {
+        "description": "Download one immutable attachment through browser authentication.",
+        "operationId": "download_attachment_api_attachments__attachment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Attachment"
+      }
+    },
     "/api/auth/login": {
       "post": {
         "description": "Authenticate with the app password and set a session cookie.",
@@ -7965,6 +8061,47 @@
           }
         },
         "summary": "Archive Conversation"
+      }
+    },
+    "/api/conversations/{conversation_id}/attachments": {
+      "post": {
+        "description": "Stage one validated immutable file for a later Conversation turn.",
+        "operationId": "upload_attachment_api_conversations__conversation_id__attachments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Attachment"
       }
     },
     "/api/conversations/{conversation_id}/dream-now": {

@@ -58,6 +58,10 @@ _Avoid_: pi turn, agent run, Message
 One canonical ordered transcript entry within a Conversation turn, including its speaker or execution role. User Messages are conversational Evidence. Scheduled Messages record a Scheduled occurrence; Health Messages record a Health moment. Both are context rather than fresh user Evidence and cannot authorize Product observation capture, email-to-Evidence promotion, or another capability requiring fresh active-turn user Evidence, though their turns retain ordinary tools. Because pi RPC accepts prompts only as user-role input, Tether wraps their canonical content with host-owned context instructions before execution while preserving the Message unchanged. Assistant, reasoning, and tool Messages are also context only unless they contain separately verified Evidence.
 _Avoid_: pi message, session entry, Conversation turn
 
+**Message attachment**:
+One immutable file carried by a user Message, such as an image, PDF, or text document. Its original bytes are canonical Evidence with the Message. A staged upload becomes a Message attachment only when its Conversation turn is accepted; an abandoned upload is not Evidence. Text extracted for agent reading is a derivative view of the file, never independent Evidence.
+_Avoid_: upload, agent file, document Message
+
 **Confined program**:
 One fresh, bounded TypeScript/JavaScript execution inside an `execute_tools` call. It may sequence, parallelize, filter, and aggregate generated Tether tool calls, but has no ambient filesystem, process, environment, network, packages, persistence, or durable child identity. Each nested call still crosses its existing host authorization and tracing boundary; the outer tool call remains the one transcript Message.
 _Avoid_: shell, agent, workflow, pi session

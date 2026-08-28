@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
 
-import type { ConversationTurn, Message } from "./host/chat";
+import type { Attachment, ConversationTurn, Message } from "./host/chat";
 import type { ChatFrame, ReplyMode } from "./chat-bus";
 import {
   deriveRows,
@@ -20,6 +20,7 @@ const MESSAGES_PAGE_SIZE = 30;
 
 export interface QueuedPrompt {
   id: number;
+  attachments: Attachment[];
   content: string;
   conversationId: string;
   replyMode: ReplyMode;
@@ -45,6 +46,7 @@ export interface LiveChatTransport {
     content: string,
     replyMode: ReplyMode,
     requestId: string,
+    attachmentIds: readonly string[],
   ): void;
 }
 
@@ -95,13 +97,16 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const [turn, setTurn] = createSignal(emptyTurn());
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([]);
   const visibleQueuedPrompts = createMemo(() =>
-    queuedPrompts().map(({ content, id, replyMode, retryable, turnId }) => ({
-      content,
-      id,
-      replyMode,
-      retryable,
-      turnId,
-    })),
+    queuedPrompts().map(
+      ({ attachments, content, id, replyMode, retryable, turnId }) => ({
+        attachments,
+        content,
+        id,
+        replyMode,
+        retryable,
+        turnId,
+      }),
+    ),
   );
   const [, setOutboundPrompt] = createSignal<QueuedPrompt | null>(null);
   const [awaitingAgentEnd, setAwaitingAgentEnd] = createSignal(false);
@@ -200,6 +205,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     Array.from(accumulated().values())
       .sort((left, right) => left.seq - right.seq)
       .map((message) => ({
+        attachments: message.attachments,
         createdAt: message.created_at,
         id: message.id,
         role: message.role,
@@ -329,6 +335,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
             .filter((durableTurn) => !seen.has(durableTurn.id))
             .map((durableTurn) => {
               const prompt: QueuedPrompt = {
+                attachments: durableTurn.attachments,
                 content: durableTurn.prompt,
                 conversationId,
                 id: nextQueuedPromptId,
@@ -473,7 +480,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     setInterrupted(false);
     setOutboundPrompt(prompt);
     setActiveTurnConversationId(prompt.conversationId);
-    setTurn(startTurn(prompt.content, now(), prompt.turnId));
+    setTurn(
+      startTurn(prompt.content, now(), prompt.turnId, prompt.attachments),
+    );
     runningPrompt = prompt;
     runningReplyMode = prompt.replyMode;
     toolPhaseActive = false;
@@ -493,17 +502,25 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       prompt.content,
       prompt.replyMode,
       prompt.requestId,
+      prompt.attachments.map((attachment) => attachment.id),
     );
   };
 
-  const sendPrompt = (untrimmedContent: string) => {
+  const sendPrompt = (
+    untrimmedContent: string,
+    attachments: Attachment[] = [],
+  ) => {
     const content = untrimmedContent.trim();
     const conversationId = dependencies.conversationId();
-    if (content.length === 0 || conversationId === undefined) {
+    if (
+      (content.length === 0 && attachments.length === 0) ||
+      conversationId === undefined
+    ) {
       return;
     }
     setError(undefined);
     const prompt: QueuedPrompt = {
+      attachments,
       content,
       conversationId,
       id: nextQueuedPromptId,
@@ -520,7 +537,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     const conversationId = dependencies.conversationId();
     const current = queuedPrompts().find((prompt) => prompt.id === promptId);
     if (
-      content.length === 0 ||
+      (content.length === 0 && current?.attachments.length === 0) ||
       conversationId === undefined ||
       current?.turnId === undefined
     ) {

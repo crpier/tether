@@ -41,6 +41,7 @@ import type { JSX } from "solid-js";
 import { useAppContext, useHost } from "../app-context";
 import {
   conversationLabel,
+  type Attachment,
   type ChatHost,
   type Conversation,
   type ConversationTurn,
@@ -103,6 +104,9 @@ const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
 
 const CHAT_INPUT_MAX_ROWS = 10;
+const MAX_MESSAGE_ATTACHMENTS = 4;
+const ATTACHMENT_ACCEPT =
+  "image/png,image/jpeg,image/webp,application/pdf,text/*,application/json,application/xml,.md,.markdown,.csv,.tsv,.toml,.yaml,.yml";
 
 function fitChatInputToContent(element: HTMLTextAreaElement): void {
   element.style.height = "auto";
@@ -621,6 +625,64 @@ function MessageActions(props: {
   );
 }
 
+function AttachmentList(props: {
+  attachments: readonly Attachment[];
+  onRemove?: (attachmentId: string) => void;
+}) {
+  return (
+    <div class="flex flex-wrap gap-2" role="list">
+      <For each={props.attachments}>
+        {(attachment) => (
+          <div
+            class="bg-background/60 flex max-w-full items-center gap-2 rounded-md border p-1.5"
+            role="listitem"
+          >
+            <Show
+              fallback={
+                <a
+                  class="text-primary max-w-56 truncate text-xs font-medium hover:underline"
+                  href={`/api/attachments/${attachment.id}`}
+                  target="_blank"
+                >
+                  {attachment.filename}
+                </a>
+              }
+              when={attachment.kind === "image"}
+            >
+              <a
+                aria-label={`Open ${attachment.filename}`}
+                href={`/api/attachments/${attachment.id}`}
+                target="_blank"
+              >
+                <img
+                  alt={attachment.filename}
+                  class="max-h-32 max-w-48 rounded object-contain"
+                  src={`/api/attachments/${attachment.id}`}
+                />
+              </a>
+            </Show>
+            <Show when={attachment.kind === "image"}>
+              <span class="max-w-40 truncate text-xs">
+                {attachment.filename}
+              </span>
+            </Show>
+            <Show when={props.onRemove !== undefined}>
+              <button
+                aria-label={`Remove ${attachment.filename}`}
+                class="flex size-6 shrink-0 items-center justify-center rounded hover:bg-black/10 dark:hover:bg-white/10"
+                onClick={() => props.onRemove?.(attachment.id)}
+                type="button"
+              >
+                ×
+              </button>
+            </Show>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
 function MessageRow(props: {
   isSpoken: (text: string) => boolean;
   row: DisplayRow;
@@ -751,6 +813,9 @@ function MessageRow(props: {
                     </Show>
                   </div>
                 )}
+              </Show>
+              <Show when={(message().attachments?.length ?? 0) > 0}>
+                <AttachmentList attachments={message().attachments ?? []} />
               </Show>
               <Show
                 when={
@@ -997,8 +1062,14 @@ export function ChatPage() {
   const promptParam = searchParams.prompt;
   const starterPrompt = typeof promptParam === "string" ? promptParam : "";
   const [draft, setDraft] = createSignal(starterPrompt);
+  const [draftAttachments, setDraftAttachments] = createSignal<Attachment[]>(
+    [],
+  );
+  const [attachmentError, setAttachmentError] = createSignal<string>();
+  const [uploadingAttachments, setUploadingAttachments] = createSignal(false);
   const [newChatPending, setNewChatPending] = createSignal(false);
   const [newChatFailed, setNewChatFailed] = createSignal(false);
+  let attachmentInput: HTMLInputElement | undefined;
   let messageInput: HTMLTextAreaElement | undefined;
   const [editingPromptId, setEditingPromptId] = createSignal<number | null>(
     null,
@@ -1007,7 +1078,11 @@ export function ChatPage() {
   const [openArtifact, setOpenArtifact] = createSignal<ArtifactPointer | null>(
     null,
   );
-  const canSend = createMemo(() => draft().trim().length > 0);
+  const canSend = createMemo(
+    () =>
+      !uploadingAttachments() &&
+      (draft().trim().length > 0 || draftAttachments().length > 0),
+  );
 
   createEffect(() => {
     draft();
@@ -1058,6 +1133,14 @@ export function ChatPage() {
         : requestedConversationQuery.data,
   );
   const conversationId = createMemo(() => conversation()?.id);
+  createEffect((previousId: string | undefined) => {
+    const currentId = conversationId();
+    if (previousId !== undefined && currentId !== previousId) {
+      setAttachmentError(undefined);
+      setDraftAttachments([]);
+    }
+    return currentId;
+  }, undefined);
   const turnParam = createMemo(() => {
     const turn = searchParams.turn;
     return typeof turn === "string" && turn.length > 0 ? turn : undefined;
@@ -1155,8 +1238,8 @@ export function ChatPage() {
       abort: (id, turnId) => {
         bus()?.abort(id, turnId);
       },
-      sendPrompt: (id, content, replyMode, requestId) => {
-        bus()?.sendPrompt(id, content, replyMode, requestId);
+      sendPrompt: (id, content, replyMode, requestId, attachmentIds) => {
+        bus()?.sendPrompt(id, content, replyMode, requestId, attachmentIds);
       },
     },
   });
@@ -1326,15 +1409,55 @@ export function ChatPage() {
     }
   });
 
+  const attachFiles = async (files: readonly File[]) => {
+    const currentConversationId = conversationId();
+    if (
+      currentConversationId === undefined ||
+      files.length === 0 ||
+      uploadingAttachments()
+    ) {
+      return;
+    }
+    const remaining = MAX_MESSAGE_ATTACHMENTS - draftAttachments().length;
+    if (files.length > remaining) {
+      setAttachmentError("A message can include up to 4 files.");
+      return;
+    }
+    setAttachmentError(undefined);
+    setUploadingAttachments(true);
+    try {
+      for (const file of files) {
+        const attachment = await api.uploadAttachment(
+          currentConversationId,
+          file,
+        );
+        if (conversationId() === currentConversationId) {
+          setDraftAttachments((current) => [...current, attachment]);
+        }
+      }
+    } catch (error) {
+      setAttachmentError(
+        error instanceof Error ? error.message : "File upload failed.",
+      );
+    } finally {
+      setUploadingAttachments(false);
+    }
+  };
+
   const sendPrompt = (overrideContent?: string) => {
     const content = (overrideContent ?? draft()).trim();
-    if (content.length === 0 || conversationId() === undefined) {
+    const attachments = draftAttachments();
+    if (
+      (content.length === 0 && attachments.length === 0) ||
+      conversationId() === undefined
+    ) {
       return;
     }
     // Barge-in (#546): the user taking over stops active playback.
     conversationMode.onPromptSent();
     setDraft("");
-    sendLivePrompt(content);
+    setDraftAttachments([]);
+    sendLivePrompt(content, attachments);
   };
 
   const beginEditingQueuedPrompt = (prompt: {
@@ -1698,15 +1821,28 @@ export function ChatPage() {
                         <Show
                           fallback={
                             <>
-                              <p class="whitespace-pre-wrap break-words text-sm">
-                                {prompt.content}
-                              </p>
+                              <Show when={prompt.content.length > 0}>
+                                <p class="whitespace-pre-wrap break-words text-sm">
+                                  {prompt.content}
+                                </p>
+                              </Show>
+                              <Show when={prompt.attachments.length > 0}>
+                                <AttachmentList
+                                  attachments={prompt.attachments}
+                                />
+                              </Show>
                               <div class="flex flex-wrap gap-2">
                                 <Button
+                                  disabled={prompt.attachments.length > 0}
                                   onClick={() => {
                                     beginEditingQueuedPrompt(prompt);
                                   }}
                                   size="sm"
+                                  title={
+                                    prompt.attachments.length > 0
+                                      ? "Messages with files cannot be edited after submission"
+                                      : undefined
+                                  }
                                   type="button"
                                   variant="outline"
                                 >
@@ -1715,6 +1851,9 @@ export function ChatPage() {
                                 <Button
                                   disabled={
                                     awaitingAgentEnd() ||
+                                    queuedPrompts().some(
+                                      (queued) => queued.attachments.length > 0,
+                                    ) ||
                                     (prompt.turnId === undefined &&
                                       prompt.retryable !== true)
                                   }
@@ -1760,7 +1899,8 @@ export function ChatPage() {
                           <div class="flex flex-wrap gap-2">
                             <Button
                               disabled={
-                                editingPromptContent().trim().length === 0
+                                editingPromptContent().trim().length === 0 &&
+                                prompt.attachments.length === 0
                               }
                               onClick={() => {
                                 saveQueuedPrompt(prompt.id);
@@ -1788,9 +1928,46 @@ export function ChatPage() {
                   </For>
                 </section>
               </Show>
+              <Show when={attachmentError()}>
+                {(message) => (
+                  <p class="text-destructive text-xs" role="alert">
+                    {message()}
+                  </p>
+                )}
+              </Show>
+              <Show when={uploadingAttachments()}>
+                <p class="text-muted-foreground text-xs" role="status">
+                  Uploading file…
+                </p>
+              </Show>
+              <Show when={draftAttachments().length > 0}>
+                <AttachmentList
+                  attachments={draftAttachments()}
+                  onRemove={(attachmentId) => {
+                    setDraftAttachments((current) =>
+                      current.filter(
+                        (attachment) => attachment.id !== attachmentId,
+                      ),
+                    );
+                  }}
+                />
+              </Show>
               <PromptInput
                 aria-label="Message composer"
                 class="bg-card flex items-end gap-1 rounded-xl border p-1 shadow-sm"
+                onDragOver={(event) => {
+                  const transfer = event.dataTransfer;
+                  if (transfer?.types.includes("Files") === true) {
+                    event.preventDefault();
+                  }
+                }}
+                onDrop={(event) => {
+                  const transfer = event.dataTransfer;
+                  if (transfer !== null && transfer.files.length > 0) {
+                    event.preventDefault();
+                    void attachFiles(Array.from(transfer.files));
+                  }
+                }}
                 role="group"
               >
                 <KitnTextarea
@@ -1802,6 +1979,13 @@ export function ChatPage() {
                     fitChatInputToContent(event.currentTarget);
                   }}
                   onKeyDown={onMessageKeyDown}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData?.files ?? []);
+                    if (files.length > 0) {
+                      event.preventDefault();
+                      void attachFiles(files);
+                    }
+                  }}
                   placeholder={
                     conversationMode.enabled()
                       ? "Reply spoken…"
@@ -1820,6 +2004,35 @@ export function ChatPage() {
                   value={draft()}
                 />
                 <PromptInputActions class="shrink-0 gap-1">
+                  <input
+                    accept={ATTACHMENT_ACCEPT}
+                    aria-label="Attach files"
+                    class="sr-only"
+                    multiple
+                    onChange={(event) => {
+                      const files = Array.from(event.currentTarget.files ?? []);
+                      event.currentTarget.value = "";
+                      void attachFiles(files);
+                    }}
+                    ref={(element) => {
+                      attachmentInput = element;
+                    }}
+                    type="file"
+                  />
+                  <Button
+                    aria-label="Add files"
+                    disabled={
+                      uploadingAttachments() ||
+                      draftAttachments().length >= MAX_MESSAGE_ATTACHMENTS
+                    }
+                    onClick={() => attachmentInput?.click()}
+                    size="icon-sm"
+                    title="Add files"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <span aria-hidden="true">＋</span>
+                  </Button>
                   <VoiceComposerControls
                     active={() => conversationMode.enabled()}
                     autoStartSignal={() => conversationMode.voiceAutoStart()}

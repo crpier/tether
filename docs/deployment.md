@@ -454,7 +454,7 @@ Nightly `restic` → Backblaze B2, client-side encrypted, run by a systemd timer
 lifecycle). The script uses Python's SQLite driver inside the container to make
 independent, consistent `VACUUM INTO` snapshots of `/data/tether.sqlite3` and
 `/data/telemetry.sqlite3`, then backs up both snapshots, the KB's top-level
-Markdown and retained pi sessions, and `.env` in one restic run. Rebuildable
+Markdown, Message attachments, retained pi sessions, and `.env` in one restic run. Rebuildable
 Lance indexes are excluded instead of being copied through the VM's bounded
 `/tmp` tmpfs. Failure to snapshot or copy either database fails the whole run;
 a partial source-of-truth backup is never reported as successful.
@@ -466,6 +466,7 @@ Current coverage is intentionally explicit:
 
 - Included: both SQLite sources of truth (`tether.sqlite3` and
   `telemetry.sqlite3`), curated memories under `/data/kb/memory/**/*.md`,
+  immutable Message attachments under `/data/kb/uploads`,
   `/data/kb/pi-sessions`, and production `.env`. Hidden/editor paths and
   symlinks inside the Memory workspace are excluded.
 - Excluded as rebuildable: `/data/kb/index`, `/data/kb/transcript-index`, and

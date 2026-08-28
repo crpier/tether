@@ -134,6 +134,7 @@ async def _compose_app_runtime(
         AppRuntime(
             app_password=dependencies.config.app_password,
             artifact_service=core.artifact_service,
+            attachment_service=core.attachment_service,
             bucket_item_search_service=core.bucket_item_search_service,
             bucket_item_service=core.bucket_item_service,
             conversation_runtime_registry=core.conversation_runtime_registry,

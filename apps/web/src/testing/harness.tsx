@@ -30,6 +30,7 @@ export function createBusHarness(): {
   createChatBus: CreateChatBus;
   emit(frame: ChatFrame): void;
   sent: {
+    attachmentIds?: readonly string[];
     content?: string;
     conversationId: string;
     replyMode?: "spoken" | "text";
@@ -41,6 +42,7 @@ export function createBusHarness(): {
   let closed = false;
   let handlers: ChatBusHandlers | undefined;
   const sent: {
+    attachmentIds?: readonly string[];
     content?: string;
     conversationId: string;
     replyMode?: "spoken" | "text";
@@ -58,8 +60,20 @@ export function createBusHarness(): {
     requestSessionStatus(conversationId) {
       statusRequests.push(conversationId);
     },
-    sendPrompt(conversationId, content, replyMode) {
-      sent.push({ content, conversationId, replyMode, type: "prompt" });
+    sendPrompt(
+      conversationId,
+      content,
+      replyMode,
+      _requestId,
+      attachmentIds = [],
+    ) {
+      sent.push({
+        ...(attachmentIds.length === 0 ? {} : { attachmentIds }),
+        content,
+        conversationId,
+        replyMode,
+        type: "prompt",
+      });
     },
   };
   return {

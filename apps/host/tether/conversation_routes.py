@@ -15,6 +15,8 @@ from snekql.sqlite import Fetched, select
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from tether.attachment_routes import AttachmentRead
+from tether.attachments import AttachmentService
 from tether.chat_prompt import ReplyMode
 from tether.conversation_model import (
     ConversationArchiveBlockedError,
@@ -299,6 +301,7 @@ class ConversationTurnSummaryRead(BaseModel):
 class ConversationTurnRead(BaseModel):
     """Flat durable turn state used for queue restoration and deep links."""
 
+    attachments: list[AttachmentRead]
     completed_at: datetime | None
     conversation_id: UUID7
     created_at: datetime
@@ -313,9 +316,15 @@ class ConversationTurnRead(BaseModel):
     status: ConversationTurnStatus
 
     @classmethod
-    def from_turn(cls, turn: ConversationTurn[Fetched]) -> ConversationTurnRead:
+    def from_turn(
+        cls,
+        turn: ConversationTurn[Fetched],
+        *,
+        attachments: list[AttachmentRead] | None = None,
+    ) -> ConversationTurnRead:
         """Render stable lifecycle state without execution diagnostics."""
         return cls(
+            attachments=[] if attachments is None else attachments,
             completed_at=turn.completed_at,
             conversation_id=turn.conversation_id,
             created_at=turn.created_at,
@@ -334,6 +343,7 @@ class ConversationTurnRead(BaseModel):
 class MessageRead(BaseModel):
     """HTTP representation of a settled transcript row."""
 
+    attachments: list[AttachmentRead]
     content: str
     conversation_id: UUID7
     created_at: datetime
@@ -353,10 +363,12 @@ class MessageRead(BaseModel):
         cls,
         message: Message[Fetched],
         *,
+        attachments: list[AttachmentRead] | None = None,
         turn: ConversationTurnSummaryRead | None = None,
     ) -> MessageRead:
         """Decode stored JSON fields at the HTTP presentation boundary."""
         return cls(
+            attachments=[] if attachments is None else attachments,
             content=message.content,
             conversation_id=message.conversation_id,
             created_at=message.created_at,
@@ -445,6 +457,7 @@ class _ConversationRuntimeRegistry(Protocol):
 class _ConversationRuntime(Protocol):
     """Conversation dependencies available while serving requests."""
 
+    attachment_service: AttachmentService
     conversation_runtime_registry: _ConversationRuntimeRegistry
     conversation_service: ConversationService
     dreaming_enabled: bool
@@ -512,6 +525,9 @@ async def _messages_response(
         )
     except ConversationNotFoundError:
         return JSONResponse({"detail": "conversation not found"}, status_code=404)
+    attachments_by_message = await _runtime(
+        request
+    ).attachment_service.fetch_for_messages({message.id for message in messages})
     turn_ids = {message.turn_id for message in messages if message.turn_id is not None}
     async with _runtime(request).conversation_service.database.transaction() as tx:
         turns = (
@@ -552,6 +568,10 @@ async def _messages_response(
         [
             MessageRead.from_message(
                 message,
+                attachments=[
+                    AttachmentRead.from_attachment(attachment)
+                    for attachment in attachments_by_message.get(message.id, [])
+                ],
                 turn=(
                     None if message.turn_id is None else summaries.get(message.turn_id)
                 ),
@@ -1026,8 +1046,24 @@ async def list_nonterminal_turns(request: Request, conversation_id: str) -> Resp
             .where(ConversationTurn.status.in_("pending", "running"))
             .order_by(ConversationTurn.turn_seq.asc())
         )
+        attachments_by_turn = {
+            turn.id: await runtime.attachment_service.fetch_for_turn(
+                transaction,
+                turn.id,
+            )
+            for turn in turns
+        }
     return JSONResponse(
-        [ConversationTurnRead.from_turn(turn).model_dump(mode="json") for turn in turns]
+        [
+            ConversationTurnRead.from_turn(
+                turn,
+                attachments=[
+                    AttachmentRead.from_attachment(attachment)
+                    for attachment in attachments_by_turn[turn.id]
+                ],
+            ).model_dump(mode="json")
+            for turn in turns
+        ]
     )
 
 
@@ -1053,9 +1089,24 @@ async def fetch_turn_detail(
             .where(ConversationTurn.id.eq(parsed_turn_id))
             .where(ConversationTurn.conversation_id.eq(parsed_conversation_id))
         )
+        attachments = (
+            []
+            if turn is None
+            else await runtime.attachment_service.fetch_for_turn(
+                transaction,
+                turn.id,
+            )
+        )
     if turn is None:
         return JSONResponse({"detail": "turn not found"}, status_code=404)
-    return JSONResponse(ConversationTurnRead.from_turn(turn).model_dump(mode="json"))
+    return JSONResponse(
+        ConversationTurnRead.from_turn(
+            turn,
+            attachments=[
+                AttachmentRead.from_attachment(attachment) for attachment in attachments
+            ],
+        ).model_dump(mode="json")
+    )
 
 
 @router.get(

@@ -792,6 +792,7 @@ def authenticated_user_can_list_nonterminal_conversation_turns() -> None:
         response.json(),
         [
             {
+                "attachments": [],
                 "completed_at": None,
                 "conversation_id": conversation_id,
                 "created_at": response.json()[0]["created_at"],
@@ -1688,6 +1689,87 @@ def websocket_queues_overlapping_prompts_in_fifo_order() -> None:
     assert_eq(frame["event"], "user_message")
     assert_true(first_user["turn_id"] != frame["turn_id"])
     assert_eq(fake_runtime.client.commands, ["prompt", "prompt"])
+
+
+@test()
+def websocket_accepts_an_image_only_message() -> None:
+    """A user may submit attached visual Evidence without filler text."""
+    fake_runtime = FakeRuntime(
+        [MessageSettled(reasoning="", text="A small image."), AgentEnded()]
+    )
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        upload = client.post(
+            f"/api/conversations/{conversation_id}/attachments",
+            files={
+                "file": (
+                    "pixel.png",
+                    b"\x89PNG\r\n\x1a\nimage-body",
+                    "image/png",
+                )
+            },
+        )
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "attachment_ids": [upload.json()["id"]],
+                    "conversation_id": conversation_id,
+                    "request_id": str(uuid7()),
+                    "type": "prompt",
+                }
+            )
+            _ = receive_event(websocket, "turn_ended")
+        messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
+
+    assert_eq(upload.status_code, 201)
+    assert_eq(messages[0]["content"], "")
+    assert_eq(messages[0]["attachments"][0]["id"], upload.json()["id"])
+
+
+@test()
+def nonterminal_turns_expose_attachments_for_queue_restoration() -> None:
+    """A refreshed browser can restore files on durable queued turns."""
+    fake_runtime = BlockingRuntime()
+    with TemporaryDirectory() as directory, make_client(Path(directory)) as client:
+        _set_runtime_registry(client, FakeRuntimeRegistry(fake_runtime))
+        login(client)
+        conversation_id = client.get("/api/conversations").json()[0]["id"]
+        upload = client.post(
+            f"/api/conversations/{conversation_id}/attachments",
+            files={
+                "file": (
+                    "notes.txt",
+                    b"durable queue context",
+                    "text/plain",
+                )
+            },
+        )
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "attachment_ids": [upload.json()["id"]],
+                    "content": "Read this",
+                    "conversation_id": conversation_id,
+                    "request_id": str(uuid7()),
+                    "type": "prompt",
+                }
+            )
+            user_frame = receive_event(websocket, "user_message")
+            turns = client.get(f"/api/conversations/{conversation_id}/turns").json()
+            websocket.send_json(
+                {
+                    "conversation_id": conversation_id,
+                    "turn_id": user_frame["turn_id"],
+                    "type": "abort",
+                }
+            )
+            _ = receive_event(websocket, "abort_ack")
+
+    assert_eq(turns[0]["attachments"][0]["id"], upload.json()["id"])
 
 
 @test()

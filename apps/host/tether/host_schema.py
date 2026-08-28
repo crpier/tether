@@ -3,6 +3,7 @@
 from snekql.sqlite import Database
 
 from tether.artifact_store import create_artifact_schema
+from tether.attachment_store import create_attachment_schema
 from tether.bucket_item_store import create_bucket_item_schema
 from tether.conversation_store import create_conversation_schema
 from tether.dreaming_store import create_dreaming_schema
@@ -28,6 +29,7 @@ async def create_host_schema(database: Database) -> None:
     await create_memory_schema(database)
     await create_bucket_item_schema(database)
     await create_conversation_schema(database)
+    await create_attachment_schema(database)
     await create_dreaming_schema(database)
     await create_health_moment_schema(database)
     await create_health_plan_schema(database)

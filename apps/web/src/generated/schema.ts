@@ -92,6 +92,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/attachments/{attachment_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Download Attachment
+     * @description Download one immutable attachment through browser authentication.
+     */
+    get: operations["download_attachment_api_attachments__attachment_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/login": {
     parameters: {
       query?: never;
@@ -358,6 +378,26 @@ export interface paths {
      * @description Archive a Scoped Conversation whose dependent work has settled.
      */
     post: operations["archive_conversation_api_conversations__conversation_id__archive_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{conversation_id}/attachments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload Attachment
+     * @description Stage one validated immutable file for a later Conversation turn.
+     */
+    post: operations["upload_attachment_api_conversations__conversation_id__attachments_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1779,6 +1819,26 @@ export interface components {
       /** Version */
       version: number;
     };
+    /** @enum {string} */
+    AttachmentKind: "document" | "image";
+    /**
+     * AttachmentRead
+     * @description Browser representation of one immutable Message attachment.
+     */
+    AttachmentRead: {
+      /** Filename */
+      filename: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      kind: components["schemas"]["AttachmentKind"];
+      /** Mime Type */
+      mime_type: string;
+      /** Size Bytes */
+      size_bytes: number;
+    };
     /**
      * AuthoritativeScanRange
      * @description Exact time range scanned authoritatively by Health Connect.
@@ -2018,6 +2078,8 @@ export interface components {
      * @description Flat durable turn state used for queue restoration and deep links.
      */
     ConversationTurnRead: {
+      /** Attachments */
+      attachments: components["schemas"]["AttachmentRead"][];
       /** Completed At */
       completed_at: string | null;
       /**
@@ -3458,6 +3520,8 @@ export interface components {
      * @description HTTP representation of a settled transcript row.
      */
     MessageRead: {
+      /** Attachments */
+      attachments: components["schemas"]["AttachmentRead"][];
       /** Content */
       content: string;
       /**
@@ -4794,6 +4858,37 @@ export interface operations {
       };
     };
   };
+  download_attachment_api_attachments__attachment_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        attachment_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   login_api_auth_login_post: {
     parameters: {
       query?: never;
@@ -5250,6 +5345,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ConversationRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_attachment_api_conversations__conversation_id__attachments_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AttachmentRead"];
         };
       };
       /** @description Validation Error */
