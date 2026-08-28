@@ -350,6 +350,77 @@ describe("live chat turn", () => {
     dispose();
   });
 
+  test("a new prompt looks sent until acceptance is late", () => {
+    vi.useFakeTimers();
+    createRoot((dispose) => {
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("send now");
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "pending", turn_id: "turn-1" }),
+      );
+
+      expect(turn.rows()).toMatchObject([
+        { kind: "message", role: "user", text: "send now" },
+      ]);
+      expect(turn.queuedPrompts()).toEqual([]);
+
+      vi.advanceTimersByTime(299);
+      expect(turn.rows()).toMatchObject([
+        { kind: "message", role: "user", text: "send now" },
+      ]);
+      expect(turn.queuedPrompts()).toEqual([]);
+
+      vi.advanceTimersByTime(1);
+      expect(turn.rows()).toEqual([]);
+      expect(turn.queuedPrompts()).toMatchObject([{ content: "send now" }]);
+      dispose();
+    });
+    vi.useRealTimers();
+  });
+
+  test("prompt acceptance keeps the optimistic transcript row", () => {
+    vi.useFakeTimers();
+    createRoot((dispose) => {
+      const turn = createLiveChatTurn({
+        conversationId: () => "conversation-1",
+        history: {
+          listMessages: () => Promise.resolve([]),
+          settled: () => undefined,
+        },
+        transport: {
+          abort: () => undefined,
+          sendPrompt: () => undefined,
+        },
+      });
+
+      turn.sendPrompt("send now");
+      turn.handleFrame(
+        chat({ event: "turn_queued", status: "running", turn_id: "turn-1" }),
+      );
+      expect(turn.durablePendingCount()).toBe(0);
+      turn.handleFrame(chat({ event: "user_message", turn_id: "turn-1" }));
+      vi.advanceTimersByTime(300);
+
+      expect(turn.rows()).toMatchObject([
+        { kind: "message", role: "user", text: "send now" },
+      ]);
+      expect(turn.queuedPrompts()).toEqual([]);
+      dispose();
+    });
+    vi.useRealTimers();
+  });
+
   test("a rejected prompt remains queued for retry", () => {
     createRoot((dispose) => {
       const turn = createLiveChatTurn({
@@ -855,7 +926,7 @@ describe("live chat turn", () => {
     });
   });
 
-  test("a provisional prompt stays queued outside the canonical transcript", () => {
+  test("a rejected optimistic prompt moves from the transcript to the retry queue", () => {
     createRoot((dispose) => {
       const turn = createLiveChatTurn({
         conversationId: () => "conversation-1",
@@ -871,10 +942,10 @@ describe("live chat turn", () => {
 
       turn.sendPrompt("not accepted yet");
 
-      expect(turn.rows()).toEqual([]);
-      expect(turn.queuedPrompts()).toMatchObject([
-        { content: "not accepted yet" },
+      expect(turn.rows()).toMatchObject([
+        { kind: "message", role: "user", text: "not accepted yet" },
       ]);
+      expect(turn.queuedPrompts()).toEqual([]);
 
       turn.handleFrame(chat({ detail: "rejected", event: "error" }));
 

@@ -540,6 +540,43 @@ describe("Chat view", () => {
     expect(await screen.findByText("Hi there")).toBeInTheDocument();
   });
 
+  test("preserves prompt whitespace and newlines", async () => {
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+    const content = "  line one\nline two  ";
+
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: content } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(bus.sent).toEqual([
+      {
+        content,
+        conversationId: conversation.id,
+        replyMode: "text",
+        type: "prompt",
+      },
+    ]);
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "turn_queued",
+      status: "running",
+      turn_id: "turn-1",
+      type: "chat",
+    });
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "user_message",
+      turn_id: "turn-1",
+      type: "chat",
+    });
+
+    const userMessage = screen.getByRole("article", { name: "You message" });
+    expect(userMessage.querySelector(".chat-message-plain")?.textContent).toBe(
+      content,
+    );
+  });
+
   test("preserves the live Kitn message identity while text streams", async () => {
     const host = new FakeHost({ authenticated: true });
     const bus = renderApp(host);
@@ -983,6 +1020,38 @@ describe("Chat view", () => {
       },
     ]);
     expect(screen.getByText("Hello")).toBeInTheDocument();
+    bus.emit({
+      conversation_id: conversation.id,
+      event: "turn_queued",
+      status: "running",
+      turn_id: "turn-1",
+      type: "chat",
+    });
+    expect(screen.queryByText(/messages queued/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Queued messages" }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("mobile Enter inserts a newline instead of sending", async () => {
+    vi.stubGlobal("matchMedia", (query: string): MediaQueryList => ({
+      addEventListener: () => undefined,
+      addListener: () => undefined,
+      dispatchEvent: () => false,
+      matches: query === "(max-width: 639px)",
+      media: query,
+      onchange: null,
+      removeEventListener: () => undefined,
+      removeListener: () => undefined,
+    }));
+    const host = new FakeHost({ authenticated: true });
+    const bus = renderApp(host);
+
+    const messageBox = textarea(await screen.findByLabelText("Message"));
+    fireEvent.input(messageBox, { target: { value: "line one" } });
+    fireEvent.keyDown(messageBox, { key: "Enter" });
+
+    expect(bus.sent).toEqual([]);
   });
 
   test("sending during generation visibly queues the message", async () => {

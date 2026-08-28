@@ -104,6 +104,7 @@ const bubbleLabelClass =
   "text-[0.7rem] font-semibold tracking-wide uppercase opacity-70";
 
 const CHAT_INPUT_MAX_ROWS = 10;
+const MOBILE_COMPOSER_QUERY = "(max-width: 639px)";
 const MAX_MESSAGE_ATTACHMENTS = 4;
 const ATTACHMENT_ACCEPT =
   "image/png,image/jpeg,image/webp,application/pdf,text/*,application/json,application/xml,.md,.markdown,.csv,.tsv,.toml,.yaml,.yml";
@@ -541,10 +542,10 @@ function MessageActions(props: {
 
   return (
     <KitnMessageActions class="contents text-xs">
-      <div class="absolute top-1 right-2 flex gap-0.5 opacity-60 focus-within:opacity-100 hover:opacity-100">
+      <div class="absolute top-1 right-2 flex gap-0.5">
         <button
           aria-label="Copy message"
-          class="flex size-7 items-center justify-center rounded-md hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current/40 dark:hover:bg-white/10"
+          class="flex size-7 items-center justify-center rounded-md opacity-60 hover:bg-black/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current/40 dark:hover:bg-white/10"
           onClick={props.onCopy}
           title="Copy message"
           type="button"
@@ -554,7 +555,7 @@ function MessageActions(props: {
         <Show when={props.canRecordFeedback && feedbackStatus() !== "saved"}>
           <button
             aria-label="Record product feedback"
-            class="flex size-7 items-center justify-center rounded-md hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current/40 dark:hover:bg-white/10"
+            class="flex size-7 items-center justify-center rounded-md opacity-60 hover:bg-black/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current/40 dark:hover:bg-white/10"
             onClick={() => {
               setFeedbackOpen(true);
               setFeedbackStatus("idle");
@@ -1445,10 +1446,10 @@ export function ChatPage() {
   };
 
   const sendPrompt = (overrideContent?: string) => {
-    const content = (overrideContent ?? draft()).trim();
+    const content = overrideContent ?? draft();
     const attachments = draftAttachments();
     if (
-      (content.length === 0 && attachments.length === 0) ||
+      (content.trim().length === 0 && attachments.length === 0) ||
       conversationId() === undefined
     ) {
       return;
@@ -1491,13 +1492,16 @@ export function ChatPage() {
     sendPrompt();
   };
 
-  // Enter sends; Shift+Enter keeps the default newline. Single-tenant app, so a
-  // bare Enter is the expected fast path rather than chasing a submit button.
+  // Desktop Enter sends; mobile Enter and Shift+Enter keep the textarea's
+  // default newline behavior.
   const onMessageKeyDown: JSX.EventHandler<
     HTMLTextAreaElement,
     KeyboardEvent
   > = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    const mobile =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia(MOBILE_COMPOSER_QUERY).matches;
+    if (event.key === "Enter" && !event.shiftKey && !mobile) {
       event.preventDefault();
       sendPrompt();
     }
