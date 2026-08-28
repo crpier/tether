@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Accessor } from "solid-js";
 
 import type { Attachment, ConversationTurn, Message } from "./host/chat";
@@ -17,6 +17,7 @@ import {
 import { createSpokenStream } from "./spoken-stream";
 
 const MESSAGES_PAGE_SIZE = 30;
+const OPTIMISTIC_PROMPT_MS = 300;
 
 export interface QueuedPrompt {
   id: number;
@@ -27,6 +28,7 @@ export interface QueuedPrompt {
   requestId: string;
   retryable?: boolean;
   turnId?: string;
+  queuedVisible?: boolean;
 }
 
 export interface LiveChatHistory {
@@ -97,16 +99,16 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   const [turn, setTurn] = createSignal(emptyTurn());
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([]);
   const visibleQueuedPrompts = createMemo(() =>
-    queuedPrompts().map(
-      ({ attachments, content, id, replyMode, retryable, turnId }) => ({
+    queuedPrompts()
+      .filter((prompt) => prompt.queuedVisible !== false)
+      .map(({ attachments, content, id, replyMode, retryable, turnId }) => ({
         attachments,
         content,
         id,
         replyMode,
         retryable,
         turnId,
-      }),
-    ),
+      })),
   );
   const [, setOutboundPrompt] = createSignal<QueuedPrompt | null>(null);
   const [awaitingAgentEnd, setAwaitingAgentEnd] = createSignal(false);
@@ -140,6 +142,10 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   );
   const awaitingTickets: QueuedPrompt[] = [];
   const cancelAfterTicket = new Set<string>();
+  const optimisticPromptTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   let activeTurnId: string | undefined;
   let hydratedRunningConversationId: string | undefined;
   let runningPrompt: QueuedPrompt | null = null;
@@ -153,9 +159,27 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
   // assistant prose ends that phase and allows a later tool phase to cue.
   let toolPhaseActive = false;
 
+  const clearOptimisticPromptTimer = (requestId: string) => {
+    const timer = optimisticPromptTimers.get(requestId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      optimisticPromptTimers.delete(requestId);
+    }
+  };
+
+  onCleanup(() => {
+    for (const timer of optimisticPromptTimers.values()) {
+      clearTimeout(timer);
+    }
+    optimisticPromptTimers.clear();
+  });
+
   const durablePendingCount = createMemo(() =>
     durableTurnsReady()
-      ? queuedPrompts().filter((prompt) => prompt.turnId !== undefined).length
+      ? queuedPrompts().filter(
+          (prompt) =>
+            prompt.turnId !== undefined && prompt.queuedVisible !== false,
+        ).length
       : (dependencies.durablePendingCount?.() ?? 0),
   );
   const durableRunningTurnId = createMemo(() => {
@@ -398,6 +422,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       setSettledTurnIds(new Set<string>());
       awaitingTickets.splice(0);
       cancelAfterTicket.clear();
+      for (const requestId of optimisticPromptTimers.keys()) {
+        clearOptimisticPromptTimer(requestId);
+      }
       setOutboundPrompt(null);
       setAwaitingAgentEnd(false);
       setError(undefined);
@@ -506,38 +533,62 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
     );
   };
 
-  const sendPrompt = (
-    untrimmedContent: string,
-    attachments: Attachment[] = [],
-  ) => {
-    const content = untrimmedContent.trim();
+  const sendPrompt = (content: string, attachments: Attachment[] = []) => {
     const conversationId = dependencies.conversationId();
     if (
-      (content.length === 0 && attachments.length === 0) ||
+      (content.trim().length === 0 && attachments.length === 0) ||
       conversationId === undefined
     ) {
       return;
     }
     setError(undefined);
+    const optimistic = !busy();
     const prompt: QueuedPrompt = {
       attachments,
       content,
       conversationId,
       id: nextQueuedPromptId,
+      queuedVisible: !optimistic,
       replyMode: dependencies.replyMode?.() ?? "text",
       requestId: crypto.randomUUID(),
     };
     nextQueuedPromptId += 1;
+    if (optimistic) {
+      beginPrompt(prompt);
+    }
     setQueuedPrompts((current) => [...current, prompt]);
+    if (optimistic) {
+      const timer = setTimeout(() => {
+        optimisticPromptTimers.delete(prompt.requestId);
+        const pending = queuedPrompts().find(
+          (candidate) => candidate.requestId === prompt.requestId,
+        );
+        if (pending?.queuedVisible !== false) {
+          return;
+        }
+        if (runningPrompt?.requestId === prompt.requestId) {
+          runningPrompt = null;
+          setOutboundPrompt(null);
+          setTurn(emptyTurn());
+        }
+        setQueuedPrompts((current) =>
+          current.map((candidate) =>
+            candidate.requestId === prompt.requestId
+              ? { ...candidate, queuedVisible: true }
+              : candidate,
+          ),
+        );
+      }, OPTIMISTIC_PROMPT_MS);
+      optimisticPromptTimers.set(prompt.requestId, timer);
+    }
     submitPrompt(prompt);
   };
 
-  const editQueuedPrompt = (promptId: number, untrimmedContent: string) => {
-    const content = untrimmedContent.trim();
+  const editQueuedPrompt = (promptId: number, content: string) => {
     const conversationId = dependencies.conversationId();
     const current = queuedPrompts().find((prompt) => prompt.id === promptId);
     if (
-      (content.length === 0 && current?.attachments.length === 0) ||
+      (content.trim().length === 0 && current?.attachments.length === 0) ||
       conversationId === undefined ||
       current?.turnId === undefined
     ) {
@@ -567,6 +618,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       } else {
         dependencies.transport.abort(conversationId, prompt.turnId);
       }
+    }
+    if (prompt !== undefined) {
+      clearOptimisticPromptTimer(prompt.requestId);
     }
     setQueuedPrompts((current) =>
       current.filter((candidate) => candidate.id !== promptId),
@@ -714,6 +768,9 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         if (runningPrompt?.requestId === accepted.requestId) {
           runningPrompt = accepted;
         }
+        if (accepted.queuedVisible === false && frame.status === "running") {
+          clearOptimisticPromptTimer(accepted.requestId);
+        }
         setQueuedPrompts((current) =>
           current.map((prompt) =>
             prompt.requestId === accepted.requestId
@@ -746,6 +803,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
         }
       }
       if (queued !== undefined) {
+        clearOptimisticPromptTimer(queued.requestId);
         setQueuedPrompts((current) =>
           current.filter((prompt) => prompt.requestId !== queued.requestId),
         );
@@ -757,21 +815,24 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
       setOutboundPrompt(null);
     } else if (
       frame.turn_id === undefined &&
-      runningPrompt === null &&
       awaitingTickets.length > 0 &&
+      (runningPrompt === null ||
+        awaitingTickets[0]?.requestId === runningPrompt.requestId) &&
       frame.event !== "error" &&
       frame.event !== "abort_ack" &&
       frame.event !== "turn_ended"
     ) {
       // Older hosts and test transports may begin streaming before the durable
-      // ticket frames arrive. Keep that wire behavior usable without treating
-      // the provisional prompt as canonical transcript history.
+      // ticket frames arrive. Treat the first runtime frame as acceptance.
       const accepted = awaitingTickets.shift();
       if (accepted !== undefined) {
+        clearOptimisticPromptTimer(accepted.requestId);
         setQueuedPrompts((current) =>
           current.filter((prompt) => prompt.requestId !== accepted.requestId),
         );
-        beginPrompt(accepted);
+        if (runningPrompt?.requestId !== accepted.requestId) {
+          beginPrompt(accepted);
+        }
         setOutboundPrompt(null);
       }
     }
@@ -811,7 +872,7 @@ export function createLiveChatTurn(dependencies: LiveChatTurnDependencies) {
           setQueuedPrompts((current) =>
             current.map((prompt) =>
               prompt.requestId === rejectedPrompt.requestId
-                ? { ...prompt, retryable: true }
+                ? { ...prompt, queuedVisible: true, retryable: true }
                 : prompt,
             ),
           );

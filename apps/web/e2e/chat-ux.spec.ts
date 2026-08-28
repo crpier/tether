@@ -105,12 +105,21 @@ test("chat session controls and message actions work together", async ({
     0,
   );
   await expect(
-    page.getByRole("button", { name: "Copy message" }).locator("svg"),
-  ).toBeVisible();
+    page
+      .getByRole("article", { name: "You message" })
+      .locator(".chat-message-plain"),
+  ).toHaveCSS("white-space", "pre-wrap");
+  const copy = page.getByRole("button", { name: "Copy message" });
+  await expect(copy.locator("svg")).toBeVisible();
   const feedback = page.getByRole("button", {
     name: "Record product feedback",
   });
   await expect(feedback.locator("svg")).toBeVisible();
+  await expect(copy).toHaveCSS("opacity", "0.6");
+  await expect(feedback).toHaveCSS("opacity", "0.6");
+  await copy.hover();
+  await expect(copy).toHaveCSS("opacity", "1");
+  await expect(feedback).toHaveCSS("opacity", "0.6");
   await feedback.click();
   await page
     .getByRole("textbox", { name: "Expected behavior" })

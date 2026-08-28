@@ -347,6 +347,17 @@ test("phone sidebar opens from a right swipe at the left edge", async ({
   ).toBeVisible();
 });
 
+test("phone Enter inserts a composer newline", async ({ page, login }) => {
+  await page.setViewportSize(PHONE);
+  await login();
+
+  const input = page.getByRole("textbox", { name: "Message" });
+  await input.fill("line one");
+  await input.press("Enter");
+
+  await expect(input).toHaveValue("line one\n");
+});
+
 for (const viewport of [PHONE, DESKTOP]) {
   test(`chat composer is one compact row at ${viewport.width.toString()}px`, async ({
     page,
