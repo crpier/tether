@@ -33,6 +33,7 @@ from snektest import (
 from tether.conversation_model import MessageDraft, MessageRole
 from tether.conversation_store import (
     Conversation,
+    ConversationTurn,
     Message,
     create_conversation_schema,
 )
@@ -57,11 +58,7 @@ from tether.dreaming_store import (
     DreamRun,
     create_dreaming_schema,
 )
-from tether.email_evidence_store import (
-    EmailEvidencePromotion,
-    EmailEvidenceSnapshot,
-    create_email_evidence_schema,
-)
+from tether.email_evidence_store import create_email_evidence_schema
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
 
@@ -190,6 +187,104 @@ async def auto_run_enqueues_after_settling_window() -> None:
     assert_eq(run.status, "queued")
     assert_eq(run.evidence_start_seq, 1)
     assert_eq(run.evidence_end_seq, 1)
+
+
+@test()
+async def scheduled_assistant_conclusion_queues_assimilation() -> None:
+    """A succeeded unattended answer can open a Dreaming window without a user Message."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    async with conversation_service.database.transaction() as transaction:
+        turn = await transaction.execute(
+            insert(
+                ConversationTurn(
+                    conversation_id=conversation_id,
+                    origin="scheduled",
+                    status="succeeded",
+                    turn_seq=1,
+                )
+            ).returning()
+        )
+    _ = await conversation_service.append_message(
+        MessageDraft(
+            content="Review recent viewing patterns.",
+            conversation_id=conversation_id,
+            role="scheduled",
+            turn_id=turn.id,
+        )
+    )
+    conclusion = await conversation_service.append_message(
+        MessageDraft(
+            content="Recent viewing favors long-form technical interviews.",
+            conversation_id=conversation_id,
+            role="assistant",
+            turn_id=turn.id,
+        )
+    )
+
+    run = await dreaming_service.queue_assimilation_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+
+    assert run is not None
+    assert_eq(run.evidence_start_seq, 1)
+    assert_eq(run.evidence_end_seq, conclusion.seq)
+
+
+@test()
+async def assimilation_stops_before_a_nonterminal_turn() -> None:
+    """Dreaming cannot consume assistant output before its turn settles."""
+    conversation_service, dreaming_service, conversation_id = await _fixture()
+
+    prior = await _append(
+        conversation_service,
+        conversation_id=conversation_id,
+        role="user",
+        content="I prefer long-form interviews.",
+    )
+    await _retime(
+        prior.id,
+        database=conversation_service.database,
+        when=datetime.now(UTC) - timedelta(minutes=30),
+    )
+    async with conversation_service.database.transaction() as transaction:
+        running = await transaction.execute(
+            insert(
+                ConversationTurn(
+                    conversation_id=conversation_id,
+                    origin="scheduled",
+                    status="running",
+                    turn_seq=1,
+                )
+            ).returning()
+        )
+    _ = await conversation_service.append_message(
+        MessageDraft(
+            content="Analyze recent viewing.",
+            conversation_id=conversation_id,
+            role="scheduled",
+            turn_id=running.id,
+        )
+    )
+    _ = await conversation_service.append_message(
+        MessageDraft(
+            content="A still-running provisional conclusion.",
+            conversation_id=conversation_id,
+            role="assistant",
+            turn_id=running.id,
+        )
+    )
+
+    run = await dreaming_service.queue_assimilation_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+
+    assert run is not None
+    assert_eq(run.evidence_end_seq, prior.seq)
 
 
 @test()
@@ -658,91 +753,36 @@ async def production_executor_curates_evidence_into_claims() -> None:
 
 
 @test()
-async def production_executor_accepts_promoted_email_citation() -> None:
-    """Dreaming may support a nominated Claim with its exact email snapshot."""
+async def production_executor_accepts_final_assistant_message_citation() -> None:
+    """A succeeded turn's final answer may support an agent-derived Claim."""
     conversation_service, dreaming_service, conversation_id = await _fixture()
 
-    authorizing_message = await _append(
-        conversation_service,
-        conversation_id=conversation_id,
-        role="user",
-        content="Remember the dates from the booking email.",
-    )
-    async with conversation_service.database.transaction(mode="immediate") as tx:
-        snapshot = await tx.execute(
+    async with conversation_service.database.transaction() as transaction:
+        turn = await transaction.execute(
             insert(
-                EmailEvidenceSnapshot(
-                    body_chars=39,
-                    body_text="The apartment is booked for 12-18 June.",
-                    body_truncated=False,
-                    content_hash="source-hash",
-                    date_header="Tue, 7 Apr 2026 09:30:00 +0000",
-                    from_header="Alice <alice@example.com>",
-                    gmail_message_id="m1",
-                    subject="Lisbon booking",
-                    thread_id="t1",
+                ConversationTurn(
+                    conversation_id=conversation_id,
+                    origin="interactive",
+                    status="succeeded",
+                    turn_seq=1,
                 )
             ).returning()
         )
-        _ = await tx.execute(
-            insert(
-                EmailEvidencePromotion(
-                    authorizing_conversation_id=conversation_id,
-                    authorizing_message_id=cast("UUID7", authorizing_message.id),
-                    authorizing_message_seq=authorizing_message.seq,
-                    claim_hint="The Lisbon apartment is booked for 12-18 June.",
-                    snapshot_id=snapshot.id,
-                )
-            )
+    _ = await conversation_service.append_message(
+        MessageDraft(
+            content="What patterns are in my liked videos?",
+            conversation_id=conversation_id,
+            role="user",
+            turn_id=turn.id,
         )
-    run = await dreaming_service.queue_manual_run(
-        conversation_id,
-        logger=test_logger(),
-        now=datetime.now(UTC),
     )
-    assert run is not None
-    email_uri = f"tether://email/{snapshot.id}"
-
-    class _Runner:
-        def __init__(self) -> None:
-            self.prompts: list[str] = []
-
-        async def run(self, prompt: str) -> str:
-            self.prompts.append(prompt)
-            return (
-                "## Travel\n\n- Lisbon apartment booked for 12-18 June. "
-                f"[source]({email_uri})"
-            )
-
-    with TemporaryDirectory() as workspace_root:
-        runner = _Runner()
-        result = await ConversationWindowDreamingExecutor(
-            conversation_service,
-            workspace_root=Path(workspace_root),
-            curation_runner=runner,
-        )(run, logger=test_logger())
-
-        assert_eq(result.status, "success")
-        document = (
-            Path(workspace_root) / str(conversation_id) / f"{run.id}.md"
-        ).read_text(encoding="utf-8")
-
-    assert_eq(len(runner.prompts), 1)
-    assert "The apartment is booked for 12-18 June." in runner.prompts[0]
-    assert "The Lisbon apartment is booked for 12-18 June." in runner.prompts[0]
-    assert email_uri in document
-
-
-@test()
-async def production_executor_rejects_unpromoted_email_citation() -> None:
-    """Gmail context cannot support a Claim without a promoted snapshot."""
-    conversation_service, dreaming_service, conversation_id = await _fixture()
-
-    await _append(
-        conversation_service,
-        conversation_id=conversation_id,
-        role="user",
-        content="Search my email for the booking.",
+    conclusion = await conversation_service.append_message(
+        MessageDraft(
+            content="Your feed is mostly industry sense-making, not tutorials.",
+            conversation_id=conversation_id,
+            role="assistant",
+            turn_id=turn.id,
+        )
     )
     run = await dreaming_service.queue_manual_run(
         conversation_id,
@@ -754,8 +794,8 @@ async def production_executor_rejects_unpromoted_email_citation() -> None:
     class _Runner:
         async def run(self, prompt: str) -> str:
             return (
-                "## Travel\n\n- Lisbon apartment booked for June. "
-                "[source](tether://email/019f0000-0000-7000-8000-000000000099)"
+                "## Learning\n\n- Uses YouTube mainly for industry sense-making. "
+                f"[source](tether://message/{conclusion.id})"
             )
 
     with TemporaryDirectory() as workspace_root:
@@ -765,9 +805,7 @@ async def production_executor_rejects_unpromoted_email_citation() -> None:
             curation_runner=_Runner(),
         )(run, logger=test_logger())
 
-    assert_eq(result.status, "failed")
-    assert result.error is not None
-    assert "outside bounded supporting Evidence" in result.error
+    assert_eq(result.status, "success")
 
 
 @test()
@@ -1935,16 +1973,29 @@ async def maintenance_executor_supplies_newer_user_evidence() -> None:
 
 
 @test()
-async def maintenance_executor_supersedes_a_claim_with_newer_evidence() -> None:
-    """A verified correction replaces the old current Claim."""
+async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
+    """A user correction replaces a lower-authority agent conclusion."""
     conversation_service, service, conversation_id, root = await load_fixture(
         maintenance_fixture()
     )
-    old_evidence = await _append(
-        conversation_service,
-        conversation_id=conversation_id,
-        role="user",
-        content="I am vegetarian.",
+    async with conversation_service.database.transaction() as transaction:
+        turn = await transaction.execute(
+            insert(
+                ConversationTurn(
+                    conversation_id=conversation_id,
+                    origin="interactive",
+                    status="succeeded",
+                    turn_seq=1,
+                )
+            ).returning()
+        )
+    old_evidence = await conversation_service.append_message(
+        MessageDraft(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="The user is vegetarian.",
+            turn_id=turn.id,
+        )
     )
     newer_evidence = await _append(
         conversation_service,
@@ -2187,18 +2238,40 @@ async def semantic_verifier_rejects_unexplained_claim_loss() -> None:
 
 
 @test()
-async def maintenance_executor_rejects_assistant_supported_claims() -> None:
-    """Assistant Messages remain context and cannot support current Claims."""
+async def maintenance_executor_accepts_final_assistant_support() -> None:
+    """Maintenance preserves a Claim supported by an eligible agent conclusion."""
     conversation_service, service, conversation_id, root = await load_fixture(
         maintenance_fixture()
     )
-    assistant = await _append(
-        conversation_service,
-        conversation_id=conversation_id,
-        role="assistant",
-        content="The user loves black coffee.",
+    async with conversation_service.database.transaction() as transaction:
+        turn = await transaction.execute(
+            insert(
+                ConversationTurn(
+                    conversation_id=conversation_id,
+                    origin="health",
+                    status="succeeded",
+                    turn_seq=1,
+                )
+            ).returning()
+        )
+    assistant = await conversation_service.append_message(
+        MessageDraft(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="The user loves black coffee.",
+            turn_id=turn.id,
+        )
     )
     assistant_uri = f"tether://message/{assistant.id}"
+    async with conversation_service.database.transaction() as transaction:
+        _ = await transaction.execute(
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=assistant.seq,
+                )
+            )
+        )
     _ = _write_topic(
         root,
         conversation_id,
@@ -2233,9 +2306,7 @@ async def maintenance_executor_rejects_assistant_supported_claims() -> None:
 
     result = await executor(run, logger=test_logger())
 
-    assert_eq(result.status, "failed")
-    assert result.error is not None
-    assert "user Evidence" in result.error
+    assert_eq(result.status, "success")
 
 
 @test()

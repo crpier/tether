@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from tether.conversation_turns import ConversationTurns
     from tether.conversations import ConversationService
     from tether.dreaming import DreamingService
-    from tether.email_evidence import EmailEvidenceService
     from tether.events import EventHub
     from tether.evidence import EvidenceResolver
     from tether.gmail import GmailClient, GoogleGmailAuthService
@@ -75,7 +74,6 @@ class AppRuntime:
     kosync_auth: KosyncAuth
     gmail_client: GmailClient | None
     gmail_auth_service: GoogleGmailAuthService | None
-    email_evidence_service: EmailEvidenceService
     kosync_service: KosyncService
     logger: Logger
     memory_workspace_service: MemoryWorkspaceService

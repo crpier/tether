@@ -31,7 +31,8 @@ from snekql.sqlite import (
 from yaml import YAMLError, safe_load
 from yaml import dump as yaml_dump
 
-from tether.conversation_store import Conversation, Message
+from tether.conversation_evidence import fetch_claim_supporting_message_ids
+from tether.conversation_store import Conversation, ConversationTurn, Message
 from tether.conversations import ConversationService
 from tether.dreaming_store import (
     DreamConversationCursor,
@@ -44,7 +45,6 @@ from tether.dreaming_store import (
     DreamRunKind,
     DreamRunTerminalStatus,
 )
-from tether.email_evidence import EmailEvidenceService
 from tether.memory_workspace import MemoryWorkspace
 from tether.search_projection.loop import run_reconcile_loop
 from tether.structured_logging import Logger
@@ -652,12 +652,10 @@ class DreamingCurationRunner(Protocol):
 class _ConversationDreamEvidence:
     """Normalized source supplied to one Conversation Dream run."""
 
-    claim_hint: str | None
     content: str
     occurred_at: datetime
     role: str
     seq: PositiveInt
-    source_kind: Literal["email", "message"]
     supports_claim: bool
     uri: str
 
@@ -676,9 +674,6 @@ class ConversationWindowDreamingExecutor:
         self.conversation_service: ConversationService = conversation_service
         self.workspace_root: Path = workspace_root
         self.curation_runner: DreamingCurationRunner | None = curation_runner
-        self.email_evidence_service: EmailEvidenceService = EmailEvidenceService(
-            conversation_service.database
-        )
         self.mutation_coordinator: DreamingMutationCoordinator = (
             mutation_coordinator
             if mutation_coordinator is not None
@@ -860,15 +855,11 @@ class ConversationWindowDreamingExecutor:
             "\n".join(
                 (
                     f"seq: {source.seq}",
-                    f"kind: {source.source_kind}",
+                    "kind: message",
                     f"role: {source.role}",
+                    f"supports_claim: {str(source.supports_claim).lower()}",
                     f"created_at: {source.occurred_at.isoformat()}",
                     f"uri: {source.uri}",
-                    *(
-                        (f"claim_hint: {source.claim_hint}",)
-                        if source.claim_hint is not None
-                        else ()
-                    ),
                     "content:",
                     source.content,
                 )
@@ -878,10 +869,12 @@ class ConversationWindowDreamingExecutor:
         return f"""Curate durable, user-centric Claims from this bounded Conversation Evidence.
 
 Rules:
-- User Messages and promoted Email Evidence may support Claims.
-- Assistant, reasoning, tool Messages, and email claim hints are context only.
-- Email Evidence proves what the sender communicated, not that every assertion is true.
-- Omit transient requests, implementation chatter, and assistant-authored facts.
+- Only sources marked `supports_claim: true` may support Claims.
+- User Messages outrank assistant conclusions; explicit user corrections supersede them.
+- Assistant repetition does not corroborate or strengthen an agent-derived conclusion.
+- Preserve uncertainty in assistant conclusions instead of converting inference to fact.
+- Scheduled, Health, reasoning, tool, partial, and failed Messages are context only.
+- Omit transient requests, implementation chatter, and unsupported assertions.
 - Return Markdown only, grouped under `##` Topic headings.
 - Every Claim is one `- ` bullet with an inline exact `tether://` source citation.
 - Use only exact Evidence URIs below. Preserve uncertainty and corrections.
@@ -906,13 +899,11 @@ evidence_end_seq: {run.evidence_end_seq}
             line for line in curated_body.splitlines() if line.startswith("- ")
         ]
         if not claim_lines or any(
-            not re.search(r"tether://(?:message|email)/[0-9A-Za-z-]+", claim)
+            not re.search(r"tether://message/[0-9A-Za-z-]+", claim)
             for claim in claim_lines
         ):
             return "every curated Claim must cite bounded supporting Evidence"
-        cited_uris = set(
-            re.findall(r"tether://(?:message|email)/[0-9A-Za-z-]+", curated_body)
-        )
+        cited_uris = set(re.findall(r"tether://message/[0-9A-Za-z-]+", curated_body))
         unsupported = sorted(cited_uris - supported_evidence_uris)
         if unsupported:
             return (
@@ -1087,7 +1078,7 @@ evidence_end_seq: {run.evidence_end_seq}
     async def _fetch_evidence(
         self, run: DreamRun[Fetched]
     ) -> list[_ConversationDreamEvidence]:
-        """Return Messages and promoted email sources bounded by the run window."""
+        """Return Conversation Messages bounded by the run window."""
         if run.evidence_end_seq < run.evidence_start_seq:
             return []
         messages = await self.conversation_service.fetch_messages(
@@ -1098,48 +1089,21 @@ evidence_end_seq: {run.evidence_end_seq}
         bounded_messages = [
             message for message in messages if message.seq >= run.evidence_start_seq
         ]
-        evidence = [
+        supporting_message_ids = await fetch_claim_supporting_message_ids(
+            self.conversation_service.database,
+            bounded_messages,
+        )
+        return [
             _ConversationDreamEvidence(
-                claim_hint=None,
                 content=message.content,
                 occurred_at=message.created_at,
                 role=message.role,
                 seq=message.seq,
-                source_kind="message",
-                supports_claim=message.role == "user",
+                supports_claim=message.id in supporting_message_ids,
                 uri=f"tether://message/{message.id}",
             )
             for message in bounded_messages
         ]
-        promoted_email = (
-            await self.email_evidence_service.fetch_for_conversation_window(
-                UUID(str(run.conversation_id)),
-                start_seq=run.evidence_start_seq,
-                end_seq=run.evidence_end_seq,
-            )
-        )
-        evidence.extend(
-            _ConversationDreamEvidence(
-                claim_hint=source.claim_hint,
-                content="\n".join(
-                    (
-                        f"From: {source.from_header}",
-                        f"Date: {source.date_header}",
-                        f"Subject: {source.subject}",
-                        "",
-                        source.body_text,
-                    )
-                ),
-                occurred_at=source.captured_at,
-                role="external_source",
-                seq=source.authorizing_message_seq,
-                source_kind="email",
-                supports_claim=True,
-                uri=source.uri,
-            )
-            for source in promoted_email
-        )
-        return sorted(evidence, key=lambda source: (source.seq, source.source_kind))
 
 
 _MAINTENANCE_MIN_FILES = 1
@@ -1456,8 +1420,16 @@ class MaintenanceDreamingExecutor:
                     .limit(_MAINTENANCE_MAX_FOLLOWUP_MESSAGES)
                 )
                 related_messages.update({message.id: message for message in followups})
-        return sorted(
+        supporting_ids = await fetch_claim_supporting_message_ids(
+            self.database,
             related_messages.values(),
+        )
+        return sorted(
+            (
+                message
+                for message in related_messages.values()
+                if message.id in supporting_ids
+            ),
             key=lambda message: (message.created_at, message.seq),
         )
 
@@ -1500,6 +1472,9 @@ Canonical Conversation Evidence cited by the inputs:
 
 Rules:
 - Merge duplicate or tightly overlapping Claims into concise Claims that preserve their complete meaning and citations; keep distinct facts distinct.
+- User Messages outrank assistant conclusions; explicit user corrections supersede them.
+- Assistant repetition does not corroborate or strengthen an agent-derived conclusion.
+- Preserve uncertainty in assistant conclusions instead of converting inference to fact.
 - Unify related fragments into fewer larger Topic files with meaningful titles and stable kebab-case `.md` paths.
 - Preserve every supported idea unless it qualifies for retirement. Age or disuse alone never qualifies.
 - Retire a Claim only when its explicit time bound passed, newer Evidence supersedes it, Evidence explicitly says it is no longer current, or it lacks permitted support.
@@ -1730,8 +1705,8 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
         supported = {
             uri for _, content in batch for uri in cls._evidence_uris(content)
         } | {f"tether://message/{message.id}" for message in evidence}
-        message_roles = {
-            f"tether://message/{message.id}": message.role for message in evidence
+        permitted_message_uris = {
+            f"tether://message/{message.id}" for message in evidence
         }
         for relative, document in transition.documents:
             document_citations = cls._evidence_uris(document)
@@ -1741,16 +1716,16 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
                     f"{relative}: {', '.join(sorted(unsupported))}"
                 )
                 raise _MaintenanceError(message)
-            non_user_messages = {
+            ineligible_messages = {
                 uri
                 for uri in document_citations
                 if uri.startswith("tether://message/")
-                and message_roles.get(uri) != "user"
+                and uri not in permitted_message_uris
             }
-            if non_user_messages:
+            if ineligible_messages:
                 message = (
-                    "current Claims require resolved user Evidence: "
-                    f"{relative}: {', '.join(sorted(non_user_messages))}"
+                    "current Claims require permitted Message Evidence: "
+                    f"{relative}: {', '.join(sorted(ineligible_messages))}"
                 )
                 raise _MaintenanceError(message)
         retired_claims: set[str] = set()
@@ -2450,40 +2425,68 @@ class DreamingService:
                     DreamConversationCursor.conversation_id.eq(conversation_id)
                 )
             )
-            latest_user = await tx.fetch_one_or_none(
-                select(Message)
-                .where(Message.conversation_id.eq(conversation_id))
-                .where(Message.role.eq("user"))
-                .order_by(Message.seq.desc())
-                .limit(1)
-            )
-            if latest_user is None:
-                return None
-            if not explicit and (
-                now_utc - _as_utc(latest_user.created_at) < self.settle_window
-            ):
-                return None
+            start_seq = cursor.last_assimilated_seq + 1 if cursor is not None else 1
             latest = await tx.fetch_one_or_none(
                 select(Message)
                 .where(Message.conversation_id.eq(conversation_id))
                 .order_by(Message.seq.desc())
                 .limit(1)
             )
-            if latest is None:
-                return None
-            start_seq = cursor.last_assimilated_seq + 1 if cursor is not None else 1
-            if latest_user.seq < start_seq:
-                return None
-            proposed_end = latest.seq
-            max_end = (
-                window_size(self.max_messages_per_run, start_seq)
-                if self.max_messages_per_run > 0
-                else proposed_end
+            settled_end_seq = 0 if latest is None else latest.seq
+            if latest is not None and latest.turn_id is not None:
+                latest_turn = await tx.fetch_one_or_none(
+                    select(ConversationTurn).where(
+                        ConversationTurn.id.eq(latest.turn_id)
+                    )
+                )
+                if latest_turn is not None and latest_turn.status not in {
+                    "succeeded",
+                    "failed",
+                    "cancelled",
+                }:
+                    first_unsettled = await tx.fetch_one(
+                        select(Message)
+                        .where(Message.turn_id.eq(latest_turn.id))
+                        .order_by(Message.seq.asc())
+                        .limit(1)
+                    )
+                    settled_end_seq = first_unsettled.seq - 1
+            candidate_messages = await tx.fetch_all(
+                select(Message)
+                .where(Message.conversation_id.eq(conversation_id))
+                .where(Message.seq.gte(start_seq))
+                .where(Message.seq.lte(settled_end_seq))
+                .where(Message.role.in_("user", "assistant"))
+                .order_by(Message.seq.asc())
             )
-            end_seq = min(proposed_end, max_end)
-            if end_seq < start_seq:
-                return None
-            return _AssimilationWindow(start_seq=start_seq, end_seq=end_seq)
+        if latest is None or not candidate_messages:
+            return None
+        supporting_ids = await fetch_claim_supporting_message_ids(
+            self.database,
+            candidate_messages,
+        )
+        supporting_messages = [
+            message for message in candidate_messages if message.id in supporting_ids
+        ]
+        if not supporting_messages:
+            return None
+        latest_supporting = supporting_messages[-1]
+        if (
+            not explicit
+            and latest_supporting.role == "user"
+            and now_utc - _as_utc(latest_supporting.created_at) < self.settle_window
+        ):
+            return None
+        proposed_end = settled_end_seq
+        max_end = (
+            window_size(self.max_messages_per_run, start_seq)
+            if self.max_messages_per_run > 0
+            else proposed_end
+        )
+        end_seq = min(proposed_end, max_end)
+        if end_seq < start_seq:
+            return None
+        return _AssimilationWindow(start_seq=start_seq, end_seq=end_seq)
 
     async def _advance_cursor(
         self,

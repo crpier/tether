@@ -32,6 +32,7 @@ from tether.chat_turn import (
     TurnSpec,
     stream_chat_turn,
 )
+from tether.conversation_evidence import fetch_claim_supporting_message_ids
 from tether.conversation_model import (
     ConversationNotFoundError,
     ConversationTurnStatus,
@@ -577,7 +578,7 @@ class ConversationTurns:
         acceptance_uncertain_failed = 0
         pending_recovered = 0
         running_failed = 0
-        dream_conversations: set[UUID] = set()
+        dream_candidate_turns: dict[UUID, UUID] = {}
         interrupted_conversations: set[UUID] = set()
         async with self.dependencies.conversation_service.database.transaction(
             mode="immediate"
@@ -659,26 +660,21 @@ class ConversationTurns:
                 elif turn.status == "pending":
                     pending_recovered += 1
                 if (
-                    (
-                        turn.status in _TERMINAL_STATUSES
-                        or turn.status == "running"
-                        or turn.acceptance_started_at is not None
-                    )
-                    and turn.origin in {"capture", "interactive"}
-                    and await transaction.fetch_one_or_none(
-                        select(Message)
-                        .where(Message.turn_id.eq(turn.id))
-                        .where(Message.role.eq("user"))
-                        .limit(1)
-                    )
-                    is not None
+                    turn.status in _TERMINAL_STATUSES
+                    or turn.status == "running"
+                    or turn.acceptance_started_at is not None
                 ):
-                    dream_conversations.add(turn.conversation_id)
+                    dream_candidate_turns[turn.id] = turn.conversation_id
         for conversation_id in interrupted_conversations:
             _ = await self.dependencies.conversation_service.rotate_pi_session(
                 conversation_id
             )
             await self.dependencies.runtime_registry.discard(conversation_id)
+        dream_conversations = {
+            conversation_id
+            for turn_id, conversation_id in dream_candidate_turns.items()
+            if await self._has_dreaming_evidence(turn_id)
+        }
         for conversation_id in dream_conversations:
             await self._queue_dreaming(conversation_id)
         return ReconciliationReport(
@@ -920,7 +916,7 @@ class ConversationTurns:
                 )
                 await self.dependencies.runtime_registry.discard(turn.conversation_id)
                 _ = self._cancel_requested.discard(turn.id)
-            if await self._has_terminal_user_message(turn.id):
+            if await self._has_dreaming_evidence(turn.id):
                 await self._queue_dreaming(turn.conversation_id)
             attached_sink = self._sinks.pop(turn.id, None)
             if attached_sink is not None:
@@ -1550,28 +1546,27 @@ class ConversationTurns:
             self._notify_settled(turn_id)
         return settled
 
-    async def _has_terminal_user_message(self, turn_id: UUID) -> bool:
-        """Derive Dreaming eligibility from durable Evidence and lifecycle state."""
+    async def _has_dreaming_evidence(self, turn_id: UUID) -> bool:
+        """Queue only terminal turns carrying permitted Claim support."""
         async with (
             self.dependencies.conversation_service.database.transaction() as transaction
         ):
             turn = await transaction.fetch_one(
                 select(ConversationTurn).where(ConversationTurn.id.eq(turn_id))
             )
-            if turn.status not in _TERMINAL_STATUSES or turn.origin not in {
-                "capture",
-                "interactive",
-            }:
+            if turn.status not in _TERMINAL_STATUSES:
                 return False
-            return (
-                await transaction.fetch_one_or_none(
-                    select(Message)
-                    .where(Message.turn_id.eq(turn_id))
-                    .where(Message.role.eq("user"))
-                    .limit(1)
-                )
-                is not None
+            messages = await transaction.fetch_all(
+                select(Message)
+                .where(Message.turn_id.eq(turn_id))
+                .order_by(Message.turn_message_seq.asc())
             )
+        return bool(
+            await fetch_claim_supporting_message_ids(
+                self.dependencies.conversation_service.database,
+                messages,
+            )
+        )
 
     def _publish_navigation_state_later(
         self,
@@ -1608,7 +1603,7 @@ class ConversationTurns:
             event.set()
 
     async def _queue_dreaming(self, conversation_id: UUID) -> None:
-        """Queue Dreaming after any terminal interactive turn with user Evidence."""
+        """Queue Dreaming after a terminal turn carrying permitted Evidence."""
         if not self.dependencies.dreaming_enabled:
             return
         try:

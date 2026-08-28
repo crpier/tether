@@ -10,7 +10,7 @@ Each Markdown file has parseable YAML frontmatter with a non-empty `title`. Reco
 
 SQLite remains canonical for source Evidence, Tether Conversations and Messages, user suppressions, Dreaming orchestration, complete file history, and typed verticals. Current filesystem content is accepted only when it exactly matches an authorized acknowledged or recoverable Dreaming mutation; recorded Dreaming state repairs every other disagreement. Per-turn context and indexes are disposable projections. External Markdown edits are not corrections; malformed external files are preserved, excluded from retrieval, and surfaced diagnostically.
 
-Dreaming automatically assimilates settled evidence and maintains the workspace; it does not create a Review inbox. Authority is explicit correction or instruction, then explicit user assertion, appropriately scoped verified evidence, repeated implicit patterns, and finally assistant output as context only. Prior memory prose is state to revise, never independent evidence. User controls replace item approval: **Don't remember this** retains source conversation while suppressing and deleting affected memory files; **Delete this everywhere** also purges source material and every derived or historical copy.
+Dreaming automatically assimilates settled evidence and maintains the workspace; it does not create a Review inbox. Authority is explicit correction or instruction, then explicit user assertion, appropriately scoped verified evidence, repeated implicit patterns, and finally settled assistant conclusions. Prior memory prose is state to revise, never independent evidence. User controls replace item approval: **Don't remember this** retains source conversation while suppressing and deleting affected memory files; **Delete this everywhere** also purges source material and every derived or historical copy.
 
 This supersedes ADRs 0001 and 0004, ADR 0003 for Memory, ADR 0007, and ADR 0010. It amends ADR 0012: raw Telemetry still remains in typed vertical storage, but evidence-backed Distillations produced from it may now be applied automatically through Dreaming rather than entering a loose-to-tethered gate. Recall may remain a learning workflow, but no longer determines whether content enters Memory.
 
@@ -22,4 +22,4 @@ This supersedes ADRs 0001 and 0004, ADR 0003 for Memory, ADR 0007, and ADR 0010.
 - Whole-file deletion is the correction and erasure granularity. A later dream may reconstruct unrelated material from remaining evidence.
 - Obsidian, Neovim, and similar editors can inspect canonical files; a built-in editor is not required.
 
-ADR 0026 records the sole-writer refinement: human corrections enter through conversational Evidence.
+ADR 0026 records the sole-writer refinement: human corrections enter through conversational Evidence. ADR 0036 permits lower-authority settled assistant conclusions to support Claims.

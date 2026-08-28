@@ -7,6 +7,7 @@ from snektest import assert_eq, assert_in, test
 from tether.agent_trace_model import RunKind
 from tether.system_prompt import (
     CONVERSATION_SYSTEM_PROMPT,
+    DREAMING_SYSTEM_PROMPT,
     TASK_SYSTEM_PROMPT,
     system_prompt_for,
 )
@@ -60,12 +61,18 @@ async def explicit_remembering_queues_dreaming_instead_of_editing_memory() -> No
 
 
 @test()
-async def email_promotion_requires_explicit_authorization_and_prior_read() -> None:
-    """The foreground agent promotes selected email before mutating its source."""
-    assert_in("`promote_gmail_evidence`", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("explicitly asks to remember", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("after `read_gmail_message`", CONVERSATION_SYSTEM_PROMPT)
-    assert_in("before archiving, labelling, or trashing", CONVERSATION_SYSTEM_PROMPT)
+async def assistant_conclusions_are_automatically_available_to_dreaming() -> None:
+    """Foreground output needs no source-specific Memory promotion tool."""
+    assert_in("settled final assistant Messages", CONVERSATION_SYSTEM_PROMPT)
+    assert "promote_gmail_evidence" not in CONVERSATION_SYSTEM_PROMPT
+
+
+@test()
+async def dreaming_preserves_user_authority_over_assistant_conclusions() -> None:
+    """Agent-derived support cannot outrank a user assertion or correction."""
+    assert_in("settled final assistant Messages", DREAMING_SYSTEM_PROMPT)
+    assert_in("lower authority", DREAMING_SYSTEM_PROMPT)
+    assert_in("does not corroborate", DREAMING_SYSTEM_PROMPT)
 
 
 @test()

@@ -1,11 +1,11 @@
-"""Persistence for immutable promoted email Evidence and nominations."""
+"""Read-only persistence compatibility for retained email snapshots."""
 
 from __future__ import annotations
 
 from typing import ClassVar
 from uuid import uuid7
 
-from pydantic import UUID7, PositiveInt
+from pydantic import UUID7
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -42,27 +42,6 @@ class EmailEvidenceSnapshot[S = Pending](Model[S, "EmailEvidenceSnapshot[Fetched
     __indexes__: ClassVar = [Index(gmail_message_id, content_hash, unique=True)]
 
 
-class EmailEvidencePromotion[S = Pending](Model[S, "EmailEvidencePromotion[Fetched]"]):
-    """One foreground nomination linking a snapshot to authorizing Evidence."""
-
-    id: EmailEvidencePromotion.GenCol[UUID7] = Text(
-        primary_key=True,
-        default_factory=uuid7,
-    )
-    authorizing_conversation_id: EmailEvidencePromotion.Col[UUID7] = Text()
-    authorizing_message_id: EmailEvidencePromotion.Col[UUID7] = Text()
-    authorizing_message_seq: EmailEvidencePromotion.Col[PositiveInt] = Integer()
-    claim_hint: EmailEvidencePromotion.Col[str] = Text()
-    snapshot_id: EmailEvidencePromotion.Col[UUID7] = Text()
-    created_at: EmailEvidencePromotion.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
-
-    __indexes__: ClassVar = [
-        Index(snapshot_id, authorizing_message_id, claim_hint, unique=True)
-    ]
-
-
 _EMAIL_EVIDENCE_MIGRATIONS = {
     "001_create_email_evidence_snapshot": (
         'CREATE TABLE "email_evidence_snapshot" ('
@@ -97,12 +76,11 @@ _EMAIL_EVIDENCE_MIGRATIONS = {
 
 
 async def create_email_evidence_schema(database: Database) -> None:
-    """Bring promoted email Evidence storage to its current version."""
+    """Preserve the historical email Evidence schema without new writes."""
     await database.migrate(_EMAIL_EVIDENCE_MIGRATIONS)
 
 
 __all__ = [
-    "EmailEvidencePromotion",
     "EmailEvidenceSnapshot",
     "create_email_evidence_schema",
 ]
