@@ -60,6 +60,7 @@ from tether.search_projection.embeddings import Embedder, FakeEmbedder, FastEmbe
 from tether.search_tools import internal_search_tool_routes
 from tether.stt import SttClient
 from tether.stt_transport import HttpSttTransport
+from tether.tanstack_ai_prototype import router as tanstack_ai_prototype_router
 from tether.tavily_search import HttpTavilyTransport, TavilySearchProvider
 from tether.telemetry_middleware import TelemetryMiddleware
 from tether.telemetry_model import TelemetrySettings
@@ -191,6 +192,8 @@ def create_app(
     app.add_exception_handler(RequestValidationError, log_request_validation)
 
     app.include_router(public_api_router())
+    # THROWAWAY PROTOTYPE: excluded from OpenAPI and never deployed.
+    app.include_router(tanstack_ai_prototype_router)
     app.router.routes.extend(
         [
             *trace_routes(),

@@ -10,7 +10,7 @@ import {
   createQuery,
   useQueryClient,
 } from "@tanstack/solid-query";
-import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createSignal, lazy, onCleanup, onMount } from "solid-js";
 
 import { createRestHost, type WebHost } from "./host";
 import type { AppContextValue } from "./app-context";
@@ -98,6 +98,10 @@ const BrowseTodosPage = directBrowsePage("todos");
 const BrowseRemindersPage = directBrowsePage("reminders");
 const BrowseFeedbackPage = directBrowsePage("feedback");
 const BrowsePanelsPage = directBrowsePage("panels");
+const NativeTanStackAiPrototypePage = lazy(async () => ({
+  default: (await import("./prototypes/tanstack-ai-674/native-page"))
+    .NativeTanStackAiPrototypePage,
+}));
 
 // The WebSocket bus and frame handling live above the router, beside the
 // session gate (#250): one /ws connection app-wide, so `invalidate` and
@@ -169,6 +173,11 @@ function ConnectedApp(props: Required<AppDependencies>) {
         <Route component={ChatPage} path="/chat" />
         <Route component={ChatPage} path="/chat/:conversationId" />
         <Route component={HealthPage} path="/health" />
+        {/* THROWAWAY PROTOTYPE: never merge or deploy this route. */}
+        <Route
+          component={NativeTanStackAiPrototypePage}
+          path="/prototypes/tanstack-ai/:conversationId"
+        />
         <Route component={BrowseIndexPage} path="/browse" />
         <Route component={BrowseMemoriesPage} path="/browse/memories" />
         <Route component={BrowseDreamingPage} path="/browse/dreaming" />
