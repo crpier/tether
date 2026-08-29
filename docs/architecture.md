@@ -94,7 +94,9 @@ Cloud LLMs only (no local models), provider-agnostic via pi, not locked to front
 - **0032** — Fresh confined programs may orchestrate host-owned tools without ambient authority.
 - **0033** — Confined TypeScript/JavaScript is Tether's only programmable agent environment; Memory reads cross typed host tools.
 - **0034** — Typed capabilities own action policy; Tether has no generic Proposal or earned-autonomy system.
-- **0035** — Only explicitly promoted active-turn email reads become citeable Evidence.
+- **0035** — Only explicitly promoted active-turn email reads become citeable Evidence (superseded by 0036).
+- **0036** — Settled final assistant Messages may support lower-authority agent-derived Memory Claims.
+- **0037** — One constrained Ledger Vertical owns user-approved generic records.
 
 ## Build order
 
