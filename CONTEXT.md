@@ -102,6 +102,18 @@ _Avoid_: pool, general memories, unstructured store
 A hand-built, typed slice of the domain (e.g. Cooking, Health) with its own records and lifecycle. Admitted only when a domain needs typed queries over time, a dedicated lifecycle, or a dedicated panel — not merely because it has accumulated many Topics.
 _Avoid_: module, feature, app
 
+**Ledger**:
+A user-approved instance of Tether's one hand-built generic-record Vertical, for a structured history that does not justify dedicated Vertical code. It has a stable identity, purpose, lifecycle, and immutable flat schema revisions; the agent may propose one but cannot approve it.
+_Avoid_: agent-defined Vertical, generic table, Memory Topic
+
+**Ledger entry**:
+One immutable structured record interpreted under an exact Ledger revision and linked to exact Evidence. A correction appends a complete replacement that supersedes one current entry; ordinary operations never edit or delete either record.
+_Avoid_: row, event, Memory Claim
+
+**Ledger revision**:
+One immutable approved version of a Ledger's definition and flat field schema. Historical entries retain their exact revision, and a field identity is never reused with a different type or meaning.
+_Avoid_: database migration, JSON Schema
+
 **Promotion**:
 The graduation of a Commons domain into a Vertical, justified when repeated Evidence and workflows reveal stable structure or lifecycle needs. One-directional in practice — Verticals aren't demoted back to Commons.
 _Avoid_: migration, upgrade, graduation
