@@ -23,15 +23,15 @@ The `Result` API deliberately stays small: `Ok`, `Err`, `Result`, and the
 `map`, `map_error`, and `and_then` composition methods required by concrete
 consumers. It does not attempt to provide a functional-programming framework.
 
-## Validated scalar classes
+## Validated scalar aliases
 
-`NonEmptySecretStr`, `NonEmptyStr`, and `NonNegativeInt` are nominal classes with
-validated constructors and Pydantic support:
+`NonEmptySecretStr`, `NonEmptyStr`, and `NonNegativeInt` are constrained nominal
+aliases with Pydantic support:
 
 ```python
 from pydantic import BaseModel
 
-from snekok import NonEmptySecretStr
+from snekok import NonEmptySecretStr, validate_python
 from snekok.types import NonEmptyStr, NonNegativeInt
 
 
@@ -39,8 +39,8 @@ class ApiSettings(BaseModel):
     api_key: NonEmptySecretStr
 
 
-label = NonEmptyStr("hello")
-retry_count = NonNegativeInt(0)
+label = validate_python(NonEmptyStr, "hello").unwrap()
+retry_count = validate_python(NonNegativeInt, 0).unwrap()
 settings = ApiSettings.model_validate({"api_key": "secret-value"})
 assert settings.api_key.get_secret_value() == "secret-value"
 ```

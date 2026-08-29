@@ -406,9 +406,10 @@ class SupadataTranscriptSource:
                     pass
             if isinstance(response, SupadataJobFailed):
                 return Err(_classify_job_failure(video_id, response))
+
             if isinstance(response, SupadataJobCompleted):
                 return _extract_transcript(response, video_id=video_id).map(
-                    _as_fetched_transcript
+                    partial(FetchedTranscript, source=_SOURCE)
                 )
             # A validated pending state consumes one bounded poll attempt.
         return Err(

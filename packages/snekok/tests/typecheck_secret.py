@@ -1,22 +1,25 @@
-"""Static typing contracts for nominal non-empty secrets."""
+"""Static typing contracts for nominal validated scalar aliases."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, assert_type
 
-from snekok import NonEmptySecretStr
+from snekok import NonEmptySecretStr, validate_python
 from snekok.types import NonBlankStr, NonEmptyStr, NonNegativeInt
 
 if TYPE_CHECKING:
     from pydantic import SecretStr
 
 
-def constructors_return_nominal_types() -> None:
-    """Prove each direct constructor has its nominal return type."""
-    assert_type(NonBlankStr("hello"), NonBlankStr)
-    assert_type(NonEmptySecretStr("secret"), NonEmptySecretStr)
-    assert_type(NonEmptyStr("hello"), NonEmptyStr)
-    assert_type(NonNegativeInt(0), NonNegativeInt)
+def validation_returns_nominal_types() -> None:
+    """Prove validated values retain each alias's nominal static type."""
+    assert_type(validate_python(NonBlankStr, "hello").unwrap(), NonBlankStr)
+    assert_type(
+        validate_python(NonEmptySecretStr, "secret").unwrap(),
+        NonEmptySecretStr,
+    )
+    assert_type(validate_python(NonEmptyStr, "hello").unwrap(), NonEmptyStr)
+    assert_type(validate_python(NonNegativeInt, 0).unwrap(), NonNegativeInt)
 
 
 def require_non_empty_secret(secret: NonEmptySecretStr) -> None:

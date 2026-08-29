@@ -18,8 +18,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 import httpx2
-from pydantic import TypeAdapter
-from snekok import Err, NonEmptySecretStr, Ok, Result
+from snekok import Err, NonEmptySecretStr, Ok, Result, validate_python
 from snekok.types import NonBlankStr, NonNegativeInt
 from snektest import assert_eq, assert_is_none, assert_isinstance, test
 
@@ -184,12 +183,9 @@ def _paced_provider(
     )
 
 
-_API_KEY_ADAPTER: TypeAdapter[NonEmptySecretStr] = TypeAdapter(NonEmptySecretStr)
-
-
 def _api_key() -> NonEmptySecretStr:
     """Validate the nominal API-key type through its intended Pydantic boundary."""
-    return _API_KEY_ADAPTER.validate_python("test-api-key")
+    return validate_python(NonEmptySecretStr, "test-api-key").unwrap()
 
 
 @test()
@@ -220,9 +216,9 @@ async def http_transport_decodes_a_timed_transcript() -> None:
         response.value.content,
         (
             SupadataCue(
-                text=NonBlankStr("hello"),
-                offset=NonNegativeInt(0),
-                duration=NonNegativeInt(500),
+                text=validate_python(NonBlankStr, "hello").unwrap(),
+                offset=validate_python(NonNegativeInt, 0).unwrap(),
+                duration=validate_python(NonNegativeInt, 500).unwrap(),
                 lang="en",
             ),
         ),
@@ -325,9 +321,9 @@ async def http_transport_decodes_a_failed_job_error() -> None:
     assert_eq(
         response.value.error,
         SupadataApiError(
-            code=NonBlankStr("transcript-unavailable"),
-            message=NonBlankStr("Transcript unavailable"),
-            details=NonBlankStr("No caption track exists"),
+            code=validate_python(NonBlankStr, "transcript-unavailable").unwrap(),
+            message=validate_python(NonBlankStr, "Transcript unavailable").unwrap(),
+            details=validate_python(NonBlankStr, "No caption track exists").unwrap(),
         ),
     )
 
@@ -356,7 +352,9 @@ async def http_transport_treats_partial_poll_content_as_a_failure() -> None:
             SupadataHttpFailure(
                 operation="poll",
                 status_code=206,
-                error=SupadataApiError(code=NonBlankStr("transcript-unavailable")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "transcript-unavailable").unwrap()
+                ),
             )
         ),
     )
@@ -392,9 +390,11 @@ async def http_transport_preserves_structured_error_identity() -> None:
                 operation="submit",
                 status_code=429,
                 error=SupadataApiError(
-                    code=NonBlankStr("limit-exceeded"),
-                    message=NonBlankStr("Slow down"),
-                    details=NonBlankStr("The request rate was exceeded"),
+                    code=validate_python(NonBlankStr, "limit-exceeded").unwrap(),
+                    message=validate_python(NonBlankStr, "Slow down").unwrap(),
+                    details=validate_python(
+                        NonBlankStr, "The request rate was exceeded"
+                    ).unwrap(),
                 ),
                 retry_after=timedelta(seconds=30),
             )
@@ -510,8 +510,14 @@ async def direct_hit_with_timed_cues_returns_joined_text() -> None:
         submit=[
             SupadataTranscript(
                 content=(
-                    SupadataCue(text=NonBlankStr("hello"), offset=NonNegativeInt(0)),
-                    SupadataCue(text=NonBlankStr("world"), offset=NonNegativeInt(1500)),
+                    SupadataCue(
+                        text=validate_python(NonBlankStr, "hello").unwrap(),
+                        offset=validate_python(NonNegativeInt, 0).unwrap(),
+                    ),
+                    SupadataCue(
+                        text=validate_python(NonBlankStr, "world").unwrap(),
+                        offset=validate_python(NonNegativeInt, 1500).unwrap(),
+                    ),
                 )
             )
         ]
@@ -568,7 +574,9 @@ async def partial_content_status_is_unavailable() -> None:
             SupadataHttpFailure(
                 operation="submit",
                 status_code=206,
-                error=SupadataApiError(code=NonBlankStr("transcript-unavailable")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "transcript-unavailable").unwrap()
+                ),
             )
         ]
     )
@@ -587,7 +595,9 @@ async def forbidden_is_unavailable() -> None:
             SupadataHttpFailure(
                 operation="submit",
                 status_code=403,
-                error=SupadataApiError(code=NonBlankStr("forbidden")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "forbidden").unwrap()
+                ),
             )
         ]
     )
@@ -627,7 +637,9 @@ async def limit_error_body_is_blocked() -> None:
             SupadataHttpFailure(
                 operation="submit",
                 status_code=403,
-                error=SupadataApiError(code=NonBlankStr("limit-exceeded")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "limit-exceeded").unwrap()
+                ),
             )
         ]
     )
@@ -646,7 +658,9 @@ async def unauthorized_is_blocked() -> None:
             SupadataHttpFailure(
                 operation="submit",
                 status_code=401,
-                error=SupadataApiError(code=NonBlankStr("unauthorized")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "unauthorized").unwrap()
+                ),
             )
         ]
     )
@@ -666,7 +680,9 @@ async def upgrade_required_is_blocked() -> None:
             SupadataHttpFailure(
                 operation="submit",
                 status_code=402,
-                error=SupadataApiError(code=NonBlankStr("upgrade-required")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "upgrade-required").unwrap()
+                ),
             )
         ]
     )
@@ -726,7 +742,9 @@ async def a_missing_poll_job_is_transient() -> None:
         SupadataHttpFailure(
             operation="poll",
             status_code=404,
-            error=SupadataApiError(code=NonBlankStr("not-found")),
+            error=SupadataApiError(
+                code=validate_python(NonBlankStr, "not-found").unwrap()
+            ),
         ),
     )
 
@@ -744,7 +762,9 @@ async def forbidden_while_polling_is_blocked() -> None:
         SupadataHttpFailure(
             operation="poll",
             status_code=403,
-            error=SupadataApiError(code=NonBlankStr("forbidden")),
+            error=SupadataApiError(
+                code=validate_python(NonBlankStr, "forbidden").unwrap()
+            ),
         ),
     )
 
@@ -780,7 +800,9 @@ async def async_job_transcript_unavailable_is_unavailable() -> None:
         poll=[
             SupadataJobFailed(
                 status="failed",
-                error=SupadataApiError(code=NonBlankStr("transcript-unavailable")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "transcript-unavailable").unwrap()
+                ),
             )
         ],
     )
@@ -799,7 +821,9 @@ async def async_job_internal_error_is_transient() -> None:
         poll=[
             SupadataJobFailed(
                 status="failed",
-                error=SupadataApiError(code=NonBlankStr("internal-error")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "internal-error").unwrap()
+                ),
             )
         ],
     )
@@ -818,7 +842,9 @@ async def async_job_limit_exceeded_is_blocked() -> None:
         poll=[
             SupadataJobFailed(
                 status="failed",
-                error=SupadataApiError(code=NonBlankStr("limit-exceeded")),
+                error=SupadataApiError(
+                    code=validate_python(NonBlankStr, "limit-exceeded").unwrap()
+                ),
             )
         ],
     )
