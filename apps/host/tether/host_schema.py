@@ -12,6 +12,7 @@ from tether.email_evidence_store import create_email_evidence_schema
 from tether.gmail import create_gmail_schema
 from tether.health_connect import create_health_moment_schema, create_health_plan_schema
 from tether.kosync_store import create_kosync_schema
+from tether.ledger_store import create_ledger_schema
 from tether.memory_store import create_memory_schema
 from tether.notification_store import create_notification_schema
 from tether.panel_store import create_panel_schema
@@ -49,3 +50,4 @@ async def create_host_schema(database: Database) -> None:
     await create_ebook_stats_schema(database)
     await create_gmail_schema(database)
     await create_email_evidence_schema(database)
+    await create_ledger_schema(database)

@@ -17,8 +17,12 @@ interface JsonSchema {
   format?: string;
   items?: JsonSchema;
   maximum?: number;
+  maxItems?: number;
+  maxProperties?: number;
   minimum?: number;
+  minItems?: number;
   minLength?: number;
+  minProperties?: number;
   properties?: Record<string, JsonSchema>;
   required?: string[];
   title?: string;
@@ -60,25 +64,37 @@ function renderOptions(schema: JsonSchema): string {
   if (typeof schema.maximum === "number") {
     options.push(`maximum: ${String(schema.maximum)}`);
   }
+  if (typeof schema.maxItems === "number") {
+    options.push(`maxItems: ${String(schema.maxItems)}`);
+  }
+  if (typeof schema.maxProperties === "number") {
+    options.push(`maxProperties: ${String(schema.maxProperties)}`);
+  }
   if (typeof schema.minimum === "number") {
     options.push(`minimum: ${String(schema.minimum)}`);
   }
+  if (typeof schema.minItems === "number") {
+    options.push(`minItems: ${String(schema.minItems)}`);
+  }
   if (typeof schema.minLength === "number") {
     options.push(`minLength: ${String(schema.minLength)}`);
+  }
+  if (typeof schema.minProperties === "number") {
+    options.push(`minProperties: ${String(schema.minProperties)}`);
   }
   return options.length === 0 ? "" : `{ ${options.join(", ")} }`;
 }
 
 function renderRequiredExpression(schema: JsonSchema): string {
   if (schema.anyOf !== undefined) {
-    // A Pydantic `T | None` field renders as `anyOf: [<T>, null]`; the column
-    // is already made `Type.Optional(...)` by being absent from `required`, so
-    // only the non-null member needs rendering here.
-    const nonNull = schema.anyOf.find((member) => member.type !== "null");
-    if (nonNull === undefined) {
+    const nonNull = schema.anyOf.filter((member) => member.type !== "null");
+    if (nonNull.length === 0) {
       throw new Error(`unsupported schema: ${JSON.stringify(schema)}`);
     }
-    return renderRequiredExpression(nonNull);
+    if (nonNull.length === 1) {
+      return renderRequiredExpression(nonNull[0]);
+    }
+    return `Type.Union([${nonNull.map(renderRequiredExpression).join(", ")}])`;
   }
   if (schema.enum !== undefined) {
     return `StringEnum([${schema.enum.map(quoted).join(", ")}] as const)`;
@@ -95,13 +111,13 @@ function renderRequiredExpression(schema: JsonSchema): string {
   }
   if (
     schema.type === "object" &&
-    typeof schema.additionalProperties === "object" &&
-    schema.additionalProperties.type === "string"
+    typeof schema.additionalProperties === "object"
   ) {
-    // A Pydantic `dict[str, str]` field (e.g. Commons `facets`): a flat
-    // string-to-string map with no fixed property names, so TypeBox's
-    // `Type.Record` is the shape, not `Type.Object`.
-    return "Type.Record(Type.String(), Type.String())";
+    // Pydantic dynamic maps become TypeBox records. The host remains the final
+    // validator for constrained property names such as Ledger field ids.
+    const options = renderOptions(schema);
+    const record = `Type.Record(Type.String(), ${renderRequiredExpression(schema.additionalProperties)}`;
+    return options === "" ? `${record})` : `${record}, ${options})`;
   }
   if (schema.type === "object" && schema.additionalProperties === true) {
     // A Pydantic `dict[str, object]` field is an arbitrary string-to-JSON map,
@@ -114,10 +130,11 @@ function renderRequiredExpression(schema: JsonSchema): string {
     return renderObject(schema);
   }
   if (schema.type === "array" && schema.items !== undefined) {
-    // A Pydantic `list[T]` field (e.g. the fused Search `sources` filter):
-    // `resolvePropertySchema` has already inlined `items`'s `$ref` (a string
-    // enum's members), so this only needs to wrap that rendering.
-    return `Type.Array(${renderRequiredExpression(schema.items)})`;
+    // A Pydantic `list[T]` field keeps its host-owned cardinality limits in the
+    // generated tool schema as well as in final host validation.
+    const options = renderOptions(schema);
+    const array = `Type.Array(${renderRequiredExpression(schema.items)}`;
+    return options === "" ? `${array})` : `${array}, ${options})`;
   }
   throw new Error(`unsupported schema: ${JSON.stringify(schema)}`);
 }
@@ -157,17 +174,27 @@ function resolvePropertySchema(
     // `$ref` under `items`; resolve it the same way an `anyOf` branch is.
     return { ...schema, items: resolvePropertySchema(root, schema.items) };
   }
-  if (schema.type === "object" && schema.properties !== undefined) {
-    // A nested model's own fields may themselves be `$ref`s (e.g. enums);
-    // resolve each so the nested render sees inlined definitions.
+  if (schema.type === "object") {
     return {
       ...schema,
-      properties: Object.fromEntries(
-        Object.entries(schema.properties).map(([name, property]) => [
-          name,
-          resolvePropertySchema(root, property),
-        ]),
-      ),
+      ...(typeof schema.additionalProperties === "object"
+        ? {
+            additionalProperties: resolvePropertySchema(
+              root,
+              schema.additionalProperties,
+            ),
+          }
+        : {}),
+      ...(schema.properties !== undefined
+        ? {
+            properties: Object.fromEntries(
+              Object.entries(schema.properties).map(([name, property]) => [
+                name,
+                resolvePropertySchema(root, property),
+              ]),
+            ),
+          }
+        : {}),
     };
   }
   if (schema.$ref === undefined) {

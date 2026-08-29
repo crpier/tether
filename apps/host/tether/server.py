@@ -41,6 +41,7 @@ from tether.host_config import AppConfig, HostSettings
 from tether.host_resources import HOST_QUIET_LOGGERS, HostBootstrap
 from tether.kosync_routes import kosync_protocol_routes
 from tether.kosync_tools import internal_kosync_tool_routes
+from tether.ledger_tools import internal_ledger_tool_routes
 from tether.local_dependencies import (
     LocalProviderAuthBackend,
     LocalSttTransport,
@@ -209,6 +210,7 @@ def create_app(
             *internal_kosync_tool_routes(),
             *internal_health_connect_tool_routes(),
             *internal_product_observation_tool_routes(),
+            *internal_ledger_tool_routes(),
             *(
                 kosync_protocol_routes()
                 if config.kosync_enabled

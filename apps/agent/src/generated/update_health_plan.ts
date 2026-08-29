@@ -17,6 +17,7 @@ const update_health_planParameters = Type.Object({
       "walking",
       "weightlifting",
     ] as const),
+    { maxItems: 4, minItems: 1 },
   ),
   grace_minutes: Type.Optional(
     Type.Integer({ default: 60, maximum: 360, minimum: 15 }),
@@ -37,6 +38,7 @@ const update_health_planParameters = Type.Object({
         "sunday",
       ] as const),
     }),
+    { maxItems: 14, minItems: 1 },
   ),
   plan_id: Type.String({ format: "uuid" }),
   version: Type.Integer({ exclusiveMinimum: 0 }),

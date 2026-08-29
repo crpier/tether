@@ -16,6 +16,7 @@ from tether.conversation_history_tools import CONVERSATION_HISTORY_TOOL_SPECS
 from tether.gmail import GMAIL_TOOL_SPECS
 from tether.health_connect import HEALTH_CONNECT_TOOL_SPECS
 from tether.kosync_tools import KOSYNC_TOOL_SPECS
+from tether.ledger_tools import LEDGER_TOOL_SPECS
 from tether.panel_tools import PANEL_TOOL_SPECS
 from tether.product_observation_tools import PRODUCT_OBSERVATION_TOOL_SPECS
 from tether.recall_tools import RECALL_TOOL_SPECS
@@ -50,4 +51,5 @@ def all_tool_specs() -> tuple[ToolSpec, ...]:
         *KOSYNC_TOOL_SPECS,
         *HEALTH_CONNECT_TOOL_SPECS,
         *PRODUCT_OBSERVATION_TOOL_SPECS,
+        *LEDGER_TOOL_SPECS,
     )

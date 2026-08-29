@@ -20,6 +20,7 @@ from tether.gmail import action_routes_router as gmail_action_router
 from tether.gmail import auth_routes_router as gmail_auth_router
 from tether.health_connect import router as health_connect_router
 from tether.kosync_routes import router as ebook_router
+from tether.ledger_routes import router as ledger_router
 from tether.model_selection import router as model_router
 from tether.notification_routes import router as notification_router
 from tether.panel_routes import router as panel_router
@@ -58,6 +59,7 @@ _PUBLIC_ROUTERS = (
     artifact_router,
     panel_router,
     product_observation_router,
+    ledger_router,
     ebook_router,
     stt_router,
     tts_router,

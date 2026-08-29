@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from tether.health_distillation import HealthDistillationService
     from tether.kosync import KosyncService
     from tether.kosync_routes import KosyncAuth
+    from tether.ledgers import LedgerService
     from tether.memory_workspace_service import MemoryWorkspaceService
     from tether.model_selection import AgentModelCatalog
     from tether.notifications import NotificationService
@@ -75,6 +76,7 @@ class AppRuntime:
     gmail_client: GmailClient | None
     gmail_auth_service: GoogleGmailAuthService | None
     kosync_service: KosyncService
+    ledger_service: LedgerService
     logger: Logger
     memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog

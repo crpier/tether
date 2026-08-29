@@ -161,6 +161,7 @@ async def _compose_app_runtime(
             health_plan_service=core.health_plan_service,
             kosync_auth=core.kosync_auth,
             kosync_service=core.kosync_service,
+            ledger_service=core.ledger_service,
             logger=host.logger,
             memory_workspace_service=core.memory_workspace_service,
             model_catalog=core.model_catalog,

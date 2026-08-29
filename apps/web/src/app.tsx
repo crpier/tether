@@ -58,6 +58,7 @@ function parseBrowseTab(value: SearchValue): BrowseView | undefined {
   return raw === "memories" ||
     raw === "dreaming" ||
     raw === "bucket" ||
+    raw === "ledgers" ||
     raw === "todos" ||
     raw === "reminders" ||
     raw === "feedback" ||
@@ -94,6 +95,7 @@ const BrowseMemoriesPage = directBrowsePage("memories");
 const BrowseDreamingPage = directBrowsePage("dreaming");
 const BrowseBucketPage = directBrowsePage("bucket");
 const BrowseBucketHistoryPage = directBrowsePage("bucket", "history");
+const BrowseLedgersPage = directBrowsePage("ledgers");
 const BrowseTodosPage = directBrowsePage("todos");
 const BrowseRemindersPage = directBrowsePage("reminders");
 const BrowseFeedbackPage = directBrowsePage("feedback");
@@ -177,6 +179,7 @@ function ConnectedApp(props: Required<AppDependencies>) {
           component={BrowseBucketHistoryPage}
           path="/browse/bucket/history"
         />
+        <Route component={BrowseLedgersPage} path="/browse/ledgers" />
         <Route component={BrowseTodosPage} path="/browse/todos" />
         <Route component={BrowseRemindersPage} path="/browse/reminders" />
         <Route component={BrowseFeedbackPage} path="/browse/feedback" />

@@ -1935,6 +1935,528 @@
         "title": "ListProductObservationsParams",
         "type": "object"
       }
+    },
+    {
+      "endpoint": "/internal/tools/propose_ledger",
+      "name": "propose_ledger",
+      "params_model": "ProposeLedgerParams",
+      "schema": {
+        "$defs": {
+          "LedgerFieldDefinition": {
+            "additionalProperties": false,
+            "description": "One stable scalar field in an immutable Ledger revision.",
+            "properties": {
+              "deprecated": {
+                "default": false,
+                "title": "Deprecated",
+                "type": "boolean"
+              },
+              "description": {
+                "maxLength": 500,
+                "minLength": 1,
+                "title": "Description",
+                "type": "string"
+              },
+              "enum_values": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enum Values"
+              },
+              "field_id": {
+                "$ref": "#/$defs/LedgerFieldId"
+              },
+              "label": {
+                "maxLength": 80,
+                "minLength": 1,
+                "title": "Label",
+                "type": "string"
+              },
+              "required": {
+                "title": "Required",
+                "type": "boolean"
+              },
+              "type": {
+                "$ref": "#/$defs/LedgerFieldType"
+              },
+              "unit": {
+                "anyOf": [
+                  {
+                    "maxLength": 40,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unit"
+              }
+            },
+            "required": [
+              "description",
+              "field_id",
+              "label",
+              "required",
+              "type"
+            ],
+            "title": "LedgerFieldDefinition",
+            "type": "object"
+          },
+          "LedgerFieldId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "LedgerFieldType": {
+            "enum": [
+              "boolean",
+              "date",
+              "datetime",
+              "decimal",
+              "enum",
+              "integer",
+              "text"
+            ],
+            "type": "string"
+          },
+          "LedgerLifecycleStatus": {
+            "enum": ["active", "completed", "abandoned"],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Propose a flat structured history for later explicit user approval.\n\nUse only when no established Vertical owns the records. This freezes a\nproposal but creates no writable Ledger. A later interactive user Message\nmust approve the exact proposal.",
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/$defs/LedgerFieldDefinition"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "purpose": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/LedgerLifecycleStatus",
+            "default": "active"
+          }
+        },
+        "required": ["fields", "name", "purpose"],
+        "title": "ProposeLedgerParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/append_ledger_entries",
+      "name": "append_ledger_entries",
+      "params_model": "AppendLedgerEntriesParams",
+      "schema": {
+        "$defs": {
+          "LedgerEntryDraft": {
+            "additionalProperties": false,
+            "description": "One complete schema-versioned entry proposed for atomic append.",
+            "properties": {
+              "occurred_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Occurred At"
+              },
+              "supersedes_entry_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid7",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Supersedes Entry Id"
+              },
+              "values": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/LedgerScalarValue"
+                },
+                "maxProperties": 32,
+                "minProperties": 1,
+                "propertyNames": {
+                  "$ref": "#/$defs/LedgerFieldId"
+                },
+                "title": "Values",
+                "type": "object"
+              }
+            },
+            "required": ["values"],
+            "title": "LedgerEntryDraft",
+            "type": "object"
+          },
+          "LedgerFieldId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "LedgerScalarValue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "description": "Append an atomic bounded batch under one observed active schema.\n\nValues must satisfy the approved field definitions. Every appended record\ncites the active user Message automatically. Set `supersedes_entry_id` only\nfor a complete correction of one current entry.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/LedgerEntryDraft"
+            },
+            "maxItems": 25,
+            "minItems": 1,
+            "title": "Entries",
+            "type": "array"
+          },
+          "ledger_id": {
+            "format": "uuid7",
+            "title": "Ledger Id",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": ["entries", "ledger_id", "revision"],
+        "title": "AppendLedgerEntriesParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/query_ledger_entries",
+      "name": "query_ledger_entries",
+      "params_model": "QueryLedgerEntriesParams",
+      "schema": {
+        "$defs": {
+          "LedgerScalarValue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "Query bounded generic records separately from current Memory Search.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before"
+          },
+          "field_equals": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/LedgerScalarValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field Equals"
+          },
+          "include_superseded": {
+            "default": false,
+            "title": "Include Superseded",
+            "type": "boolean"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "format": "uuid7",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "q": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Q",
+            "type": "string"
+          }
+        },
+        "title": "QueryLedgerEntriesParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/propose_ledger_revision",
+      "name": "propose_ledger_revision",
+      "params_model": "ProposeLedgerRevisionParams",
+      "schema": {
+        "$defs": {
+          "LedgerFieldDefinition": {
+            "additionalProperties": false,
+            "description": "One stable scalar field in an immutable Ledger revision.",
+            "properties": {
+              "deprecated": {
+                "default": false,
+                "title": "Deprecated",
+                "type": "boolean"
+              },
+              "description": {
+                "maxLength": 500,
+                "minLength": 1,
+                "title": "Description",
+                "type": "string"
+              },
+              "enum_values": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enum Values"
+              },
+              "field_id": {
+                "$ref": "#/$defs/LedgerFieldId"
+              },
+              "label": {
+                "maxLength": 80,
+                "minLength": 1,
+                "title": "Label",
+                "type": "string"
+              },
+              "required": {
+                "title": "Required",
+                "type": "boolean"
+              },
+              "type": {
+                "$ref": "#/$defs/LedgerFieldType"
+              },
+              "unit": {
+                "anyOf": [
+                  {
+                    "maxLength": 40,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unit"
+              }
+            },
+            "required": [
+              "description",
+              "field_id",
+              "label",
+              "required",
+              "type"
+            ],
+            "title": "LedgerFieldDefinition",
+            "type": "object"
+          },
+          "LedgerFieldId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "LedgerFieldType": {
+            "enum": [
+              "boolean",
+              "date",
+              "datetime",
+              "decimal",
+              "enum",
+              "integer",
+              "text"
+            ],
+            "type": "string"
+          },
+          "LedgerLifecycleStatus": {
+            "enum": ["active", "completed", "abandoned"],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Propose an exact successor to one observed active Ledger revision.",
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/$defs/LedgerFieldDefinition"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "purpose": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/LedgerLifecycleStatus",
+            "default": "active"
+          },
+          "ledger_id": {
+            "format": "uuid7",
+            "title": "Ledger Id",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": ["fields", "name", "purpose", "ledger_id", "revision"],
+        "title": "ProposeLedgerRevisionParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/approve_ledger_proposal",
+      "name": "approve_ledger_proposal",
+      "params_model": "ApproveLedgerProposalParams",
+      "schema": {
+        "description": "Approve one exact proposal after the user explicitly confirms it.",
+        "properties": {
+          "proposal_id": {
+            "format": "uuid7",
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "required": ["proposal_id"],
+        "title": "ApproveLedgerProposalParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_ledgers",
+      "name": "list_ledgers",
+      "params_model": "ListLedgersParams",
+      "schema": {
+        "description": "List current approved generic Ledgers and their field schemas.",
+        "properties": {},
+        "title": "ListLedgersParams",
+        "type": "object"
+      }
+    },
+    {
+      "endpoint": "/internal/tools/list_ledger_proposals",
+      "name": "list_ledger_proposals",
+      "params_model": "ListLedgerProposalsParams",
+      "schema": {
+        "description": "List pending Ledger definitions awaiting explicit user approval.",
+        "properties": {},
+        "title": "ListLedgerProposalsParams",
+        "type": "object"
+      }
     }
   ]
 }

@@ -5,6 +5,7 @@ import { createChatHost, type ChatHost } from "./chat";
 import { createDreamingHost, type DreamingHost } from "./dreaming";
 import { createEvidenceHost, type EvidenceHost } from "./evidence";
 import { createHealthHost, type HealthHost } from "./health";
+import { createLedgersHost, type LedgersHost } from "./ledgers";
 import { createMemoriesHost, type MemoriesHost } from "./memories";
 import {
   createNotificationsHost,
@@ -31,6 +32,7 @@ export * from "./chat";
 export * from "./dreaming";
 export * from "./evidence";
 export * from "./health";
+export * from "./ledgers";
 export * from "./memories";
 export * from "./notifications";
 export * from "./panels";
@@ -53,6 +55,7 @@ export interface WebHost {
   dreaming: DreamingHost;
   evidence: EvidenceHost;
   health: HealthHost;
+  ledgers: LedgersHost;
   memories: MemoriesHost;
   notifications: NotificationsHost;
   panels: PanelsHost;
@@ -78,6 +81,7 @@ export function createRestHost(
     dreaming: createDreamingHost(context),
     evidence: createEvidenceHost(context),
     health: createHealthHost(context),
+    ledgers: createLedgersHost(context),
     memories: createMemoriesHost(context),
     notifications: createNotificationsHost(context),
     panels: createPanelsHost(context),

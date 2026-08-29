@@ -109,6 +109,20 @@ async def dreaming_uses_second_person_for_user_facing_memory() -> None:
 
 
 @test()
+async def the_conversation_prompt_constrains_generic_ledgers() -> None:
+    """Foreground guidance keeps Ledgers approved, typed, and outside Memory."""
+    prompt = system_prompt_for("conversation")
+
+    assert_in("Ledger", prompt)
+    assert_in("propose_ledger", prompt)
+    assert_in("approve_ledger_proposal", prompt)
+    assert_in("append_ledger_entries", prompt)
+    assert_in("query_ledger_entries", prompt)
+    assert_in("later active user Message", prompt)
+    assert_in("Health, Purchases, Recall", prompt)
+
+
+@test()
 async def the_conversation_prompt_records_only_explicit_product_feedback() -> None:
     """Product observations require an explicit request, never inference."""
     assert_in("record_product_observation", CONVERSATION_SYSTEM_PROMPT)

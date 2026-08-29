@@ -4378,6 +4378,464 @@
         "title": "LabelEbookRequest",
         "type": "object"
       },
+      "LedgerDetailRead": {
+        "description": "Current Ledger definition together with immutable revision history.",
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/LedgerRead"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerRead"
+            },
+            "title": "Revisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "current",
+          "revisions"
+        ],
+        "title": "LedgerDetailRead",
+        "type": "object"
+      },
+      "LedgerEntryRead": {
+        "description": "One immutable Ledger record with its exact interpretation and Evidence.",
+        "properties": {
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "ledger_id": {
+            "format": "uuid7",
+            "title": "Ledger Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "superseded_by_entry_id": {
+            "anyOf": [
+              {
+                "format": "uuid7",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Entry Id"
+          },
+          "supersedes_entry_id": {
+            "anyOf": [
+              {
+                "format": "uuid7",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Entry Id"
+          },
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LedgerScalarValue"
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "evidence",
+          "id",
+          "is_current",
+          "ledger_id",
+          "occurred_at",
+          "recorded_at",
+          "revision",
+          "superseded_by_entry_id",
+          "supersedes_entry_id",
+          "values"
+        ],
+        "title": "LedgerEntryRead",
+        "type": "object"
+      },
+      "LedgerExportRead": {
+        "description": "Complete deterministic Ledger definition and record history.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntryRead"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "ledger_id": {
+            "format": "uuid7",
+            "title": "Ledger Id",
+            "type": "string"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerProposalRead"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerRead"
+            },
+            "title": "Revisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries",
+          "ledger_id",
+          "proposals",
+          "revisions"
+        ],
+        "title": "LedgerExportRead",
+        "type": "object"
+      },
+      "LedgerFieldDefinition": {
+        "additionalProperties": false,
+        "description": "One stable scalar field in an immutable Ledger revision.",
+        "properties": {
+          "deprecated": {
+            "default": false,
+            "title": "Deprecated",
+            "type": "boolean"
+          },
+          "description": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "enum_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enum Values"
+          },
+          "field_id": {
+            "$ref": "#/components/schemas/LedgerFieldId"
+          },
+          "label": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "$ref": "#/components/schemas/LedgerFieldType"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "description",
+          "field_id",
+          "label",
+          "required",
+          "type"
+        ],
+        "title": "LedgerFieldDefinition",
+        "type": "object"
+      },
+      "LedgerFieldId": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "LedgerFieldType": {
+        "enum": [
+          "boolean",
+          "date",
+          "datetime",
+          "decimal",
+          "enum",
+          "integer",
+          "text"
+        ],
+        "type": "string"
+      },
+      "LedgerLifecycleStatus": {
+        "enum": [
+          "active",
+          "completed",
+          "abandoned"
+        ],
+        "type": "string"
+      },
+      "LedgerProposalKind": {
+        "enum": [
+          "create",
+          "revise"
+        ],
+        "type": "string"
+      },
+      "LedgerProposalRead": {
+        "description": "One exact Ledger definition awaiting or retaining approval.",
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by_message_id": {
+            "anyOf": [
+              {
+                "format": "uuid7",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By Message Id"
+          },
+          "base_revision": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerFieldDefinition"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LedgerProposalKind"
+          },
+          "ledger_id": {
+            "format": "uuid7",
+            "title": "Ledger Id",
+            "type": "string"
+          },
+          "ledger_status": {
+            "$ref": "#/components/schemas/LedgerLifecycleStatus"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "proposed_by_conversation_id": {
+            "format": "uuid7",
+            "title": "Proposed By Conversation Id",
+            "type": "string"
+          },
+          "proposed_by_message_id": {
+            "format": "uuid7",
+            "title": "Proposed By Message Id",
+            "type": "string"
+          },
+          "proposed_revision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Proposed Revision",
+            "type": "integer"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LedgerProposalStatus"
+          }
+        },
+        "required": [
+          "approved_at",
+          "approved_by_message_id",
+          "base_revision",
+          "created_at",
+          "fields",
+          "id",
+          "kind",
+          "ledger_id",
+          "ledger_status",
+          "name",
+          "proposed_by_conversation_id",
+          "proposed_by_message_id",
+          "proposed_revision",
+          "purpose",
+          "status"
+        ],
+        "title": "LedgerProposalRead",
+        "type": "object"
+      },
+      "LedgerProposalStatus": {
+        "enum": [
+          "pending",
+          "approved"
+        ],
+        "type": "string"
+      },
+      "LedgerRead": {
+        "description": "One Ledger at a specific approved immutable revision.",
+        "properties": {
+          "approved_by_conversation_id": {
+            "format": "uuid7",
+            "title": "Approved By Conversation Id",
+            "type": "string"
+          },
+          "approved_by_message_id": {
+            "format": "uuid7",
+            "title": "Approved By Message Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerFieldDefinition"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid7",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid7",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LedgerLifecycleStatus"
+          }
+        },
+        "required": [
+          "approved_by_conversation_id",
+          "approved_by_message_id",
+          "created_at",
+          "fields",
+          "id",
+          "name",
+          "proposal_id",
+          "purpose",
+          "revision",
+          "status"
+        ],
+        "title": "LedgerRead",
+        "type": "object"
+      },
+      "LedgerScalarValue": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
       "LoginRequest": {
         "description": "Body for app login with the shared password.",
         "properties": {
@@ -9090,6 +9548,189 @@
           }
         },
         "summary": "Read Health Overview"
+      }
+    },
+    "/api/ledger-proposals": {
+      "get": {
+        "description": "List pending exact definitions awaiting user approval.",
+        "operationId": "list_ledger_proposals_api_ledger_proposals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LedgerProposalRead"
+                  },
+                  "title": "Response List Ledger Proposals Api Ledger Proposals Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ledger Proposals"
+      }
+    },
+    "/api/ledgers": {
+      "get": {
+        "description": "List current approved Ledger definitions.",
+        "operationId": "list_ledgers_api_ledgers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LedgerRead"
+                  },
+                  "title": "Response List Ledgers Api Ledgers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ledgers"
+      }
+    },
+    "/api/ledgers/{ledger_id}": {
+      "get": {
+        "description": "Return current Ledger state and immutable definition history.",
+        "operationId": "fetch_ledger_api_ledgers__ledger_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ledger_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ledger Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fetch Ledger"
+      }
+    },
+    "/api/ledgers/{ledger_id}/entries": {
+      "get": {
+        "description": "List current records or complete immutable history newest first.",
+        "operationId": "list_ledger_entries_api_ledgers__ledger_id__entries_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ledger_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ledger Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_superseded",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Superseded",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LedgerEntryRead"
+                  },
+                  "title": "Response List Ledger Entries Api Ledgers  Ledger Id  Entries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Ledger Entries"
+      }
+    },
+    "/api/ledgers/{ledger_id}/export": {
+      "get": {
+        "description": "Export one complete deterministic Ledger history.",
+        "operationId": "export_ledger_api_ledgers__ledger_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ledger_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ledger Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerExportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Ledger"
       }
     },
     "/api/memory-rebuilds": {

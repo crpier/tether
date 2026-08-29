@@ -84,9 +84,16 @@ describe("generated tool extension", () => {
       "update_health_plan",
       "record_product_observation",
       "list_product_observations",
+      "propose_ledger",
+      "append_ledger_entries",
+      "query_ledger_entries",
+      "propose_ledger_revision",
+      "approve_ledger_proposal",
+      "list_ledgers",
+      "list_ledger_proposals",
       "execute_tools",
     ]);
-    expect(tetherToolSources).toHaveLength(58);
+    expect(tetherToolSources).toHaveLength(65);
   });
 
   test("makes every generated schema discoverable by confined code", async () => {

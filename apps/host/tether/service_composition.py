@@ -57,6 +57,7 @@ from tether.host_resources import HostBootstrap, HostResources, ephemeral_pi_con
 from tether.kosync import KosyncService
 from tether.kosync_routes import KosyncAuth
 from tether.kosync_store import KosyncStore
+from tether.ledgers import LedgerService
 from tether.memory_workspace_service import (
     MemoryWorkspaceService,
     memory_workspace_root,
@@ -543,6 +544,7 @@ class CoreServices:
     event_hub: EventHub
     kosync_auth: KosyncAuth
     kosync_service: KosyncService
+    ledger_service: LedgerService
     memory_workspace_service: MemoryWorkspaceService
     model_catalog: AgentModelCatalog
     notification_service: NotificationService
@@ -903,6 +905,7 @@ async def compose_core_services(
         event_hub=event_hub,
         kosync_auth=presentation.kosync_auth,
         kosync_service=presentation.kosync_service,
+        ledger_service=LedgerService(host.database, event_publisher=event_hub),
         memory_workspace_service=memory_workspace_service,
         model_catalog=model_catalog,
         notification_service=scheduler_component.notification_service,
