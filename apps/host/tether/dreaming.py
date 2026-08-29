@@ -1168,9 +1168,12 @@ _MESSAGE_URI_PATTERN = re.compile(
 )
 _FILE_SEPARATOR_PATTERN = re.compile(r"^===\s+(\S+)\s+===\s*$", re.MULTILINE)
 _RETIREMENT_SEPARATOR = "=== RETIREMENTS ==="
+_RETIREMENT_FIELD_COUNT = 3
 _SOURCE_CITATION_PATTERN = re.compile(r"\s*\[source\]\(tether://[^)]+\)", re.IGNORECASE)
 _CITATION_ALIAS_PREFIX = "citation:E"
 _CITATION_ALIAS_PATTERN = re.compile(r"citation:[^\s)\]>,\"']*")
+_CLAIM_ALIAS_PREFIX = "claim:C"
+_CLAIM_ALIAS_PATTERN = re.compile(r"claim:C[1-9]\d*")
 
 MaintenanceRetirementReason = Literal[
     "expired",
@@ -1210,19 +1213,35 @@ class _MaintenanceError(Exception):
     """A consolidated response violated a maintenance invariant."""
 
 
-@dataclass(frozen=True, slots=True)
-class _MaintenanceCitationAliases:
-    """Hide canonical Evidence identifiers behind short curator references."""
+def _claim_texts(document: str) -> tuple[str, ...]:
+    """Read current Claim text in document order without source-link markup."""
+    body = document
+    if document.startswith("---\n"):
+        parts = document.split(_FRONTMATTER_SEPARATOR, 1)
+        if len(parts) == _FRONTMATTER_PART_COUNT:
+            body = parts[1]
+    return tuple(
+        claim
+        for line in body.splitlines()
+        if line.startswith("- ")
+        and (claim := _SOURCE_CITATION_PATTERN.sub("", line.removeprefix("- ")).strip())
+    )
 
-    canonical_by_alias: dict[str, str]
+
+@dataclass(frozen=True, slots=True)
+class _MaintenanceAliases:
+    """Bound model-visible Claim and Evidence references to maintenance inputs."""
+
+    canonical_evidence_by_alias: dict[str, str]
+    claim_by_alias: dict[str, str]
 
     @classmethod
     def from_inputs(
         cls,
         batch: list[tuple[str, str]],
         evidence: list[Message[Fetched]],
-    ) -> _MaintenanceCitationAliases:
-        """Assign deterministic aliases to every Evidence URI in the bounded input."""
+    ) -> _MaintenanceAliases:
+        """Assign deterministic aliases in bounded input order."""
         canonical_uris = dict.fromkeys(
             uri
             for _, content in batch
@@ -1231,25 +1250,39 @@ class _MaintenanceCitationAliases:
         canonical_uris.update(
             {f"tether://message/{message.id}": None for message in evidence}
         )
+        claims = dict.fromkeys(
+            claim for _, document in batch for claim in _claim_texts(document)
+        )
         return cls(
-            canonical_by_alias={
+            canonical_evidence_by_alias={
                 f"{_CITATION_ALIAS_PREFIX}{index}": uri
                 for index, uri in enumerate(canonical_uris, start=1)
-            }
+            },
+            claim_by_alias={
+                f"{_CLAIM_ALIAS_PREFIX}{index}": claim
+                for index, claim in enumerate(claims, start=1)
+            },
         )
 
-    def obscure(self, text: str) -> str:
+    def obscure_citations(self, text: str) -> str:
         """Replace canonical identifiers before text crosses the agent seam."""
         alias_by_canonical = {
-            canonical: alias for alias, canonical in self.canonical_by_alias.items()
+            canonical: alias
+            for alias, canonical in self.canonical_evidence_by_alias.items()
         }
         return _EVIDENCE_URI_PATTERN.sub(
             lambda match: alias_by_canonical.get(match.group(), match.group()),
             text,
         )
 
-    def resolve(self, text: str) -> str:
-        """Restore known aliases and reject references outside the bounded input."""
+    def render_claims(self) -> str:
+        """Render the bounded Claim legend given to curator and verifier."""
+        return "\n".join(
+            f"{alias} | {claim}" for alias, claim in self.claim_by_alias.items()
+        )
+
+    def resolve_citations(self, text: str) -> str:
+        """Restore known Evidence aliases and reject out-of-bounds references."""
         if _EVIDENCE_URI_PATTERN.search(text):
             message = (
                 "maintenance output contains a canonical Evidence URI; "
@@ -1258,15 +1291,23 @@ class _MaintenanceCitationAliases:
             raise _MaintenanceError(message)
         for match in _CITATION_ALIAS_PATTERN.finditer(text):
             alias = match.group()
-            if alias not in self.canonical_by_alias:
+            if alias not in self.canonical_evidence_by_alias:
                 message = (
                     f"maintenance output contains an unknown citation alias: {alias}"
                 )
                 raise _MaintenanceError(message)
         return _CITATION_ALIAS_PATTERN.sub(
-            lambda match: self.canonical_by_alias[match.group()],
+            lambda match: self.canonical_evidence_by_alias[match.group()],
             text,
         )
+
+    def resolve_claim(self, alias: str) -> str:
+        """Restore one exact current Claim or reject an out-of-bounds alias."""
+        try:
+            return self.claim_by_alias[alias]
+        except KeyError as error:
+            message = f"maintenance output contains an unknown Claim alias: {alias}"
+            raise _MaintenanceError(message) from error
 
 
 def maintenance_group_run_id(folder: str) -> UUID7:
@@ -1325,12 +1366,12 @@ class MaintenanceDreamingExecutor:
                 error="maintenance requires a consolidation runner",
             )
         evidence = await self._fetch_message_evidence(batch)
-        citations = _MaintenanceCitationAliases.from_inputs(batch, evidence)
+        aliases = _MaintenanceAliases.from_inputs(batch, evidence)
         response = (
             await agent.curator.run(
                 self._render_prompt(
                     batch,
-                    citations=citations,
+                    aliases=aliases,
                     evidence=evidence,
                     now=current_time,
                 )
@@ -1351,8 +1392,8 @@ class MaintenanceDreamingExecutor:
             )
         aliased_response = response
         try:
-            response = citations.resolve(response)
-            transition = self._parse_response(response)
+            response = aliases.resolve_citations(response)
+            transition = self._parse_response(response, aliases=aliases)
             needs_semantic_verification = self._validate_transition(
                 batch,
                 transition,
@@ -1365,7 +1406,7 @@ class MaintenanceDreamingExecutor:
                 agent,
                 prompt=self._render_verification_prompt(
                     batch,
-                    citations=citations,
+                    aliases=aliases,
                     evidence=evidence,
                     now=current_time,
                     response=aliased_response,
@@ -1541,19 +1582,19 @@ class MaintenanceDreamingExecutor:
         self,
         batch: list[tuple[str, str]],
         *,
-        citations: _MaintenanceCitationAliases,
+        aliases: _MaintenanceAliases,
         evidence: list[Message[Fetched]],
         now: datetime,
     ) -> str:
         """Render current state, its source Evidence, and temporal policy."""
         blocks = "\n\n".join(
-            f"<<< {relative}\n{citations.obscure(content)}\n>>>"
+            f"<<< {relative}\n{aliases.obscure_citations(content)}\n>>>"
             for relative, content in batch
         )
         evidence_blocks = "\n\n".join(
             "\n".join(
                 (
-                    f"citation: {citations.obscure(f'tether://message/{message.id}')}",
+                    f"citation: {aliases.obscure_citations(f'tether://message/{message.id}')}",
                     f"role: {message.role}",
                     f"created_at: {_as_utc(message.created_at).isoformat()}",
                     "content:",
@@ -1576,6 +1617,10 @@ Canonical Conversation Evidence cited by the inputs:
 
 {evidence_blocks}
 
+Bounded current Claim aliases:
+
+{aliases.render_claims()}
+
 Rules:
 - Merge duplicate or tightly overlapping Claims into concise Claims that preserve their complete meaning and citations; keep distinct facts distinct.
 - User Messages outrank assistant conclusions; explicit user corrections supersede them.
@@ -1589,6 +1634,7 @@ Rules:
 - When uncertain, preserve or qualify the Claim and set `review_after`; never guess.
 - In Topic documents, format every Evidence citation as `[source](citation:E1)`, replacing `citation:E1` with the exact supplied citation alias. Never expose an alias as link text. Never use raw HTML for Evidence links.
 - Every Evidence citation and retirement basis must use an exact supplied `citation:E<number>` alias; never invent or alter an alias.
+- Every retirement must use an exact supplied `claim:C<number>` alias. Never copy old Claim text into a retirement.
 - Return either exactly `NO_CHANGES` or zero or more resulting documents followed by a retirement ledger when any Claim is removed:
 
 === <workspace-relative/path.md> ===
@@ -1599,30 +1645,29 @@ title: <Topic title>
 <document body>
 
 === RETIREMENTS ===
-- claim: <exact old Claim text without the leading dash or source citation>
-  reason: <expired|superseded|explicitly_no_longer_current|unsupported>
-  basis:
-    - <exact supplied citation alias>
+claim:C1 | <expired|superseded|explicitly_no_longer_current|unsupported> | citation:E1, citation:E2
+
+Use one line per retirement. Replace every example alias with an exact supplied alias.
 """
 
     def _render_verification_prompt(
         self,
         batch: list[tuple[str, str]],
         *,
-        citations: _MaintenanceCitationAliases,
+        aliases: _MaintenanceAliases,
         evidence: list[Message[Fetched]],
         now: datetime,
         response: str,
     ) -> str:
         """Ask a separate pass to reject semantically unsafe retirement."""
         current_documents = "\n\n".join(
-            f"<<< {relative}\n{citations.obscure(content)}\n>>>"
+            f"<<< {relative}\n{aliases.obscure_citations(content)}\n>>>"
             for relative, content in batch
         )
         evidence_blocks = "\n\n".join(
             "\n".join(
                 (
-                    f"citation: {citations.obscure(f'tether://message/{message.id}')}",
+                    f"citation: {aliases.obscure_citations(f'tether://message/{message.id}')}",
                     f"role: {message.role}",
                     f"created_at: {_as_utc(message.created_at).isoformat()}",
                     "content:",
@@ -1641,11 +1686,15 @@ Current Topic documents:
 Canonical Conversation Evidence:
 {evidence_blocks}
 
+Bounded current Claim aliases:
+{aliases.render_claims()}
+
 Proposed transition:
 {response}
 
 Citation aliases intentionally replace canonical Evidence URIs in this verification task.
-Accept `[source](citation:E1)` as a valid Evidence link when `citation:E1` is supplied above. Do not require canonical identifiers or reject a transition merely because it uses citation aliases.
+Claim aliases intentionally identify exact current Claims in retirement lines.
+Accept `[source](citation:E1)` as a valid Evidence link when `citation:E1` is supplied above. Do not require canonical identifiers or reject a transition merely because it uses aliases.
 
 Return exactly `APPROVED` only when all three checks pass:
 - coverage: every prior Claim's supported meaning remains in a resulting Claim or has an explicit retirement;
@@ -1655,7 +1704,12 @@ Return exactly `APPROVED` only when all three checks pass:
 Age or disuse alone never justifies retirement. Otherwise return one concise rejection reason.
 """
 
-    def _parse_response(self, response: str) -> MaintenanceTransition:
+    def _parse_response(
+        self,
+        response: str,
+        *,
+        aliases: _MaintenanceAliases,
+    ) -> MaintenanceTransition:
         """Parse resulting documents and an optional retirement ledger."""
         if response.count(_RETIREMENT_SEPARATOR) > 1:
             message = "consolidation response repeated the retirement ledger"
@@ -1665,7 +1719,9 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
         )
         documents = self._parse_documents(documents_text.strip())
         retirements = (
-            self._parse_retirements(retirements_text.strip()) if marker else []
+            self._parse_retirements(retirements_text.strip(), aliases=aliases)
+            if marker
+            else []
         )
         if not documents and not retirements:
             message = "consolidation response contained no documents or retirements"
@@ -1707,51 +1763,47 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
             proposals.append((safe_path, document + "\n"))
         return proposals
 
-    def _parse_retirements(self, response: str) -> list[MaintenanceRetirement]:
-        """Decode the closed retirement vocabulary from YAML."""
-        try:
-            loaded = safe_load(response)
-        except YAMLError as error:
-            message = f"retirement ledger is invalid YAML: {error}"
-            raise _MaintenanceError(message) from error
-        if not isinstance(loaded, list):
-            message = "retirement ledger must be a YAML list"
+    def _parse_retirements(
+        self,
+        response: str,
+        *,
+        aliases: _MaintenanceAliases,
+    ) -> list[MaintenanceRetirement]:
+        """Decode the strict alias-only retirement line protocol."""
+        lines = response.splitlines()
+        if not lines or any(
+            len(line.split(" | ")) != _RETIREMENT_FIELD_COUNT for line in lines
+        ):
+            message = "retirement must use one Claim alias per line"
             raise _MaintenanceError(message)
         retirements: list[MaintenanceRetirement] = []
+        seen_aliases: set[str] = set()
         allowed_reasons: set[str] = {
             "expired",
             "explicitly_no_longer_current",
             "superseded",
             "unsupported",
         }
-        for raw_retirement in cast("list[object]", loaded):
-            if not isinstance(raw_retirement, dict):
-                message = "each retirement must be a mapping"
+        for line in lines:
+            alias, reason, raw_basis = line.split(" | ")
+            if _CLAIM_ALIAS_PATTERN.fullmatch(alias) is None:
+                message = f"retirement contains a malformed Claim alias: {alias}"
                 raise _MaintenanceError(message)
-            retirement = cast("dict[str, object]", raw_retirement)
-            if set(retirement) != {"basis", "claim", "reason"}:
-                message = "retirement must contain only basis, claim, and reason"
+            if alias in seen_aliases:
+                message = f"retirement repeated Claim alias: {alias}"
                 raise _MaintenanceError(message)
-            claim = retirement["claim"]
-            reason = retirement["reason"]
-            basis = retirement["basis"]
-            if not isinstance(claim, str) or not claim.strip():
-                message = "retirement claim must be non-empty text"
-                raise _MaintenanceError(message)
-            if not isinstance(reason, str) or reason not in allowed_reasons:
+            seen_aliases.add(alias)
+            if reason not in allowed_reasons:
                 message = f"retirement reason is unsupported: {reason}"
                 raise _MaintenanceError(message)
-            if (
-                not isinstance(basis, list)
-                or not basis
-                or not all(isinstance(uri, str) for uri in cast("list[object]", basis))
-            ):
+            basis = raw_basis.split(", ")
+            if not all(_EVIDENCE_URI_PATTERN.fullmatch(uri) for uri in basis):
                 message = "retirement basis must contain Evidence URIs"
                 raise _MaintenanceError(message)
             retirements.append(
                 MaintenanceRetirement(
-                    basis=tuple(cast("list[str]", basis)),
-                    claim=claim.strip(),
+                    basis=tuple(basis),
+                    claim=aliases.resolve_claim(alias),
                     reason=cast("MaintenanceRetirementReason", reason),
                 )
             )
@@ -1790,21 +1842,6 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
         """Extract canonical citations without sentence-ending punctuation."""
         return {
             match.rstrip(".,;:!?") for match in _EVIDENCE_URI_PATTERN.findall(document)
-        }
-
-    @staticmethod
-    def _claim_texts(document: str) -> set[str]:
-        """Read exact current Claim text while excluding source-link markup."""
-        body = document
-        if document.startswith("---\n"):
-            parts = document.split(_FRONTMATTER_SEPARATOR, 1)
-            if len(parts) == _FRONTMATTER_PART_COUNT:
-                body = parts[1]
-        return {
-            _SOURCE_CITATION_PATTERN.sub("", line.removeprefix("- ")).strip()
-            for line in body.splitlines()
-            if line.startswith("- ")
-            and _SOURCE_CITATION_PATTERN.sub("", line.removeprefix("- ")).strip()
         }
 
     @classmethod
@@ -1860,12 +1897,12 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
             retired_claims.add(retirement.claim)
 
         prior_claims = {
-            claim for _, document in batch for claim in cls._claim_texts(document)
+            claim for _, document in batch for claim in _claim_texts(document)
         }
         resulting_claims = {
             claim
             for _, document in transition.documents
-            for claim in cls._claim_texts(document)
+            for claim in _claim_texts(document)
         }
         if unknown_retirements := retired_claims - prior_claims:
             message = "retirement does not name an exact prior Claim: " + ", ".join(
