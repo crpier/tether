@@ -14,7 +14,7 @@ const update_panelParameters = Type.Object({
   facets: Type.Record(Type.String(), Type.String()),
   query: Type.Optional(Type.String()),
   window_days: Type.Optional(Type.Integer({ exclusiveMinimum: 0 })),
-  columns: Type.Optional(Type.Array(Type.String())),
+  columns: Type.Optional(Type.Array(Type.String(), { default: [] })),
   render_kind: Type.Optional(StringEnum(["table", "vega-lite"] as const)),
   vega_lite_spec: Type.Optional(Type.String()),
   position: Type.Optional(Type.Integer({ default: 0 })),

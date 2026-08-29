@@ -808,6 +808,106 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/ledger-proposals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Ledger Proposals
+     * @description List pending exact definitions awaiting user approval.
+     */
+    get: operations["list_ledger_proposals_api_ledger_proposals_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/ledgers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Ledgers
+     * @description List current approved Ledger definitions.
+     */
+    get: operations["list_ledgers_api_ledgers_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/ledgers/{ledger_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Fetch Ledger
+     * @description Return current Ledger state and immutable definition history.
+     */
+    get: operations["fetch_ledger_api_ledgers__ledger_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/ledgers/{ledger_id}/entries": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Ledger Entries
+     * @description List current records or complete immutable history newest first.
+     */
+    get: operations["list_ledger_entries_api_ledgers__ledger_id__entries_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/ledgers/{ledger_id}/export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Export Ledger
+     * @description Export one complete deterministic Ledger history.
+     */
+    get: operations["export_ledger_api_ledgers__ledger_id__export_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/memory-rebuilds": {
     parameters: {
       query?: never;
@@ -3489,6 +3589,191 @@ export interface components {
       title: string;
     };
     /**
+     * LedgerDetailRead
+     * @description Current Ledger definition together with immutable revision history.
+     */
+    LedgerDetailRead: {
+      current: components["schemas"]["LedgerRead"];
+      /** Revisions */
+      revisions: components["schemas"]["LedgerRead"][];
+    };
+    /**
+     * LedgerEntryRead
+     * @description One immutable Ledger record with its exact interpretation and Evidence.
+     */
+    LedgerEntryRead: {
+      /** Evidence */
+      evidence: string[];
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Is Current */
+      is_current: boolean;
+      /**
+       * Ledger Id
+       * Format: uuid7
+       */
+      ledger_id: string;
+      /** Occurred At */
+      occurred_at: string | null;
+      /**
+       * Recorded At
+       * Format: date-time
+       */
+      recorded_at: string;
+      /** Revision */
+      revision: number;
+      /** Superseded By Entry Id */
+      superseded_by_entry_id: string | null;
+      /** Supersedes Entry Id */
+      supersedes_entry_id: string | null;
+      /** Values */
+      values: {
+        [key: string]: components["schemas"]["LedgerScalarValue"];
+      };
+    };
+    /**
+     * LedgerExportRead
+     * @description Complete deterministic Ledger definition and record history.
+     */
+    LedgerExportRead: {
+      /** Entries */
+      entries: components["schemas"]["LedgerEntryRead"][];
+      /**
+       * Ledger Id
+       * Format: uuid7
+       */
+      ledger_id: string;
+      /** Proposals */
+      proposals: components["schemas"]["LedgerProposalRead"][];
+      /** Revisions */
+      revisions: components["schemas"]["LedgerRead"][];
+    };
+    /**
+     * LedgerFieldDefinition
+     * @description One stable scalar field in an immutable Ledger revision.
+     */
+    LedgerFieldDefinition: {
+      /**
+       * Deprecated
+       * @default false
+       */
+      deprecated: boolean;
+      /** Description */
+      description: string;
+      /** Enum Values */
+      enum_values?: string[] | null;
+      field_id: components["schemas"]["LedgerFieldId"];
+      /** Label */
+      label: string;
+      /** Required */
+      required: boolean;
+      type: components["schemas"]["LedgerFieldType"];
+      /** Unit */
+      unit?: string | null;
+    };
+    LedgerFieldId: string;
+    /** @enum {string} */
+    LedgerFieldType:
+      "boolean" | "date" | "datetime" | "decimal" | "enum" | "integer" | "text";
+    /** @enum {string} */
+    LedgerLifecycleStatus: "active" | "completed" | "abandoned";
+    /** @enum {string} */
+    LedgerProposalKind: "create" | "revise";
+    /**
+     * LedgerProposalRead
+     * @description One exact Ledger definition awaiting or retaining approval.
+     */
+    LedgerProposalRead: {
+      /** Approved At */
+      approved_at: string | null;
+      /** Approved By Message Id */
+      approved_by_message_id: string | null;
+      /** Base Revision */
+      base_revision: number | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Fields */
+      fields: components["schemas"]["LedgerFieldDefinition"][];
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      kind: components["schemas"]["LedgerProposalKind"];
+      /**
+       * Ledger Id
+       * Format: uuid7
+       */
+      ledger_id: string;
+      ledger_status: components["schemas"]["LedgerLifecycleStatus"];
+      /** Name */
+      name: string;
+      /**
+       * Proposed By Conversation Id
+       * Format: uuid7
+       */
+      proposed_by_conversation_id: string;
+      /**
+       * Proposed By Message Id
+       * Format: uuid7
+       */
+      proposed_by_message_id: string;
+      /** Proposed Revision */
+      proposed_revision: number;
+      /** Purpose */
+      purpose: string;
+      status: components["schemas"]["LedgerProposalStatus"];
+    };
+    /** @enum {string} */
+    LedgerProposalStatus: "pending" | "approved";
+    /**
+     * LedgerRead
+     * @description One Ledger at a specific approved immutable revision.
+     */
+    LedgerRead: {
+      /**
+       * Approved By Conversation Id
+       * Format: uuid7
+       */
+      approved_by_conversation_id: string;
+      /**
+       * Approved By Message Id
+       * Format: uuid7
+       */
+      approved_by_message_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Fields */
+      fields: components["schemas"]["LedgerFieldDefinition"][];
+      /**
+       * Id
+       * Format: uuid7
+       */
+      id: string;
+      /** Name */
+      name: string;
+      /**
+       * Proposal Id
+       * Format: uuid7
+       */
+      proposal_id: string;
+      /** Purpose */
+      purpose: string;
+      /** Revision */
+      revision: number;
+      status: components["schemas"]["LedgerLifecycleStatus"];
+    };
+    LedgerScalarValue: boolean | number | string;
+    /**
      * LoginRequest
      * @description Body for app login with the shared password.
      */
@@ -6077,6 +6362,141 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HealthOverviewRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_ledger_proposals_api_ledger_proposals_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LedgerProposalRead"][];
+        };
+      };
+    };
+  };
+  list_ledgers_api_ledgers_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LedgerRead"][];
+        };
+      };
+    };
+  };
+  fetch_ledger_api_ledgers__ledger_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        ledger_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LedgerDetailRead"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_ledger_entries_api_ledgers__ledger_id__entries_get: {
+    parameters: {
+      query?: {
+        include_superseded?: boolean;
+      };
+      header?: never;
+      path: {
+        ledger_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LedgerEntryRead"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  export_ledger_api_ledgers__ledger_id__export_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        ledger_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LedgerExportRead"];
         };
       };
       /** @description Validation Error */

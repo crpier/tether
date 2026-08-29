@@ -5,6 +5,9 @@ import type {
   DreamRunDetail,
   Evidence,
   HealthOverview,
+  Ledger,
+  LedgerEntry,
+  LedgerProposal,
   MemoryTopic,
   Message,
   MemoryWorkspaceDiagnostic,
@@ -23,6 +26,7 @@ import { FakeChatHost } from "./fakes/chat";
 import { FakeDreamingHost } from "./fakes/dreaming";
 import { FakeEvidenceHost } from "./fakes/evidence";
 import { FakeHealthHost } from "./fakes/health";
+import { FakeLedgersHost } from "./fakes/ledgers";
 import { FakeMemoriesHost } from "./fakes/memories";
 import { FakeNotificationsHost } from "./fakes/notifications";
 import { FakePanelsHost } from "./fakes/panels";
@@ -43,6 +47,7 @@ export class FakeHost implements WebHost {
   readonly dreaming: FakeDreamingHost;
   readonly evidence: FakeEvidenceHost;
   readonly health: FakeHealthHost;
+  readonly ledgers: FakeLedgersHost;
   readonly memories: FakeMemoriesHost;
   readonly notifications = new FakeNotificationsHost();
   readonly panels: FakePanelsHost;
@@ -64,6 +69,9 @@ export class FakeHost implements WebHost {
     dreamRuns?: DreamRun[];
     evidence?: Evidence[];
     healthOverview?: HealthOverview;
+    ledgerEntries?: Record<string, LedgerEntry[]>;
+    ledgerProposals?: LedgerProposal[];
+    ledgers?: Ledger[];
     memoryTopics?: MemoryTopic[];
     memoryWorkspaceDiagnostics?: MemoryWorkspaceDiagnostic[];
     messages?: Message[];
@@ -84,6 +92,11 @@ export class FakeHost implements WebHost {
     );
     this.evidence = new FakeEvidenceHost(options.evidence);
     this.health = new FakeHealthHost(options.healthOverview);
+    this.ledgers = new FakeLedgersHost(
+      options.ledgerProposals,
+      options.ledgers,
+      options.ledgerEntries,
+    );
     this.memories = new FakeMemoriesHost(options.memoryTopics);
     this.memories.workspaceDiagnostics =
       options.memoryWorkspaceDiagnostics ?? [];

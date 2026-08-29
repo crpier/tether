@@ -12,6 +12,7 @@ from tether.conversation_history_tools import (
 from tether.gmail.tools import internal_gmail_tool_routes
 from tether.health_connect.tools import internal_health_connect_tool_routes
 from tether.kosync_tools import internal_kosync_tool_routes
+from tether.ledger_tools import internal_ledger_tool_routes
 from tether.panel_tools import internal_panel_tool_routes
 from tether.product_observation_tools import (
     internal_product_observation_tool_routes,
@@ -94,6 +95,13 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "update_health_plan",
             "record_product_observation",
             "list_product_observations",
+            "propose_ledger",
+            "append_ledger_entries",
+            "query_ledger_entries",
+            "propose_ledger_revision",
+            "approve_ledger_proposal",
+            "list_ledgers",
+            "list_ledger_proposals",
         },
     )
     search_schema = cast("dict[str, Any]", tools["search"]["schema"])
@@ -192,6 +200,25 @@ def health_plan_schema_requires_explicit_weekly_windows() -> None:
 
 
 @test()
+def ledger_schema_is_flat_typed_and_bounded() -> None:
+    """Generated Ledger tools expose only the approved scalar record grammar."""
+    tools = {tool["name"]: tool for tool in build_tool_schema_document()["tools"]}
+    proposal = cast("dict[str, Any]", tools["propose_ledger"]["schema"])
+    append = cast("dict[str, Any]", tools["append_ledger_entries"]["schema"])
+
+    assert_eq(
+        proposal["$defs"]["LedgerFieldType"]["enum"],
+        ["boolean", "date", "datetime", "decimal", "enum", "integer", "text"],
+    )
+    assert_eq(proposal["properties"]["fields"]["maxItems"], 32)
+    assert_eq(append["properties"]["entries"]["maxItems"], 25)
+    assert_eq(
+        append["$defs"]["LedgerScalarValue"]["anyOf"],
+        [{"type": "boolean"}, {"type": "integer"}, {"type": "string"}],
+    )
+
+
+@test()
 def youtube_activity_schema_requires_explicit_time_boundaries() -> None:
     """The aggregate advertises aware date-time inputs and proxy semantics."""
     tools = {tool["name"]: tool for tool in build_tool_schema_document()["tools"]}
@@ -230,6 +257,7 @@ def schema_document_covers_every_mounted_tool_route() -> None:
             internal_kosync_tool_routes(),
             internal_health_connect_tool_routes(),
             internal_product_observation_tool_routes(),
+            internal_ledger_tool_routes(),
         )
         for route in routes
     }

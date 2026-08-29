@@ -11,6 +11,14 @@ test("Browse tab query deep-links to Reminders", async ({ page, login }) => {
   );
 });
 
+test("Browse deep-links to Ledgers", async ({ page, login }) => {
+  await login();
+  await page.goto("/browse/ledgers", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Browse" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Ledgers" })).toBeVisible();
+  await expect(page.getByText("No approved Ledgers")).toBeVisible();
+});
+
 test("Browse deep-links to Feedback", async ({ page, login }) => {
   await login();
   await page.goto("/browse/feedback", { waitUntil: "domcontentloaded" });

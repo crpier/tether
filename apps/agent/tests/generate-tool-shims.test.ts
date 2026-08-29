@@ -85,6 +85,42 @@ describe("renderTypeBoxProperty", () => {
     expect(rendered).toBe("facets: Type.Record(Type.String(), Type.String())");
   });
 
+  test("preserves array bounds", () => {
+    const rendered = renderTypeBoxProperty(
+      "entries",
+      {
+        items: { type: "string" },
+        maxItems: 25,
+        minItems: 1,
+        type: "array",
+      },
+      true,
+    );
+
+    expect(rendered).toBe(
+      "entries: Type.Array(Type.String(), { maxItems: 25, minItems: 1 })",
+    );
+  });
+
+  test("renders a bounded scalar-map object as Type.Record", () => {
+    const rendered = renderTypeBoxProperty(
+      "values",
+      {
+        additionalProperties: {
+          anyOf: [{ type: "boolean" }, { type: "integer" }, { type: "string" }],
+        },
+        maxProperties: 32,
+        minProperties: 1,
+        type: "object",
+      },
+      true,
+    );
+
+    expect(rendered).toBe(
+      "values: Type.Record(Type.String(), Type.Union([Type.Boolean(), Type.Integer(), Type.String()]), { maxProperties: 32, minProperties: 1 })",
+    );
+  });
+
   test("unwraps a nullable optional string-map object to Type.Record", () => {
     const rendered = renderTypeBoxProperty(
       "facets",

@@ -187,6 +187,31 @@ import {
   registerListProductObservationsTool,
   list_product_observationsTool,
 } from "./list_product_observations.js";
+import {
+  registerProposeLedgerTool,
+  propose_ledgerTool,
+} from "./propose_ledger.js";
+import {
+  registerAppendLedgerEntriesTool,
+  append_ledger_entriesTool,
+} from "./append_ledger_entries.js";
+import {
+  registerQueryLedgerEntriesTool,
+  query_ledger_entriesTool,
+} from "./query_ledger_entries.js";
+import {
+  registerProposeLedgerRevisionTool,
+  propose_ledger_revisionTool,
+} from "./propose_ledger_revision.js";
+import {
+  registerApproveLedgerProposalTool,
+  approve_ledger_proposalTool,
+} from "./approve_ledger_proposal.js";
+import { registerListLedgersTool, list_ledgersTool } from "./list_ledgers.js";
+import {
+  registerListLedgerProposalsTool,
+  list_ledger_proposalsTool,
+} from "./list_ledger_proposals.js";
 
 export const tetherToolSources = [
   sourceForTool(searchTool),
@@ -247,6 +272,13 @@ export const tetherToolSources = [
   sourceForTool(update_health_planTool),
   sourceForTool(record_product_observationTool),
   sourceForTool(list_product_observationsTool),
+  sourceForTool(propose_ledgerTool),
+  sourceForTool(append_ledger_entriesTool),
+  sourceForTool(query_ledger_entriesTool),
+  sourceForTool(propose_ledger_revisionTool),
+  sourceForTool(approve_ledger_proposalTool),
+  sourceForTool(list_ledgersTool),
+  sourceForTool(list_ledger_proposalsTool),
 ];
 
 export default function tetherToolsExtension(pi: ExtensionAPI): void {
@@ -308,5 +340,12 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerUpdateHealthPlanTool(pi);
   registerRecordProductObservationTool(pi);
   registerListProductObservationsTool(pi);
+  registerProposeLedgerTool(pi);
+  registerAppendLedgerEntriesTool(pi);
+  registerQueryLedgerEntriesTool(pi);
+  registerProposeLedgerRevisionTool(pi);
+  registerApproveLedgerProposalTool(pi);
+  registerListLedgersTool(pi);
+  registerListLedgerProposalsTool(pi);
   pi.registerTool(createCodeModeTool(tetherToolSources));
 }

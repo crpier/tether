@@ -8,6 +8,7 @@ import {
 } from "../components/segmented-control";
 import { BucketPanel, type BucketView } from "../panels/bucket";
 import { DreamingPanel } from "../panels/dreaming";
+import { LedgersPanel } from "../panels/ledgers";
 import { MemoriesPanel } from "../panels/memories";
 import { ProductObservationsPanel } from "../panels/product-observations";
 import { SyntheticPanels } from "../panels/synthetic";
@@ -17,6 +18,7 @@ import { TriggersPanel } from "../panels/triggers";
 export type BrowseView =
   | "memories"
   | "dreaming"
+  | "ledgers"
   | "bucket"
   | "todos"
   | "reminders"
@@ -27,6 +29,7 @@ const browsePaths: Record<BrowseView, string> = {
   bucket: "/browse/bucket",
   dreaming: "/browse/dreaming",
   feedback: "/browse/feedback",
+  ledgers: "/browse/ledgers",
   memories: "/browse/memories",
   panels: "/browse/panels",
   reminders: "/browse/reminders",
@@ -45,6 +48,7 @@ function browseViewFromLocation(): BrowseView | undefined {
   return queryView === "memories" ||
     queryView === "dreaming" ||
     queryView === "bucket" ||
+    queryView === "ledgers" ||
     queryView === "todos" ||
     queryView === "reminders" ||
     queryView === "feedback" ||
@@ -63,6 +67,7 @@ export function BrowsePage(
   const { openEvidence } = useAppContext();
   const bucket = useHost("bucket");
   const dreaming = useHost("dreaming");
+  const ledgers = useHost("ledgers");
   const memories = useHost("memories");
   const panels = useHost("panels");
   const productObservations = useHost("productObservations");
@@ -108,6 +113,7 @@ export function BrowsePage(
           options={[
             { label: "Memories", value: "memories" },
             { label: "Dreaming", value: "dreaming" },
+            { label: "Ledgers", value: "ledgers" },
             { label: "Bucket", value: "bucket" },
             { label: "Todos", value: "todos" },
             { label: "Reminders", value: "reminders" },
@@ -135,6 +141,15 @@ export function BrowsePage(
               role="tabpanel"
             >
               <DreamingPanel api={dreaming} onOpenEvidence={openEvidence} />
+            </div>
+          </Match>
+          <Match when={view() === "ledgers"}>
+            <div
+              aria-labelledby={segmentedTabId("browse-view", "ledgers")}
+              id={segmentedPanelId("browse-view", "ledgers")}
+              role="tabpanel"
+            >
+              <LedgersPanel api={ledgers} onOpenEvidence={openEvidence} />
             </div>
           </Match>
           <Match when={view() === "bucket"}>

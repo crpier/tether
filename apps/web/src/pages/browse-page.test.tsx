@@ -111,6 +111,20 @@ describe("Browse page", () => {
     );
   });
 
+  test("opens Ledgers from its direct Browse URL", async () => {
+    const host = new FakeHost({ authenticated: true });
+    renderApp(host, undefined, { path: "/browse/ledgers" });
+
+    await screen.findByRole("heading", { name: "Browse" });
+    expect(
+      await screen.findByRole("region", { name: "Ledgers" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Ledgers" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   test("opens Feedback from its direct Browse URL", async () => {
     const host = new FakeHost({ authenticated: true });
     renderApp(host, undefined, { path: "/browse/feedback" });
