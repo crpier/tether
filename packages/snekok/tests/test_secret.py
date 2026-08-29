@@ -3,8 +3,9 @@
 from pydantic import BaseModel, SecretStr, ValidationError
 from snektest import assert_eq, assert_isinstance, assert_raises, fail, test
 
-from snekok import Err, Ok, validate_python
+from snekok.result import Err, Ok
 from snekok.types import NonBlankStr, NonEmptySecretStr, NonEmptyStr, NonNegativeInt
+from snekok.validation import validate_python
 
 
 @test(mark="fast")
@@ -107,6 +108,8 @@ def non_empty_secret_accepts_content() -> None:
             assert_eq(str(secret), "**********")
         case Err(error):
             fail(f"unexpected validation error: {error}")
+        case unexpected:
+            fail(f"unexpected result variant: {unexpected}")
 
 
 @test(mark="fast")

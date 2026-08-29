@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Config, Database, Fetched, Pending, insert, select
 from snektest import (
     assert_eq,

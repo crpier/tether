@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import Database, Fetched, insert, select, update
 
 from tether.readwise_http import (
@@ -187,7 +187,7 @@ class ReadwiseClient:
         transport_response = await self.transport.verify_token()
         if isinstance(transport_response, Err):
             return Err(transport_response.error)
-        response = transport_response.value
+        response = transport_response.unwrap()
         if response.status_code == _AUTH_OK_STATUS:
             return Ok(None)
         _info(logger, "Readwise token check failed", status_code=response.status_code)
@@ -224,7 +224,7 @@ class ReadwiseClient:
             )
             if isinstance(page, Err):
                 return Err(page.error)
-            response = page.value
+            response = page.unwrap()
             if response.status_code in {401, 403}:
                 return Err(
                     ReadwiseAuthenticationFailure(
@@ -273,7 +273,7 @@ class ReadwiseClient:
             )
             if isinstance(transport_response, Err):
                 return transport_response
-            response = transport_response.value
+            response = transport_response.unwrap()
             if response.status_code != _RATE_LIMITED_STATUS:
                 return Ok(response)
             retry_after = response.retry_after
@@ -313,7 +313,7 @@ class ReadwiseSyncService:
         if isinstance(export, Err):
             return Err(export.error)
         created = updated = deleted = skipped = 0
-        for book in export.value:
+        for book in export.unwrap():
             for highlight in book.highlights:
                 outcome = await self._apply_highlight(book, highlight, logger=logger)
                 if outcome == "created":

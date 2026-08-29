@@ -6,7 +6,8 @@ from pydantic import GetCoreSchemaHandler, ValidationError
 from pydantic_core import CoreSchema, core_schema
 from snektest import assert_eq, assert_isinstance, fail, test
 
-from snekok import Err, Ok, validate_python
+from snekok.result import Err, Ok
+from snekok.validation import validate_python
 
 
 class _SchemaBuildCounter(int):
@@ -39,6 +40,8 @@ def invalid_python_input_returns_validation_error() -> None:
             _ = assert_isinstance(error, ValidationError)
         case Ok(validated_value):
             fail(f"unexpected validated value: {validated_value}")
+        case unexpected:
+            fail(f"unexpected result variant: {unexpected}")
 
 
 @test(mark="fast")

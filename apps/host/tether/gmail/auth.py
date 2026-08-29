@@ -20,7 +20,7 @@ from pathlib import Path
 
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.gmail.client import GmailClient, GmailFailure
 from tether.gmail.oauth import (
@@ -57,11 +57,11 @@ async def _recent_subjects(
         if isinstance(listing, Err):
             return Err(listing.error)
         subjects: list[str] = []
-        for message_id in listing.value[:count]:
+        for message_id in listing.unwrap()[:count]:
             message = await client.get_message(message_id)
             if isinstance(message, Err):
                 return Err(message.error)
-            subjects.append(message.value.subject or "(no subject)")
+            subjects.append(message.unwrap().subject or "(no subject)")
         return Ok(subjects)
 
 
@@ -98,7 +98,7 @@ def main() -> None:
             f"Gmail authorization verification failed: {type(subject_result.error).__name__}"
         )
         raise SystemExit(1)
-    subjects = subject_result.value
+    subjects = subject_result.unwrap()
     print(f"Authorized. Token cached at {config.token_path}.")
     if subjects:
         print("Most-recent eligible subjects:")

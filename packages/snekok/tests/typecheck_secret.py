@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, assert_type
 
-from snekok import NonEmptySecretStr, validate_python
-from snekok.types import NonBlankStr, NonEmptyStr, NonNegativeInt
+from snekok.types import NonBlankStr, NonEmptySecretStr, NonEmptyStr, NonNegativeInt
+from snekok.validation import validate_python
 
 if TYPE_CHECKING:
     from pydantic import SecretStr

@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import structlog
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Config, Database, select
 from snektest import (
     assert_eq,

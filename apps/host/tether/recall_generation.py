@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field, ValidationError
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.recall_schedule import RecallPromptKind
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snektest import assert_eq, test
 
 from tests.surfaces import call_tool, surface_client

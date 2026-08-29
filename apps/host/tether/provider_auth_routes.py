@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from snekok import Err
+from snekok.result import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -49,7 +49,7 @@ async def start_provider_auth(request: Request) -> Response:
         return JSONResponse(
             {"detail": "provider authorization is already active"}, status_code=409
         )
-    return _response(outcome.value, status_code=202)
+    return _response(outcome.unwrap(), status_code=202)
 
 
 @router.delete("/api/provider-auth/openai-codex", response_model=ProviderAuthRead)

@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from opentelemetry.trace import Tracer
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Database
 
 from tether.background_runtime import (

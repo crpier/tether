@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import assert_eq, assert_true, test
 

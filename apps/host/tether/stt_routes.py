@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from snekok import Err
+from snekok.result import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -43,10 +43,10 @@ async def transcribe_audio(request: Request) -> Response:
     upload_outcome = await read_audio_upload(request)
     if isinstance(upload_outcome, Err):
         return audio_upload_error_response(upload_outcome.error)
-    transcription_outcome = await stt_client.transcribe(upload_outcome.value)
+    transcription_outcome = await stt_client.transcribe(upload_outcome.unwrap())
     if isinstance(transcription_outcome, Err):
         return transcription_error_response(transcription_outcome.error)
-    transcript = transcription_outcome.value
+    transcript = transcription_outcome.unwrap()
     if not transcript.strip():
         return JSONResponse(
             {"detail": "no speech detected in the audio"}, status_code=422

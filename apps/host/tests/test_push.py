@@ -12,7 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 from starlette.testclient import TestClient

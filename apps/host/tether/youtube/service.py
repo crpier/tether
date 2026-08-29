@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, Self
 
 from opentelemetry.trace import Tracer
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,

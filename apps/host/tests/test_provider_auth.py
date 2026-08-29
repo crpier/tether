@@ -6,7 +6,7 @@ import asyncio
 import sys
 from collections.abc import Callable
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snektest import assert_eq, assert_raises, test
 
 from tether.provider_auth import ProviderAuthService

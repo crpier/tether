@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snektest import assert_eq, test
 from starlette.testclient import TestClient
 

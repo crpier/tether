@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from datetime import timedelta
 
-from snekok import Err
+from snekok.result import Err
 from snektest import assert_eq, assert_isinstance, test
 
 from tether.transcripts.contracts import (

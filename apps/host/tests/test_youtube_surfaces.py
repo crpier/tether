@@ -13,7 +13,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snekok import Err
+from snekok.result import Err
 from snektest import assert_eq, assert_in, assert_not_in, test
 
 from tests.surfaces import call_tool, login, surface_client

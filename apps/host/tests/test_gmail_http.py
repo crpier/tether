@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx2
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snektest import assert_eq, test
 
 from tether.gmail.client import GmailNetworkFailure

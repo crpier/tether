@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import httpx2
-from snekok import Err
+from snekok.result import Err
 from snektest import assert_eq, test
 
 from tether.readwise_http import (

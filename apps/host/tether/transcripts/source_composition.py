@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-from snekok import NonEmptySecretStr, validate_python
+from snekok.types import NonEmptySecretStr
+from snekok.validation import validate_python
 
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.library import (

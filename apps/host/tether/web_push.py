@@ -7,7 +7,7 @@ import importlib
 import json
 from typing import Any, Protocol
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import Fetched
 
 from tether.notification_delivery import PushNotification

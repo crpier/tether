@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -142,7 +142,7 @@ class ReaderClient:
                 )
                 if isinstance(page, Err):
                     return Err(page.error)
-                response = page.value
+                response = page.unwrap()
                 if response.status_code in {401, 403}:
                     return Err(
                         ReadwiseAuthenticationFailure(
@@ -202,7 +202,7 @@ class ReaderClient:
             )
             if isinstance(transport_response, Err):
                 return transport_response
-            response = transport_response.value
+            response = transport_response.unwrap()
             if response.status_code != _RATE_LIMITED_STATUS:
                 return Ok(response)
             retry_after = response.retry_after
@@ -237,7 +237,7 @@ class ReaderSyncService:
         if isinstance(documents, Err):
             return Err(documents.error)
         appended = skipped = finished = 0
-        for document in documents.value:
+        for document in documents.unwrap():
             outcome = await self._apply_document(document)
             if outcome == "appended":
                 appended += 1

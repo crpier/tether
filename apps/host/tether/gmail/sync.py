@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from pydantic import UUID7
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import Database, Fetched, Transaction, insert, select, update
 
 from tether.chat_prompt import local_timezone_name
@@ -136,14 +136,14 @@ class GmailSyncService:
             return Err(label_resolution.error)
         eligible = await self._fetch_eligible_messages(
             watermark=watermark,
-            tether_label_id=label_resolution.value,
+            tether_label_id=label_resolution.unwrap(),
             logger=logger,
         )
         if isinstance(eligible, Err):
             return Err(eligible.error)
         counts = await self._triage_messages(
-            eligible.value.messages,
-            tether_label_id=label_resolution.value,
+            eligible.unwrap().messages,
+            tether_label_id=label_resolution.unwrap(),
             now=started_at,
             logger=logger,
         )
@@ -152,7 +152,7 @@ class GmailSyncService:
             ingested=counts.ingested,
             noise=counts.noise,
             pending=counts.pending,
-            prefiltered=eligible.value.prefiltered,
+            prefiltered=eligible.unwrap().prefiltered,
         )
         _info(
             logger,
@@ -177,20 +177,20 @@ class GmailSyncService:
             fetched = await self.client.get_message(record.message_id)
             if isinstance(fetched, Err):
                 return Err(fetched.error)
-            eligible.append(fetched.value)
+            eligible.append(fetched.unwrap())
         listing = await self.client.list_message_ids(
             query=_build_query(watermark), logger=logger
         )
         if isinstance(listing, Err):
             return Err(listing.error)
         prefiltered = 0
-        for message_id in listing.value:
+        for message_id in listing.unwrap():
             if await self._already_recorded(message_id):
                 continue
             fetched = await self.client.get_message(message_id)
             if isinstance(fetched, Err):
                 return Err(fetched.error)
-            message = fetched.value
+            message = fetched.unwrap()
             if _is_excluded_entirely(message.label_ids):
                 continue
             has_tether_label = (

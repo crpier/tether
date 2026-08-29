@@ -9,7 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snekql.sqlite import Database, select
 from snektest import assert_eq, test
 from starlette.applications import Starlette

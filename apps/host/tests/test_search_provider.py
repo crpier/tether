@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_is_none, assert_true, fail, test
 
@@ -112,18 +112,17 @@ async def tavily_results_are_normalized_for_the_agent() -> None:
         "tavily API", max_results=2, search_depth=SearchDepth.BASIC
     )
 
-    match outcome:
-        case Ok(response):
-            assert_eq(response.results[0].title, "Tavily docs")
-            assert_eq(response.results[0].url, "https://docs.tavily.com/")
-            assert_eq(response.results[0].snippet, "Search API documentation.")
-            assert_eq(
-                response.results[0].extracted_content,
-                "# Search API\nFull extracted page.",
-            )
-            assert_is_none(response.results[1].extracted_content)
-        case Err(error):
-            fail(f"unexpected failure: {error}")
+    if isinstance(outcome, Err):
+        fail(f"unexpected failure: {outcome.error}")
+    response = outcome.unwrap()
+    assert_eq(response.results[0].title, "Tavily docs")
+    assert_eq(response.results[0].url, "https://docs.tavily.com/")
+    assert_eq(response.results[0].snippet, "Search API documentation.")
+    assert_eq(
+        response.results[0].extracted_content,
+        "# Search API\nFull extracted page.",
+    )
+    assert_is_none(response.results[1].extracted_content)
 
 
 @test()
@@ -137,12 +136,12 @@ async def tavily_error_response_is_a_typed_upstream_failure() -> None:
         "latest news", max_results=5, search_depth=SearchDepth.BASIC
     )
 
-    match outcome:
-        case Err(SearchUpstreamFailure(status_code=status_code)):
+    if isinstance(outcome, Ok):
+        fail(f"unexpected success: {outcome.value}")
+    match outcome.unwrap_error():
+        case SearchUpstreamFailure(status_code=status_code):
             assert_eq(status_code, 429)
-        case Ok(response):
-            fail(f"unexpected success: {response}")
-        case Err(error):
+        case error:
             fail(f"unexpected failure: {error}")
 
 
@@ -197,13 +196,13 @@ async def persisted_credit_cap_blocks_before_an_upstream_call() -> None:
         "blocked", max_results=1, search_depth=SearchDepth.BASIC
     )
 
-    match outcome:
-        case Err(SearchBudgetExhaustedFailure(used=used, limit=limit)):
+    if isinstance(outcome, Ok):
+        fail(f"unexpected success: {outcome.value}")
+    match outcome.unwrap_error():
+        case SearchBudgetExhaustedFailure(used=used, limit=limit):
             assert_eq(used, 2)
             assert_eq(limit, 2)
-        case Ok(response):
-            fail(f"unexpected success: {response}")
-        case Err(error):
+        case error:
             fail(f"unexpected failure: {error}")
     assert_eq(len(transport.requests), 1)
     await database.close()

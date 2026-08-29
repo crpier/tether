@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Config, Database
 from snektest import assert_eq, test
 from starlette.applications import Starlette

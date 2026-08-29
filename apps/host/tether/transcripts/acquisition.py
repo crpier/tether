@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,

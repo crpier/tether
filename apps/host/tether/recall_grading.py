@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ValidationError
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 _SHORT_ANSWER_GRADING_INSTRUCTIONS = """\
 You are grading one short-answer recall response.

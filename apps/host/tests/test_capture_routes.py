@@ -17,7 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snektest import assert_eq, assert_true, test
 from starlette.testclient import TestClient
 

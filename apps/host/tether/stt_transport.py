@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Protocol, cast
 
 import httpx2
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.stt_errors import SttConfigurationError, SttFailure, SttNetworkFailure
 from tether.stt_model import AudioUpload, TranscriptionResponse

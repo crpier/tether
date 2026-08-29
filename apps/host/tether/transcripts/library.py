@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 
 from tether.transcripts.contracts import (
     FetchedTranscript,

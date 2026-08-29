@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import Config, Database, insert, select
 from snektest import assert_eq, assert_false, assert_isinstance, test
 

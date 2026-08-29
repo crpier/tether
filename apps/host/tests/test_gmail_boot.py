@@ -14,7 +14,7 @@ from pathlib import Path
 import structlog
 from anyio import TemporaryDirectory
 from opentelemetry import trace
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snekql.sqlite import Config, Database
 from snektest import assert_true, test
 

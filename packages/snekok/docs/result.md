@@ -3,7 +3,7 @@
 `Result[T, E]` represents either an expected success or an expected failure:
 
 ```python
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 
 def read_count(raw: str) -> Result[int, str]:
@@ -14,37 +14,34 @@ def read_count(raw: str) -> Result[int, str]:
 
 ## Variants
 
+- `Result[T, E]` is the nominal base type shared by both variants.
 - `Ok(value)` contains a successful `T` in `.value`.
 - `Err(error)` contains a failed `E` in `.error`.
-- `Result[T, E]` is the union `Ok[T, E] | Err[T, E]`.
 
 Both variants are immutable, slotted value types. Each carries a phantom type
 for the absent channel, allowing transformations to preserve and widen both
-covariant channels without reconstructing an enclosing result.
+covariant channels without reconstructing an enclosing result. The nominal base
+keeps annotations and type-checker output compact.
 
 ## Consumption
 
-Use structural pattern matching when both outcomes affect control flow:
-
-```python
-match read_count(raw):
-    case Ok(count):
-        consume(count)
-    case Err(error):
-        report(error)
-```
-
-Pyright can narrow each branch and report a non-exhaustive match when configured
-with `reportMatchNotExhaustive = "error"`.
-
-Direct field access is appropriate after an existing branch has already narrowed
-the variant:
+Narrow a concrete variant when its field is needed, then unwrap the base type:
 
 ```python
 outcome = read_count(raw)
 if isinstance(outcome, Err):
     report(outcome.error)
+else:
+    consume(outcome.unwrap())
 ```
+
+`unwrap()` returns `T` and raises `RuntimeError` for an `Err`. `unwrap_error()`
+returns `E` and raises `RuntimeError` for an `Ok`. Check the known variant before
+calling either method when both outcomes are expected.
+
+`Ok` and `Err` remain class-pattern compatible, but static type checkers cannot
+consider a nominal class hierarchy sealed. A `match` over `Result[T, E]` therefore
+needs a fallback case even when it handles both built-in variants.
 
 ## Composition
 
@@ -71,6 +68,17 @@ def require_positive(count: int) -> Result[int, ValueError]:
 
 
 positive = read_count(raw).and_then(require_positive)
+```
+
+`and_then_async` provides the same error propagation for an asynchronous
+continuation:
+
+```python
+async def require_positive_async(count: int) -> Result[int, ValueError]:
+    return require_positive(count)
+
+
+validated = await read_count(raw).and_then_async(require_positive_async)
 ```
 
 Transform callbacks are ordinary Python calls. Exceptions raised by them are not

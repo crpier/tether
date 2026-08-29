@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.provider_auth_errors import ProviderAuthFailure, ProviderAuthProcessFailure
 from tether.provider_auth_model import DeviceCode

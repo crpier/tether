@@ -18,13 +18,14 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
 )
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekok.types import NonBlankStr, NonEmptySecretStr, NonNegativeInt
 
 from tether.transcripts.contracts import (
     AsyncClosable,
     FetchedTranscript,
     TranscriptBlockedFailure,
+    TranscriptFailure,
     TranscriptFetchResult,
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
@@ -141,6 +142,10 @@ type SupadataTransportFailure = (
 )
 type SupadataSubmitResult = Result[SupadataSubmitResponse, SupadataTransportFailure]
 type SupadataPollResult = Result[SupadataPollResponse, SupadataTransportFailure]
+type _SupadataPollingResult = Result[
+    FetchedTranscript | None,
+    TranscriptFailure,
+]
 
 
 class SupadataTransport(Protocol):
@@ -373,11 +378,14 @@ class SupadataTranscriptSource:
         submission = (await self._transport.submit(video_id)).map_error(
             partial(_classify_transport_failure, video_id)
         )
-        match submission:
-            case Err(failure):
-                return Err(failure)
-            case Ok(response):
-                pass
+        return await submission.and_then_async(
+            partial(self._resolve_submission, video_id)
+        )
+
+    async def _resolve_submission(
+        self, video_id: str, response: SupadataSubmitResponse
+    ) -> TranscriptFetchResult:
+        """Resolve an immediate transcript or continue an accepted async job."""
         if isinstance(response, SupadataJobAccepted):
             return await self._poll_to_completion(video_id, response.job_id)
         return _extract_transcript(response, video_id=video_id).map(
@@ -394,24 +402,50 @@ class SupadataTranscriptSource:
         pending after the attempt budget is *transient* (retried per-video next
         pass) rather than hanging the worker.
         """
+        polling: _SupadataPollingResult = Ok(None)
         for _ in range(self._config.max_poll_attempts):
-            await self._sleep(self._config.poll_interval.total_seconds())
-            polling = (await self._transport.poll(job_id)).map_error(
-                partial(_classify_transport_failure, video_id)
+            polling = await polling.and_then_async(
+                partial(self._continue_polling, video_id, job_id)
             )
-            match polling:
-                case Err(failure):
-                    return Err(failure)
-                case Ok(response):
-                    pass
-            if isinstance(response, SupadataJobFailed):
-                return Err(_classify_job_failure(video_id, response))
+        return polling.and_then(partial(self._finish_polling, video_id, job_id))
 
-            if isinstance(response, SupadataJobCompleted):
-                return _extract_transcript(response, video_id=video_id).map(
-                    partial(FetchedTranscript, source=_SOURCE)
-                )
-            # A validated pending state consumes one bounded poll attempt.
+    async def _continue_polling(
+        self,
+        video_id: str,
+        job_id: str,
+        transcript: FetchedTranscript | None,
+    ) -> _SupadataPollingResult:
+        """Preserve a completion or make the next bounded poll request."""
+        if transcript is not None:
+            return Ok(transcript)
+        await self._sleep(self._config.poll_interval.total_seconds())
+        return (
+            (await self._transport.poll(job_id))
+            .map_error(partial(_classify_transport_failure, video_id))
+            .and_then(partial(self._resolve_poll_response, video_id))
+        )
+
+    def _resolve_poll_response(
+        self, video_id: str, response: SupadataPollResponse
+    ) -> _SupadataPollingResult:
+        """Resolve one validated poll response into completion or continuation."""
+        if isinstance(response, SupadataJobFailed):
+            return Err(_classify_job_failure(video_id, response))
+        if isinstance(response, SupadataJobCompleted):
+            return _extract_transcript(response, video_id=video_id).map(
+                _as_fetched_transcript
+            )
+        return Ok(None)
+
+    def _finish_polling(
+        self,
+        video_id: str,
+        job_id: str,
+        transcript: FetchedTranscript | None,
+    ) -> TranscriptFetchResult:
+        """Return a completion or classify the exhausted pending job."""
+        if transcript is not None:
+            return Ok(transcript)
         return Err(
             _unfinished_failure(video_id, job_id, self._config.max_poll_attempts)
         )

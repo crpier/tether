@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snektest import assert_eq, assert_isinstance, assert_true, test
 
 from tether.transcripts.contracts import (

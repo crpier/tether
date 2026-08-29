@@ -18,8 +18,9 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 import httpx2
-from snekok import Err, NonEmptySecretStr, Ok, Result, validate_python
-from snekok.types import NonBlankStr, NonNegativeInt
+from snekok.result import Err, Ok, Result
+from snekok.types import NonBlankStr, NonEmptySecretStr, NonNegativeInt
+from snekok.validation import validate_python
 from snektest import assert_eq, assert_is_none, assert_isinstance, test
 
 from tether.transcripts.contracts import (

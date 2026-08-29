@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,

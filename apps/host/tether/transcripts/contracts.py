@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,13 +162,13 @@ class TranscriptProviderChain:
                 continue
             selected_policy.record_attempt(source.source)
             outcome = await source.fetch(video_id)
-            match outcome:
-                case Ok():
-                    return outcome
-                case Err(TranscriptUnavailableFailure() as failure):
-                    last_unavailable = failure
-                case Err():
-                    return outcome
+            if isinstance(outcome, Ok):
+                return outcome
+            failure = outcome.unwrap_error()
+            if isinstance(failure, TranscriptUnavailableFailure):
+                last_unavailable = failure
+            else:
+                return outcome
         if deferred:
             return Err(
                 TranscriptDeferredFailure(

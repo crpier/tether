@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snektest import assert_eq, test
 
 from tether.gmail.client import (

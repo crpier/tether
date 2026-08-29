@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import parse_qs, urlparse
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snektest import assert_eq, assert_false, assert_true, test
 
 from tests.surfaces import login, surface_client

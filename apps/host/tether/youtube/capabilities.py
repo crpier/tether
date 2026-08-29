@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Protocol, cast
 
 from pydantic import UUID7, BaseModel
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import Fetched
 from starlette.requests import Request
 

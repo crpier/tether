@@ -2,18 +2,25 @@
 
 from dataclasses import FrozenInstanceError
 
-from snektest import assert_eq, assert_false, assert_raises, fail, test
+from snektest import (
+    assert_eq,
+    assert_false,
+    assert_raises,
+    assert_true,
+    fail,
+    test,
+)
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 
 def _success() -> Result[int, str]:
-    """Return a union-typed success so both match branches remain possible."""
+    """Return a base-typed success so both match branches remain possible."""
     return Ok(42)
 
 
 def _failure() -> Result[int, str]:
-    """Return a union-typed failure so both match branches remain possible."""
+    """Return a base-typed failure so both match branches remain possible."""
     return Err("invalid input")
 
 
@@ -25,6 +32,8 @@ def ok_exposes_its_value_through_structural_matching() -> None:
             assert_eq(value, 42)
         case Err(error):
             fail(f"unexpected error: {error}")
+        case unexpected:
+            fail(f"unexpected result variant: {unexpected}")
 
 
 @test(mark="fast")
@@ -35,6 +44,8 @@ def err_exposes_its_error_through_structural_matching() -> None:
             fail(f"unexpected value: {value}")
         case Err(error):
             assert_eq(error, "invalid input")
+        case unexpected:
+            fail(f"unexpected result variant: {unexpected}")
 
 
 @test(mark="fast")
@@ -74,6 +85,44 @@ def err_and_then_preserves_the_error() -> None:
 
 
 @test(mark="fast")
+async def ok_and_then_async_continues_with_the_next_result() -> None:
+    """`and_then_async` awaits a fallible continuation for an `Ok` value."""
+
+    async def triple(number: int) -> Result[int, str]:
+        return Ok(number * 3)
+
+    assert_eq(await Ok(2).and_then_async(triple), Ok(6))
+
+
+@test(mark="fast")
+async def err_and_then_async_preserves_the_error() -> None:
+    """`and_then_async` does not run its continuation for an `Err` value."""
+
+    continuation_called = False
+
+    async def track_call(_number: int) -> Result[int, str]:
+        nonlocal continuation_called
+        continuation_called = True
+        return Ok(0)
+
+    assert_eq(await Err[int, str]("invalid").and_then_async(track_call), Err("invalid"))
+    assert_false(continuation_called)
+
+
+@test(mark="fast")
+def err_unwrap_error_returns_error() -> None:
+    """`unwrap_error` returns the failure value from an `Err`."""
+    assert_eq(Err("invalid").unwrap_error(), "invalid")
+
+
+@test(mark="fast")
+def ok_unwrap_error_raises() -> None:
+    """`unwrap_error` rejects an `Ok` without an error value."""
+    with assert_raises(RuntimeError):
+        _ = Ok(42).unwrap_error()
+
+
+@test(mark="fast")
 def ok_is_immutable() -> None:
     """An `Ok` value cannot change after construction."""
     success = Ok(42)
@@ -101,3 +150,14 @@ def ok_has_no_instance_dictionary() -> None:
 def err_has_no_instance_dictionary() -> None:
     """An `Err` stores only its declared error field."""
     assert_false(hasattr(Err("invalid input"), "__dict__"))
+
+
+@test(mark="fast")
+def variants_share_nominal_result_base() -> None:
+    """Both variants are instances of the compact public `Result` type."""
+    assert_true(
+        isinstance(Ok(42), Result)  # pyright: ignore[reportUnnecessaryIsInstance]
+    )
+    assert_true(
+        isinstance(Err("invalid input"), Result)  # pyright: ignore[reportUnnecessaryIsInstance]
+    )

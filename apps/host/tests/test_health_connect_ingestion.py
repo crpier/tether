@@ -1,6 +1,6 @@
 """Health Connect cursor workflow tests through the ingestion service seam."""
 
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Config, Database, Transaction
 from snektest import assert_eq, assert_raises, assert_true, test
 
