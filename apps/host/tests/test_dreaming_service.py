@@ -2111,6 +2111,8 @@ async def maintenance_executor_instructs_curator_to_use_second_person() -> None:
     assert "Address the user as `you` and `your`" in curator.prompts[0]
     assert "Begin every Claim with `You` or `Your`" in curator.prompts[0]
     assert "Rewrite existing third-person user references" in curator.prompts[0]
+    assert "claim:C1 | You like Roboquest." in curator.prompts[0]
+    assert "claim:C2 | You own a Switch." in curator.prompts[0]
     assert "[source](citation:E1)" in curator.prompts[0]
     assert "Never use raw HTML for Evidence links" in curator.prompts[0]
 
@@ -2397,10 +2399,7 @@ async def maintenance_user_evidence_supersedes_assistant_conclusion() -> None:
                 "---\n\n",
                 "- You eat fish now. [source](citation:E2)\n\n",
                 "=== RETIREMENTS ===\n",
-                '- claim: "You are vegetarian."\n',
-                "  reason: superseded\n",
-                "  basis:\n",
-                "    - citation:E2\n",
+                "claim:C1 | superseded | citation:E2\n",
             )
         )
     )
@@ -2467,15 +2466,7 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
     )
     assert run is not None
     curator = _ConsolidationRunner(
-        "".join(
-            (
-                "=== RETIREMENTS ===\n",
-                '- claim: "You are avoiding coffee this week."\n',
-                "  reason: expired\n",
-                "  basis:\n",
-                "    - citation:E1\n",
-            )
-        )
+        "=== RETIREMENTS ===\nclaim:C1 | expired | citation:E1\n"
     )
     verifier = _ConsolidationRunner("APPROVED")
     executor = MaintenanceDreamingExecutor(
@@ -2492,8 +2483,16 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
 
     assert_eq(result.status, "success")
     assert not topic.exists()
+    assert "claim:C1 | You are avoiding coffee this week." in curator.prompts[0]
+    assert "Never copy old Claim text into a retirement" in curator.prompts[0]
     assert_eq(len(verifier.prompts), 1)
     assert "citation:E1" in verifier.prompts[0]
+    assert "claim:C1 | You are avoiding coffee this week." in verifier.prompts[0]
+    assert "claim:C1 | expired | citation:E1" in verifier.prompts[0]
+    assert (
+        "Claim aliases intentionally identify exact current Claims"
+        in (verifier.prompts[0])
+    )
     assert "tether://" not in verifier.prompts[0]
     assert (
         "Citation aliases intentionally replace canonical Evidence URIs"
@@ -2512,7 +2511,165 @@ async def maintenance_executor_retires_an_expired_claim() -> None:
     assert deletion is not None
     assert deletion.payload is not None
     assert "You are avoiding coffee this week." in deletion.payload
+    assert f"tether://message/{evidence_id}" in deletion.payload
+    assert "claim:C1" not in deletion.payload
+    assert "citation:E1" not in deletion.payload
     assert "reason: expired" in deletion.payload
+
+
+@test()
+async def maintenance_executor_rejects_yaml_retirement_ledger() -> None:
+    """The former model-authored YAML shape cannot bypass the line protocol."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    evidence_uri = "tether://health-connect/record/coffee-1"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "coffee.md",
+        title="Coffee",
+        body=f"- You avoid coffee. [source]({evidence_uri})",
+        uris=(evidence_uri,),
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    verifier = _ConsolidationRunner("APPROVED")
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(
+                "".join(
+                    (
+                        "=== RETIREMENTS ===\n",
+                        '- claim: "You avoid coffee."\n',
+                        "  reason: unsupported\n",
+                        "  basis:\n",
+                        "    - citation:E1\n",
+                    )
+                )
+            ),
+            verifier=verifier,
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(result.error, "retirement must use one Claim alias per line")
+    assert_eq(verifier.prompts, [])
+    assert_eq(topic.read_text(encoding="utf-8"), original)
+
+
+@test(
+    [
+        Param(
+            value=(
+                "claim:C999",
+                "maintenance output contains an unknown Claim alias: claim:C999",
+            ),
+            name="unknown",
+        ),
+        Param(
+            value=(
+                "claim:C0",
+                "retirement contains a malformed Claim alias: claim:C0",
+            ),
+            name="malformed",
+        ),
+    ]
+)
+async def maintenance_executor_rejects_invalid_claim_alias(
+    case: tuple[str, str],
+) -> None:
+    """A retirement accepts only exact aliases from the bounded Topic batch."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    evidence_uri = "tether://health-connect/record/coffee-1"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "coffee.md",
+        title="Coffee",
+        body=f"- You avoid coffee. [source]({evidence_uri})",
+        uris=(evidence_uri,),
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(
+                f"=== RETIREMENTS ===\n{case[0]} | unsupported | citation:E1\n"
+            ),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(result.error, case[1])
+    assert_eq(topic.read_text(encoding="utf-8"), original)
+
+
+@test()
+async def maintenance_executor_rejects_duplicate_claim_alias() -> None:
+    """One bounded Claim cannot be retired twice in the same transition."""
+    conversation_service, service, conversation_id, root = await load_fixture(
+        maintenance_fixture()
+    )
+    evidence_uri = "tether://health-connect/record/coffee-1"
+    topic = _write_topic(
+        root,
+        conversation_id,
+        "coffee.md",
+        title="Coffee",
+        body=f"- You avoid coffee. [source]({evidence_uri})",
+        uris=(evidence_uri,),
+    )
+    original = topic.read_text(encoding="utf-8")
+    run = await service.queue_maintenance_run(
+        conversation_id,
+        logger=test_logger(),
+        now=datetime.now(UTC),
+    )
+    assert run is not None
+    executor = MaintenanceDreamingExecutor(
+        conversation_service.database,
+        workspace_root=root,
+        agent=MaintenanceDreamingAgent(
+            curator=_ConsolidationRunner(
+                "".join(
+                    (
+                        "=== RETIREMENTS ===\n",
+                        "claim:C1 | expired | citation:E1\n",
+                        "claim:C1 | unsupported | citation:E1\n",
+                    )
+                )
+            ),
+            verifier=_ConsolidationRunner("APPROVED"),
+        ),
+    )
+
+    result = await executor(run, logger=test_logger())
+
+    assert_eq(result.status, "failed")
+    assert_eq(result.error, "retirement repeated Claim alias: claim:C1")
+    assert_eq(topic.read_text(encoding="utf-8"), original)
 
 
 @test()
@@ -2538,15 +2695,7 @@ async def rejected_retirement_leaves_current_memory_unchanged() -> None:
     )
     assert run is not None
     curator = _ConsolidationRunner(
-        "".join(
-            (
-                "=== RETIREMENTS ===\n",
-                '- claim: "Sister is Ana."\n',
-                "  reason: expired\n",
-                "  basis:\n",
-                "    - citation:E1\n",
-            )
-        )
+        "=== RETIREMENTS ===\nclaim:C1 | expired | citation:E1\n"
     )
     executor = MaintenanceDreamingExecutor(
         conversation_service.database,
