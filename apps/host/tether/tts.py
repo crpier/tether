@@ -1,6 +1,6 @@
 """Text-to-speech policy over a structural provider transport."""
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.tts_errors import (
     TtsFailure,
@@ -49,7 +49,7 @@ class TtsClient:
         )
         if isinstance(outcome, Err):
             return Err(outcome.error)
-        response = outcome.value
+        response = outcome.unwrap()
         if response.status_code == _RATE_LIMITED_STATUS:
             return Err(
                 TtsRateLimitedFailure(

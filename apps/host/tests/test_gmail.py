@@ -24,7 +24,7 @@ from typing import cast
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched, select
 from snektest import (
     assert_eq,

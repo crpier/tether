@@ -18,7 +18,7 @@ from pathlib import Path
 import structlog
 from anyio import Path as AsyncPath
 from anyio import TemporaryDirectory
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import (
     assert_eq,

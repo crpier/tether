@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Literal, Protocol, cast
 
 import httpx2
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 _DEFAULT_BASE_URL = "https://readwise.io"
 _EXPORT_PATH = "/api/v2/export/"

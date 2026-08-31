@@ -7,7 +7,7 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.provider_auth_errors import (
     ProviderAuthFailure,
@@ -62,7 +62,7 @@ class ProviderAuthService:
             )
         else:
             self._status = ProviderAuthStatus(
-                state="connected" if outcome.value else "disconnected"
+                state="connected" if outcome.unwrap() else "disconnected"
             )
         return self._status
 

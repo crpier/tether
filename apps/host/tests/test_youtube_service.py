@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from snekok import Err
+from snekok.result import Err
 from snekql.sqlite import Config, Database, Fetched, Pending, insert, select
 from snektest import (
     assert_eq,
@@ -44,15 +44,22 @@ from tether.youtube.service import EmptyYouTubeSearchQueryError
 from tether.youtube.store import (
     IngestedVideo,
     TranscriptPersistedStatus,
-    YouTubeTranscriptState,
+    TranscriptRetrying,
+    YouTubeTranscript,
     create_youtube_schema,
     derive_ingest_state,
+    fetch_transcript_state,
     upsert_ingested_video,
+    write_transcript_available,
+    write_transcript_retrying,
+    write_transcript_review_needed,
+    write_transcript_unavailable,
 )
 from tether.youtube.sync import (
     YouTubeSyncConfig,
     YouTubeSyncService,
 )
+from tether.youtube.types import VideoId
 
 
 def noop_tracer() -> Tracer:
@@ -88,7 +95,7 @@ def video(
 ) -> RawYouTubeVideo:
     """Build a raw upstream video with sensible defaults."""
     return RawYouTubeVideo(
-        video_id=video_id,
+        video_id=VideoId(video_id),
         title=title,
         channel="PyConf",
         topic=topic,
@@ -223,7 +230,7 @@ async def browse_orders_by_liked_at_then_falls_back_to_created_at() -> None:
         _ = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id="liked",
+                    video_id=VideoId("liked"),
                     source="liked",
                     title="t",
                     channel="c",
@@ -237,7 +244,7 @@ async def browse_orders_by_liked_at_then_falls_back_to_created_at() -> None:
         _ = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id="null_new",
+                    video_id=VideoId("null_new"),
                     source="liked",
                     title="t",
                     channel="c",
@@ -250,7 +257,7 @@ async def browse_orders_by_liked_at_then_falls_back_to_created_at() -> None:
         _ = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id="null_old",
+                    video_id=VideoId("null_old"),
                     source="liked",
                     title="t",
                     channel="c",
@@ -595,10 +602,10 @@ async def _seed_transcript_state(
 ) -> None:
     """Insert a video with a given caption flag and a transcript-state row."""
     async with db.transaction() as tx:
-        _ = await tx.execute(
+        video = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id=video_id,
+                    video_id=VideoId(video_id),
                     source="liked",
                     title="t",
                     channel="c",
@@ -606,11 +613,28 @@ async def _seed_transcript_state(
                     description="",
                     caption_available=caption_available,
                 )
+            ).returning()
+        )
+        if status == "retrying":
+            await write_transcript_retrying(
+                tx,
+                video.id,
+                failed_attempts=1,
+                last_error="temporary",
+                next_attempt_at=datetime(2026, 6, 1, tzinfo=UTC),
             )
-        )
-        _ = await tx.execute(
-            insert(YouTubeTranscriptState(video_id=video_id, status=status))
-        )
+        elif status == "needs_review":
+            await write_transcript_review_needed(
+                tx, video.id, failed_attempts=1, last_error="missing"
+            )
+        elif status == "available":
+            await write_transcript_available(
+                tx, video.id, text="transcript", segments=()
+            )
+        else:
+            await write_transcript_unavailable(
+                tx, video.id, failed_attempts=1, last_error="given up"
+            )
 
 
 @test()
@@ -627,11 +651,11 @@ async def captions_appearing_reopens_an_unavailable_video() -> None:
         )
 
     async with env.db.transaction() as tx:
-        state = await tx.fetch_one_or_none(
-            select(YouTubeTranscriptState).where(
-                YouTubeTranscriptState.video_id.eq("v1")
-            )
+        video_row = await tx.fetch_one_or_none(
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId("v1")))
         )
+        assert video_row is not None
+        state = await fetch_transcript_state(tx, video_row.id)
     assert_is_none(state)
 
 
@@ -647,12 +671,12 @@ async def captions_appearing_leaves_a_retrying_video_untouched() -> None:
         )
 
     async with env.db.transaction() as tx:
-        state = await tx.fetch_one_or_none(
-            select(YouTubeTranscriptState).where(
-                YouTubeTranscriptState.video_id.eq("v1")
-            )
+        video_row = await tx.fetch_one_or_none(
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId("v1")))
         )
-    assert_eq(state.status if state is not None else None, "retrying")
+        assert video_row is not None
+        state = await fetch_transcript_state(tx, video_row.id)
+    _ = assert_isinstance(state, TranscriptRetrying)
 
 
 @test()
@@ -821,7 +845,7 @@ async def sync_preserves_enriched_metadata() -> None:
     """The detail fetch's enriched fields round-trip onto the ingested row."""
     liked_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     raw = RawYouTubeVideo(
-        video_id="v1",
+        video_id=VideoId("v1"),
         title="Async IO",
         channel="PyConf",
         topic="python",
@@ -937,7 +961,7 @@ async def fetch_transcript_returns_and_persists_the_text() -> None:
     result = (await env.service.fetch_transcript("v1", logger=test_logger())).unwrap()
 
     assert_eq(result.transcript, "the transcript body")
-    assert_eq(result.video.transcript, "the transcript body")
+    assert_eq(await env.service.stored_transcript("v1"), "the transcript body")
 
 
 @test()
@@ -964,9 +988,7 @@ async def transcript_survives_a_re_sync() -> None:
     _ = await env.service.fetch_transcript("v1", logger=test_logger())
 
     _ = await env.sync.sync(logger=test_logger())
-    stored = await env.service.get_video("v1")
-
-    assert_eq(stored.transcript, "body")
+    assert_eq(await env.service.stored_transcript("v1"), "body")
 
 
 @test()
@@ -1099,18 +1121,16 @@ async def sync_stops_on_quota_exhaustion_without_raising() -> None:
 def _ingested(
     video_id: str,
     *,
-    transcript: str | None = None,
     ignored_at: datetime | None = None,
 ) -> IngestedVideo[Pending]:
     """Build an ingested-video row for direct insertion in status tests."""
     return IngestedVideo(
-        video_id=video_id,
+        video_id=VideoId(video_id),
         source="liked",
         title="t",
         channel="c",
         topic="python",
         description="",
-        transcript=transcript,
         ignored_at=ignored_at,
     )
 
@@ -1120,21 +1140,20 @@ async def sync_status_partitions_the_corpus_by_transcript_state() -> None:
     """Status partitions active videos across the normalized transcript lifecycle."""
     env = await load_fixture(make_env(InMemoryYouTubeApi(), daily_limit=50))
     async with env.db.transaction() as tx:
-        _ = await tx.execute(insert(_ingested("available", transcript="hello")))
+        available = await tx.execute(insert(_ingested("available")).returning())
         _ = await tx.execute(insert(_ingested("pending")))
-        _ = await tx.execute(insert(_ingested("needs-review")))
-        _ = await tx.execute(insert(_ingested("unavailable")))
+        review = await tx.execute(insert(_ingested("needs-review")).returning())
+        unavailable = await tx.execute(insert(_ingested("unavailable")).returning())
         # An ignored video is out of the corpus and not counted at all.
         _ = await tx.execute(
             insert(_ingested("ignored", ignored_at=datetime(2026, 1, 1, tzinfo=UTC)))
         )
-        _ = await tx.execute(
-            insert(
-                YouTubeTranscriptState(video_id="needs-review", status="needs_review")
-            )
+        await write_transcript_available(tx, available.id, text="hello", segments=())
+        await write_transcript_review_needed(
+            tx, review.id, failed_attempts=1, last_error="missing"
         )
-        _ = await tx.execute(
-            insert(YouTubeTranscriptState(video_id="unavailable", status="unavailable"))
+        await write_transcript_unavailable(
+            tx, unavailable.id, failed_attempts=1, last_error="given up"
         )
 
     status = await env.service.sync_status(logger=test_logger())
@@ -1194,8 +1213,8 @@ async def sync_status_is_empty_before_any_sync() -> None:
 
 
 @test()
-async def schema_normalizes_legacy_transcript_statuses() -> None:
-    """A pre-normalization database upgrades machine states and settled absence."""
+async def schema_ignores_legacy_transcript_states_without_saved_videos() -> None:
+    """Legacy failure rows without a saved-video parent remain orphaned."""
     db = await Database.initialize(backend=Config(database=":memory:"))
     await db.migrate(
         {
@@ -1224,14 +1243,8 @@ async def schema_normalizes_legacy_transcript_statuses() -> None:
     await create_youtube_schema(db)
 
     async with db.transaction() as tx:
-        rows = await tx.fetch_all(select(YouTubeTranscriptState).all())
-    assert_eq(
-        {row.video_id: row.status for row in rows},
-        {
-            "try-later": "retrying",
-            "give-up": "unavailable",
-        },
-    )
+        rows = await tx.fetch_all(select(YouTubeTranscript).all())
+    assert_eq(rows, [])
     await db.close()
 
 

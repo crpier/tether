@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 import httpx2
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snektest import assert_eq, assert_is_none, assert_raises, test
 
 from tether.tts import TtsClient

@@ -14,7 +14,7 @@ import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from pydantic import UUID7
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import Config, Database, Fetched, select, update
 from snektest import (
     assert_eq,

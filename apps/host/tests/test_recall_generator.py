@@ -6,7 +6,7 @@ recovers the JSON object from a reply (even wrapped in prose or code fences) and
 that a malformed reply becomes a typed failure rather than a corrupt study item.
 """
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snektest import assert_eq, assert_raises, test
 
 from tether.recall_generation import PiStudyItemGenerator, StudyItemGenerationFailure

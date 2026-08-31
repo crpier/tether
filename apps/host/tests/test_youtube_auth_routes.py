@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import parse_qs, urlparse
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snektest import assert_eq, assert_false, assert_true, test
 
 from tests.surfaces import login, surface_client
@@ -21,6 +21,7 @@ from tether.youtube.auth_service import (
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.oauth import REQUIRED_SCOPES, OAuthConfig
 from tether.youtube.quota import LikedPage, RawYouTubeVideo
+from tether.youtube.types import VideoId
 
 
 class FakeGoogleCredentials:
@@ -175,7 +176,7 @@ def successful_youtube_callback_immediately_syncs_likes() -> None:
     youtube_api = AuthorizationGuardedYouTubeApi(
         liked=[
             RawYouTubeVideo(
-                video_id="fresh-video",
+                video_id=VideoId("fresh-video"),
                 title="Freshly liked",
                 channel="Channel",
                 topic="youtube",

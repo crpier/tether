@@ -25,12 +25,13 @@ from tether.youtube.quota import (
     RawYouTubeVideo,
 )
 from tether.youtube.store import create_youtube_schema
+from tether.youtube.types import VideoId
 
 
 def video(video_id: str) -> RawYouTubeVideo:
     """A minimal raw upstream video for seeding the fake liked list."""
     return RawYouTubeVideo(
-        video_id=video_id, title="A Talk", channel="PyConf", topic="python"
+        video_id=VideoId(video_id), title="A Talk", channel="PyConf", topic="python"
     )
 
 

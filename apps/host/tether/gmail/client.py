@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from html import unescape
 from typing import Literal, Protocol, cast
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.structured_logging import Logger
 
@@ -544,7 +544,7 @@ class GmailClient:
             )
             if isinstance(transported, Err):
                 return Err(transported.error)
-            response = transported.value
+            response = transported.unwrap()
             if failure := _response_failure(response, operation="list-messages"):
                 return Err(failure)
             messages = response.payload.get("messages", [])
@@ -604,7 +604,7 @@ class GmailClient:
         )
         if isinstance(transported, Err):
             return Err(transported.error)
-        response = transported.value
+        response = transported.unwrap()
         if failure := _response_failure(response, operation="list-messages"):
             return Err(failure)
         parsed = _parse_search_page(response.payload, operation="list-messages")
@@ -620,15 +620,15 @@ class GmailClient:
                 return await self.get_message_preview(identity.message_id)
 
         fetched = await asyncio.gather(
-            *(fetch_preview(identity) for identity in parsed.value.messages)
+            *(fetch_preview(identity) for identity in parsed.unwrap().messages)
         )
         previews: list[GmailMessagePreview] = []
-        for identity, result in zip(parsed.value.messages, fetched, strict=True):
+        for identity, result in zip(parsed.unwrap().messages, fetched, strict=True):
             if isinstance(result, Err):
                 return Err(result.error)
             if (
-                result.value.message_id != identity.message_id
-                or result.value.thread_id != identity.thread_id
+                result.unwrap().message_id != identity.message_id
+                or result.unwrap().thread_id != identity.thread_id
             ):
                 return Err(
                     GmailProtocolFailure(
@@ -636,12 +636,12 @@ class GmailClient:
                         operation="get-message-preview",
                     )
                 )
-            previews.append(result.value)
+            previews.append(result.unwrap())
         return Ok(
             GmailSearchPage(
                 messages=tuple(previews),
-                next_page_token=parsed.value.next_page_token,
-                result_size_estimate=parsed.value.result_size_estimate,
+                next_page_token=parsed.unwrap().next_page_token,
+                result_size_estimate=parsed.unwrap().result_size_estimate,
             )
         )
 
@@ -650,7 +650,7 @@ class GmailClient:
         transported = await self.transport.get_message(message_id)
         if isinstance(transported, Err):
             return Err(transported.error)
-        response = transported.value
+        response = transported.unwrap()
         if failure := _response_failure(response, operation="get-message"):
             return Err(failure)
         return _parse_message(response.payload, operation="get-message")
@@ -662,7 +662,7 @@ class GmailClient:
         transported = await self.transport.get_message_preview(message_id)
         if isinstance(transported, Err):
             return Err(transported.error)
-        response = transported.value
+        response = transported.unwrap()
         if failure := _response_failure(response, operation="get-message-preview"):
             return Err(failure)
         return _parse_message_preview(response.payload, operation="get-message-preview")
@@ -674,7 +674,7 @@ class GmailClient:
         transported = await self.transport.get_raw_message(message_id)
         if isinstance(transported, Err):
             return Err(transported.error)
-        response = transported.value
+        response = transported.unwrap()
         if failure := _response_failure(response, operation="get-raw-message"):
             return Err(failure)
         return _parse_raw_message(response.payload, operation="get-raw-message")
@@ -684,7 +684,7 @@ class GmailClient:
         transported = await self.transport.list_labels()
         if isinstance(transported, Err):
             return Err(transported.error)
-        response = transported.value
+        response = transported.unwrap()
         if failure := _response_failure(response, operation="list-labels"):
             return Err(failure)
         raw_labels = response.payload.get("labels")
@@ -729,7 +729,7 @@ class GmailClient:
             return Err(listed.error)
         return Ok(
             next(
-                (label.label_id for label in listed.value if label.name == name),
+                (label.label_id for label in listed.unwrap() if label.name == name),
                 None,
             )
         )
@@ -739,9 +739,10 @@ class GmailClient:
         fetched = await self._get_or_none(message_id)
         if isinstance(fetched, Err):
             return Err(fetched.error)
-        if fetched.value is None:
+        message = fetched.unwrap()
+        if message is None:
             return Ok(GmailWriteResult("gone", "message no longer exists"))
-        if _INBOX_LABEL not in fetched.value.label_ids:
+        if _INBOX_LABEL not in message.label_ids:
             return Ok(GmailWriteResult("already", "message already archived"))
         return await self._modify_labels(
             message_id, add_label_ids=(), remove_label_ids=(_INBOX_LABEL,)
@@ -754,9 +755,10 @@ class GmailClient:
         fetched = await self._get_or_none(message_id)
         if isinstance(fetched, Err):
             return Err(fetched.error)
-        if fetched.value is None:
+        message = fetched.unwrap()
+        if message is None:
             return Ok(GmailWriteResult("gone", "message no longer exists"))
-        if label_id in fetched.value.label_ids:
+        if label_id in message.label_ids:
             return Ok(GmailWriteResult("already", "message already carries the label"))
         return await self._modify_labels(
             message_id, add_label_ids=(label_id,), remove_label_ids=()
@@ -773,9 +775,10 @@ class GmailClient:
         fetched = await self._get_or_none(message_id)
         if isinstance(fetched, Err):
             return Err(fetched.error)
-        if fetched.value is None:
+        message = fetched.unwrap()
+        if message is None:
             return Ok(GmailWriteResult("gone", "message no longer exists"))
-        current_label_ids = set(fetched.value.label_ids)
+        current_label_ids = set(message.label_ids)
         additions = tuple(
             label_id for label_id in add_label_ids if label_id not in current_label_ids
         )
@@ -795,14 +798,17 @@ class GmailClient:
         fetched = await self._get_or_none(message_id)
         if isinstance(fetched, Err):
             return Err(fetched.error)
-        if fetched.value is None:
+        message = fetched.unwrap()
+        if message is None:
             return Ok(GmailWriteResult("gone", "message no longer exists"))
-        if _TRASH_LABEL in fetched.value.label_ids:
+        if _TRASH_LABEL in message.label_ids:
             return Ok(GmailWriteResult("already", "message already trashed"))
         transported = await self.transport.trash_message(message_id)
         if isinstance(transported, Err):
             return Err(transported.error)
-        if failure := _response_failure(transported.value, operation="trash-message"):
+        if failure := _response_failure(
+            transported.unwrap(), operation="trash-message"
+        ):
             return Err(failure)
         return Ok(GmailWriteResult("done"))
 
@@ -812,7 +818,7 @@ class GmailClient:
         transported = await self.transport.get_message(message_id)
         if isinstance(transported, Err):
             return Err(transported.error)
-        response = transported.value
+        response = transported.unwrap()
         if response.status_code == _HTTP_NOT_FOUND:
             return Ok(None)
         if failure := _response_failure(response, operation="get-message"):
@@ -833,7 +839,9 @@ class GmailClient:
         )
         if isinstance(transported, Err):
             return Err(transported.error)
-        if failure := _response_failure(transported.value, operation="modify-labels"):
+        if failure := _response_failure(
+            transported.unwrap(), operation="modify-labels"
+        ):
             return Err(failure)
         return Ok(GmailWriteResult("done"))
 

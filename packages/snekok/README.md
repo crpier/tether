@@ -3,7 +3,7 @@
 Small, typed tools for treating expected failures as values in Python.
 
 ```python
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 
 def parse_port(raw: str) -> Result[int, str]:
@@ -12,35 +12,36 @@ def parse_port(raw: str) -> Result[int, str]:
     return Err("port must be an integer")
 
 
-match parse_port("8080"):
-    case Ok(port):
-        print(port)
-    case Err(error):
-        print(error)
+port = parse_port("8080")
+if isinstance(port, Err):
+    print(port.error)
+else:
+    print(port.unwrap())
 ```
 
-The `Result` API deliberately stays small: `Ok`, `Err`, `Result`, and the
-`map`, `map_error`, and `and_then` composition methods required by concrete
-consumers. It does not attempt to provide a functional-programming framework.
+The `Result` API deliberately stays small: `Ok`, `Err`, `Result`, `unwrap`,
+`unwrap_error`, and the `map`, `map_error`, `and_then`, and `and_then_async`
+composition methods required by concrete consumers. It does not attempt to provide a
+functional-programming framework.
 
-## Validated scalar classes
+## Validated scalar aliases
 
-`NonEmptySecretStr`, `NonEmptyStr`, and `NonNegativeInt` are nominal classes with
-validated constructors and Pydantic support:
+`NonEmptySecretStr`, `NonEmptyStr`, and `NonNegativeInt` are constrained nominal
+aliases with Pydantic support:
 
 ```python
 from pydantic import BaseModel
 
-from snekok import NonEmptySecretStr
-from snekok.types import NonEmptyStr, NonNegativeInt
+from snekok.types import NonEmptySecretStr, NonEmptyStr, NonNegativeInt
+from snekok.validation import validate_python
 
 
 class ApiSettings(BaseModel):
     api_key: NonEmptySecretStr
 
 
-label = NonEmptyStr("hello")
-retry_count = NonNegativeInt(0)
+label = validate_python(NonEmptyStr, "hello").unwrap()
+retry_count = validate_python(NonNegativeInt, 0).unwrap()
 settings = ApiSettings.model_validate({"api_key": "secret-value"})
 assert settings.api_key.get_secret_value() == "secret-value"
 ```

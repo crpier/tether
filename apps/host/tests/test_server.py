@@ -18,7 +18,7 @@ from tempfile import TemporaryDirectory
 import structlog
 from fastapi import FastAPI
 from httpx2 import AsyncClient
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snektest import (
     assert_eq,
     assert_false,

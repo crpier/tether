@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from pydantic import BaseModel, Field
-from snekok import Err, Ok
+from snekok.result import Ok
 from starlette.requests import Request
 from starlette.routing import Route
 
@@ -48,10 +48,6 @@ class SearchBudgetExhaustedError(Exception):
         self.used: int = used
 
 
-class UnexpectedWebSearchFailureError(Exception):
-    """The configured provider violated the closed Web Search failure contract."""
-
-
 class WebSearchParams(BaseModel):
     """Search the current public web and return snippets plus extracted content."""
 
@@ -81,31 +77,29 @@ async def _web_search(
     outcome = await provider.search(
         query, max_results=max_results, search_depth=search_depth
     )
-    match outcome:
-        case Err(SearchBudgetExhaustedFailure(used=used, limit=limit)):
+    if isinstance(outcome, Ok):
+        response = outcome.value
+        return CapabilityOutcome(
+            quota=response.quota,
+            result=[
+                {
+                    "title": result.title,
+                    "url": result.url,
+                    "snippet": result.snippet,
+                    **(
+                        {"extracted_content": result.extracted_content}
+                        if result.extracted_content is not None
+                        else {}
+                    ),
+                }
+                for result in response.results
+            ],
+        )
+    match outcome.unwrap_error():
+        case SearchBudgetExhaustedFailure(used=used, limit=limit):
             raise SearchBudgetExhaustedError(used, limit)
-        case Err(SearchUpstreamFailure(status_code=status_code)):
+        case SearchUpstreamFailure(status_code=status_code):
             raise SearchUpstreamError(status_code)
-        case Ok(response):
-            return CapabilityOutcome(
-                quota=response.quota,
-                result=[
-                    {
-                        "title": result.title,
-                        "url": result.url,
-                        "snippet": result.snippet,
-                        **(
-                            {"extracted_content": result.extracted_content}
-                            if result.extracted_content is not None
-                            else {}
-                        ),
-                    }
-                    for result in response.results
-                ],
-            )
-        case Err(failure):  # pragma: no cover - closed failure union is exhaustive
-            message = f"unexpected Web Search failure: {type(failure).__name__}"
-            raise UnexpectedWebSearchFailureError(message)
 
 
 SEARCH_TOOL_SPECS: tuple[ToolSpec, ...] = (

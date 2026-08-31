@@ -6,16 +6,8 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from snekok import Err, Ok
-from snekql.sqlite import (
-    CurrentTimestamp,
-    Database,
-    Fetched,
-    delete,
-    insert,
-    select,
-    update,
-)
+from snekok.result import Err, Ok
+from snekql.sqlite import Database, Fetched, select
 
 from tether.escalating_pause import PauseState
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
@@ -40,9 +32,16 @@ from tether.transcripts.provider_health import (
 )
 from tether.youtube import (
     IngestedVideo,
-    TranscriptPersistedStatus,
-    YouTubeTranscriptState,
+    TranscriptAvailable,
+    TranscriptRetrying,
+    TranscriptReviewNeeded,
+    TranscriptUnavailable,
+    VideoId,
     YouTubeVideoNotFoundError,
+    fetch_transcript_state,
+    write_transcript_available,
+    write_transcript_retrying,
+    write_transcript_review_needed,
 )
 
 
@@ -54,16 +53,6 @@ class TranscriptAcquisitionConfig:
     backoff_cap: timedelta = timedelta(hours=6)
     block_pause_base: timedelta = timedelta(hours=2)
     block_pause_cap: timedelta = timedelta(hours=24)
-
-
-@dataclass(frozen=True, slots=True)
-class _StateWrite:
-    """Mutable fields of one persisted transcript-state transition."""
-
-    attempts: int
-    last_error: str | None
-    next_attempt_at: datetime | None
-    status: TranscriptPersistedStatus
 
 
 class TranscriptAcquisitionInvariantError(Exception):
@@ -104,11 +93,13 @@ class TranscriptAcquisitionService:
         """Fetch and persist one transcript without duplicate concurrent calls."""
         async with self._lock:
             video = await self._video(video_id)
-            if video.transcript is not None:
+            async with self.database.transaction() as tx:
+                state = await fetch_transcript_state(tx, video.id)
+            if isinstance(state, TranscriptAvailable):
                 return TranscriptStored(
                     cached=True,
-                    source=video.transcript_source,
-                    text=video.transcript,
+                    source=state.source,
+                    text=state.text,
                 )
             pauses = await load_all_provider_pauses(self.database)
             deferred_sources = frozenset(
@@ -135,29 +126,27 @@ class TranscriptAcquisitionService:
                         text=fetched.text,
                     )
                 case Err(TranscriptUnavailableFailure()):
-                    await self._write_failure(
-                        video_id,
-                        _StateWrite(
-                            attempts=await self._attempts(video_id),
+                    attempts = max(1, self._failed_attempts(state))
+                    async with self.database.transaction(mode="immediate") as tx:
+                        await write_transcript_review_needed(
+                            tx,
+                            video.id,
+                            failed_attempts=attempts,
                             last_error=video_id,
-                            next_attempt_at=None,
-                            status="needs_review",
-                        ),
-                    )
+                        )
                     await self._publish_change()
                     return TranscriptNeedsReview(video_id=video_id)
                 case Err(TranscriptTransientFailure() as failure):
-                    attempts = await self._attempts(video_id) + 1
+                    attempts = self._failed_attempts(state) + 1
                     next_attempt_at = self._next_attempt_at(now, attempts)
-                    await self._write_failure(
-                        video_id,
-                        _StateWrite(
-                            attempts=attempts,
+                    async with self.database.transaction(mode="immediate") as tx:
+                        await write_transcript_retrying(
+                            tx,
+                            video.id,
+                            failed_attempts=attempts,
                             last_error=str(failure),
                             next_attempt_at=next_attempt_at,
-                            status="retrying",
-                        ),
-                    )
+                        )
                     return TranscriptRetryScheduled(next_attempt_at=next_attempt_at)
                 case Err(TranscriptBlockedFailure() as failure):
                     paused = await self._provider_health.trip(
@@ -178,64 +167,33 @@ class TranscriptAcquisitionService:
     async def _video(self, video_id: str) -> IngestedVideo[Fetched]:
         async with self.database.transaction() as tx:
             video = await tx.fetch_one_or_none(
-                select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
+                select(IngestedVideo).where(
+                    IngestedVideo.video_id.eq(VideoId(video_id))
+                )
             )
         if video is None:
             raise YouTubeVideoNotFoundError(video_id)
         return video
 
-    async def _attempts(self, video_id: str) -> int:
-        async with self.database.transaction() as tx:
-            state = await tx.fetch_one_or_none(
-                select(YouTubeTranscriptState).where(
-                    YouTubeTranscriptState.video_id.eq(video_id)
-                )
-            )
-        return state.attempts if state is not None else 0
+    @staticmethod
+    def _failed_attempts(
+        state: TranscriptRetrying
+        | TranscriptReviewNeeded
+        | TranscriptUnavailable
+        | None,
+    ) -> int:
+        """Return the persisted failure count for states that carry one."""
+        return state.failed_attempts if state is not None else 0
 
     async def _store(self, video_id: str, fetched: FetchedTranscript) -> None:
+        video = await self._video(video_id)
         async with self.database.transaction(mode="immediate") as tx:
-            _ = await tx.execute(
-                update(IngestedVideo)
-                .set(IngestedVideo.transcript.to(fetched.text))
-                .set(IngestedVideo.transcript_source.to(fetched.source))
-                .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(video_id))
-            )
-            _ = await tx.execute(
-                delete(YouTubeTranscriptState).where(
-                    YouTubeTranscriptState.video_id.eq(video_id)
-                )
-            )
-
-    async def _write_failure(self, video_id: str, fields: _StateWrite) -> None:
-        async with self.database.transaction(mode="immediate") as tx:
-            existing = await tx.fetch_one_or_none(
-                select(YouTubeTranscriptState).where(
-                    YouTubeTranscriptState.video_id.eq(video_id)
-                )
-            )
-            if existing is None:
-                _ = await tx.execute(
-                    insert(
-                        YouTubeTranscriptState(
-                            video_id=video_id,
-                            status=fields.status,
-                            attempts=fields.attempts,
-                            next_attempt_at=fields.next_attempt_at,
-                            last_error=fields.last_error,
-                        )
-                    )
-                )
-                return
-            _ = await tx.execute(
-                update(YouTubeTranscriptState)
-                .set(YouTubeTranscriptState.status.to(fields.status))
-                .set(YouTubeTranscriptState.attempts.to(fields.attempts))
-                .set(YouTubeTranscriptState.next_attempt_at.to(fields.next_attempt_at))
-                .set(YouTubeTranscriptState.last_error.to(fields.last_error))
-                .set(YouTubeTranscriptState.updated_at.to(CurrentTimestamp))
-                .where(YouTubeTranscriptState.video_id.eq(video_id))
+            await write_transcript_available(
+                tx,
+                video.id,
+                source=fetched.source,
+                text=fetched.text,
+                segments=fetched.segments,
             )
 
     def _next_attempt_at(self, now: datetime, attempts: int) -> datetime:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 
 from tether.transcripts.contracts import (
     FetchedTranscript,

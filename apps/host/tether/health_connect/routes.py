@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 from pydantic import AwareDatetime, BaseModel, model_validator
-from snekok import Err
+from snekok.result import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -264,7 +264,7 @@ async def complete_health_connect_baseline(
         return JSONResponse(
             {"detail": _contract_failure_detail(outcome.error)}, status_code=422
         )
-    report = outcome.value
+    report = outcome.unwrap()
     _runtime(request).logger.info(
         "Health Connect baseline completed",
         deleted=report.deleted,
@@ -289,7 +289,7 @@ async def ingest_health_connect_step_aggregates(
             {"detail": "request_id was reused for another step snapshot"},
             status_code=409,
         )
-    report = outcome.value
+    report = outcome.unwrap()
     _runtime(request).logger.info(
         "Health Connect canonical step snapshot accepted",
         accepted=report.accepted,
@@ -326,7 +326,7 @@ async def ingest_health_connect_batch(
         return JSONResponse(
             {"detail": _contract_failure_detail(outcome.error)}, status_code=409
         )
-    report = outcome.value
+    report = outcome.unwrap()
     _runtime(request).logger.info(
         "Health Connect page accepted",
         accepted=report.accepted,

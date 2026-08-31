@@ -268,7 +268,9 @@ async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcom
     return CapabilityOutcome(
         result={
             "video": YouTubeVideoRead.from_video(
-                result.video, transcript_status="available"
+                result.video,
+                transcript_status="available",
+                transcript=result.transcript,
             ).model_dump(mode="json"),
             "transcript": result.transcript,
         },

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from anyio import NamedTemporaryFile
 from anyio import Path as AsyncPath
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.ebook_stats_errors import (
     EbookStatsFailure,

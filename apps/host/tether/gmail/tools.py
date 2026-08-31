@@ -6,7 +6,7 @@ from datetime import date
 from typing import NoReturn, Protocol, Self, cast
 
 from pydantic import BaseModel, Field, model_validator
-from snekok import Ok
+from snekok.result import Ok
 from starlette.requests import Request
 from starlette.routing import Route
 
@@ -184,7 +184,7 @@ async def _archive_gmail_message(
     if isinstance(archived, Ok):
         outcome = archived.value
     else:
-        _translate_failure(archived.error)
+        _translate_failure(archived.unwrap_error())
     return CapabilityOutcome(
         result={
             "detail": outcome.detail,
@@ -204,7 +204,7 @@ async def undo_archive(request: Request, message_id: str) -> CapabilityOutcome:
     if isinstance(restored, Ok):
         outcome = restored.value
     else:
-        _translate_failure(restored.error, not_found_if_404=True)
+        _translate_failure(restored.unwrap_error(), not_found_if_404=True)
     return CapabilityOutcome(
         result={
             "detail": outcome.detail,
@@ -233,7 +233,7 @@ async def _search_gmail(request: Request, params: BaseModel) -> CapabilityOutcom
     if isinstance(search, Ok):
         value = search.value
     else:
-        _translate_failure(search.error)
+        _translate_failure(search.unwrap_error())
     return CapabilityOutcome(
         result={
             "messages": [
@@ -265,7 +265,7 @@ async def _update_gmail_labels(
     if isinstance(listed, Ok):
         label_ids_by_name = {label.name: label.label_id for label in listed.value}
     else:
-        _translate_failure(listed.error)
+        _translate_failure(listed.unwrap_error())
     unknown_labels = [
         label
         for label in (*add_labels, *remove_labels)
@@ -288,7 +288,7 @@ async def _update_gmail_labels(
     if isinstance(updated, Ok):
         outcome = updated.value
     else:
-        _translate_failure(updated.error)
+        _translate_failure(updated.unwrap_error())
     return CapabilityOutcome(
         result={
             "detail": outcome.detail,
@@ -304,7 +304,7 @@ async def _trash_gmail_message(request: Request, message_id: str) -> CapabilityO
     if isinstance(trashed, Ok):
         outcome = trashed.value
     else:
-        _translate_failure(trashed.error)
+        _translate_failure(trashed.unwrap_error())
     return CapabilityOutcome(
         result={
             "detail": outcome.detail,
@@ -320,7 +320,7 @@ async def _list_gmail_labels(request: Request) -> CapabilityOutcome:
     if isinstance(labels, Ok):
         available_labels = labels.value
     else:
-        _translate_failure(labels.error)
+        _translate_failure(labels.unwrap_error())
     return CapabilityOutcome(
         result={
             "labels": [
@@ -340,7 +340,7 @@ async def _read_gmail_message(
     if isinstance(message, Ok):
         raw = message.value
     else:
-        _translate_failure(message.error, not_found_if_404=True)
+        _translate_failure(message.unwrap_error(), not_found_if_404=True)
     truncated = raw.raw_rfc2822[:max_chars]
     return CapabilityOutcome(
         result={

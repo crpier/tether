@@ -14,7 +14,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snektest import assert_eq, assert_not_in, assert_true, test
 from starlette.testclient import TestClient
 
@@ -27,6 +27,7 @@ from tether.recall_generation import (
 from tether.recall_grading import AnswerGradingUnavailable, EssayGradeProposal
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import RawYouTubeVideo
+from tether.youtube.types import VideoId
 
 
 class FakeGenerator:
@@ -107,7 +108,7 @@ def seeded_api() -> InMemoryYouTubeApi:
     return InMemoryYouTubeApi(
         liked=[
             RawYouTubeVideo(
-                video_id="v1",
+                video_id=VideoId("v1"),
                 title="Async IO Explained",
                 channel="PyConf",
                 topic="python",

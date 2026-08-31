@@ -7,15 +7,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
+from snekok.types import (
+    NonBlankStr,
+    NonNegativeInt,
+    StrictFrozenModel,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class FetchedTranscript:
-    """Usable transcript text with its producing source."""
+    """Usable transcript text, exact timed segments, and producing source."""
 
     source: str
     text: str
+    segments: tuple[TranscriptSegment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,13 +168,13 @@ class TranscriptProviderChain:
                 continue
             selected_policy.record_attempt(source.source)
             outcome = await source.fetch(video_id)
-            match outcome:
-                case Ok():
-                    return outcome
-                case Err(TranscriptUnavailableFailure() as failure):
-                    last_unavailable = failure
-                case Err():
-                    return outcome
+            if isinstance(outcome, Ok):
+                return outcome
+            failure = outcome.unwrap_error()
+            if isinstance(failure, TranscriptUnavailableFailure):
+                last_unavailable = failure
+            else:
+                return outcome
         if deferred:
             return Err(
                 TranscriptDeferredFailure(
@@ -259,3 +265,16 @@ class TranscriptAcquisitionPort(Protocol):
     ) -> TranscriptAcquisitionOutcome:
         """Fetch and persist one transcript according to explicit pass policy."""
         ...
+
+
+class TranscriptSegment(StrictFrozenModel):
+    """One exact provider-reported timed transcript segment."""
+
+    text: NonBlankStr
+    start_ms: NonNegativeInt
+    duration_ms: NonNegativeInt
+
+    @property
+    def end_ms(self) -> int:
+        """Return the exclusive segment end in integer milliseconds."""
+        return self.start_ms + self.duration_ms

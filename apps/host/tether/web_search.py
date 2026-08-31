@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from snekok import Result
+from snekok.result import Result
 
 from tether.capability_contracts import QuotaMeta
 

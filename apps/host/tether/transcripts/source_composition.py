@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-from pydantic import TypeAdapter
-from snekok import NonEmptySecretStr
+from snekok.types import NonEmptySecretStr
+from snekok.validation import validate_python
 
 from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
 from tether.transcripts.library import (
@@ -17,10 +17,6 @@ from tether.transcripts.supadata import (
     HttpSupadataTransport,
     SupadataConfig,
     SupadataTranscriptSource,
-)
-
-_SUPADATA_API_KEY_ADAPTER: TypeAdapter[NonEmptySecretStr] = TypeAdapter(
-    NonEmptySecretStr
 )
 
 
@@ -77,7 +73,9 @@ def build_configured_transcript_provider(
         providers.append(
             SupadataTranscriptSource(
                 HttpSupadataTransport(
-                    _SUPADATA_API_KEY_ADAPTER.validate_python(config.supadata.api_key),
+                    validate_python(
+                        NonEmptySecretStr, config.supadata.api_key
+                    ).unwrap(),
                     config=supadata_config,
                 ),
                 config=supadata_config,

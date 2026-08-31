@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 from snektest import assert_eq, test
 
 from tests.surfaces import login, surface_client

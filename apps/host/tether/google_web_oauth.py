@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from pydantic import BaseModel
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.google_oauth import OAuthConfig
 

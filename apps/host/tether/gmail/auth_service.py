@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal, Protocol
 
 from pydantic import BaseModel
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.gmail.client import (
     GmailAuthenticationFailure,
@@ -234,7 +234,7 @@ class GoogleGmailAuthBackend:
         outcome = await self._flow.start(redirect_uri=redirect_uri)
         if isinstance(outcome, Err):
             return Err(GmailAuthFailure(message=outcome.error.message))
-        return Ok(GmailAuthorization(**outcome.value.model_dump()))
+        return Ok(GmailAuthorization(**outcome.unwrap().model_dump()))
 
     async def complete(
         self, *, authorization_response: str, expected_state: str
@@ -289,7 +289,7 @@ class GoogleGmailAuthService:
             )
             return self._status
         self._status = GmailAuthStatus(
-            state="connected" if outcome.value else "disconnected"
+            state="connected" if outcome.unwrap() else "disconnected"
         )
         return self._status
 
@@ -308,9 +308,9 @@ class GoogleGmailAuthService:
                 state="error",
             )
             return self._status
-        self._expected_state = outcome.value.state
+        self._expected_state = outcome.unwrap().state
         self._status = GmailAuthStatus(
-            authorization_url=outcome.value.authorization_url,
+            authorization_url=outcome.unwrap().authorization_url,
             state="authorizing",
         )
         return self._status

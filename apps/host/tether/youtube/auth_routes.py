@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol, cast
 
 from fastapi import APIRouter
-from snekok import Err
+from snekok.result import Err
 from starlette.datastructures import URL
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response

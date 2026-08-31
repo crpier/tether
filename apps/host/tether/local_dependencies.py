@@ -5,7 +5,7 @@ from __future__ import annotations
 from base64 import b64decode
 from collections.abc import Callable
 
-from snekok import Ok, Result
+from snekok.result import Ok, Result
 
 from tether.provider_auth import ProviderAuthBackend
 from tether.provider_auth_errors import ProviderAuthFailure

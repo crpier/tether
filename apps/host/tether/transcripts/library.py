@@ -17,13 +17,15 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
+from snekok.validation import validate_python_unsafe
 
 from tether.transcripts.contracts import (
     FetchedTranscript,
     TranscriptBlockedFailure,
     TranscriptFailure,
     TranscriptFetchResult,
+    TranscriptSegment,
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
@@ -157,17 +159,45 @@ def _classify_library_error(video_id: str, error: Exception) -> TranscriptFailur
     )
 
 
-def _parse_snippets(raw: Iterable[Any]) -> str:
-    """Join usable text from modern object or legacy mapping snippets."""
-    snippets: list[str] = []
+def _parse_snippets(raw: Iterable[Any]) -> tuple[str, tuple[TranscriptSegment, ...]]:
+    """Join text and preserve timing only when every usable cue reports it."""
+    texts: list[str] = []
+    segments: list[TranscriptSegment] = []
+    complete_timing = True
     for snippet in raw:
         if isinstance(snippet, Mapping):
-            text = cast("Mapping[str, object]", snippet).get("text")
+            values = cast("Mapping[str, object]", snippet)
+            text = values.get("text")
+            start = values.get("start")
+            duration = values.get("duration")
         else:
             text = getattr(snippet, "text", None)
-        if isinstance(text, str) and (cleaned := text.strip()):
-            snippets.append(cleaned)
-    return " ".join(snippets)
+            start = getattr(snippet, "start", None)
+            duration = getattr(snippet, "duration", None)
+        if not isinstance(text, str) or not (cleaned := text.strip()):
+            continue
+        texts.append(cleaned)
+        if (
+            isinstance(start, int | float)
+            and not isinstance(start, bool)
+            and isinstance(duration, int | float)
+            and not isinstance(duration, bool)
+            and start >= 0
+            and duration >= 0
+        ):
+            segments.append(
+                validate_python_unsafe(
+                    TranscriptSegment,
+                    {
+                        "text": cleaned,
+                        "start_ms": round(start * 1000),
+                        "duration_ms": round(duration * 1000),
+                    },
+                )
+            )
+        else:
+            complete_timing = False
+    return " ".join(texts), tuple(segments) if complete_timing else ()
 
 
 def _default_library_fetcher(languages: tuple[str, ...]) -> Callable[[str], Any]:
@@ -260,7 +290,7 @@ class YouTubeTranscriptApiSource:
             raw = await asyncio.to_thread(fetcher, video_id)
         except Exception as e:
             return Err(_classify_library_error(video_id, e))
-        text = _parse_snippets(raw)
+        text, segments = _parse_snippets(raw)
         if not text:
             return Err(TranscriptUnavailableFailure(video_id=video_id))
-        return Ok(FetchedTranscript(text=text, source=_SOURCE))
+        return Ok(FetchedTranscript(text=text, source=_SOURCE, segments=segments))

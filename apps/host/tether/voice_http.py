@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 from starlette.requests import Request

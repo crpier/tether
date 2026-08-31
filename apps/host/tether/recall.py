@@ -11,7 +11,7 @@ from datetime import datetime
 
 from opentelemetry.trace import Tracer
 from pydantic import UUID7
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -162,11 +162,9 @@ class RecallService:
             generation = await self.generator.generate(
                 transcript=transcript, title=source_title
             )
-            match generation:
-                case Err(failure):
-                    raise InvalidPromptError(failure.message)
-                case Ok(generated):
-                    pass
+            if isinstance(generation, Err):
+                raise InvalidPromptError(generation.error.message)
+            generated = generation.unwrap()
             validation = validate_generated_study_item(generated)
             if isinstance(validation, Err):
                 raise InvalidPromptError(validation.error.message)
@@ -395,15 +393,13 @@ class RecallService:
             rubric=prompt.rubric,
             answer_text=answer_text,
         )
-        match proposal_result:
-            case Err():
-                logger.warning(
-                    "Essay grading unavailable; the human grades unaided",
-                    prompt_id=str(prompt.id),
-                )
-                return EssayGradeProposal(correct=None, reasoning=None)
-            case Ok(proposal):
-                pass
+        if isinstance(proposal_result, Err):
+            logger.warning(
+                "Essay grading unavailable; the human grades unaided",
+                prompt_id=str(prompt.id),
+            )
+            return EssayGradeProposal(correct=None, reasoning=None)
+        proposal = proposal_result.unwrap()
         _info(
             logger,
             "Essay grade proposed",
@@ -470,14 +466,12 @@ class RecallService:
                 reference_answer=reference_answer,
                 answer_text=answer_text,
             )
-            match grade:
-                case Ok(correct):
-                    return correct
-                case Err():
-                    logger.warning(
-                        "Short-answer grading unavailable; falling back to strict match",
-                        prompt_id=str(prompt.id),
-                    )
+            if isinstance(grade, Ok):
+                return grade.value
+            logger.warning(
+                "Short-answer grading unavailable; falling back to strict match",
+                prompt_id=str(prompt.id),
+            )
         return matches_reference(reference_answer, answer_text)
 
     async def _require_absent(self, source_video_id: str) -> None:

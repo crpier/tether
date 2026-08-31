@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 from snekql.sqlite import (
     Database,
     Fetched,

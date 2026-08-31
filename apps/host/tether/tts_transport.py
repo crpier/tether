@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Protocol
 
 import httpx2
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.tts_errors import TtsConfigurationError, TtsFailure, TtsNetworkFailure
 from tether.tts_model import SpeechResponse

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 from snekql.sqlite import Config, Database, insert, select
 from snektest import assert_eq, assert_false, assert_isinstance, test
 
@@ -27,8 +27,11 @@ from tether.transcripts.contracts import (
 )
 from tether.youtube.store import (
     IngestedVideo,
+    TranscriptAvailable,
     create_youtube_schema,
+    fetch_transcript_state,
 )
+from tether.youtube.types import VideoId
 
 _NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -69,7 +72,7 @@ async def _seed(
         _ = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id=video_id,
+                    video_id=VideoId(video_id),
                     source="liked",
                     title="Talk",
                     channel="PyConf",
@@ -84,9 +87,12 @@ async def _seed(
 async def _stored_text(database: Database, video_id: str) -> str | None:
     async with database.transaction() as tx:
         video = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
         )
-    return video.transcript if video is not None else None
+        state = (
+            await fetch_transcript_state(tx, video.id) if video is not None else None
+        )
+    return state.text if isinstance(state, TranscriptAvailable) else None
 
 
 @test()

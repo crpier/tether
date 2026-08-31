@@ -8,7 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, Self
 
 from opentelemetry.trace import Tracer
-from snekok import Err, Ok, Result
+from pydantic import UUID7
+from snekok.result import Err, Ok, Result
+from snekok.validation import validate_python_unsafe
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -36,16 +38,18 @@ from tether.transcripts.contracts import (
 from tether.youtube.quota import QuotaMeta, YouTubeApiClient
 from tether.youtube.store import (
     IngestedVideo,
-    TranscriptStateWrite,
+    TranscriptAvailable,
+    TranscriptReviewNeeded,
+    TranscriptState,
     TranscriptStatus,
     YouTubeSource,
-    YouTubeTranscriptState,
-    derive_transcript_status,
+    YouTubeTranscript,
     fetch_transcript_state,
-    fetch_transcript_statuses,
-    write_transcript_state,
+    fetch_transcript_states,
+    write_transcript_unavailable,
 )
 from tether.youtube.sync import read_last_youtube_sync_at
+from tether.youtube.types import VideoId
 
 if TYPE_CHECKING:
     from tether.youtube.search import VideoMatch
@@ -56,6 +60,28 @@ _DEFAULT_SEMANTIC_LIMIT = 50
 def _empty_snippets() -> dict[str, str]:
     """Typed empty default for `SearchResult.snippets` (the lexical path)."""
     return {}
+
+
+def _empty_transcripts() -> dict[VideoId, str]:
+    """Typed empty default for result rows without available transcript text."""
+    return {}
+
+
+def _transcript_projections(
+    videos: Sequence[IngestedVideo[Fetched]],
+    states: Mapping[UUID7, TranscriptState],
+) -> tuple[dict[VideoId, TranscriptStatus], dict[VideoId, str]]:
+    """Project canonical states into status and available-text lookup maps."""
+    statuses: dict[VideoId, TranscriptStatus] = {
+        video.video_id: (states[video.id].status if video.id in states else "pending")
+        for video in videos
+    }
+    transcripts: dict[VideoId, str] = {
+        video.video_id: state.text
+        for video in videos
+        if isinstance(state := states.get(video.id), TranscriptAvailable)
+    }
+    return statuses, transcripts
 
 
 class YouTubeVideoNotFoundError(Exception):
@@ -133,9 +159,10 @@ class BrowseResult:
     """A topic-filtered browse: the local videos plus the day's quota/cache."""
 
     videos: list[IngestedVideo[Fetched]]
-    transcript_statuses: Mapping[str, TranscriptStatus]
+    transcript_statuses: Mapping[VideoId, TranscriptStatus]
     cache: CacheMeta
     quota: QuotaMeta
+    transcripts: Mapping[VideoId, str] = field(default_factory=_empty_transcripts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,9 +193,10 @@ class SearchResult:
     lexical fallback."""
 
     videos: list[IngestedVideo[Fetched]]
-    transcript_statuses: Mapping[str, TranscriptStatus]
+    transcript_statuses: Mapping[VideoId, TranscriptStatus]
     cache: CacheMeta
     quota: QuotaMeta
+    transcripts: Mapping[VideoId, str] = field(default_factory=_empty_transcripts)
     snippets: dict[str, str] = field(default_factory=_empty_snippets)
 
 
@@ -341,51 +369,63 @@ class YouTubeService:
                 query = query.limit(limit)
             async with self.database.transaction() as tx:
                 videos = await tx.fetch_all(query)
-                transcript_statuses = await fetch_transcript_statuses(tx, videos)
+                states = await fetch_transcript_states(tx, videos)
+            transcript_statuses, transcripts = _transcript_projections(videos, states)
         _debug(logger, "YouTube browse completed", result_count=len(videos))
         return BrowseResult(
             videos=videos,
             transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
+            transcripts=transcripts,
         )
 
     async def transcript_status(self, video_id: str) -> TranscriptStatus:
         """Read one video's normalized transcript status from local state."""
         async with self.database.transaction() as tx:
             video = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video_id)
-        return derive_transcript_status(video, state)
+            state = await fetch_transcript_state(tx, video.id)
+        return state.status if state is not None else "pending"
+
+    async def stored_transcript(self, video_id: str) -> str | None:
+        """Return already-persisted transcript text without acquiring upstream."""
+        async with self.database.transaction() as tx:
+            video = await self._fetch(tx, video_id)
+            state = await fetch_transcript_state(tx, video.id)
+        return state.text if isinstance(state, TranscriptAvailable) else None
 
     async def transcript_decisions(self, *, logger: Logger) -> list[TranscriptDecision]:
         """List active videos whose providers are exhausted, newest decision first."""
         with self.tracer.start_as_current_span("YouTubeService.transcript_decisions"):
             async with self.database.transaction() as tx:
-                states = await tx.fetch_all(
-                    select(YouTubeTranscriptState)
-                    .where(YouTubeTranscriptState.status.eq("needs_review"))
-                    .order_by(YouTubeTranscriptState.updated_at.desc())
+                rows = await tx.fetch_all(
+                    select(YouTubeTranscript)
+                    .where(YouTubeTranscript.status.eq("needs_review"))
+                    .order_by(YouTubeTranscript.updated_at.desc())
                 )
+                states = [
+                    validate_python_unsafe(TranscriptReviewNeeded, row) for row in rows
+                ]
                 if not states:
                     return []
                 videos = await tx.fetch_all(
                     select(IngestedVideo)
                     .where(
-                        IngestedVideo.video_id.in_(
-                            *(state.video_id for state in states)
+                        IngestedVideo.id.in_(
+                            *(state.ingested_video_id for state in states)
                         )
                     )
                     .where(IngestedVideo.ignored_at.is_null())
                 )
-            video_by_id = {video.video_id: video for video in videos}
+            video_by_id = {video.id: video for video in videos}
             decisions = [
                 TranscriptDecision(
-                    video=video_by_id[state.video_id],
+                    video=video_by_id[state.ingested_video_id],
                     last_error=state.last_error,
-                    attempts=state.attempts,
+                    attempts=state.failed_attempts,
                 )
                 for state in states
-                if state.video_id in video_by_id
+                if state.ingested_video_id in video_by_id
             ]
         _debug(logger, "Listed transcript decisions", result_count=len(decisions))
         return decisions
@@ -396,13 +436,13 @@ class YouTubeService:
         """Return a review-needed transcript to the background acquisition queue."""
 
         async def _keep_trying(tx: Transaction) -> None:
-            _ = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video_id)
-            if state is None or state.status != "needs_review":
+            video = await self._fetch(tx, video_id)
+            state = await fetch_transcript_state(tx, video.id)
+            if not isinstance(state, TranscriptReviewNeeded):
                 raise TranscriptUnavailableError(video_id)
             _ = await tx.execute(
-                delete(YouTubeTranscriptState).where(
-                    YouTubeTranscriptState.video_id.eq(video_id)
+                delete(YouTubeTranscript).where(
+                    YouTubeTranscript.ingested_video_id.eq(video.id)
                 )
             )
 
@@ -418,19 +458,15 @@ class YouTubeService:
         """Settle a review-needed transcript as explicitly unavailable."""
 
         async def _give_up(tx: Transaction) -> None:
-            _ = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video_id)
-            if state is None or state.status != "needs_review":
+            video = await self._fetch(tx, video_id)
+            state = await fetch_transcript_state(tx, video.id)
+            if not isinstance(state, TranscriptReviewNeeded):
                 raise TranscriptUnavailableError(video_id)
-            await write_transcript_state(
+            await write_transcript_unavailable(
                 tx,
-                video_id,
-                TranscriptStateWrite(
-                    status="unavailable",
-                    attempts=state.attempts,
-                    next_attempt_at=None,
-                    last_error=state.last_error,
-                ),
+                video.id,
+                failed_attempts=state.failed_attempts,
+                last_error=state.last_error,
             )
 
         async with self.database.transaction(mode="immediate") as tx:
@@ -456,17 +492,20 @@ class YouTubeService:
                 active = await tx.fetch_all(
                     select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
                 )
-                states = await tx.fetch_all(select(YouTubeTranscriptState).all())
-            state_by_video_id = {state.video_id: state.status for state in states}
-            done_count = sum(video.transcript is not None for video in active)
+                states = await fetch_transcript_states(tx, active)
+            done_count = sum(
+                states.get(video.id) is not None
+                and states[video.id].status == "available"
+                for video in active
+            )
             needs_review_count = sum(
-                video.transcript is None
-                and state_by_video_id.get(video.video_id) == "needs_review"
+                states.get(video.id) is not None
+                and states[video.id].status == "needs_review"
                 for video in active
             )
             unavailable_count = sum(
-                video.transcript is None
-                and state_by_video_id.get(video.video_id) == "unavailable"
+                states.get(video.id) is not None
+                and states[video.id].status == "unavailable"
                 for video in active
             )
             total = len(active)
@@ -539,26 +578,27 @@ class YouTubeService:
                 cache=CacheMeta(hit=True, source="cache"),
                 quota=await self.client.snapshot(),
             )
-        video_ids = [match.video_id for match in matches]
+        video_ids = [VideoId(match.video_id) for match in matches]
         async with self.database.transaction() as tx:
             videos = await tx.fetch_all(
                 select(IngestedVideo)
                 .where(IngestedVideo.video_id.in_(*video_ids))
                 .where(IngestedVideo.ignored_at.is_null())
             )
-            transcript_statuses = await fetch_transcript_statuses(tx, videos)
+            states = await fetch_transcript_states(tx, videos)
+        transcript_statuses, transcripts = _transcript_projections(videos, states)
         by_video_id = {video.video_id: video for video in videos}
         # Preserve relevance order and drop any match whose video has since been
         # ignored or deleted (index drift the next reconcile would clean up).
         ordered = [
-            by_video_id[match.video_id]
+            by_video_id[VideoId(match.video_id)]
             for match in matches
-            if match.video_id in by_video_id
+            if VideoId(match.video_id) in by_video_id
         ]
         snippets = {
             match.video_id: match.snippet
             for match in matches
-            if match.video_id in by_video_id
+            if VideoId(match.video_id) in by_video_id
         }
         _debug(logger, "YouTube semantic search completed", result_count=len(ordered))
         return SearchResult(
@@ -566,6 +606,7 @@ class YouTubeService:
             transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
+            transcripts=transcripts,
             snippets=snippets,
         )
 
@@ -573,30 +614,47 @@ class YouTubeService:
         self, query: str, *, limit: int | None, logger: Logger
     ) -> SearchResult:
         """The SQLite `LIKE` fallback used when semantic search is disabled."""
-        terms = query.split()
+        terms = [term.casefold() for term in query.split()]
         _debug(logger, "Searching YouTube ingestion", terms_count=len(terms))
-        statement = select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
-        for term in terms:
-            pattern = f"%{term}%"
-            statement = statement.where(
-                IngestedVideo.title.like(pattern)
-                | IngestedVideo.description.like(pattern)
-                | IngestedVideo.transcript.like(pattern)
-            )
-        statement = statement.order_by(
-            IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc()
+        statement = (
+            select(IngestedVideo)
+            .where(IngestedVideo.ignored_at.is_null())
+            .order_by(IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc())
         )
-        if limit is not None:
-            statement = statement.limit(limit)
         async with self.database.transaction() as tx:
-            videos = await tx.fetch_all(statement)
-            transcript_statuses = await fetch_transcript_statuses(tx, videos)
+            candidates = await tx.fetch_all(statement)
+            states = await fetch_transcript_states(tx, candidates)
+        videos = [
+            video
+            for video in candidates
+            if all(
+                term
+                in "\n".join(
+                    (
+                        video.title,
+                        video.description,
+                        (
+                            state.text
+                            if isinstance(
+                                state := states.get(video.id), TranscriptAvailable
+                            )
+                            else ""
+                        ),
+                    )
+                ).casefold()
+                for term in terms
+            )
+        ]
+        if limit is not None:
+            videos = videos[:limit]
+        transcript_statuses, transcripts = _transcript_projections(videos, states)
         _debug(logger, "YouTube search completed", result_count=len(videos))
         return SearchResult(
             videos=videos,
             transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
+            transcripts=transcripts,
         )
 
     async def fetch_transcript(
@@ -605,17 +663,18 @@ class YouTubeService:
         """Return a stored transcript or a typed expected request failure."""
         _debug(logger, "Fetching YouTube transcript", video_id=video_id)
         video = await self.get_video(video_id)
-        transcript_status = await self.transcript_status(video_id)
+        async with self.database.transaction() as tx:
+            state = await fetch_transcript_state(tx, video.id)
         request_result: TranscriptRequestResult
-        if transcript_status == "needs_review":
+        if isinstance(state, TranscriptReviewNeeded):
             request_result = Err(TranscriptNeedsReview(video_id=video_id))
-        elif transcript_status == "unavailable":
+        elif state is not None and state.status == "unavailable":
             request_result = Err(TranscriptExplicitlyUnavailable(video_id=video_id))
-        elif video.transcript is not None:
+        elif isinstance(state, TranscriptAvailable):
             request_result = Ok(
                 TranscriptResult(
                     video=video,
-                    transcript=video.transcript,
+                    transcript=state.text,
                     cache=CacheMeta(hit=True, source="cache"),
                     quota=await self.client.snapshot(),
                 )
@@ -654,7 +713,7 @@ class YouTubeService:
                 update(IngestedVideo)
                 .set(IngestedVideo.ignored_at.to(CurrentTimestamp))
                 .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(video_id))
+                .where(IngestedVideo.video_id.eq(VideoId(video_id)))
                 .where(IngestedVideo.ignored_at.is_null())
             )
             return await self._fetch(tx, video_id)
@@ -675,7 +734,7 @@ class YouTubeService:
                 update(IngestedVideo)
                 .set(IngestedVideo.ignored_at.to(None))
                 .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(video_id))
+                .where(IngestedVideo.video_id.eq(VideoId(video_id)))
             )
             return await self._fetch(tx, video_id)
 
@@ -693,7 +752,7 @@ class YouTubeService:
     async def _fetch(self, tx: Transaction, video_id: str) -> IngestedVideo[Fetched]:
         """Fetch an ingested video by its upstream id or raise."""
         video = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
         )
         if video is None:
             raise YouTubeVideoNotFoundError(video_id)

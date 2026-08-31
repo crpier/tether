@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Never, assert_type
 
-from snekok import Err, Ok
+from snekok.result import Err, Ok
 
 if TYPE_CHECKING:
-    from snekok import Result
+    from snekok.result import Result
 
 
 def variants_default_the_absent_channel_to_never() -> None:
@@ -23,8 +23,14 @@ def widen_result(
     return outcome
 
 
+def unwrap_result(outcome: Result[int, str]) -> None:
+    """Both nominal channels can be unwrapped with their declared types."""
+    assert_type(outcome.unwrap(), int)
+    assert_type(outcome.unwrap_error(), str)
+
+
 def map_result(outcome: Result[int, str]) -> Result[str, str]:
-    """`map` changes only the success channel of a union-typed result."""
+    """`map` changes only the success channel of a base-typed result."""
     return outcome.map(str)
 
 
@@ -43,3 +49,15 @@ def stringify_positive(number: int) -> Result[str, ValueError]:
 def chain_result(outcome: Result[int, str]) -> Result[str, str | ValueError]:
     """`and_then` preserves old errors and adds continuation errors."""
     return outcome.and_then(stringify_positive)
+
+
+async def stringify_positive_async(number: int) -> Result[str, ValueError]:
+    """Expose the fallible transformation through an asynchronous interface."""
+    return stringify_positive(number)
+
+
+async def chain_result_async(
+    outcome: Result[int, str],
+) -> Result[str, str | ValueError]:
+    """`and_then_async` preserves old errors and adds continuation errors."""
+    return await outcome.and_then_async(stringify_positive_async)

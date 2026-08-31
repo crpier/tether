@@ -21,7 +21,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 import httpx2
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.gmail.client import (
     GmailAuthenticationFailure,
@@ -195,7 +195,7 @@ class HttpGmailTransport:
             response = await self._client.get(
                 path,
                 params=params or {},
-                headers={"Authorization": f"Bearer {token_result.value}"},
+                headers={"Authorization": f"Bearer {token_result.unwrap()}"},
             )
         except httpx2.RequestError as error:
             return Err(GmailNetworkFailure(message=str(error), operation=operation))
@@ -215,7 +215,7 @@ class HttpGmailTransport:
             response = await self._client.post(
                 path,
                 json=json_body,
-                headers={"Authorization": f"Bearer {token_result.value}"},
+                headers={"Authorization": f"Bearer {token_result.unwrap()}"},
             )
         except httpx2.RequestError as error:
             return Err(GmailNetworkFailure(message=str(error), operation=operation))

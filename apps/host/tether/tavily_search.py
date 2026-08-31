@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 import httpx2
-from snekok import Err, Ok, Result
+from snekok.result import Err, Ok, Result
 
 from tether.search_spend import SearchSpendGuard, UnlimitedSearchSpend
 from tether.web_search import (

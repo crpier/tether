@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from snekok import Err
+from snekok.result import Err
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -44,7 +44,7 @@ async def synthesize_speech(body: SpeechRequest, request: Request) -> Response:
     if isinstance(outcome, Err):
         return _speech_error_response(outcome.error)
     return Response(
-        content=outcome.value.audio,
+        content=outcome.unwrap().audio,
         headers={"Cache-Control": "no-store"},
-        media_type=outcome.value.content_type,
+        media_type=outcome.unwrap().content_type,
     )

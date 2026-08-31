@@ -142,6 +142,10 @@ _Avoid_: watch time, watch history, screen time
 The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. _Needs review_ means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. _Unavailable_ means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
 _Avoid_: terminal, caption state, transcript error
 
+**Transcript segment**:
+One provider-reported timed cue stored with integer millisecond start and duration. Duration is exact upstream data, never inferred from the next cue. A text-only Transcript has no Transcript segments.
+_Avoid_: estimated cue, sentence timestamp, inferred duration
+
 **Telemetry**:
 Raw time-series Evidence landing through an Ingestion gate (heart rate, location, read events). It remains in typed Vertical storage and never becomes Memory as-is.
 _Avoid_: metrics, events, raw data
