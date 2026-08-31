@@ -27,10 +27,10 @@ from snektest import (
 from tether.conversation_store import (
     Conversation,
     ConversationTurn,
-    create_conversation_schema,
 )
 from tether.conversations import ConversationService
 from tether.events import HubEvent, InvalidateEvent
+from tether.host_schema import create_host_schema
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.structured_logging import Logger
 from tether.trigger_schedule import (
@@ -90,8 +90,7 @@ def noop_tracer() -> Tracer:
 async def trigger_service() -> AsyncGenerator[TriggerService]:
     """A fresh, isolated trigger database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(db)
-    await create_trigger_schema(db)
+    await create_host_schema(db)
     _ = await ConversationService(db).fetch_main_conversation()
     yield TriggerService(database=db, tracer=noop_tracer())
     await db.close()

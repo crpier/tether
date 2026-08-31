@@ -18,6 +18,7 @@ from functools import partial
 from typing import ClassVar, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+from snekql import sqlite
 from snekql.sqlite import (
     Database,
     Fetched,
@@ -141,8 +142,8 @@ class YouTubeApi(Protocol):
 class YouTubeSyncState[S = Pending](Model[S, "YouTubeSyncState[Fetched]"]):
     """A small key/value store for ingestion bookkeeping (cursor, last-run)."""
 
-    key: YouTubeSyncState.Col[str] = Text(primary_key=True)
-    value: YouTubeSyncState.Col[str] = Text(nullable=False)
+    key: sqlite.Col[str] = Text(primary_key=True)
+    value: sqlite.Col[str] = Text(nullable=False)
 
 
 class YouTubeQuotaDaily[S = Pending](Model[S, "YouTubeQuotaDaily[Fetched]"]):
@@ -152,8 +153,8 @@ class YouTubeQuotaDaily[S = Pending](Model[S, "YouTubeQuotaDaily[Fetched]"]):
     starts fresh with no row (treated as zero used).
     """
 
-    day: YouTubeQuotaDaily.Col[str] = Text(primary_key=True)
-    used: YouTubeQuotaDaily.Col[int] = Integer(default=0)
+    day: sqlite.Col[str] = Text(primary_key=True)
+    used: sqlite.Col[int] = Integer(default=0)
 
 
 async def state_get(database: Database, key: str) -> str | None:
@@ -398,7 +399,7 @@ class YouTubeApiClient:
     ) -> Mapping[str, RawYouTubeVideo]:
         """Fetch batched metadata for the given ids, spending one guarded unit."""
         if not video_ids:
-            return {}
+            return dict[str, RawYouTubeVideo]()
         now = self._clock.now()
         await self._gate.ensure_open(now=now)
         await self._quota.spend(self._CALL_COST, now=now)

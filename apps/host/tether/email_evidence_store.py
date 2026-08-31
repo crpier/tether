@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import uuid7
 
 from pydantic import UUID7
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -22,22 +23,20 @@ from snekql.sqlite import (
 class EmailEvidenceSnapshot[S = Pending](Model[S, "EmailEvidenceSnapshot[Fetched]"]):
     """One immutable, explicitly promoted remote email source."""
 
-    id: EmailEvidenceSnapshot.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    body_chars: EmailEvidenceSnapshot.Col[int] = Integer()
-    body_text: EmailEvidenceSnapshot.Col[str] = Text()
-    body_truncated: EmailEvidenceSnapshot.Col[int] = Integer()
-    content_hash: EmailEvidenceSnapshot.Col[str] = Text()
-    date_header: EmailEvidenceSnapshot.Col[str] = Text(default="")
-    from_header: EmailEvidenceSnapshot.Col[str] = Text(default="")
-    gmail_message_id: EmailEvidenceSnapshot.Col[str] = Text()
-    subject: EmailEvidenceSnapshot.Col[str] = Text(default="")
-    thread_id: EmailEvidenceSnapshot.Col[str] = Text()
-    captured_at: EmailEvidenceSnapshot.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
+    body_chars: sqlite.Col[int] = Integer()
+    body_text: sqlite.Col[str] = Text()
+    body_truncated: sqlite.Col[int] = Integer()
+    content_hash: sqlite.Col[str] = Text()
+    date_header: sqlite.Col[str] = Text(default="")
+    from_header: sqlite.Col[str] = Text(default="")
+    gmail_message_id: sqlite.Col[str] = Text()
+    subject: sqlite.Col[str] = Text(default="")
+    thread_id: sqlite.Col[str] = Text()
+    captured_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(gmail_message_id, content_hash, unique=True)]
 

@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
 
-    from snekql.sqlite import Database, Fetched, SelectModelQuery
+    from snekql.sqlite import Database, Fetched, Select
 
     from tether.bucket_item_index import BucketItemCandidate
     from tether.search_projection.embeddings import Embedder
@@ -105,7 +105,7 @@ class BucketItemReconcileReport:
     """Whether a model change forced a full drop-and-rebuild."""
 
 
-def _active_corpus() -> SelectModelQuery[BucketItem, BucketItem[Fetched]]:
+def _active_corpus() -> Select[BucketItem[Fetched]]:
     """The active-item corpus: non-completed, non-deleted Bucket items."""
     return select(BucketItem).where(
         BucketItem.completed_at.is_null() & BucketItem.deleted_at.is_null()

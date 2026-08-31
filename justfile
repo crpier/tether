@@ -210,7 +210,7 @@ host-test:
 
 # host type check
 host-typecheck:
-    uv run pyright
+    cd apps/host && uv run ty check
 
 # host lint
 host-lint:
@@ -225,7 +225,7 @@ snekok-test:
     cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run python -m snektest tests/
 
 snekok-typecheck:
-    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run pyright
+    cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run ty check
 
 snekok-lint:
     cd packages/snekok && env -u UV_PROJECT -u VIRTUAL_ENV uv run ruff check .

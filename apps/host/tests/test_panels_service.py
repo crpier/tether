@@ -12,12 +12,12 @@ from snekql.sqlite import Config, Database, insert
 from snektest import assert_eq, assert_raises, fixture, load_fixture, test
 
 from tether.dreaming import DreamingMutationCoordinator
-from tether.dreaming_store import DreamingWorkspaceFile, create_dreaming_schema
+from tether.dreaming_store import DreamingWorkspaceFile
+from tether.host_schema import create_host_schema
 from tether.memory_workspace_service import MemoryWorkspaceService
 from tether.panel_errors import InvalidPanelSpecError
 from tether.panel_execution import PanelExecutor
 from tether.panel_model import PanelSpec
-from tether.panel_store import create_panel_schema
 from tether.panels import PanelService
 from tether.structured_logging import Logger
 
@@ -65,8 +65,7 @@ class PanelEnv:
 @fixture
 async def panel_env() -> AsyncGenerator[PanelEnv]:
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_dreaming_schema(database)
-    await create_panel_schema(database)
+    await create_host_schema(database)
     with TemporaryDirectory() as directory:
         yield PanelEnv(database, Path(directory))
     await database.close()

@@ -23,10 +23,10 @@ from snektest import (
     test,
 )
 
+from tether.host_schema import create_host_schema
 from tether.kosync_store import (
     EbookDocument,
     EbookProgressEvent,
-    create_kosync_schema,
 )
 from tether.reader import ReaderClient, ReaderSyncService
 from tether.readwise_http import (
@@ -36,7 +36,6 @@ from tether.readwise_http import (
     ReadwiseProtocolFailure,
     ReadwiseResponse,
 )
-from tether.readwise_store import create_readwise_schema
 from tether.structured_logging import Logger
 
 
@@ -175,8 +174,7 @@ class ReaderEnv:
 async def reader_env() -> AsyncGenerator[ReaderEnv]:
     """A fresh database with the ebook and Readwise source schemas."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_kosync_schema(database)
-    await create_readwise_schema(database)
+    await create_host_schema(database)
     yield ReaderEnv(database=database, logger=test_logger())
     await database.close()
 
@@ -326,7 +324,7 @@ async def a_synced_document_is_upserted_with_the_api_title() -> None:
 
     document = await env.document("reader:d1")
     assert_is_not_none(document)
-    assert_eq(document.title, "Deep Work")  # pyright: ignore[reportOptionalMemberAccess]
+    assert_eq(document.title, "Deep Work")  # ty: ignore[unresolved-attribute]
 
 
 @test()

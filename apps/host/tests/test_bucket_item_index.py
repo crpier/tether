@@ -90,7 +90,7 @@ async def optimize_self_heals_the_lance_corruption() -> None:
         )
         await index.upsert([kept])
         # Swap in a table whose first optimize() raises the lance corruption.
-        index._table._table = _RaiseOnceOptimize(index._table._table)  # pyright: ignore[reportAttributeAccessIssue]
+        index._table._table = _RaiseOnceOptimize(index._table._table)  # ty: ignore[invalid-assignment]
 
         await index.optimize()  # self-heals instead of raising
 

@@ -16,6 +16,7 @@ compared. The table is a singleton — one row, replaced in place.
 from __future__ import annotations
 
 from pydantic import PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -47,15 +48,15 @@ class SearchMetaInvariantError(Exception):
 
 
 class SearchMeta[S = Pending](Model[S, "SearchMeta[Fetched]"]):
-    id: SearchMeta.Col[int] = Integer(primary_key=True, default=_SINGLETON_ID)
+    id: sqlite.Col[int] = Integer(primary_key=True, default=_SINGLETON_ID)
     """Fixed singleton key; the table never holds more than one row."""
-    embedding_model: SearchMeta.Col[str] = Text()
+    embedding_model: sqlite.Col[str] = Text()
     """Identifier of the model that produced the corpus's current vectors."""
-    vector_dim: SearchMeta.Col[PositiveInt] = Integer()
+    vector_dim: sqlite.Col[PositiveInt] = Integer()
     """Dimension of those vectors; the LanceDB schema is built from it."""
-    index_schema_version: SearchMeta.Col[PositiveInt] = Integer(default=1)
+    index_schema_version: sqlite.Col[PositiveInt] = Integer(default=1)
     """Bumped when the index layout (not the model) changes incompatibly."""
-    updated_at: SearchMeta.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class SearchMetaService:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from fastapi import APIRouter
 from pydantic import UUID7, BaseModel, PositiveInt
@@ -139,7 +139,7 @@ class _EvidenceRuntime(Protocol):
 
 
 def _resolver(request: Request) -> EvidenceResolver:
-    runtime: _EvidenceRuntime = request.app.state.runtime
+    runtime = cast("_EvidenceRuntime", request.app.state.runtime)
     return runtime.evidence_resolver
 
 

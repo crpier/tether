@@ -198,6 +198,6 @@ Generated code is committed. The gate drift-checks it.
 ## Before you push
 
 Run the full validation gate (see the repo `AGENTS.md` / `CLAUDE.md`):
-`pyright`, `ruff check`, `ruff format --check`, the snektest suite,
+`ty check`, `ruff check`, `ruff format --check`, the snektest suite,
 `just codegen-check`, the web/agent typecheck+lint+format+test, and
 `just validate-web-smoke`. `main` must stay green.

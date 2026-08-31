@@ -413,7 +413,7 @@ async def optimize_self_heals_a_corrupt_fragment_without_losing_rows() -> None:
         await table.upsert(kept)
         before = await table.list_ids()
         # Swap in a table whose first optimize() raises the lance corruption.
-        table._table = _RaiseOnceOptimize(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+        table._table = _RaiseOnceOptimize(table._table)  # ty: ignore[invalid-assignment]
 
         await table.optimize(logger=_logger())  # self-heals instead of raising
 
@@ -442,7 +442,7 @@ async def salvage_preserves_payload_columns() -> None:
             payload={"video_id": "vid1"},
         )
         await table.upsert([chunk])
-        table._table = _RaiseOnceOptimize(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+        table._table = _RaiseOnceOptimize(table._table)  # ty: ignore[invalid-assignment]
 
         await table.optimize(logger=_logger())
 
@@ -469,7 +469,7 @@ async def optimize_reraises_errors_that_are_not_lance_corruption() -> None:
     async with TemporaryDirectory() as tmp:
         table = await _open(Path(tmp) / "index")
         await table.upsert([_doc("android", [1.0, 0.0, 0.0, 0.0])])
-        table._table = _RaiseUnrelated(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+        table._table = _RaiseUnrelated(table._table)  # ty: ignore[invalid-assignment]
 
         with assert_raises(RuntimeError):
             await table.optimize(logger=_logger())
@@ -493,7 +493,7 @@ async def optimize_self_heals_a_rust_panic_without_losing_rows() -> None:
         ]
         await table.upsert(kept)
         before = await table.list_ids()
-        table._table = _RaiseOnceRustPanicOptimize(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+        table._table = _RaiseOnceRustPanicOptimize(table._table)  # ty: ignore[invalid-assignment]
 
         await table.optimize(logger=_logger())  # self-heals instead of raising
 
@@ -522,7 +522,7 @@ async def optimize_reraises_non_runtime_errors_that_are_not_rust_panic() -> None
     async with TemporaryDirectory() as tmp:
         table = await _open(Path(tmp) / "index")
         await table.upsert([_doc("android", [1.0, 0.0, 0.0, 0.0])])
-        table._table = _RaiseValueError(table._table)  # pyright: ignore[reportAttributeAccessIssue]
+        table._table = _RaiseValueError(table._table)  # ty: ignore[invalid-assignment]
 
         with assert_raises(ValueError):
             await table.optimize(logger=_logger())

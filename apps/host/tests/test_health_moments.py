@@ -10,7 +10,6 @@ from snekql.sqlite import Config, Database, insert
 from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.conversation_model import MessageDraft
-from tether.conversation_store import create_conversation_schema
 from tether.conversation_turns import (
     HealthTurnRequest,
     TurnResult,
@@ -31,10 +30,10 @@ from tether.health_connect import (
     HealthPlanRead,
     HealthPlanService,
     create_health_connect_schema,
-    create_health_moment_schema,
-    create_health_plan_schema,
 )
 from tether.health_connect.persistence import HcSleepSession, HcSleepStage
+from tether.health_connect.plans import ExercisePlanType
+from tether.host_schema import create_host_schema
 from tether.model_selection import AgentModelCatalog
 from tether.notification_delivery import PushNotification
 
@@ -97,9 +96,7 @@ class RecordingPushSender:
 @fixture
 async def moment_database() -> AsyncGenerator[Database]:
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(database)
-    await create_health_moment_schema(database)
-    await create_health_plan_schema(database)
+    await create_host_schema(database)
     try:
         yield database
     finally:
@@ -120,12 +117,12 @@ async def create_monday_strength_plan(
     database: Database, *, include_weightlifting: bool = False
 ) -> HealthPlanRead:
     """Create one independently timed plan used by reconciliation examples."""
+    exercise_types: list[ExercisePlanType] = ["strength_training"]
+    if include_weightlifting:
+        exercise_types.append("weightlifting")
     return await HealthPlanService(database).create(
         HealthPlanDraft(
-            exercise_types=[
-                "strength_training",
-                *(["weightlifting"] if include_weightlifting else []),
-            ],
+            exercise_types=exercise_types,
             grace_minutes=60,
             timezone="Europe/Athens",
             title="Home strength",

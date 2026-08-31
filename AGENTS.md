@@ -57,13 +57,13 @@
 
 - Use `snektest` for tests.
   - For snektest usage documentation, read its installed distribution metadata with `importlib.metadata.distribution("snektest").read_text("METADATA")`; the `METADATA` file embeds snektest's README.
-- Use `pyright` for static typing validation.
+- Use `ty` for static typing validation.
 - Use `ruff` for linting and formatting checks.
 
 ### Validation gate (keep `main` clean)
 
 - `main` must always pass every check. Never commit, push, open, or merge a PR until all of the checks below pass clean from the relevant package dir (e.g. `apps/host`):
-  - `uv run pyright` — 0 errors.
+  - `uv run ty check` — 0 errors.
   - `uv run ruff check .` — all checks passed.
   - `uv run ruff format --check .` — no files would be reformatted.
   - `uv run python -m snektest tests/` — all tests pass.
@@ -78,7 +78,7 @@
   - `pnpm -C apps/web test` — all tests pass.
   - `just validate-web-smoke` — boots host + Vite on ephemeral ports and runs the Playwright e2e suite (`apps/web/e2e`: login → chat view, create reminder, recall panel) against the live SPA. Every spec carries a console guard that fails on any console error, page error, 5xx response, or genuine request failure. Catches runtime/integration breakage that static checks and jsdom unit tests miss (needs a one-time `pnpm -C apps/web exec playwright install chromium`). Set `TETHER_E2E_HEADED=1` to watch the browser. The live-LLM chat spec is gated by `TETHER_E2E_LLM=1` and skipped by default (it spends tokens and is non-deterministic); enabling it also needs `pnpm -C apps/agent install` plus a default model + provider credentials in the environment. For interactive iteration, run `just host` + `just web` and `pnpm -C apps/web e2e` (or `e2e:headed`) against the default `http://127.0.0.1:3000`.
 - Run the gate against the full changed surface, not just files you touched — formatting/typing issues often surface in neighbours. If any check fails, fix it before proceeding rather than committing and following up.
-- Do not silence findings by relaxing the strict `pyright`/`ruff` config for production code. Fix the code. Config relaxations are only acceptable for genuine test-only false positives, scoped to `tests/` (ruff `per-file-ignores`, pyright `executionEnvironments`), and must be commented with the reason.
+- Do not silence findings by relaxing the strict `ty`/`ruff` config for production code. Fix the code. Config relaxations are only acceptable for genuine test-only false positives, scoped to `tests/` (`ruff` per-file ignores or `ty` overrides), and must be commented with the reason.
 
 ## Interacting with databases
 

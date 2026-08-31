@@ -123,9 +123,9 @@ async def _create_table(
     )
     await table.create_index(
         _CONTENT_COLUMN,
-        # lancedb ships no py.typed, so pyright can't see FTS's dataclass
+        # lancedb ships no py.typed, so static analysis cannot see FTS's dataclass
         # fields and reads its init as no-arg; the kwarg is valid at runtime.
-        config=FTS(with_position=True),  # pyright: ignore[reportCallIssue]
+        config=FTS(with_position=True),
     )
     return table
 

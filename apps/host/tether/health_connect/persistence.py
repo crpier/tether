@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from snekql import sqlite
 from snekql.sqlite import (
     PENDING_GENERATION,
     Database,
@@ -19,246 +20,236 @@ class HealthConnectSyncState[S = Pending](Model[S, "HealthConnectSyncState[Fetch
     """Durable cursor and baseline generation for one installation/type set."""
 
     __tablename__ = "hc_sync_state"
-    state_key: HealthConnectSyncState.Col[str] = Text(primary_key=True)
-    baseline_generation: HealthConnectSyncState.Col[int] = Integer(nullable=False)
-    baseline_request_id: HealthConnectSyncState.Col[str | None] = Text(nullable=True)
-    completion_deleted_json: HealthConnectSyncState.Col[str | None] = Text(
-        nullable=True
-    )
-    completion_request_id: HealthConnectSyncState.Col[str | None] = Text(nullable=True)
-    current_token: HealthConnectSyncState.Col[str | None] = Text(nullable=True)
-    installation_id: HealthConnectSyncState.Col[str] = Text(nullable=False, index=True)
-    record_type_set: HealthConnectSyncState.Col[str] = Text(nullable=False)
-    status: HealthConnectSyncState.Col[str] = Text(nullable=False)
+    state_key: sqlite.Col[str] = Text(primary_key=True)
+    baseline_generation: sqlite.Col[int] = Integer(nullable=False)
+    baseline_request_id: sqlite.Col[str | None] = Text(nullable=True)
+    completion_deleted_json: sqlite.Col[str | None] = Text(nullable=True)
+    completion_request_id: sqlite.Col[str | None] = Text(nullable=True)
+    current_token: sqlite.Col[str | None] = Text(nullable=True)
+    installation_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    record_type_set: sqlite.Col[str] = Text(nullable=False)
+    status: sqlite.Col[str] = Text(nullable=False)
 
 
 class HcOrigin[S = Pending](Model[S, "HcOrigin[Fetched]"]):
     """Writing application and nullable device provenance."""
 
-    origin_id: HcOrigin.GenCol[int] = Integer(
+    origin_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    origin_key: HcOrigin.Col[str] = Text(nullable=False, unique=True)
-    data_origin_package: HcOrigin.Col[str] = Text(nullable=False)
-    device_manufacturer: HcOrigin.Col[str | None] = Text(nullable=True)
-    device_model: HcOrigin.Col[str | None] = Text(nullable=True)
-    device_type: HcOrigin.Col[int | None] = Integer(nullable=True)
+    origin_key: sqlite.Col[str] = Text(nullable=False, unique=True)
+    data_origin_package: sqlite.Col[str] = Text(nullable=False)
+    device_manufacturer: sqlite.Col[str | None] = Text(nullable=True)
+    device_model: sqlite.Col[str | None] = Text(nullable=True)
+    device_type: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcPageRequest[S = Pending](Model[S, "HcPageRequest[Fetched]"]):
     """Committed request identity making response-loss retries idempotent."""
 
-    request_id: HcPageRequest.Col[str] = Text(primary_key=True)
-    state_key: HcPageRequest.Col[str] = Text(nullable=False, index=True)
-    payload_hash: HcPageRequest.Col[str] = Text(nullable=False)
-    accepted_json: HcPageRequest.Col[str] = Text(nullable=False)
-    deleted_json: HcPageRequest.Col[str] = Text(nullable=False)
-    skipped_json: HcPageRequest.Col[str] = Text(nullable=False)
+    request_id: sqlite.Col[str] = Text(primary_key=True)
+    state_key: sqlite.Col[str] = Text(nullable=False, index=True)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    accepted_json: sqlite.Col[str] = Text(nullable=False)
+    deleted_json: sqlite.Col[str] = Text(nullable=False)
+    skipped_json: sqlite.Col[str] = Text(nullable=False)
 
 
 class HcBaselineSeen[S = Pending](Model[S, "HcBaselineSeen[Fetched]"]):
     """One record observed during one uploaded baseline page."""
 
-    seen_key: HcBaselineSeen.Col[str] = Text(primary_key=True)
-    state_key: HcBaselineSeen.Col[str] = Text(nullable=False, index=True)
-    baseline_generation: HcBaselineSeen.Col[int] = Integer(nullable=False)
-    record_type: HcBaselineSeen.Col[str] = Text(nullable=False)
-    record_uid: HcBaselineSeen.Col[str] = Text(nullable=False, index=True)
+    seen_key: sqlite.Col[str] = Text(primary_key=True)
+    state_key: sqlite.Col[str] = Text(nullable=False, index=True)
+    baseline_generation: sqlite.Col[int] = Integer(nullable=False)
+    record_type: sqlite.Col[str] = Text(nullable=False)
+    record_uid: sqlite.Col[str] = Text(nullable=False, index=True)
 
 
 class HcHeartRateRecord[S = Pending](Model[S, "HcHeartRateRecord[Fetched]"]):
     """One accepted heart-rate record version or tombstone."""
 
-    version_id: HcHeartRateRecord.GenCol[int] = Integer(
+    version_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    record_uid: HcHeartRateRecord.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    modified_at: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    received_at: HcHeartRateRecord.Col[int] = Integer(nullable=False)
-    request_id: HcHeartRateRecord.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcHeartRateRecord.Col[bool] = Integer(nullable=False)
-    payload_hash: HcHeartRateRecord.Col[str] = Text(nullable=False)
-    client_record_id: HcHeartRateRecord.Col[str | None] = Text(nullable=True)
-    client_record_version: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    recording_method: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    start_time: HcHeartRateRecord.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcHeartRateRecord.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcHeartRateRecord.Col[int | None] = Integer(nullable=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False, index=True)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    is_deleted: sqlite.Col[bool] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True, index=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcHeartRateSample[S = Pending](Model[S, "HcHeartRateSample[Fetched]"]):
     """An ordered sample belonging to exactly one heart-rate version."""
 
-    sample_id: HcHeartRateSample.GenCol[int] = Integer(
+    sample_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    version_id: HcHeartRateSample.Col[int] = Integer(nullable=False, index=True)
-    sample_index: HcHeartRateSample.Col[int] = Integer(nullable=False)
-    time: HcHeartRateSample.Col[int] = Integer(nullable=False, index=True)
-    beats_per_minute: HcHeartRateSample.Col[int] = Integer(nullable=False)
+    version_id: sqlite.Col[int] = Integer(nullable=False, index=True)
+    sample_index: sqlite.Col[int] = Integer(nullable=False)
+    time: sqlite.Col[int] = Integer(nullable=False, index=True)
+    beats_per_minute: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcSleepSession[S = Pending](Model[S, "HcSleepSession[Fetched]"]):
     """One accepted sleep-session version or tombstone."""
 
-    version_id: HcSleepSession.GenCol[int] = Integer(
+    version_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    record_uid: HcSleepSession.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    modified_at: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    received_at: HcSleepSession.Col[int] = Integer(nullable=False)
-    request_id: HcSleepSession.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcSleepSession.Col[bool] = Integer(nullable=False)
-    payload_hash: HcSleepSession.Col[str] = Text(nullable=False)
-    client_record_id: HcSleepSession.Col[str | None] = Text(nullable=True)
-    client_record_version: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    recording_method: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    start_time: HcSleepSession.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    end_zone_offset_seconds: HcSleepSession.Col[int | None] = Integer(nullable=True)
-    title: HcSleepSession.Col[str | None] = Text(nullable=True)
-    notes: HcSleepSession.Col[str | None] = Text(nullable=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False, index=True)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    is_deleted: sqlite.Col[bool] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True, index=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    title: sqlite.Col[str | None] = Text(nullable=True)
+    notes: sqlite.Col[str | None] = Text(nullable=True)
 
 
 class HcSleepStage[S = Pending](Model[S, "HcSleepStage[Fetched]"]):
     """An ordered original-enum stage belonging to one sleep version."""
 
-    stage_id: HcSleepStage.GenCol[int] = Integer(
+    stage_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    version_id: HcSleepStage.Col[int] = Integer(nullable=False, index=True)
-    stage_index: HcSleepStage.Col[int] = Integer(nullable=False)
-    start_time: HcSleepStage.Col[int] = Integer(nullable=False, index=True)
-    end_time: HcSleepStage.Col[int] = Integer(nullable=False)
-    stage: HcSleepStage.Col[int] = Integer(nullable=False)
+    version_id: sqlite.Col[int] = Integer(nullable=False, index=True)
+    stage_index: sqlite.Col[int] = Integer(nullable=False)
+    start_time: sqlite.Col[int] = Integer(nullable=False, index=True)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    stage: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcStepInterval[S = Pending](Model[S, "HcStepInterval[Fetched]"]):
     """One accepted step interval version or tombstone."""
 
-    version_id: HcStepInterval.GenCol[int] = Integer(
+    version_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    record_uid: HcStepInterval.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    modified_at: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    received_at: HcStepInterval.Col[int] = Integer(nullable=False)
-    request_id: HcStepInterval.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcStepInterval.Col[bool] = Integer(nullable=False)
-    payload_hash: HcStepInterval.Col[str] = Text(nullable=False)
-    client_record_id: HcStepInterval.Col[str | None] = Text(nullable=True)
-    client_record_version: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    recording_method: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    start_time: HcStepInterval.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    end_zone_offset_seconds: HcStepInterval.Col[int | None] = Integer(nullable=True)
-    count: HcStepInterval.Col[int | None] = Integer(nullable=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False, index=True)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    is_deleted: sqlite.Col[bool] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True, index=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    count: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcExerciseSession[S = Pending](Model[S, "HcExerciseSession[Fetched]"]):
     """One accepted exercise-session version or tombstone."""
 
-    version_id: HcExerciseSession.GenCol[int] = Integer(
+    version_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    record_uid: HcExerciseSession.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    modified_at: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    received_at: HcExerciseSession.Col[int] = Integer(nullable=False)
-    request_id: HcExerciseSession.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcExerciseSession.Col[bool] = Integer(nullable=False)
-    payload_hash: HcExerciseSession.Col[str] = Text(nullable=False)
-    client_record_id: HcExerciseSession.Col[str | None] = Text(nullable=True)
-    client_record_version: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    recording_method: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    start_time: HcExerciseSession.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcExerciseSession.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    exercise_type: HcExerciseSession.Col[int | None] = Integer(nullable=True)
-    title: HcExerciseSession.Col[str | None] = Text(nullable=True)
-    notes: HcExerciseSession.Col[str | None] = Text(nullable=True)
-    planned_exercise_session_id: HcExerciseSession.Col[str | None] = Text(nullable=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False, index=True)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    is_deleted: sqlite.Col[bool] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True, index=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    exercise_type: sqlite.Col[int | None] = Integer(nullable=True)
+    title: sqlite.Col[str | None] = Text(nullable=True)
+    notes: sqlite.Col[str | None] = Text(nullable=True)
+    planned_exercise_session_id: sqlite.Col[str | None] = Text(nullable=True)
 
 
 class HcExerciseSegment[S = Pending](Model[S, "HcExerciseSegment[Fetched]"]):
     """An ordered segment belonging to one exercise version."""
 
-    segment_id: HcExerciseSegment.GenCol[int] = Integer(
+    segment_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    version_id: HcExerciseSegment.Col[int] = Integer(nullable=False, index=True)
-    segment_index: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    start_time: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    end_time: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    segment_type: HcExerciseSegment.Col[int] = Integer(nullable=False)
-    repetitions_count: HcExerciseSegment.Col[int] = Integer(nullable=False)
+    version_id: sqlite.Col[int] = Integer(nullable=False, index=True)
+    segment_index: sqlite.Col[int] = Integer(nullable=False)
+    start_time: sqlite.Col[int] = Integer(nullable=False)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    segment_type: sqlite.Col[int] = Integer(nullable=False)
+    repetitions_count: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcExerciseLap[S = Pending](Model[S, "HcExerciseLap[Fetched]"]):
     """An ordered lap with canonical meter length."""
 
-    lap_id: HcExerciseLap.GenCol[int] = Integer(
+    lap_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    version_id: HcExerciseLap.Col[int] = Integer(nullable=False, index=True)
-    lap_index: HcExerciseLap.Col[int] = Integer(nullable=False)
-    start_time: HcExerciseLap.Col[int] = Integer(nullable=False)
-    end_time: HcExerciseLap.Col[int] = Integer(nullable=False)
-    length_meters: HcExerciseLap.Col[float | None] = Real(nullable=True)
+    version_id: sqlite.Col[int] = Integer(nullable=False, index=True)
+    lap_index: sqlite.Col[int] = Integer(nullable=False)
+    start_time: sqlite.Col[int] = Integer(nullable=False)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    length_meters: sqlite.Col[float | None] = Real(nullable=True)
 
 
 class HcExerciseRoutePoint[S = Pending](Model[S, "HcExerciseRoutePoint[Fetched]"]):
     """An ordered route point with Health Connect's canonical units."""
 
-    route_point_id: HcExerciseRoutePoint.GenCol[int] = Integer(
+    route_point_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    version_id: HcExerciseRoutePoint.Col[int] = Integer(nullable=False, index=True)
-    point_index: HcExerciseRoutePoint.Col[int] = Integer(nullable=False)
-    time: HcExerciseRoutePoint.Col[int] = Integer(nullable=False, index=True)
-    latitude: HcExerciseRoutePoint.Col[float] = Real(nullable=False)
-    longitude: HcExerciseRoutePoint.Col[float] = Real(nullable=False)
-    horizontal_accuracy_meters: HcExerciseRoutePoint.Col[float | None] = Real(
-        nullable=True
-    )
-    vertical_accuracy_meters: HcExerciseRoutePoint.Col[float | None] = Real(
-        nullable=True
-    )
-    altitude_meters: HcExerciseRoutePoint.Col[float | None] = Real(nullable=True)
+    version_id: sqlite.Col[int] = Integer(nullable=False, index=True)
+    point_index: sqlite.Col[int] = Integer(nullable=False)
+    time: sqlite.Col[int] = Integer(nullable=False, index=True)
+    latitude: sqlite.Col[float] = Real(nullable=False)
+    longitude: sqlite.Col[float] = Real(nullable=False)
+    horizontal_accuracy_meters: sqlite.Col[float | None] = Real(nullable=True)
+    vertical_accuracy_meters: sqlite.Col[float | None] = Real(nullable=True)
+    altitude_meters: sqlite.Col[float | None] = Real(nullable=True)
 
 
 class HcGenericRecord[S = Pending](Model[S, "HcGenericRecord[Fetched]"]):
     """Append-only raw storage for expanded Health Connect record types."""
 
-    version_id: HcGenericRecord.GenCol[int] = Integer(
+    version_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    record_type: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
-    record_uid: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
-    origin_id: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    modified_at: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    received_at: HcGenericRecord.Col[int] = Integer(nullable=False)
-    request_id: HcGenericRecord.Col[str] = Text(nullable=False, index=True)
-    is_deleted: HcGenericRecord.Col[bool] = Integer(nullable=False)
-    payload_hash: HcGenericRecord.Col[str] = Text(nullable=False)
-    client_record_id: HcGenericRecord.Col[str | None] = Text(nullable=True)
-    client_record_version: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    recording_method: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    start_time: HcGenericRecord.Col[int | None] = Integer(nullable=True, index=True)
-    end_time: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    end_zone_offset_seconds: HcGenericRecord.Col[int | None] = Integer(nullable=True)
-    payload_json: HcGenericRecord.Col[str | None] = Text(nullable=True)
+    record_type: sqlite.Col[str] = Text(nullable=False, index=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False, index=True)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    is_deleted: sqlite.Col[bool] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True, index=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    payload_json: sqlite.Col[str | None] = Text(nullable=True)
 
 
 class HcStepAggregateSnapshot[S = Pending](
@@ -266,57 +257,51 @@ class HcStepAggregateSnapshot[S = Pending](
 ):
     """One accepted authoritative read of Health Connect's canonical steps."""
 
-    snapshot_id: HcStepAggregateSnapshot.GenCol[int] = Integer(
+    snapshot_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    accepted_count: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
-    deleted_count: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
-    end_time: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
-    installation_id: HcStepAggregateSnapshot.Col[str] = Text(nullable=False)
-    payload_hash: HcStepAggregateSnapshot.Col[str] = Text(nullable=False)
-    received_at: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
-    request_id: HcStepAggregateSnapshot.Col[str] = Text(nullable=False, unique=True)
-    skipped_count: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False)
-    start_time: HcStepAggregateSnapshot.Col[int] = Integer(nullable=False, index=True)
+    accepted_count: sqlite.Col[int] = Integer(nullable=False)
+    deleted_count: sqlite.Col[int] = Integer(nullable=False)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    installation_id: sqlite.Col[str] = Text(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, unique=True)
+    skipped_count: sqlite.Col[int] = Integer(nullable=False)
+    start_time: sqlite.Col[int] = Integer(nullable=False, index=True)
 
 
 class HcStepAggregateBucket[S = Pending](Model[S, "HcStepAggregateBucket[Fetched]"]):
     """One append-only canonical step-bucket version or tombstone."""
 
-    version_id: HcStepAggregateBucket.GenCol[int] = Integer(
+    version_id: sqlite.GenCol[int] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    bucket_end: HcStepAggregateBucket.Col[int | None] = Integer(nullable=True)
-    bucket_start: HcStepAggregateBucket.Col[int] = Integer(nullable=False, index=True)
-    count: HcStepAggregateBucket.Col[int | None] = Integer(nullable=True)
-    is_deleted: HcStepAggregateBucket.Col[bool] = Integer(nullable=False)
-    payload_hash: HcStepAggregateBucket.Col[str] = Text(nullable=False)
-    received_at: HcStepAggregateBucket.Col[int] = Integer(nullable=False)
-    request_id: HcStepAggregateBucket.Col[str] = Text(nullable=False, index=True)
-    zone_offset_seconds: HcStepAggregateBucket.Col[int | None] = Integer(nullable=True)
+    bucket_end: sqlite.Col[int | None] = Integer(nullable=True)
+    bucket_start: sqlite.Col[int] = Integer(nullable=False, index=True)
+    count: sqlite.Col[int | None] = Integer(nullable=True)
+    is_deleted: sqlite.Col[bool] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False, index=True)
+    zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcHeartRateRecordCurrent[S = Pending](
     Model[S, "HcHeartRateRecordCurrent[Fetched]"]
 ):
-    version_id: HcHeartRateRecordCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcHeartRateRecordCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcHeartRateRecordCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcHeartRateRecordCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcHeartRateRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcHeartRateRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcHeartRateRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcHeartRateRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
+    version_id: sqlite.Col[int] = Integer(primary_key=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcHeartRateSampleCurrent[S = Pending](
@@ -324,67 +309,55 @@ class HcHeartRateSampleCurrent[S = Pending](
 ):
     """A heart-rate sample whose parent version remains current."""
 
-    sample_id: HcHeartRateSampleCurrent.Col[int] = Integer(primary_key=True)
-    version_id: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
-    sample_index: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
-    time: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
-    beats_per_minute: HcHeartRateSampleCurrent.Col[int] = Integer(nullable=False)
+    sample_id: sqlite.Col[int] = Integer(primary_key=True)
+    version_id: sqlite.Col[int] = Integer(nullable=False)
+    sample_index: sqlite.Col[int] = Integer(nullable=False)
+    time: sqlite.Col[int] = Integer(nullable=False)
+    beats_per_minute: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcSleepSessionCurrent[S = Pending](Model[S, "HcSleepSessionCurrent[Fetched]"]):
-    version_id: HcSleepSessionCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcSleepSessionCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcSleepSessionCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcSleepSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcSleepSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcSleepSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcSleepSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    title: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
-    notes: HcSleepSessionCurrent.Col[str | None] = Text(nullable=True)
+    version_id: sqlite.Col[int] = Integer(primary_key=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    title: sqlite.Col[str | None] = Text(nullable=True)
+    notes: sqlite.Col[str | None] = Text(nullable=True)
 
 
 class HcSleepStageCurrent[S = Pending](Model[S, "HcSleepStageCurrent[Fetched]"]):
     """A sleep stage whose parent session version remains current."""
 
-    stage_id: HcSleepStageCurrent.Col[int] = Integer(primary_key=True)
-    version_id: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
-    stage_index: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
-    start_time: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
-    end_time: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
-    stage: HcSleepStageCurrent.Col[int] = Integer(nullable=False)
+    stage_id: sqlite.Col[int] = Integer(primary_key=True)
+    version_id: sqlite.Col[int] = Integer(nullable=False)
+    stage_index: sqlite.Col[int] = Integer(nullable=False)
+    start_time: sqlite.Col[int] = Integer(nullable=False)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    stage: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcStepIntervalCurrent[S = Pending](Model[S, "HcStepIntervalCurrent[Fetched]"]):
-    version_id: HcStepIntervalCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcStepIntervalCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcStepIntervalCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcStepIntervalCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcStepIntervalCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcStepIntervalCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcStepIntervalCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    count: HcStepIntervalCurrent.Col[int | None] = Integer(nullable=True)
+    version_id: sqlite.Col[int] = Integer(primary_key=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    count: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcStepAggregateBucketCurrent[S = Pending](
@@ -392,68 +365,52 @@ class HcStepAggregateBucketCurrent[S = Pending](
 ):
     """Latest live Health Connect canonical value for one duration bucket."""
 
-    version_id: HcStepAggregateBucketCurrent.Col[int] = Integer(primary_key=True)
-    bucket_end: HcStepAggregateBucketCurrent.Col[int | None] = Integer(nullable=True)
-    bucket_start: HcStepAggregateBucketCurrent.Col[int] = Integer(nullable=False)
-    count: HcStepAggregateBucketCurrent.Col[int | None] = Integer(nullable=True)
-    payload_hash: HcStepAggregateBucketCurrent.Col[str] = Text(nullable=False)
-    received_at: HcStepAggregateBucketCurrent.Col[int] = Integer(nullable=False)
-    request_id: HcStepAggregateBucketCurrent.Col[str] = Text(nullable=False)
-    zone_offset_seconds: HcStepAggregateBucketCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
+    version_id: sqlite.Col[int] = Integer(primary_key=True)
+    bucket_end: sqlite.Col[int | None] = Integer(nullable=True)
+    bucket_start: sqlite.Col[int] = Integer(nullable=False)
+    count: sqlite.Col[int | None] = Integer(nullable=True)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    request_id: sqlite.Col[str] = Text(nullable=False)
+    zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
 
 
 class HcExerciseSessionCurrent[S = Pending](
     Model[S, "HcExerciseSessionCurrent[Fetched]"]
 ):
-    version_id: HcExerciseSessionCurrent.Col[int] = Integer(primary_key=True)
-    record_uid: HcExerciseSessionCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcExerciseSessionCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcExerciseSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcExerciseSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcExerciseSessionCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    exercise_type: HcExerciseSessionCurrent.Col[int | None] = Integer(nullable=True)
-    title: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
-    notes: HcExerciseSessionCurrent.Col[str | None] = Text(nullable=True)
-    planned_exercise_session_id: HcExerciseSessionCurrent.Col[str | None] = Text(
-        nullable=True
-    )
+    version_id: sqlite.Col[int] = Integer(primary_key=True)
+    record_uid: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    exercise_type: sqlite.Col[int | None] = Integer(nullable=True)
+    title: sqlite.Col[str | None] = Text(nullable=True)
+    notes: sqlite.Col[str | None] = Text(nullable=True)
+    planned_exercise_session_id: sqlite.Col[str | None] = Text(nullable=True)
 
 
 class HcGenericRecordCurrent[S = Pending](Model[S, "HcGenericRecordCurrent[Fetched]"]):
-    version_id: HcGenericRecordCurrent.Col[int] = Integer(primary_key=True)
-    record_type: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
-    record_uid: HcGenericRecordCurrent.Col[str] = Text(nullable=False)
-    origin_id: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    modified_at: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    received_at: HcGenericRecordCurrent.Col[int] = Integer(nullable=False)
-    client_record_id: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
-    client_record_version: HcGenericRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    recording_method: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    end_time: HcGenericRecordCurrent.Col[int | None] = Integer(nullable=True)
-    start_zone_offset_seconds: HcGenericRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    end_zone_offset_seconds: HcGenericRecordCurrent.Col[int | None] = Integer(
-        nullable=True
-    )
-    payload_json: HcGenericRecordCurrent.Col[str | None] = Text(nullable=True)
+    version_id: sqlite.Col[int] = Integer(primary_key=True)
+    record_type: sqlite.Col[str] = Text(nullable=False)
+    record_uid: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    modified_at: sqlite.Col[int | None] = Integer(nullable=True)
+    received_at: sqlite.Col[int] = Integer(nullable=False)
+    client_record_id: sqlite.Col[str | None] = Text(nullable=True)
+    client_record_version: sqlite.Col[int | None] = Integer(nullable=True)
+    recording_method: sqlite.Col[int | None] = Integer(nullable=True)
+    start_time: sqlite.Col[int | None] = Integer(nullable=True)
+    end_time: sqlite.Col[int | None] = Integer(nullable=True)
+    start_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    end_zone_offset_seconds: sqlite.Col[int | None] = Integer(nullable=True)
+    payload_json: sqlite.Col[str | None] = Text(nullable=True)
 
 
 class HcExerciseEpisodeSummary[S = Pending](
@@ -461,48 +418,48 @@ class HcExerciseEpisodeSummary[S = Pending](
 ):
     """Deterministic aggregation of one settled exercise session version."""
 
-    record_uid: HcExerciseEpisodeSummary.Col[str] = Text(primary_key=True)
-    version_id: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
-    payload_hash: HcExerciseEpisodeSummary.Col[str] = Text(nullable=False)
-    origin_id: HcExerciseEpisodeSummary.Col[int | None] = Integer(nullable=True)
-    exercise_type: HcExerciseEpisodeSummary.Col[int | None] = Integer(nullable=True)
-    title: HcExerciseEpisodeSummary.Col[str | None] = Text(nullable=True)
-    start_time: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
-    end_time: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
-    duration_minutes: HcExerciseEpisodeSummary.Col[float] = Real(nullable=False)
-    segment_count: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
-    lap_count: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
-    total_lap_meters: HcExerciseEpisodeSummary.Col[float | None] = Real(nullable=True)
-    processor_version: HcExerciseEpisodeSummary.Col[int] = Integer(nullable=False)
+    record_uid: sqlite.Col[str] = Text(primary_key=True)
+    version_id: sqlite.Col[int] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    exercise_type: sqlite.Col[int | None] = Integer(nullable=True)
+    title: sqlite.Col[str | None] = Text(nullable=True)
+    start_time: sqlite.Col[int] = Integer(nullable=False)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    duration_minutes: sqlite.Col[float] = Real(nullable=False)
+    segment_count: sqlite.Col[int] = Integer(nullable=False)
+    lap_count: sqlite.Col[int] = Integer(nullable=False)
+    total_lap_meters: sqlite.Col[float | None] = Real(nullable=True)
+    processor_version: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcSleepEpisodeSummary[S = Pending](Model[S, "HcSleepEpisodeSummary[Fetched]"]):
     """Deterministic per-stage aggregation of one settled sleep session version."""
 
-    record_uid: HcSleepEpisodeSummary.Col[str] = Text(primary_key=True)
-    version_id: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
-    payload_hash: HcSleepEpisodeSummary.Col[str] = Text(nullable=False)
-    origin_id: HcSleepEpisodeSummary.Col[int | None] = Integer(nullable=True)
-    title: HcSleepEpisodeSummary.Col[str | None] = Text(nullable=True)
-    start_time: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
-    end_time: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
-    duration_minutes: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_awake: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_sleeping: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_out_of_bed: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_light: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_deep: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_rem: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_awake_in_bed: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    minutes_other: HcSleepEpisodeSummary.Col[float] = Real(nullable=False)
-    processor_version: HcSleepEpisodeSummary.Col[int] = Integer(nullable=False)
+    record_uid: sqlite.Col[str] = Text(primary_key=True)
+    version_id: sqlite.Col[int] = Integer(nullable=False)
+    payload_hash: sqlite.Col[str] = Text(nullable=False)
+    origin_id: sqlite.Col[int | None] = Integer(nullable=True)
+    title: sqlite.Col[str | None] = Text(nullable=True)
+    start_time: sqlite.Col[int] = Integer(nullable=False)
+    end_time: sqlite.Col[int] = Integer(nullable=False)
+    duration_minutes: sqlite.Col[float] = Real(nullable=False)
+    minutes_awake: sqlite.Col[float] = Real(nullable=False)
+    minutes_sleeping: sqlite.Col[float] = Real(nullable=False)
+    minutes_out_of_bed: sqlite.Col[float] = Real(nullable=False)
+    minutes_light: sqlite.Col[float] = Real(nullable=False)
+    minutes_deep: sqlite.Col[float] = Real(nullable=False)
+    minutes_rem: sqlite.Col[float] = Real(nullable=False)
+    minutes_awake_in_bed: sqlite.Col[float] = Real(nullable=False)
+    minutes_other: sqlite.Col[float] = Real(nullable=False)
+    processor_version: sqlite.Col[int] = Integer(nullable=False)
 
 
 class HcEpisodeCursor[S = Pending](Model[S, "HcEpisodeCursor[Fetched]"]):
     """High-water mark of source versions already reconsidered for one type."""
 
-    record_type: HcEpisodeCursor.Col[str] = Text(primary_key=True)
-    last_version_id: HcEpisodeCursor.Col[int] = Integer(nullable=False)
+    record_type: sqlite.Col[str] = Text(primary_key=True)
+    last_version_id: sqlite.Col[int] = Integer(nullable=False)
 
 
 _LEGACY_SCHEMA_MODELS = [
@@ -582,15 +539,9 @@ def health_connect_migrations() -> dict[str, str]:
             continue
         migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
         next_index += 1
-    for view, query in _CHILD_CURRENT_VIEW_MIGRATIONS.items():
-        sql = f'CREATE VIEW "{view}" AS {query}'
-        migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
-        next_index += 1
-    for sql in scaffold([HcBaselineSeen]).splitlines():
-        migrations[f"{next_index:04d}_baseline_seen"] = _create_if_not_exists(sql)
-        next_index += 1
 
-    # Preserve the five keys already applied by the failed v3 production boot.
+    # Preserve the five keys applied immediately after the parent views by the
+    # failed v3 production boot. This order lets 0.6 adopt that partial history.
     generic_start = len(legacy_statements) + 1
     for index, sql in enumerate(
         scaffold([HcGenericRecord]).splitlines(), start=generic_start
@@ -598,6 +549,14 @@ def health_connect_migrations() -> dict[str, str]:
         migrations[f"{index:04d}_health_connect_schema"] = sql
     generic_view = _CURRENT_VIEW_MIGRATIONS["hc_generic_record_current"]
     migrations["0045_hc_generic_record_current"] = _create_if_not_exists(generic_view)
+
+    for view, query in _CHILD_CURRENT_VIEW_MIGRATIONS.items():
+        sql = f'CREATE VIEW "{view}" AS {query}'
+        migrations[f"{next_index:04d}_{view}"] = _create_if_not_exists(sql)
+        next_index += 1
+    for sql in scaffold([HcBaselineSeen]).splitlines():
+        migrations[f"{next_index:04d}_baseline_seen"] = _create_if_not_exists(sql)
+        next_index += 1
 
     # Episode-summary tables: appended under fresh explicit keys so no already
     # applied migration key or statement changes.
@@ -632,5 +591,5 @@ def health_connect_migrations() -> dict[str, str]:
 
 async def create_health_connect_schema(database: Database) -> None:
     """Initialize every typed table, index, and current-version view."""
-    await database.migrate(health_connect_migrations())
+    await database.migrate(health_connect_migrations(), adopt_legacy=True)
     await database.verify(_MODELS)

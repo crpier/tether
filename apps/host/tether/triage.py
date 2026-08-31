@@ -61,7 +61,7 @@ def _decay(age_days: int) -> float:
     asymptotic to (but never reaching) 1.0. Monotonic in age so an older
     intention always reads as more decayed than a younger one.
     """
-    return 1.0 - 0.5 ** (age_days / _INTENT_HALF_LIFE_DAYS)
+    return float(1.0 - 0.5 ** (age_days / _INTENT_HALF_LIFE_DAYS))
 
 
 class UnderSpecifiedItem(BaseModel):

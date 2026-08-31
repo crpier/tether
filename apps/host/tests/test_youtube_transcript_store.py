@@ -185,34 +185,41 @@ async def schema_migrates_legacy_content_and_retry_state() -> None:
         if name.startswith("013_"):
             break
         legacy_migrations[name] = statement
-    legacy_migrations["test_seed_available_video"] = (
-        'INSERT INTO "ingested_video" ('
-        '"id", "video_id", "source", "title", "channel", "topic", '
-        '"description", "transcript", "transcript_source") VALUES '
-        f"('{available_id}', 'available-video', 'liked', 'Title', 'Channel', "
-        "'python', '', 'legacy text', 'legacy-provider')"
-    )
-    legacy_migrations["test_seed_retrying_video"] = (
-        'INSERT INTO "ingested_video" ('
-        '"id", "video_id", "source", "title", "channel", "topic", '
-        '"description") VALUES '
-        f"('{retrying_id}', 'retrying-video', 'liked', 'Title', 'Channel', "
-        "'python', '')"
-    )
-    legacy_migrations["test_seed_timed_video"] = (
-        'INSERT INTO "ingested_video" ('
-        '"id", "video_id", "source", "title", "channel", "topic", '
-        '"description", "transcript", "transcript_segments_json") VALUES '
-        f"('{timed_id}', 'timed-video', 'liked', 'Title', 'Channel', "
-        "'python', '', 'legacy timed text', "
-        '\'[{"start_seconds":0.0,"text":"legacy timed text"}]\')'
-    )
-    legacy_migrations["test_seed_retrying_state"] = (
-        'INSERT INTO "you_tube_transcript_state" ('
-        '"video_id", "status", "attempts", "next_attempt_at", "last_error") '
-        "VALUES ('retrying-video', 'retrying', 0, NULL, NULL)"
-    )
+    seed_statements = [
+        (
+            'INSERT INTO "ingested_video" ('
+            '"id", "video_id", "source", "title", "channel", "topic", '
+            '"description", "transcript", "transcript_source") VALUES '
+            f"('{available_id}', 'available-video', 'liked', 'Title', 'Channel', "
+            "'python', '', 'legacy text', 'legacy-provider')"
+        ),
+        (
+            'INSERT INTO "ingested_video" ('
+            '"id", "video_id", "source", "title", "channel", "topic", '
+            '"description") VALUES '
+            f"('{retrying_id}', 'retrying-video', 'liked', 'Title', 'Channel', "
+            "'python', '')"
+        ),
+        (
+            'INSERT INTO "ingested_video" ('
+            '"id", "video_id", "source", "title", "channel", "topic", '
+            '"description", "transcript", "transcript_segments_json") VALUES '
+            f"('{timed_id}', 'timed-video', 'liked', 'Title', 'Channel', "
+            "'python', '', 'legacy timed text', "
+            '\'[{"start_seconds":0.0,"text":"legacy timed text"}]\')'
+        ),
+        (
+            'INSERT INTO "you_tube_transcript_state" ('
+            '"video_id", "status", "attempts", "next_attempt_at", "last_error") '
+            "VALUES ('retrying-video', 'retrying', 0, NULL, NULL)"
+        ),
+    ]
     await database.migrate(legacy_migrations)
+    async with database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        for statement in seed_statements:
+            cursor = await connection.execute(statement, ())
+            await cursor.close()
 
     await create_youtube_schema(database)
 

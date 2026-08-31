@@ -10,10 +10,9 @@ from snekql.sqlite import Config, Database
 from snektest import assert_eq, assert_raises, test
 from starlette.testclient import TestClient
 
-from tether.attachment_store import create_attachment_schema
 from tether.attachments import AttachmentNotFoundError, AttachmentService
-from tether.conversation_store import create_conversation_schema
 from tether.conversations import ConversationService
+from tether.host_schema import create_host_schema
 from tether.model_selection import AgentModelCatalog
 from tether.search_projection.embeddings import FakeEmbedder
 from tether.server import AppConfig, create_app
@@ -71,8 +70,7 @@ def _pdf_bytes() -> bytes:
 async def abandoned_upload_is_removed_after_one_day() -> None:
     """A staged file that never joined a turn does not persist indefinitely."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(database)
-    await create_attachment_schema(database)
+    await create_host_schema(database)
     conversation_service = ConversationService(
         database,
         model_catalog=AgentModelCatalog(default_model=None, models=()),

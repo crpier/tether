@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from anyio import NamedTemporaryFile
@@ -506,7 +506,9 @@ sleep_through_version_id: {run.sleep_through_version_id}
         ]
         if not claim_lines:
             return "curated body carries no Claims"
-        cited_uris = set(re.findall(_CLAIM_URI_PATTERN, curated_body))
+        cited_uris = set(
+            cast("list[str]", re.findall(_CLAIM_URI_PATTERN, curated_body))
+        )
         if len(cited_uris) < len(claim_lines):
             return "every curated Claim must cite a bounded summary URI"
         unsupported = sorted(cited_uris - allowed_uris)
@@ -545,7 +547,10 @@ sleep_through_version_id: {run.sleep_through_version_id}
         }
         content = (
             "---\n"
-            + yaml_dump(frontmatter, default_flow_style=False, sort_keys=False)
+            + cast(
+                "str",
+                yaml_dump(frontmatter, default_flow_style=False, sort_keys=False),
+            )
             + "---\n\n"
             + body
             + "\n"

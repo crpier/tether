@@ -142,17 +142,18 @@ async def _seed(
 
 async def _mark_legacy_timed(database: Database, video_id: str) -> None:
     """Give a saved video the pre-duration timed transcript representation."""
-    await database.migrate(
-        {
-            f"test_mark_{video_id}_legacy_timed": (
-                'UPDATE "ingested_video" SET '
-                "\"transcript\" = 'old joined text', "
-                '"transcript_segments_json" = '
-                '\'[{"start_seconds":0.0,"text":"old segment"}]\' '
-                f"WHERE \"video_id\" = '{video_id}'"
-            )
-        }
-    )
+    async with database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        cursor = await connection.execute(
+            'UPDATE "ingested_video" SET "transcript" = ?, '
+            '"transcript_segments_json" = ? WHERE "video_id" = ?',
+            (
+                "old joined text",
+                '[{"start_seconds":0.0,"text":"old segment"}]',
+                video_id,
+            ),
+        )
+        await cursor.close()
 
 
 async def _state(

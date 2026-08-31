@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import uuid7
 
 from pydantic import UUID7, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -24,20 +25,18 @@ from tether.product_observation_model import ProductObservationStatus
 class ProductObservation[S = Pending](Model[S, "ProductObservation[Fetched]"]):
     """One explicit piece of product feedback from a Conversation."""
 
-    id: ProductObservation.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    wording: ProductObservation.Col[str] = Text()
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    wording: sqlite.Col[str] = Text()
     """The exact user Message that prompted capture."""
-    interpretation: ProductObservation.Col[str] = Text()
+    interpretation: sqlite.Col[str] = Text()
     """A concise statement of the behavior the user expected."""
-    conversation_id: ProductObservation.Col[UUID7] = Text()
-    message_id: ProductObservation.Col[UUID7] = Text()
-    status: ProductObservation.Col[ProductObservationStatus] = Text()
-    version: ProductObservation.Col[PositiveInt] = Integer(default=1)
-    created_at: ProductObservation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: ProductObservation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    resolved_at: ProductObservation.Col[UtcDatetime | None] = Text(
-        default=None, nullable=True
-    )
+    conversation_id: sqlite.Col[UUID7] = Text()
+    message_id: sqlite.Col[UUID7] = Text()
+    status: sqlite.Col[ProductObservationStatus] = Text()
+    version: sqlite.Col[PositiveInt] = Integer(default=1)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    resolved_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
 
     __indexes__: ClassVar = [Index(status, created_at)]
 

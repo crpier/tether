@@ -8,8 +8,8 @@ from opentelemetry import trace
 from snekql.sqlite import Config, Database, Fetched, insert, select
 from snektest import assert_eq, fixture, load_fixture, test
 
-from tether.conversation_store import create_conversation_schema
 from tether.conversations import ConversationService
+from tether.host_schema import create_host_schema
 from tether.trigger_store import ScheduledTrigger, create_trigger_schema
 from tether.triggers import TriggerService
 
@@ -42,17 +42,17 @@ async def existing_trigger_database() -> AsyncGenerator[Database]:
     """Create a database carrying the original Scheduled trigger migrations."""
     database = await Database.initialize(backend=Config(database=":memory:"))
     await database.migrate(_LEGACY_TRIGGER_MIGRATIONS)
-    await database.migrate(
-        {
-            "test_seed_legacy_scheduled_trigger": (
-                'INSERT INTO "scheduled_trigger" '
-                '("id", "recurrence", "action_kind", "payload", "timezone", '
-                '"wall_time", "next_fire_at", "status", "attempts", "version") '
-                f"VALUES ('{_LEGACY_TRIGGER_ID}', 'daily', 'message', 'stand up', "
-                "'UTC', '09:00', '2030-01-01T09:00:00.000Z', 'active', 0, 1)"
-            )
-        }
-    )
+    async with database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        cursor = await connection.execute(
+            'INSERT INTO "scheduled_trigger" '
+            '("id", "recurrence", "action_kind", "payload", "timezone", '
+            '"wall_time", "next_fire_at", "status", "attempts", "version") '
+            f"VALUES ('{_LEGACY_TRIGGER_ID}', 'daily', 'message', 'stand up', "
+            "'UTC', '09:00', '2030-01-01T09:00:00.000Z', 'active', 0, 1)",
+            (),
+        )
+        await cursor.close()
     yield database
     await database.close()
 
@@ -92,8 +92,7 @@ async def fresh_schema_persists_the_current_trigger_shape() -> None:
 async def legacy_actions_migrate_to_main_only_for_prompts() -> None:
     """Legacy prompts gain Main while fixed messages keep a null target."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(database)
-    await create_trigger_schema(database)
+    await create_host_schema(database)
     main = await ConversationService(database).fetch_main_conversation()
     async with database.transaction(mode="immediate") as transaction:
         prompt = await transaction.execute(

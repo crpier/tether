@@ -515,7 +515,7 @@ class YouTubeService:
             pauses: Mapping[str, PauseState] = (
                 await self.provider_pauses(self.database)
                 if self.provider_pauses is not None
-                else {}
+                else dict[str, PauseState]()
             )
         providers_paused = [
             TranscriptProviderPause(source=source, paused_until=pause.paused_until)

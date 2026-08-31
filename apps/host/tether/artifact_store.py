@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import uuid7
 
 from pydantic import UUID7, Json, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -23,27 +24,27 @@ from tether.artifact_model import JsonValue
 
 
 class Artifact[S = Pending](Model[S, "Artifact[Fetched]"]):
-    id: Artifact.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
     """This row's own id — one per version, never reused."""
-    artifact_id: Artifact.Col[UUID7] = Text()
+    artifact_id: sqlite.Col[UUID7] = Text()
     """The stable identity across every version of this document."""
-    version: Artifact.Col[PositiveInt] = Integer()
+    version: sqlite.Col[PositiveInt] = Integer()
     """1-based, incrementing by exactly 1 per Update; immutable once written."""
-    title: Artifact.Col[str] = Text()
-    html: Artifact.Col[str] = Text()
-    created_at: Artifact.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    title: sqlite.Col[str] = Text()
+    html: sqlite.Col[str] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(artifact_id, version)]
 
 
 class ArtifactEvent[S = Pending](Model[S, "ArtifactEvent[Fetched]"]):
-    id: ArtifactEvent.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    artifact_id: ArtifactEvent.Col[UUID7] = Text()
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    artifact_id: sqlite.Col[UUID7] = Text()
     """The artifact this event was reported by/about; append-only, never mutated."""
-    payload: ArtifactEvent.Col[Json[dict[str, JsonValue]]] = Text()
+    payload: sqlite.Col[Json[dict[str, JsonValue]]] = Text()
     """Opaque, free-form event data — no schema enforced, by convention an
     optional `type` key names it for whoever renders it later."""
-    created_at: ArtifactEvent.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(artifact_id)]
 

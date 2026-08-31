@@ -1,6 +1,7 @@
 """Pydantic validation returned as typed success or failure values."""
 
 from functools import cache
+from typing import cast
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypeForm
@@ -19,14 +20,14 @@ def validate_python[T](
 ) -> Result[T, ValidationError]:
     """Validate a Python value without raising expected validation failures."""
     try:
-        return Ok(_type_adapter(annotation).validate_python(value))
+        return Ok(cast("T", _type_adapter(annotation).validate_python(value)))
     except ValidationError as error:
         return Err(error)
 
 
 def validate_python_unsafe[T](annotation: TypeForm[T], value: object) -> T:
     """Validate a trusted Python boundary, raising `ValidationError` on defects."""
-    return _type_adapter(annotation).validate_python(value)
+    return cast("T", _type_adapter(annotation).validate_python(value))
 
 
 def validate_json[T](
@@ -34,6 +35,6 @@ def validate_json[T](
 ) -> Result[T, ValidationError]:
     """Validate JSON input without raising expected validation failures."""
     try:
-        return Ok(_type_adapter(annotation).validate_json(value))
+        return Ok(cast("T", _type_adapter(annotation).validate_json(value)))
     except ValidationError as error:
         return Err(error)

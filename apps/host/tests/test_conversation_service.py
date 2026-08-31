@@ -27,9 +27,10 @@ from tether.conversation_model import (
     ConversationNotFoundError,
     MessageDraft,
 )
-from tether.conversation_store import Message, create_conversation_schema
+from tether.conversation_store import Message
 from tether.conversations import ConversationService
-from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+from tether.host_schema import create_host_schema
+from tether.trigger_store import ScheduledTrigger
 
 GAP = timedelta(minutes=5)
 
@@ -38,8 +39,7 @@ GAP = timedelta(minutes=5)
 async def conversation_service() -> AsyncGenerator[ConversationService]:
     """A fresh, isolated conversation database for each test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(db)
-    await create_trigger_schema(db)
+    await create_host_schema(db)
     yield ConversationService(db)
     await db.close()
 
@@ -232,17 +232,16 @@ async def archive_is_blocked_by_a_nonterminal_conversation_turn_when_present() -
         display_name="Garden planning",
         scope_brief="Plan this year's vegetable garden.",
     )
-    await service.database.migrate(
-        {
-            "test_pending_conversation_turn": (
-                'INSERT INTO "conversation_turn" ('
-                '"id", "conversation_id", "origin", '
-                '"scope_revision_snapshot", "status") '
-                f"VALUES ('018f0000-0000-7000-8000-000000000099', "
-                f"'{conversation.id}', 'interactive', 1, 'pending')"
-            ),
-        }
-    )
+    async with service.database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        cursor = await connection.execute(
+            'INSERT INTO "conversation_turn" ('
+            '"id", "conversation_id", "origin", '
+            '"scope_revision_snapshot", "status") '
+            "VALUES (?, ?, 'interactive', 1, 'pending')",
+            ("018f0000-0000-7000-8000-000000000099", str(conversation.id)),
+        )
+        await cursor.close()
 
     with assert_raises(ConversationArchiveBlockedError):
         _ = await service.archive_conversation(conversation.id)

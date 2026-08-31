@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from tether.conversation_model import ConversationNotFoundError
@@ -29,11 +29,19 @@ class TitleGenerator(Protocol):
         ...
 
 
+class PiPromptRunner(Protocol):
+    """Run one ephemeral prompt and return its raw response."""
+
+    async def run(self, prompt: str) -> str:
+        """Return the model response text."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class PiTitleGenerator:
     """Run the title proposal through an ephemeral pi one-shot."""
 
-    runner: Any
+    runner: PiPromptRunner
     """An `EphemeralPiPromptRunner`-shaped runner (`run(prompt) -> str`)."""
 
     async def generate_title(self, *, first_message: str) -> str:

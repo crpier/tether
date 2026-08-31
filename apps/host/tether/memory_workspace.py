@@ -96,7 +96,7 @@ def _validate_mapping_keys(node: Node) -> None:
 
 def _decode_frontmatter(frontmatter_text: str) -> dict[str, object]:
     """Decode YAML with recursive duplicate-key and mapping validation."""
-    ast = cast("Any", yaml.compose(frontmatter_text, Loader=SafeLoader))  # type: ignore[reportUnknownMemberType]
+    ast = cast("Any", yaml.compose(frontmatter_text, Loader=SafeLoader))
     if ast is None:
         message = "frontmatter must be a non-empty YAML mapping"
         raise FrontmatterParseError(message)
@@ -141,9 +141,9 @@ def _decode_evidence(
         return (), None
     raw_evidence = frontmatter["evidence"]
     if isinstance(raw_evidence, list):
-        evidence_items = cast("list[Any]", raw_evidence)
+        evidence_items = cast("list[object]", raw_evidence)
         if all(isinstance(item, str) for item in evidence_items):
-            return tuple(evidence_items), None
+            return tuple(cast("str", item) for item in evidence_items), None
     return (), MemoryWorkspaceDiagnostic(
         path=current,
         code="frontmatter.evidence.invalid",

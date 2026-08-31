@@ -84,7 +84,7 @@ def _liked(video_id: str, **overrides: object) -> BackupLikedVideo:
         "channel_title": "PyConf",
     }
     base.update(overrides)
-    return BackupLikedVideo(**base)  # pyright: ignore[reportArgumentType]
+    return BackupLikedVideo(**base)  # ty: ignore[invalid-argument-type]
 
 
 # --- A liked record imports with all enriched fields and liked-at ordering ---

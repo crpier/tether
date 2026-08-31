@@ -60,10 +60,10 @@ from tether.bucket_items import (
     BucketItemNotFoundError,
     BucketItemService,
 )
+from tether.host_schema import create_host_schema
 from tether.search_projection.embeddings import FakeEmbedder
 from tether.search_projection.metadata import (
     SearchMetaService,
-    create_search_meta_schema,
 )
 from tether.structured_logging import Logger
 
@@ -180,8 +180,7 @@ async def searchable_bucket_item_service() -> AsyncGenerator[SearchableHarness]:
     gate, mirroring `test_memories_service.py`'s `searchable_memory_service`.
     """
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_bucket_item_schema(db)
-    await create_search_meta_schema(db)
+    await create_host_schema(db)
     embedder = FakeEmbedder(vector_dim=_SEARCH_DIM)
     logger = structlog.stdlib.get_logger("test.bucket_item_service.search")
     async with TemporaryDirectory() as root:

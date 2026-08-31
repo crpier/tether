@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import uuid7
 
 from pydantic import UUID7, Json, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -30,35 +31,33 @@ def _default_render_kind() -> PanelRenderKind:
 class SyntheticPanel[S = Pending](Model[S, "SyntheticPanel[Fetched]"]):
     """A saved faceted query over the Commons plus its render choice."""
 
-    id: SyntheticPanel.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    name: SyntheticPanel.Col[str] = Text()
+    name: sqlite.Col[str] = Text()
     """The human-facing panel title."""
-    facets: SyntheticPanel.Col[Json[dict[str, str]]] = Text(
-        default_factory=dict[str, str]
-    )
+    facets: sqlite.Col[Json[dict[str, str]]] = Text(default_factory=dict[str, str])
     """The exact-match AND facet filter, same semantics as Memory search."""
-    query: SyntheticPanel.Col[str | None] = Text(default=None, nullable=True)
+    query: sqlite.Col[str | None] = Text(default=None, nullable=True)
     """Optional text query; when present, results ride hybrid Search's ranking."""
-    window_days: SyntheticPanel.Col[int | None] = Integer(default=None, nullable=True)
+    window_days: sqlite.Col[int | None] = Integer(default=None, nullable=True)
     """Optional relative window bounding recorded Topic updates at query time."""
-    columns: SyntheticPanel.Col[Json[list[str]]] = Text(default_factory=list[str])
+    columns: sqlite.Col[Json[list[str]]] = Text(default_factory=list[str])
     """Facet keys shown as table columns beside the Memory content."""
-    render_kind: SyntheticPanel.Col[PanelRenderKind] = Text(
+    render_kind: sqlite.Col[PanelRenderKind] = Text(
         default_factory=_default_render_kind
     )
     """`table` renders rows directly; `vega-lite` injects them into the template."""
-    vega_lite_spec: SyntheticPanel.Col[str | None] = Text(default=None, nullable=True)
+    vega_lite_spec: sqlite.Col[str | None] = Text(default=None, nullable=True)
     """The stored Vega-Lite spec template for the `vega-lite` render kind."""
-    position: SyntheticPanel.Col[int] = Integer(default=0)
+    position: sqlite.Col[int] = Integer(default=0)
     """Explicit sort position; the panel column never reshuffles on its own."""
-    version: SyntheticPanel.Col[PositiveInt] = Integer(default=1)
+    version: sqlite.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: SyntheticPanel.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: SyntheticPanel.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    deleted_at: SyntheticPanel.Col[UtcDatetime | None] = Text(
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    deleted_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )

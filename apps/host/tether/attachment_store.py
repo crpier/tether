@@ -6,6 +6,7 @@ from typing import Literal
 from uuid import uuid7
 
 from pydantic import UUID7, NonNegativeInt, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -23,22 +24,18 @@ type AttachmentKind = Literal["document", "image"]
 class MessageAttachment[S = Pending](Model[S, "MessageAttachment[Fetched]"]):
     """One immutable uploaded file and its Conversation lifecycle links."""
 
-    id: MessageAttachment.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    conversation_id: MessageAttachment.Col[UUID7] = Text()
-    created_at: MessageAttachment.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    extracted_text: MessageAttachment.Col[str | None] = Text(
-        default=None, nullable=True
-    )
-    extraction_truncated: MessageAttachment.Col[bool] = Integer(default=False)
-    filename: MessageAttachment.Col[str] = Text()
-    kind: MessageAttachment.Col[AttachmentKind] = Text()
-    message_id: MessageAttachment.Col[UUID7 | None] = Text(default=None, nullable=True)
-    mime_type: MessageAttachment.Col[str] = Text()
-    size_bytes: MessageAttachment.Col[NonNegativeInt] = Integer()
-    turn_id: MessageAttachment.Col[UUID7 | None] = Text(default=None, nullable=True)
-    turn_position: MessageAttachment.Col[PositiveInt | None] = Integer(
-        default=None, nullable=True
-    )
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    conversation_id: sqlite.Col[UUID7] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    extracted_text: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    extraction_truncated: sqlite.Col[bool] = Integer(default=False)
+    filename: sqlite.Col[str] = Text()
+    kind: sqlite.Col[AttachmentKind] = Text()
+    message_id: sqlite.Col[UUID7 | None] = Text(default=None, nullable=True)
+    mime_type: sqlite.Col[str] = Text()
+    size_bytes: sqlite.Col[NonNegativeInt] = Integer()
+    turn_id: sqlite.Col[UUID7 | None] = Text(default=None, nullable=True)
+    turn_position: sqlite.Col[PositiveInt | None] = Integer(default=None, nullable=True)
 
 
 async def create_attachment_schema(database: Database) -> None:

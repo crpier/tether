@@ -28,7 +28,6 @@ from snektest import (
     test,
 )
 
-from tether.attachment_store import create_attachment_schema
 from tether.attachments import AttachmentService, AttachmentSubmissionError
 from tether.chat_frames import (
     AgentEndFrame,
@@ -42,7 +41,6 @@ from tether.conversation_model import ConversationNotFoundError, MessageDraft
 from tether.conversation_store import (
     Conversation,
     ConversationTurn,
-    create_conversation_schema,
 )
 from tether.conversation_turns import (
     CancelTurnRequest,
@@ -54,12 +52,12 @@ from tether.conversation_turns import (
 )
 from tether.conversations import ConversationService
 from tether.events import HubEvent, InvalidateEvent
+from tether.host_schema import create_host_schema
 from tether.model_selection import AgentModelCatalog, AgentModelConfig
 from tether.pi_errors import PiPreacceptTransientError
 from tether.pi_runtime import ContextUsage
 from tether.pi_turn_events import AgentEnded, MessageSettled, TurnEvent
 from tether.trigger_schedule import OnceTriggerSpec
-from tether.trigger_store import create_trigger_schema
 from tether.triggers import ScheduledPromptSnapshot, TriggerService
 
 
@@ -357,9 +355,7 @@ async def conversation_turns_fixture() -> AsyncGenerator[
     ]
 ]:
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(database)
-    await create_attachment_schema(database)
-    await create_trigger_schema(database)
+    await create_host_schema(database)
     service = ConversationService(
         database=database,
         model_catalog=AgentModelCatalog(default_model=None, models=()),
@@ -539,9 +535,7 @@ async def titling_turns_fixture() -> AsyncGenerator[
     tuple[ConversationTurns, ConversationService, RecordingTitler]
 ]:
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(database)
-    await create_attachment_schema(database)
-    await create_trigger_schema(database)
+    await create_host_schema(database)
     service = ConversationService(
         database,
         model_catalog=AgentModelCatalog(default_model=None, models=()),

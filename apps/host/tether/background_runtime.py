@@ -440,9 +440,11 @@ class BackgroundRuntime:
                     )
                     raise
                 next_failure_count = consecutive_failures + 1
-                retry_seconds = min(
-                    self._retry_base_seconds * (2 ** (next_failure_count - 1)),
-                    self._retry_cap_seconds,
+                retry_seconds = float(
+                    min(
+                        self._retry_base_seconds * (2 ** (next_failure_count - 1)),
+                        self._retry_cap_seconds,
+                    )
                 )
                 self._health[registration.name] = replace(
                     self._health[registration.name],

@@ -8,6 +8,7 @@ internal structure.
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import uuid7
 
 import structlog
@@ -25,15 +26,14 @@ from snektest import (
     test,
 )
 
+from tether.host_schema import create_host_schema
 from tether.notification_model import NotificationDraft
-from tether.notification_store import NotificationStore, create_notification_schema
+from tether.notification_store import NotificationStore
 from tether.notifications import NotificationService
 from tether.structured_logging import Logger
 from tether.todo_errors import InvalidTodoError, TodoConflictError, TodoNotFoundError
-from tether.todo_store import create_todo_schema
 from tether.todos import TodoService, todo_reference
 from tether.trigger_schedule import OnceTriggerSpec
-from tether.trigger_store import create_trigger_schema
 from tether.triggers import TriggerService
 
 
@@ -44,7 +44,7 @@ def noop_tracer() -> Tracer:
 
 def test_logger() -> Logger:
     """A throwaway structlog logger for the service's mandatory logging arg."""
-    return structlog.get_logger("test.todos")
+    return cast("Logger", structlog.get_logger("test.todos"))
 
 
 class TodoEnv:
@@ -66,9 +66,7 @@ class TodoEnv:
 async def todo_env() -> AsyncGenerator[TodoEnv]:
     """A fresh database carrying the Todo, Trigger, and Notification schemas."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_trigger_schema(db)
-    await create_notification_schema(db)
-    await create_todo_schema(db)
+    await create_host_schema(db)
     yield TodoEnv(db)
     await db.close()
 

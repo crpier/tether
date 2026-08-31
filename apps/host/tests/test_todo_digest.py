@@ -18,7 +18,7 @@ from tether.todos import TodoReadiness
 
 def _todo(action: str, *, condition: str | None = None) -> Todo[Fetched]:
     """A detached Todo carrying just the fields the digest reads."""
-    return Todo.construct(  # type: ignore[return-value]
+    return Todo.construct(  # ty: ignore[invalid-return-type]
         id=uuid7(),
         version=1,
         action=action,

@@ -155,9 +155,5 @@ def err_has_no_instance_dictionary() -> None:
 @test(mark="fast")
 def variants_share_nominal_result_base() -> None:
     """Both variants are instances of the compact public `Result` type."""
-    assert_true(
-        isinstance(Ok(42), Result)  # pyright: ignore[reportUnnecessaryIsInstance]
-    )
-    assert_true(
-        isinstance(Err("invalid input"), Result)  # pyright: ignore[reportUnnecessaryIsInstance]
-    )
+    assert_true(isinstance(Ok(42), Result))
+    assert_true(isinstance(Err("invalid input"), Result))

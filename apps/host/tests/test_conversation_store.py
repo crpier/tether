@@ -9,6 +9,7 @@ from tether.conversation_store import (
     Conversation,
     ConversationTurn,
     Message,
+    conversation_migrations,
     create_conversation_schema,
 )
 
@@ -17,43 +18,55 @@ _NEWER_ID = UUID("018f0000-0000-7000-8000-000000000002")
 _UNTITLED_ID = UUID("018f0000-0000-7000-8000-000000000003")
 
 
+async def seed_legacy_conversation_rows(
+    database: Database, statements: list[str]
+) -> None:
+    """Apply test fixture data outside the production migration declaration."""
+    async with database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        for statement in statements:
+            cursor = await connection.execute(statement, ())
+            await cursor.close()
+
+
+@test()
+async def fresh_schema_matches_the_current_conversation_model() -> None:
+    """Fresh migrations materialize the exact schema expected by snekql."""
+    database = await Database.initialize(backend=Config(database=":memory:"))
+    try:
+        await create_conversation_schema(database)
+        await database.verify([Conversation])
+    finally:
+        await database.close()
+
+
 @test()
 async def migration_assigns_explicit_lifecycle_to_existing_conversations() -> None:
     """Oldest legacy row becomes Main and additional rows become archived Scoped."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await database.migrate(
-        {
-            "003_create_conversation": (
-                'CREATE TABLE "conversation" ("id" TEXT PRIMARY KEY NOT NULL, '
-                '"created_at" TEXT NOT NULL, "pi_session_id" TEXT NOT NULL, '
-                '"selected_model" TEXT, "title" TEXT) STRICT'
-            ),
-            "003_create_message": (
-                'CREATE TABLE "message" ("id" TEXT PRIMARY KEY NOT NULL, '
-                '"conversation_id" TEXT NOT NULL, "seq" INTEGER NOT NULL, '
-                '"role" TEXT NOT NULL, "content" TEXT NOT NULL, '
-                '"created_at" TEXT NOT NULL, "pi_message_id" TEXT, '
-                '"tool_args" TEXT, "tool_name" TEXT, "tool_result" TEXT) STRICT'
-            ),
-            "test_seed_oldest_conversation": (
+    await database.migrate(dict(list(conversation_migrations().items())[:2]))
+    await seed_legacy_conversation_rows(
+        database,
+        [
+            (
                 'INSERT INTO "conversation" '
                 '("id", "created_at", "pi_session_id", "title") '
                 f"VALUES ('{_OLDEST_ID}', '2025-01-01T00:00:00.000Z', "
                 "'018f0000-0000-7000-8000-000000000011', 'Legacy main')"
             ),
-            "test_seed_newer_conversation": (
+            (
                 'INSERT INTO "conversation" '
                 '("id", "created_at", "pi_session_id", "title") '
                 f"VALUES ('{_NEWER_ID}', '2025-01-02T00:00:00.000Z', "
                 "'018f0000-0000-7000-8000-000000000012', 'Project Atlas')"
             ),
-            "test_seed_untitled_conversation": (
+            (
                 'INSERT INTO "conversation" '
                 '("id", "created_at", "pi_session_id", "title") '
                 f"VALUES ('{_UNTITLED_ID}', '2025-01-03T00:00:00.000Z', "
                 "'018f0000-0000-7000-8000-000000000013', '  ')"
             ),
-        }
+        ],
     )
 
     await create_conversation_schema(database)
@@ -78,27 +91,17 @@ async def migration_assigns_explicit_lifecycle_to_existing_conversations() -> No
 async def migration_groups_historical_transcript_without_changing_roles() -> None:
     """Leading rows and each user-led group become one settled historical turn."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await database.migrate(
-        {
-            "003_create_conversation": (
-                'CREATE TABLE "conversation" ("id" TEXT PRIMARY KEY NOT NULL, '
-                '"created_at" TEXT NOT NULL, "pi_session_id" TEXT NOT NULL, '
-                '"selected_model" TEXT, "title" TEXT) STRICT'
-            ),
-            "003_create_message": (
-                'CREATE TABLE "message" ("id" TEXT PRIMARY KEY NOT NULL, '
-                '"conversation_id" TEXT NOT NULL, "seq" INTEGER NOT NULL, '
-                '"role" TEXT NOT NULL, "content" TEXT NOT NULL, '
-                '"created_at" TEXT NOT NULL, "pi_message_id" TEXT, '
-                '"tool_args" TEXT, "tool_name" TEXT, "tool_result" TEXT) STRICT'
-            ),
-            "test_seed_conversation": (
+    await database.migrate(dict(list(conversation_migrations().items())[:2]))
+    await seed_legacy_conversation_rows(
+        database,
+        [
+            (
                 'INSERT INTO "conversation" '
                 '("id", "created_at", "pi_session_id", "selected_model") '
                 f"VALUES ('{_OLDEST_ID}', '2025-01-01T00:00:00.000Z', "
                 "'018f0000-0000-7000-8000-000000000011', 'smart')"
             ),
-            "test_seed_messages": (
+            (
                 'INSERT INTO "message" '
                 '("id", "conversation_id", "seq", "role", "content", '
                 '"created_at") VALUES '
@@ -115,7 +118,7 @@ async def migration_groups_historical_transcript_without_changing_roles() -> Non
                 f"('018f0000-0000-7000-8000-000000000106', '{_OLDEST_ID}', 6, "
                 "'tool', 'partial', '2025-01-01T00:00:06.000Z')"
             ),
-        }
+        ],
     )
 
     await create_conversation_schema(database)

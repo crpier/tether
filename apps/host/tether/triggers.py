@@ -12,9 +12,7 @@ from snekql.sqlite import (
     CurrentTimestamp,
     Database,
     Fetched,
-    Pending,
     Transaction,
-    UpdateQuery,
     insert,
     select,
     update,
@@ -1068,29 +1066,6 @@ class TriggerService:
             message = f"trigger {trigger.id} has invalid recurring state"
             raise InvalidTriggerSpecError(message)
         return materialize_trigger_schedule(spec, now=now).next_fire_at
-
-    async def _apply_scheduler_update(
-        self,
-        trigger_id: UUID7,
-        statement: UpdateQuery[ScheduledTrigger[Pending]],
-    ) -> ScheduledTrigger[Fetched]:
-        """Run a scheduler-state update against one live row, returning it fresh.
-
-        The update is scoped to the target id and skips a row a concurrent delete
-        has already retired, so settling a claimed trigger never resurrects one
-        the human removed mid-dispatch.
-        """
-
-        async def _apply(tx: Transaction) -> ScheduledTrigger[Fetched]:
-            _ = await tx.execute(
-                statement.where(ScheduledTrigger.id.eq(trigger_id)).where(
-                    ScheduledTrigger.deleted_at.is_null()
-                )
-            )
-            return await self._fetch_any(tx, trigger_id)
-
-        async with self.database.transaction(mode="immediate") as tx:
-            return await _apply(tx)
 
     def _raise_version_conflict(
         self,

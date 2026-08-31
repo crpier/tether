@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
+from snekql import sqlite
 from snekql.sqlite import (
     PENDING_GENERATION,
     CurrentTimestamp,
@@ -31,39 +32,31 @@ _WATERMARK_KEY = "statistics_file_watermark"
 class EbookStatBook[S = Pending](Model[S, "EbookStatBook[Fetched]"]):
     """One upstream KOReader `book` row mirrored into canonical SQLite."""
 
-    id: EbookStatBook.GenCol[int] = Integer(
-        primary_key=True, default=PENDING_GENERATION
-    )
-    source_book_id: EbookStatBook.Col[int] = Integer(nullable=False)
-    title: EbookStatBook.Col[str | None] = Text(default=None, nullable=True)
-    authors: EbookStatBook.Col[str | None] = Text(default=None, nullable=True)
-    pages: EbookStatBook.Col[int | None] = Integer(default=None, nullable=True)
-    md5: EbookStatBook.Col[str | None] = Text(default=None, nullable=True)
-    total_read_time: EbookStatBook.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    total_read_pages: EbookStatBook.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    highlights: EbookStatBook.Col[int | None] = Integer(default=None, nullable=True)
-    notes: EbookStatBook.Col[int | None] = Integer(default=None, nullable=True)
-    last_open: EbookStatBook.Col[int | None] = Integer(default=None, nullable=True)
-    document_hash: EbookStatBook.Col[str | None] = Text(default=None, nullable=True)
-    created_at: EbookStatBook.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: EbookStatBook.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[int] = Integer(primary_key=True, default=PENDING_GENERATION)
+    source_book_id: sqlite.Col[int] = Integer(nullable=False)
+    title: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    authors: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    pages: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    md5: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    total_read_time: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    total_read_pages: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    highlights: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    notes: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    last_open: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    document_hash: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     __indexes__: ClassVar = [Index(source_book_id, unique=True)]
 
 
 class EbookStatPageEvent[S = Pending](Model[S, "EbookStatPageEvent[Fetched]"]):
     """One append-only per-page event, unique by book, page, and start time."""
 
-    id: EbookStatPageEvent.GenCol[int] = Integer(
-        primary_key=True, default=PENDING_GENERATION
-    )
-    book: EbookStatPageEvent.Col[int] = Integer(nullable=False)
-    page: EbookStatPageEvent.Col[int] = Integer(nullable=False)
-    start_time: EbookStatPageEvent.Col[int] = Integer(nullable=False)
-    duration: EbookStatPageEvent.Col[int] = Integer(nullable=False)
+    id: sqlite.GenCol[int] = Integer(primary_key=True, default=PENDING_GENERATION)
+    book: sqlite.Col[int] = Integer(nullable=False)
+    page: sqlite.Col[int] = Integer(nullable=False)
+    start_time: sqlite.Col[int] = Integer(nullable=False)
+    duration: sqlite.Col[int] = Integer(nullable=False)
     __indexes__: ClassVar = [
         Index(book, start_time),
         Index(book, page, start_time, unique=True),
@@ -73,8 +66,8 @@ class EbookStatPageEvent[S = Pending](Model[S, "EbookStatPageEvent[Fetched]"]):
 class EbookStatSyncState[S = Pending](Model[S, "EbookStatSyncState[Fetched]"]):
     """Durable key/value state for successful file ingestion."""
 
-    key: EbookStatSyncState.Col[str] = Text(primary_key=True)
-    value: EbookStatSyncState.Col[str] = Text(nullable=False)
+    key: sqlite.Col[str] = Text(primary_key=True)
+    value: sqlite.Col[str] = Text(nullable=False)
 
 
 def _group_events_by_book(

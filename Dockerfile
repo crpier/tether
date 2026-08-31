@@ -48,7 +48,7 @@ ENV UV_PROJECT_ENVIRONMENT=/app/apps/host/.venv \
 WORKDIR /app/apps/host
 
 # Resolve Python deps from the lockfile first so the layer caches across source
-# edits. `--no-dev` skips the dev group (pyright/ruff/snektest); snekok is held
+# edits. `--no-dev` skips the dev group (ty/ruff/snektest); snekok is held
 # back until its source is copied with the host below.
 COPY apps/host/pyproject.toml apps/host/uv.lock ./
 COPY packages/snekok/pyproject.toml packages/snekok/README.md /app/packages/snekok/

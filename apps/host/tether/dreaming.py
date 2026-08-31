@@ -942,7 +942,12 @@ evidence_end_seq: {run.evidence_end_seq}
             for claim in claim_lines
         ):
             return "every curated Claim must cite bounded supporting Evidence"
-        cited_uris = set(re.findall(r"tether://message/[0-9A-Za-z-]+", curated_body))
+        cited_uris = set(
+            cast(
+                "list[str]",
+                re.findall(r"tether://message/[0-9A-Za-z-]+", curated_body),
+            )
+        )
         unsupported = sorted(cited_uris - supported_evidence_uris)
         if unsupported:
             return (
@@ -977,7 +982,10 @@ evidence_end_seq: {run.evidence_end_seq}
         }
         return (
             "---\n"
-            + yaml_dump(frontmatter, default_flow_style=False, sort_keys=False)
+            + cast(
+                "str",
+                yaml_dump(frontmatter, default_flow_style=False, sort_keys=False),
+            )
             + "---\n\n"
             + normalized_body
             + "\n"
@@ -1014,7 +1022,10 @@ evidence_end_seq: {run.evidence_end_seq}
         body = "\n\n".join(part for part in (existing_body, section) if part)
         return (
             "---\n"
-            + yaml_dump(frontmatter, default_flow_style=False, sort_keys=False)
+            + cast(
+                "str",
+                yaml_dump(frontmatter, default_flow_style=False, sort_keys=False),
+            )
             + "---\n\n"
             + body
             + "\n"
