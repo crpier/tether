@@ -32,8 +32,8 @@ from tether.transcripts.contracts import (
 
 _SOURCE = "youtube_transcript_api"
 
-# Default (disabled) request pacing, hoisted for the same reason: a `timedelta(0)`
-# default expression trips `reportCallInDefaultInitializer`.
+# Default (disabled) request pacing is hoisted to avoid constructing it in a
+# default expression.
 _NO_PACING: timedelta = timedelta(0)
 
 

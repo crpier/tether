@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import Json
+from snekql import sqlite
 from snekql.sqlite import (
     Database,
     Fetched,
@@ -31,19 +32,17 @@ type ReadwiseSyncKey = Literal["highlights_export_watermark", "reader_list_water
 class ReadwiseHighlight[S = Pending](Model[S, "ReadwiseHighlight[Fetched]"]):
     """Canonical Readwise highlight Evidence retained for Dreaming."""
 
-    highlight_id: ReadwiseHighlight.Col[int] = Integer(primary_key=True)
-    content: ReadwiseHighlight.Col[str] = Text(nullable=False)
-    metadata: ReadwiseHighlight.Col[Json[dict[str, str]]] = Text(
-        default_factory=dict[str, str]
-    )
-    updated_at: ReadwiseHighlight.Col[str] = Text(nullable=False)
+    highlight_id: sqlite.Col[int] = Integer(primary_key=True)
+    content: sqlite.Col[str] = Text(nullable=False)
+    metadata: sqlite.Col[Json[dict[str, str]]] = Text(default_factory=dict[str, str])
+    updated_at: sqlite.Col[str] = Text(nullable=False)
 
 
 class ReadwiseSyncState[S = Pending](Model[S, "ReadwiseSyncState[Fetched]"]):
     """Durable key/value synchronization state."""
 
-    key: ReadwiseSyncState.Col[str] = Text(primary_key=True)
-    value: ReadwiseSyncState.Col[str] = Text(nullable=False)
+    key: sqlite.Col[str] = Text(primary_key=True)
+    value: sqlite.Col[str] = Text(nullable=False)
 
 
 def _parse_datetime(raw: str) -> datetime | None:

@@ -30,8 +30,8 @@ from snektest import (
 
 from tether.agent_trace_model import RunKind
 from tether.agent_trace_recorder import AgentTraceRecorder
-from tether.conversation_store import create_conversation_schema
 from tether.conversations import ConversationService
+from tether.host_schema import create_host_schema
 from tether.notification_delivery import (
     PushDeliveryNotifier,
     PushNotification,
@@ -53,7 +53,6 @@ from tether.trigger_schedule import DailyTriggerSpec, OnceTriggerSpec
 from tether.trigger_store import (
     ScheduledOccurrence,
     ScheduledTrigger,
-    create_trigger_schema,
 )
 from tether.triggers import ScheduledPromptSnapshot, TriggerService
 
@@ -245,8 +244,7 @@ class FakeOccurrenceDispatcher:
 async def scheduler_service() -> AsyncGenerator[TriggerService]:
     """A fresh, isolated trigger database for each scheduler test."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(db)
-    await create_trigger_schema(db)
+    await create_host_schema(db)
     _ = await ConversationService(db).fetch_main_conversation()
     yield TriggerService(database=db, tracer=noop_tracer())
     await db.close()

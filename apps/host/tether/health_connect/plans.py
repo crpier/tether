@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import ClassVar, Literal, cast
@@ -9,6 +10,7 @@ from uuid import UUID, uuid7
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, PositiveInt, TypeAdapter
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -81,21 +83,21 @@ class HealthPlanConflictError(Exception):
 class HealthPlan[S = Pending](Model[S, "HealthPlan[Fetched]"]):
     """One persisted weekly exercise intention sourced from user Evidence."""
 
-    id: HealthPlan.GenCol[UUID] = Text(primary_key=True, default_factory=uuid7)
-    created_at: HealthPlan.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    effective_at: HealthPlan.Col[UtcDatetime] = Text(nullable=False)
-    exercise_types_json: HealthPlan.Col[str] = Text(nullable=False)
-    grace_minutes: HealthPlan.Col[int] = Integer(nullable=False)
-    source_conversation_id: HealthPlan.Col[UUID] = Text(nullable=False)
-    source_message_id: HealthPlan.Col[UUID] = Text(nullable=False)
-    status: HealthPlan.Col[HealthPlanStatus] = Text(
+    id: sqlite.GenCol[UUID] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    effective_at: sqlite.Col[UtcDatetime] = Text(nullable=False)
+    exercise_types_json: sqlite.Col[str] = Text(nullable=False)
+    grace_minutes: sqlite.Col[int] = Integer(nullable=False)
+    source_conversation_id: sqlite.Col[UUID] = Text(nullable=False)
+    source_message_id: sqlite.Col[UUID] = Text(nullable=False)
+    status: sqlite.Col[HealthPlanStatus] = Text(
         default=cast("HealthPlanStatus", "active")
     )
-    timezone: HealthPlan.Col[str] = Text(nullable=False)
-    title: HealthPlan.Col[str] = Text(nullable=False)
-    updated_at: HealthPlan.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    version: HealthPlan.Col[PositiveInt] = Integer(default=1)
-    windows_json: HealthPlan.Col[str] = Text(nullable=False)
+    timezone: sqlite.Col[str] = Text(nullable=False)
+    title: sqlite.Col[str] = Text(nullable=False)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    version: sqlite.Col[PositiveInt] = Integer(default=1)
+    windows_json: sqlite.Col[str] = Text(nullable=False)
 
     __indexes__: ClassVar = [Index(status, created_at)]
 
@@ -105,28 +107,22 @@ class PlannedExerciseOccurrence[S = Pending](
 ):
     """One settled dated realization of a snapshotted Exercise window."""
 
-    id: PlannedExerciseOccurrence.GenCol[UUID] = Text(
+    id: sqlite.GenCol[UUID] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True, default_factory=uuid7
     )
-    created_at: PlannedExerciseOccurrence.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
-    grace_ended_at: PlannedExerciseOccurrence.Col[UtcDatetime] = Text(nullable=False)
-    local_date: PlannedExerciseOccurrence.Col[str] = Text(nullable=False)
-    matched_evidence_uri: PlannedExerciseOccurrence.Col[str | None] = Text(
-        default=None, nullable=True
-    )
-    plan_id: PlannedExerciseOccurrence.Col[UUID] = Text(nullable=False)
-    plan_version: PlannedExerciseOccurrence.Col[int] = Integer(nullable=False)
-    source_record_uid: PlannedExerciseOccurrence.Col[str] = Text(nullable=False)
-    status: PlannedExerciseOccurrence.Col[PlannedExerciseStatus] = Text(nullable=False)
-    timezone: PlannedExerciseOccurrence.Col[str] = Text(nullable=False)
-    title: PlannedExerciseOccurrence.Col[str] = Text(nullable=False)
-    updated_at: PlannedExerciseOccurrence.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
-    window_ended_at: PlannedExerciseOccurrence.Col[UtcDatetime] = Text(nullable=False)
-    window_started_at: PlannedExerciseOccurrence.Col[UtcDatetime] = Text(nullable=False)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    grace_ended_at: sqlite.Col[UtcDatetime] = Text(nullable=False)
+    local_date: sqlite.Col[str] = Text(nullable=False)
+    matched_evidence_uri: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    plan_id: sqlite.Col[UUID] = Text(nullable=False)
+    plan_version: sqlite.Col[int] = Integer(nullable=False)
+    source_record_uid: sqlite.Col[str] = Text(nullable=False)
+    status: sqlite.Col[PlannedExerciseStatus] = Text(nullable=False)
+    timezone: sqlite.Col[str] = Text(nullable=False)
+    title: sqlite.Col[str] = Text(nullable=False)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    window_ended_at: sqlite.Col[UtcDatetime] = Text(nullable=False)
+    window_started_at: sqlite.Col[UtcDatetime] = Text(nullable=False)
 
     __indexes__: ClassVar = [Index(plan_id, grace_ended_at)]
 
@@ -336,7 +332,7 @@ class HealthPlanService:
         *,
         include_paused: bool = True,
         limit: int = _DEFAULT_PLAN_LIMIT,
-    ) -> list[HealthPlanRead]:
+    ) -> builtins.list[HealthPlanRead]:
         """Return a bounded set of current plans in creation order."""
         query = (
             (
@@ -353,7 +349,7 @@ class HealthPlanService:
 
     async def list_occurrences(
         self, *, after: datetime, before: datetime
-    ) -> list[PlannedExerciseOccurrenceRead]:
+    ) -> builtins.list[PlannedExerciseOccurrenceRead]:
         """Return settled adherence explanations inside one bounded period."""
         async with self.database.transaction() as transaction:
             occurrences = await transaction.fetch_all(

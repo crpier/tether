@@ -16,6 +16,7 @@ from snekok.types import (
     PositiveInt,
 )
 from snekok.validation import validate_python_unsafe
+from snekql import sqlite
 from snekql.sqlite import (
     PENDING_GENERATION,
     CurrentTimestamp,
@@ -50,68 +51,50 @@ type IngestState = Literal["active", "ignored"]
 
 
 class IngestedVideo[S = Pending](Model[S, "IngestedVideo[Fetched]"]):
-    id: IngestedVideo.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    video_id: IngestedVideo.Col[VideoId] = Text(nullable=False, unique=True)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    video_id: sqlite.Col[VideoId] = Text(nullable=False, unique=True)
     """The upstream YouTube id; the stable identity ingestion mirrors against."""
-    source: IngestedVideo.Col[YouTubeSource] = Text()
+    source: sqlite.Col[YouTubeSource] = Text()
     """Which saved list the video came from."""
-    title: IngestedVideo.Col[str] = Text()
-    channel: IngestedVideo.Col[str] = Text()
-    topic: IngestedVideo.Col[str] = Text()
+    title: sqlite.Col[str] = Text()
+    channel: sqlite.Col[str] = Text()
+    topic: sqlite.Col[str] = Text()
     """The topic browse filters on."""
-    description: IngestedVideo.Col[str] = Text()
+    description: sqlite.Col[str] = Text()
     """Saved-content text searched alongside the transcript."""
-    ignored_at: IngestedVideo.Col[UtcDatetime | None] = Text(
-        default=None, nullable=True
-    )
+    ignored_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
     """When the video was purged from ingestion; null while it is active."""
     # --- Enriched metadata (nullable; filled by sync detail fetch / import). ---
-    channel_id: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    liked_at: IngestedVideo.Col[UtcDatetime | None] = Text(default=None, nullable=True)
+    channel_id: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    liked_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
     """When the user liked the video; the ordering key for browse."""
-    video_published_at: IngestedVideo.Col[UtcDatetime | None] = Text(
+    video_published_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None, nullable=True
     )
-    duration_seconds: IngestedVideo.Col[int | None] = Integer(
+    duration_seconds: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    category_id: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    default_language: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    default_audio_language: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    caption_available: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    privacy_status: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    licensed_content: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    made_for_kids: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    live_broadcast_content: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    definition: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    dimension: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    statistics_view_count: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    statistics_like_count: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    statistics_comment_count: sqlite.Col[int | None] = Integer(
         default=None, nullable=True
     )
-    category_id: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    default_language: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    default_audio_language: IngestedVideo.Col[str | None] = Text(
+    statistics_fetched_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None, nullable=True
     )
-    caption_available: IngestedVideo.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    privacy_status: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    licensed_content: IngestedVideo.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    made_for_kids: IngestedVideo.Col[int | None] = Integer(default=None, nullable=True)
-    live_broadcast_content: IngestedVideo.Col[str | None] = Text(
-        default=None, nullable=True
-    )
-    definition: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    dimension: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    statistics_view_count: IngestedVideo.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    statistics_like_count: IngestedVideo.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    statistics_comment_count: IngestedVideo.Col[int | None] = Integer(
-        default=None, nullable=True
-    )
-    statistics_fetched_at: IngestedVideo.Col[UtcDatetime | None] = Text(
-        default=None, nullable=True
-    )
-    topic_categories_json: IngestedVideo.Col[str | None] = Text(
-        default=None, nullable=True
-    )
-    tags_json: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    thumbnails_json: IngestedVideo.Col[str | None] = Text(default=None, nullable=True)
-    created_at: IngestedVideo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: IngestedVideo.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    topic_categories_json: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    tags_json: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    thumbnails_json: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(topic)]
 
@@ -424,31 +407,23 @@ _ZERO_FAILED_ATTEMPTS = validate_python_unsafe(NonNegativeInt, 0)
 class YouTubeTranscript[S = Pending](Model[S, "YouTubeTranscript[Fetched]"]):
     """Canonical transcript content and acquisition state for one saved video."""
 
-    id: YouTubeTranscript.GenCol[PositiveInt] = Integer(
+    id: sqlite.GenCol[PositiveInt] = Integer(
         primary_key=True, auto_increment=True, default=PENDING_GENERATION
     )
-    ingested_video_id: YouTubeTranscript.FKCol[IngestedVideo, UUID7] = ForeignKey(
+    ingested_video_id: sqlite.FKCol[IngestedVideo, UUID7] = ForeignKey(
         IngestedVideo.id, nullable=False, unique=True, on_delete="CASCADE"
     )
-    status: YouTubeTranscript.Col[TranscriptPersistedStatus] = Text(nullable=False)
-    failed_attempts: YouTubeTranscript.Col[NonNegativeInt] = Integer(
-        default=_ZERO_FAILED_ATTEMPTS
-    )
-    last_error: YouTubeTranscript.Col[NonEmptyStr | None] = Text(
-        default=None, nullable=True
-    )
-    next_attempt_at: YouTubeTranscript.Col[UtcDatetime | None] = Text(
+    status: sqlite.Col[TranscriptPersistedStatus] = Text(nullable=False)
+    failed_attempts: sqlite.Col[NonNegativeInt] = Integer(default=_ZERO_FAILED_ATTEMPTS)
+    last_error: sqlite.Col[NonEmptyStr | None] = Text(default=None, nullable=True)
+    next_attempt_at: sqlite.Col[UtcDatetime | None] = Text(nullable=True, default=None)
+    source: sqlite.Col[NonEmptyStr | None] = Text(nullable=True, default=None)
+    text: sqlite.Col[NonBlankStr | None] = Text(nullable=True, default=None)
+    segments: sqlite.Col[Json[tuple[TranscriptSegment, ...] | None]] = Text(
         nullable=True, default=None
     )
-    source: YouTubeTranscript.Col[NonEmptyStr | None] = Text(
-        nullable=True, default=None
-    )
-    text: YouTubeTranscript.Col[NonBlankStr | None] = Text(nullable=True, default=None)
-    segments: YouTubeTranscript.Col[Json[tuple[TranscriptSegment, ...] | None]] = Text(
-        nullable=True, default=None
-    )
-    created_at: YouTubeTranscript.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: YouTubeTranscript.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class _TranscriptStateBase(BaseModel):

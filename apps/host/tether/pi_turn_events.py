@@ -92,7 +92,8 @@ def _is_assistant_message(message: object) -> bool:
     """Report whether a pi message envelope is an assistant turn."""
     if not isinstance(message, dict):
         return False
-    return cast("dict[str, Any]", message).get("role") == "assistant"
+    role = cast("dict[str, object]", message).get("role")
+    return isinstance(role, str) and role == "assistant"
 
 
 def _joined_content_text(message: dict[str, Any], *, item_type: str) -> str:

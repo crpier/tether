@@ -7,6 +7,7 @@ from typing import ClassVar, Literal
 from uuid import UUID, uuid7
 
 from pydantic import UUID7, NonNegativeInt, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -37,52 +38,52 @@ type PushDeliveryStatus = Literal[
 class ScheduledTrigger[S = Pending](Model[S, "ScheduledTrigger[Fetched]"]):
     """A persisted time-triggered action and its scheduler lifecycle state."""
 
-    id: ScheduledTrigger.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    recurrence: ScheduledTrigger.Col[TriggerRecurrence] = Text()
+    recurrence: sqlite.Col[TriggerRecurrence] = Text()
     """How often the trigger fires: `once`, `daily`, or `weekly`."""
-    action_kind: ScheduledTrigger.Col[TriggerActionKind] = Text()
+    action_kind: sqlite.Col[TriggerActionKind] = Text()
     """`message` delivers `payload` verbatim; `prompt` runs it through pi."""
-    payload: ScheduledTrigger.Col[str] = Text()
+    payload: sqlite.Col[str] = Text()
     """The fixed message text, or the agent prompt, depending on `action_kind`."""
-    model_profile: ScheduledTrigger.Col[str | None] = Text(default=None, nullable=True)
+    model_profile: sqlite.Col[str | None] = Text(default=None, nullable=True)
     """Profile pinned to a recurring prompt; null for other trigger actions."""
-    target_conversation_id: ScheduledTrigger.Col[UUID7 | None] = Text(
+    target_conversation_id: sqlite.Col[UUID7 | None] = Text(
         default=None,
         nullable=True,
     )
     """Active Conversation targeted by a prompt; null for fixed messages."""
-    timezone: ScheduledTrigger.Col[str] = Text()
+    timezone: sqlite.Col[str] = Text()
     """IANA timezone the wall-clock recurrence is anchored to."""
-    wall_time: ScheduledTrigger.Col[str | None] = Text(default=None, nullable=True)
+    wall_time: sqlite.Col[str | None] = Text(default=None, nullable=True)
     """`HH:MM` wall-clock fire time for recurring triggers; null for `once`."""
-    weekday: ScheduledTrigger.Col[int | None] = Integer(default=None, nullable=True)
+    weekday: sqlite.Col[int | None] = Integer(default=None, nullable=True)
     """Weekday (Mon=0) for `weekly`; null otherwise."""
-    next_fire_at: ScheduledTrigger.Col[UtcDatetime] = Text()
+    next_fire_at: sqlite.Col[UtcDatetime] = Text()
     """The next scheduled occurrence, as UTC."""
-    status: ScheduledTrigger.Col[TriggerStatus] = Text()
+    status: sqlite.Col[TriggerStatus] = Text()
     """Firing lifecycle; recurring triggers remain `active`."""
-    claimed_at: ScheduledTrigger.Col[UtcDatetime | None] = Text(
+    claimed_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
     """Stamped when a scheduler tick claims the row for dispatch."""
-    attempts: ScheduledTrigger.Col[int] = Integer(default=0)
+    attempts: sqlite.Col[int] = Integer(default=0)
     """Failed dispatch attempts at the current occurrence."""
-    next_attempt_at: ScheduledTrigger.Col[UtcDatetime | None] = Text(
+    next_attempt_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
     """Retry-backoff time; when set it overrides `next_fire_at` for due-ness."""
-    last_error: ScheduledTrigger.Col[str | None] = Text(default=None, nullable=True)
+    last_error: sqlite.Col[str | None] = Text(default=None, nullable=True)
     """The most recent dispatch failure message, for diagnostics."""
-    version: ScheduledTrigger.Col[PositiveInt] = Integer(default=1)
+    version: sqlite.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: ScheduledTrigger.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: ScheduledTrigger.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    deleted_at: ScheduledTrigger.Col[UtcDatetime | None] = Text(
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    deleted_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
@@ -93,81 +94,81 @@ class ScheduledTrigger[S = Pending](Model[S, "ScheduledTrigger[Fetched]"]):
 class ScheduledOccurrence[S = Pending](Model[S, "ScheduledOccurrence[Fetched]"]):
     """One durable firing whose definition snapshot never changes."""
 
-    id: ScheduledOccurrence.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    action_kind: ScheduledOccurrence.Col[TriggerActionKind] = Text()
-    answer: ScheduledOccurrence.Col[str | None] = Text(default=None, nullable=True)
-    answer_message_id: ScheduledOccurrence.Col[UUID | None] = Text(
+    action_kind: sqlite.Col[TriggerActionKind] = Text()
+    answer: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    answer_message_id: sqlite.Col[UUID | None] = Text(
         default=None,
         nullable=True,
     )
-    completed_at: ScheduledOccurrence.Col[UtcDatetime | None] = Text(
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    created_at: ScheduledOccurrence.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    dispatch_attempts: ScheduledOccurrence.Col[NonNegativeInt] = Integer(default=0)
-    failure_code: ScheduledOccurrence.Col[str | None] = Text(
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    dispatch_attempts: sqlite.Col[NonNegativeInt] = Integer(default=0)
+    failure_code: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    failure_summary: ScheduledOccurrence.Col[str | None] = Text(
+    failure_summary: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    intended_fire_at: ScheduledOccurrence.Col[UtcDatetime] = Text()
-    model_display_name_snapshot: ScheduledOccurrence.Col[str | None] = Text(
+    intended_fire_at: sqlite.Col[UtcDatetime] = Text()
+    model_display_name_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_id_snapshot: ScheduledOccurrence.Col[str | None] = Text(
+    model_id_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_profile: ScheduledOccurrence.Col[str | None] = Text(
+    model_profile: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_provider_snapshot: ScheduledOccurrence.Col[str | None] = Text(
+    model_provider_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_thinking_level_snapshot: ScheduledOccurrence.Col[str | None] = Text(
+    model_thinking_level_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    next_attempt_at: ScheduledOccurrence.Col[UtcDatetime | None] = Text(
+    next_attempt_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    payload: ScheduledOccurrence.Col[str] = Text()
-    push_attempts: ScheduledOccurrence.Col[NonNegativeInt] = Integer(default=0)
-    push_error: ScheduledOccurrence.Col[str | None] = Text(
+    payload: sqlite.Col[str] = Text()
+    push_attempts: sqlite.Col[NonNegativeInt] = Integer(default=0)
+    push_error: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    push_next_attempt_at: ScheduledOccurrence.Col[UtcDatetime | None] = Text(
+    push_next_attempt_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    push_status: ScheduledOccurrence.Col[PushDeliveryStatus] = Text()
-    pushed_at: ScheduledOccurrence.Col[UtcDatetime | None] = Text(
+    push_status: sqlite.Col[PushDeliveryStatus] = Text()
+    pushed_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    started_at: ScheduledOccurrence.Col[UtcDatetime | None] = Text(
+    started_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    status: ScheduledOccurrence.Col[OccurrenceStatus] = Text()
-    target_conversation_id: ScheduledOccurrence.Col[UUID7 | None] = Text(
+    status: sqlite.Col[OccurrenceStatus] = Text()
+    target_conversation_id: sqlite.Col[UUID7 | None] = Text(
         default=None,
         nullable=True,
     )
-    trigger_id: ScheduledOccurrence.Col[UUID7] = Text()
-    trigger_version: ScheduledOccurrence.Col[PositiveInt] = Integer()
+    trigger_id: sqlite.Col[UUID7] = Text()
+    trigger_version: sqlite.Col[PositiveInt] = Integer()
 
     __indexes__: ClassVar = [Index(trigger_id, intended_fire_at)]
 

@@ -71,9 +71,9 @@ async def spawn_pi_runtime[RuntimeT](
     """Resolve process identity and storage before delegating process ownership."""
     resolved_session_id = request.session_id or str(uuid.uuid7())
     resolved_session_dir = (
-        request.session_dir(resolved_session_id)
-        if callable(request.session_dir)
-        else request.session_dir
+        request.session_dir
+        if isinstance(request.session_dir, Path)
+        else request.session_dir(resolved_session_id)
     )
     await AsyncPath(resolved_session_dir).mkdir(parents=True, exist_ok=True)
     runtime = await spawn(

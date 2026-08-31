@@ -459,7 +459,7 @@ def environment_app_factory_propagates_sync_flags() -> None:
         return Starlette()
 
     original_create_app = server.create_app
-    server.create_app = fake_create_app
+    server.create_app = fake_create_app  # ty: ignore[invalid-assignment]
     try:
         with configured_environment(
             TETHER_APP_PASSWORD="test-app-password",
@@ -825,7 +825,7 @@ def serve_quiets_host_dependency_loggers() -> None:
         pass
 
     original_run = server.uvicorn.run
-    server.uvicorn.run = fake_run
+    server.uvicorn.run = fake_run  # ty: ignore[invalid-assignment]
     try:
         with captured_logging():
             serve(
@@ -856,7 +856,7 @@ def serve_runs_uvicorn_against_the_environment_app_factory() -> None:
         calls.append({"app": app, **kwargs})
 
     original_run = server.uvicorn.run
-    server.uvicorn.run = fake_run
+    server.uvicorn.run = fake_run  # ty: ignore[invalid-assignment]
     try:
         with captured_logging():
             serve(

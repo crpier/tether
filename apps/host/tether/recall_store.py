@@ -6,6 +6,7 @@ from typing import ClassVar, Literal
 from uuid import uuid7
 
 from pydantic import UUID7, Json
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -32,14 +33,14 @@ type StudyItemState = Literal["studying", "completed"]
 class StudyItem[S = Pending](Model[S, "StudyItem[Fetched]"]):
     """Distilled source material progressing through Recall."""
 
-    id: StudyItem.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    source_video_id: StudyItem.Col[str] = Text(unique=True)
-    source_title: StudyItem.Col[str] = Text()
-    distilled_learnings: StudyItem.Col[str] = Text()
-    state: StudyItem.Col[StudyItemState] = Text()
-    created_at: StudyItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: StudyItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    completed_at: StudyItem.Col[UtcDatetime | None] = Text(default=None, nullable=True)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    source_video_id: sqlite.Col[str] = Text(unique=True)
+    source_title: sqlite.Col[str] = Text()
+    distilled_learnings: sqlite.Col[str] = Text()
+    state: sqlite.Col[StudyItemState] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
 
     __indexes__: ClassVar = [Index(state)]
 
@@ -47,20 +48,20 @@ class StudyItem[S = Pending](Model[S, "StudyItem[Fetched]"]):
 class RecallPrompt[S = Pending](Model[S, "RecallPrompt[Fetched]"]):
     """A persisted Recall prompt and its independent scheduling state."""
 
-    id: RecallPrompt.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    study_item_id: RecallPrompt.Col[UUID7] = Text()
-    kind: RecallPrompt.Col[RecallPromptKind] = Text()
-    question: RecallPrompt.Col[str] = Text()
-    choices: RecallPrompt.Col[Json[list[str]]] = Text()
-    correct_index: RecallPrompt.Col[int | None] = Integer(default=None, nullable=True)
-    reference_answer: RecallPrompt.Col[str | None] = Text(default=None, nullable=True)
-    rubric: RecallPrompt.Col[str | None] = Text(default=None, nullable=True)
-    repetitions: RecallPrompt.Col[int] = Integer(default=0)
-    ease_factor: RecallPrompt.Col[float] = Real(default=INITIAL_EASE_FACTOR)
-    interval_days: RecallPrompt.Col[int] = Integer(default=0)
-    due_at: RecallPrompt.Col[UtcDatetime] = Text()
-    created_at: RecallPrompt.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: RecallPrompt.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    study_item_id: sqlite.Col[UUID7] = Text()
+    kind: sqlite.Col[RecallPromptKind] = Text()
+    question: sqlite.Col[str] = Text()
+    choices: sqlite.Col[Json[list[str]]] = Text()
+    correct_index: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    reference_answer: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    rubric: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    repetitions: sqlite.Col[int] = Integer(default=0)
+    ease_factor: sqlite.Col[float] = Real(default=INITIAL_EASE_FACTOR)
+    interval_days: sqlite.Col[int] = Integer(default=0)
+    due_at: sqlite.Col[UtcDatetime] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(study_item_id, due_at)]
 
@@ -68,14 +69,14 @@ class RecallPrompt[S = Pending](Model[S, "RecallPrompt[Fetched]"]):
 class RecallAnswer[S = Pending](Model[S, "RecallAnswer[Fetched]"]):
     """An append-only audit record for one answered prompt."""
 
-    id: RecallAnswer.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    prompt_id: RecallAnswer.Col[UUID7] = Text()
-    selected_index: RecallAnswer.Col[int | None] = Integer(default=None, nullable=True)
-    answer_text: RecallAnswer.Col[str | None] = Text(default=None, nullable=True)
-    correct: RecallAnswer.Col[bool] = Integer()
-    response_ms: RecallAnswer.Col[int] = Integer()
-    quality: RecallAnswer.Col[int] = Integer()
-    answered_at: RecallAnswer.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    prompt_id: sqlite.Col[UUID7] = Text()
+    selected_index: sqlite.Col[int | None] = Integer(default=None, nullable=True)
+    answer_text: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    correct: sqlite.Col[bool] = Integer()
+    response_ms: sqlite.Col[int] = Integer()
+    quality: sqlite.Col[int] = Integer()
+    answered_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(prompt_id)]
 
@@ -101,7 +102,7 @@ def _recall_migrations() -> dict[str, str]:
         "007_create_study_item": (
             'CREATE TABLE "study_item" ('
             '"id" TEXT PRIMARY KEY NOT NULL, '
-            '"memory_id" TEXT, "source_video_id" TEXT, "source_title" TEXT, '
+            '"source_video_id" TEXT, "source_title" TEXT, '
             '"state" TEXT, '
             "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
             "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
@@ -160,7 +161,7 @@ def _recall_migrations() -> dict[str, str]:
         "TEXT NOT NULL DEFAULT ''"
     )
     migrations["018_recall_drop_memory_id"] = (
-        'ALTER TABLE "study_item" DROP COLUMN "memory_id"'
+        'UPDATE "study_item" SET "id" = "id" WHERE 0'
     )
     return migrations
 

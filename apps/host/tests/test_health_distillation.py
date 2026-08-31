@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 
 import structlog
 from snekok.result import Err
@@ -44,8 +45,7 @@ from tether.structured_logging import Logger
 
 def test_logger() -> Logger:
     """Provide a deterministic logger for executor calls."""
-    logger: Logger = structlog.get_logger("test.health_distillation")
-    return logger
+    return cast("Logger", structlog.get_logger("test.health_distillation"))
 
 
 class _CurationRunner:

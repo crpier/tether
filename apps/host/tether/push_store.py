@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid7
 
 from pydantic import UUID7
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -25,13 +26,13 @@ from tether.push_model import PushStatus
 class PushSubscription[S = Pending](Model[S, "PushSubscription[Fetched]"]):
     """One browser subscription keyed by its provider endpoint."""
 
-    id: PushSubscription.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    endpoint: PushSubscription.Col[str] = Text(unique=True)
-    p256dh: PushSubscription.Col[str] = Text()
-    auth: PushSubscription.Col[str] = Text()
-    created_at: PushSubscription.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: PushSubscription.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    deleted_at: PushSubscription.Col[UtcDatetime | None] = Text(
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    endpoint: sqlite.Col[str] = Text(unique=True)
+    p256dh: sqlite.Col[str] = Text()
+    auth: sqlite.Col[str] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    deleted_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )

@@ -44,13 +44,13 @@ from tether.gmail.client import (
     GmailNetworkFailure,
     GmailResponse,
 )
-from tether.gmail.store import GmailMessageRecord, create_gmail_schema
-from tether.notification_store import create_notification_schema
+from tether.gmail.store import GmailMessageRecord
+from tether.host_schema import create_host_schema
 from tether.structured_logging import Logger
-from tether.todo_store import Todo, create_todo_schema
+from tether.todo_store import Todo
 from tether.todos import TodoService
 from tether.trigger_schedule import TriggerSpec
-from tether.trigger_store import ScheduledTrigger, create_trigger_schema
+from tether.trigger_store import ScheduledTrigger
 from tether.triggers import ScheduledPromptSnapshot, TriggerService
 
 
@@ -234,7 +234,7 @@ def _encode_body(text: str) -> str:
 
 _DEFAULT_INTERNAL_DATE = datetime(2026, 1, 1, tzinfo=UTC)
 """Default `internalDate` for `message_payload`, hoisted off the parameter list
-so it is not constructed in a default expression (`reportCallInDefaultInitializer`)."""
+so it is not constructed in a default expression."""
 
 
 def message_payload(  # noqa: PLR0913 (a builder mirroring the Gmail API's shape)
@@ -387,10 +387,7 @@ class GmailEnv:
 async def gmail_env() -> AsyncGenerator[GmailEnv]:
     """A fresh database with Gmail, Trigger, and Todo schemas."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_trigger_schema(db)
-    await create_notification_schema(db)
-    await create_todo_schema(db)
-    await create_gmail_schema(db)
+    await create_host_schema(db)
     yield GmailEnv(
         database=db,
         trigger_service=TriggerService(database=db, tracer=noop_tracer()),

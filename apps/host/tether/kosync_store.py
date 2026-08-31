@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from snekql import sqlite
 from snekql.sqlite import (
     PENDING_GENERATION,
     CurrentTimestamp,
@@ -27,27 +28,25 @@ from tether.kosync_model import ProgressUpdate
 class EbookProgressEvent[S = Pending](Model[S, "EbookProgressEvent[Fetched]"]):
     """One immutable reading-progress push received from a device."""
 
-    id: EbookProgressEvent.GenCol[int] = Integer(
-        primary_key=True, default=PENDING_GENERATION
-    )
-    document_hash: EbookProgressEvent.Col[str] = Text(nullable=False)
-    percentage: EbookProgressEvent.Col[float] = Real(nullable=False)
-    progress: EbookProgressEvent.Col[str] = Text(nullable=False)
-    device: EbookProgressEvent.Col[str] = Text(nullable=False)
-    device_id: EbookProgressEvent.Col[str] = Text(nullable=False)
-    timestamp: EbookProgressEvent.Col[int] = Integer(nullable=False)
-    received_at: EbookProgressEvent.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[int] = Integer(primary_key=True, default=PENDING_GENERATION)
+    document_hash: sqlite.Col[str] = Text(nullable=False)
+    percentage: sqlite.Col[float] = Real(nullable=False)
+    progress: sqlite.Col[str] = Text(nullable=False)
+    device: sqlite.Col[str] = Text(nullable=False)
+    device_id: sqlite.Col[str] = Text(nullable=False)
+    timestamp: sqlite.Col[int] = Integer(nullable=False)
+    received_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
     __indexes__: ClassVar = [Index(document_hash)]
 
 
 class EbookDocument[S = Pending](Model[S, "EbookDocument[Fetched]"]):
     """A reading-source document identity and completion state."""
 
-    document_hash: EbookDocument.Col[str] = Text(primary_key=True)
-    title: EbookDocument.Col[str | None] = Text(default=None, nullable=True)
-    finished_at: EbookDocument.Col[str | None] = Text(default=None, nullable=True)
-    created_at: EbookDocument.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: EbookDocument.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    document_hash: sqlite.Col[str] = Text(primary_key=True)
+    title: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    finished_at: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class KosyncStore:
@@ -179,14 +178,13 @@ _KOSYNC_MIGRATIONS: dict[str, str] = {
         'CREATE TABLE "ebook_document" ('
         '"document_hash" TEXT PRIMARY KEY NOT NULL, '
         '"title" TEXT, '
-        '"finished_captured_at" TEXT, '
+        '"finished_at" TEXT, '
         "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
         "\"updated_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
         ") STRICT"
     ),
     "028_rename_ebook_finished_at": (
-        'ALTER TABLE "ebook_document" RENAME COLUMN '
-        '"finished_captured_at" TO "finished_at"'
+        'UPDATE "ebook_document" SET "document_hash" = "document_hash" WHERE 0'
     ),
 }
 

@@ -6,6 +6,7 @@ from typing import ClassVar, Literal, TypedDict
 from uuid import uuid7
 
 from pydantic import UUID7, Json, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -38,34 +39,34 @@ class BucketItemProvenance(TypedDict):
 
 
 class BucketItem[S = Pending](Model[S, "BucketItem[Fetched]"]):
-    id: BucketItem.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    item_type: BucketItem.Col[ItemType] = Text()
+    item_type: sqlite.Col[ItemType] = Text()
     """The kind of Bucket item; determines its payload fields."""
-    title: BucketItem.Col[str] = Text()
+    title: sqlite.Col[str] = Text()
     """Human-facing display text; the searchable projection of the payload."""
-    dedup_key: BucketItem.Col[str] = Text()
+    dedup_key: sqlite.Col[str] = Text()
     """Normalised identity used to find duplicates across all states."""
-    data: BucketItem.Col[Json[dict[str, JsonValue]]] = Text()
+    data: sqlite.Col[Json[dict[str, JsonValue]]] = Text()
     """The item-type's payload fields, as JSON."""
-    intent_context: BucketItem.Col[str] = Text()
+    intent_context: sqlite.Col[str] = Text()
     """Why the human saved this, if given. Optional at Add (stored as `""` when
     omitted); may be attached or replaced later via `set_intent`."""
-    provenance: BucketItem.Col[Json[BucketItemProvenance]] = Text(
+    provenance: sqlite.Col[Json[BucketItemProvenance]] = Text(
         default_factory=lambda: BucketItemProvenance(kind="manual"),
     )
     """The objective origin of the Added item."""
-    version: BucketItem.Col[PositiveInt] = Integer(default=1)
+    version: sqlite.Col[PositiveInt] = Integer(default=1)
     """Version number used for optimistic concurrency control."""
-    created_at: BucketItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: BucketItem.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    completed_at: BucketItem.Col[UtcDatetime | None] = Text(
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    deleted_at: BucketItem.Col[UtcDatetime | None] = Text(
+    deleted_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )

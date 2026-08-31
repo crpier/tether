@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import uuid7
 
 from pydantic import UUID7, Json, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -30,27 +31,27 @@ from tether.ledger_model import (
 class Ledger[S = Pending](Model[S, "Ledger[Fetched]"]):
     """Stable identity shared by every immutable definition revision."""
 
-    id: Ledger.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    created_at: Ledger.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class LedgerRevision[S = Pending](Model[S, "LedgerRevision[Fetched]"]):
     """One approved immutable interpretation of a Ledger."""
 
-    id: LedgerRevision.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    approved_by_conversation_id: LedgerRevision.Col[UUID7] = Text()
-    approved_by_message_id: LedgerRevision.Col[UUID7] = Text()
-    created_at: LedgerRevision.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    fields: LedgerRevision.Col[Json[list[LedgerFieldDefinition]]] = Text()
-    ledger_id: LedgerRevision.Col[UUID7] = Text()
-    name: LedgerRevision.Col[str] = Text()
-    proposal_id: LedgerRevision.Col[UUID7] = Text()
-    purpose: LedgerRevision.Col[str] = Text()
-    revision: LedgerRevision.Col[PositiveInt] = Integer()
-    status: LedgerRevision.Col[LedgerLifecycleStatus] = Text()
+    approved_by_conversation_id: sqlite.Col[UUID7] = Text()
+    approved_by_message_id: sqlite.Col[UUID7] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    fields: sqlite.Col[Json[list[LedgerFieldDefinition]]] = Text()
+    ledger_id: sqlite.Col[UUID7] = Text()
+    name: sqlite.Col[str] = Text()
+    proposal_id: sqlite.Col[UUID7] = Text()
+    purpose: sqlite.Col[str] = Text()
+    revision: sqlite.Col[PositiveInt] = Integer()
+    status: sqlite.Col[LedgerLifecycleStatus] = Text()
 
     __indexes__: ClassVar = [Index(ledger_id, revision), Index(proposal_id)]
 
@@ -58,25 +59,25 @@ class LedgerRevision[S = Pending](Model[S, "LedgerRevision[Fetched]"]):
 class LedgerEntry[S = Pending](Model[S, "LedgerEntry[Fetched]"]):
     """One immutable schema-versioned record with exact provenance."""
 
-    id: LedgerEntry.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    dedupe_key: LedgerEntry.Col[str] = Text()
-    evidence: LedgerEntry.Col[Json[list[str]]] = Text()
-    ledger_id: LedgerEntry.Col[UUID7] = Text()
-    occurred_at: LedgerEntry.Col[UtcDatetime | None] = Text(
+    dedupe_key: sqlite.Col[str] = Text()
+    evidence: sqlite.Col[Json[list[str]]] = Text()
+    ledger_id: sqlite.Col[UUID7] = Text()
+    occurred_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    recorded_at: LedgerEntry.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    revision: LedgerEntry.Col[PositiveInt] = Integer()
-    source_message_id: LedgerEntry.Col[UUID7] = Text()
-    supersedes_entry_id: LedgerEntry.Col[UUID7 | None] = Text(
+    recorded_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    revision: sqlite.Col[PositiveInt] = Integer()
+    source_message_id: sqlite.Col[UUID7] = Text()
+    supersedes_entry_id: sqlite.Col[UUID7 | None] = Text(
         default=None,
         nullable=True,
     )
-    values: LedgerEntry.Col[Json[dict[str, LedgerScalarValue]]] = Text()
+    values: sqlite.Col[Json[dict[str, LedgerScalarValue]]] = Text()
 
     __indexes__: ClassVar = [
         Index(ledger_id, recorded_at),
@@ -88,33 +89,33 @@ class LedgerEntry[S = Pending](Model[S, "LedgerEntry[Fetched]"]):
 class LedgerProposal[S = Pending](Model[S, "LedgerProposal[Fetched]"]):
     """One frozen definition awaiting or retaining explicit user approval."""
 
-    id: LedgerProposal.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    approved_at: LedgerProposal.Col[UtcDatetime | None] = Text(
+    approved_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    approved_by_message_id: LedgerProposal.Col[UUID7 | None] = Text(
+    approved_by_message_id: sqlite.Col[UUID7 | None] = Text(
         default=None,
         nullable=True,
     )
-    base_revision: LedgerProposal.Col[PositiveInt | None] = Integer(
+    base_revision: sqlite.Col[PositiveInt | None] = Integer(
         default=None,
         nullable=True,
     )
-    created_at: LedgerProposal.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    fields: LedgerProposal.Col[Json[list[LedgerFieldDefinition]]] = Text()
-    kind: LedgerProposal.Col[LedgerProposalKind] = Text()
-    ledger_id: LedgerProposal.Col[UUID7] = Text(default_factory=uuid7)
-    ledger_status: LedgerProposal.Col[LedgerLifecycleStatus] = Text()
-    name: LedgerProposal.Col[str] = Text()
-    proposed_by_conversation_id: LedgerProposal.Col[UUID7] = Text()
-    proposed_by_message_id: LedgerProposal.Col[UUID7] = Text()
-    proposed_revision: LedgerProposal.Col[PositiveInt] = Integer()
-    purpose: LedgerProposal.Col[str] = Text()
-    status: LedgerProposal.Col[LedgerProposalStatus] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    fields: sqlite.Col[Json[list[LedgerFieldDefinition]]] = Text()
+    kind: sqlite.Col[LedgerProposalKind] = Text()
+    ledger_id: sqlite.Col[UUID7] = Text(default_factory=uuid7)
+    ledger_status: sqlite.Col[LedgerLifecycleStatus] = Text()
+    name: sqlite.Col[str] = Text()
+    proposed_by_conversation_id: sqlite.Col[UUID7] = Text()
+    proposed_by_message_id: sqlite.Col[UUID7] = Text()
+    proposed_revision: sqlite.Col[PositiveInt] = Integer()
+    purpose: sqlite.Col[str] = Text()
+    status: sqlite.Col[LedgerProposalStatus] = Text()
 
     __indexes__: ClassVar = [
         Index(status, created_at),

@@ -109,10 +109,10 @@ def _parse_timestamp(value: object) -> datetime | None:
 
 def _parse_int(value: object) -> int | None:
     """Parse a Data API count (returned as a string) into an int, or None."""
-    if value is None or isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
         return None
     try:
-        return int(value)  # pyright: ignore[reportArgumentType]  (value is Any from JSON)
+        return int(value)
     except TypeError, ValueError:
         return None
 
@@ -246,7 +246,7 @@ class OAuthYouTubeApi:
         """
         ids = list(video_ids)
         if not ids:
-            return {}
+            return dict[str, RawYouTubeVideo]()
         # Statistics are volatile, so stamp when this batch read them.
         fetched_at = datetime.now(UTC)
         result: dict[str, RawYouTubeVideo] = {}

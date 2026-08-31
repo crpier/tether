@@ -22,10 +22,10 @@ from opentelemetry import trace
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 
+from tether.host_schema import create_host_schema
 from tether.structured_logging import Logger
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import DailyQuota, YouTubeApiClient
-from tether.youtube.store import create_youtube_schema
 from tether.youtube.sync import YouTubeSyncService
 
 
@@ -41,7 +41,7 @@ async def _run(*, database_path: Path, logger: Logger) -> None:
     async with await Database.initialize(
         backend=Config(database=database_path)
     ) as database:
-        await create_youtube_schema(database)
+        await create_host_schema(database)
         # The reset only touches persisted bookkeeping, so the upstream client is a
         # throwaway fake — no YouTube call is made here.
         sync = YouTubeSyncService(

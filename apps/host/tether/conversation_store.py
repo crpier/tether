@@ -6,6 +6,7 @@ from typing import Any, cast
 from uuid import UUID, uuid7
 
 from pydantic import UUID7, NonNegativeInt, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -29,129 +30,129 @@ from tether.conversation_model import (
 class Conversation[S = Pending](Model[S, "Conversation[Fetched]"]):
     """A stable host-owned chat thread."""
 
-    id: Conversation.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    archived_at: Conversation.Col[UtcDatetime | None] = Text(
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    archived_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    created_at: Conversation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    display_name: Conversation.Col[str | None] = Text(default=None, nullable=True)
-    kind: Conversation.Col[ConversationKind] = Text(
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    display_name: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    kind: sqlite.Col[ConversationKind] = Text(
         default=cast("ConversationKind", "scoped")
     )
-    last_read_seq: Conversation.Col[NonNegativeInt] = Integer(default=0)
-    pi_session_id: Conversation.GenCol[UUID7] = Text(default_factory=uuid7)
-    scope_brief: Conversation.Col[str | None] = Text(default=None, nullable=True)
-    scope_revision: Conversation.Col[PositiveInt] = Integer(default=1)
-    runtime_scope_revision: Conversation.Col[PositiveInt] = Integer(default=1)
-    selected_model: Conversation.Col[str | None] = Text(default=None, nullable=True)
-    status: Conversation.Col[ConversationStatus] = Text(
+    last_read_seq: sqlite.Col[NonNegativeInt] = Integer(default=0)
+    pi_session_id: sqlite.GenCol[UUID7] = Text(default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    scope_brief: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    scope_revision: sqlite.Col[PositiveInt] = Integer(default=1)
+    runtime_scope_revision: sqlite.Col[PositiveInt] = Integer(default=1)
+    selected_model: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    status: sqlite.Col[ConversationStatus] = Text(
         default=cast("ConversationStatus", "active")
     )
-    title: Conversation.Col[str | None] = Text(default=None, nullable=True)
+    title: sqlite.Col[str | None] = Text(default=None, nullable=True)
 
 
 class ConversationTurn[S = Pending](Model[S, "ConversationTurn[Fetched]"]):
     """One durable FIFO execution owned by a Conversation."""
 
-    id: ConversationTurn.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    acceptance_started_at: ConversationTurn.Col[UtcDatetime | None] = Text(
+    acceptance_started_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    attempts: ConversationTurn.Col[NonNegativeInt] = Integer(default=0)
-    cancel_requested_at: ConversationTurn.Col[UtcDatetime | None] = Text(
+    attempts: sqlite.Col[NonNegativeInt] = Integer(default=0)
+    cancel_requested_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    completed_at: ConversationTurn.Col[UtcDatetime | None] = Text(
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    conversation_id: ConversationTurn.Col[UUID7] = Text()
-    created_at: ConversationTurn.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    failure_code: ConversationTurn.Col[str | None] = Text(default=None, nullable=True)
-    failure_phase: ConversationTurn.Col[str | None] = Text(default=None, nullable=True)
-    execution_lease_id: ConversationTurn.Col[UUID | None] = Text(
+    conversation_id: sqlite.Col[UUID7] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    failure_code: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    failure_phase: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    execution_lease_id: sqlite.Col[UUID | None] = Text(
         default=None,
         nullable=True,
     )
-    failure_summary: ConversationTurn.Col[str | None] = Text(
+    failure_summary: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_display_name_snapshot: ConversationTurn.Col[str | None] = Text(
+    model_display_name_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_id_snapshot: ConversationTurn.Col[str | None] = Text(
+    model_id_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_provider_snapshot: ConversationTurn.Col[str | None] = Text(
+    model_provider_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_snapshot: ConversationTurn.Col[str | None] = Text(
+    model_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    model_thinking_level_snapshot: ConversationTurn.Col[str | None] = Text(
+    model_thinking_level_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    origin: ConversationTurn.Col[ConversationTurnOrigin] = Text()
-    prompt_snapshot: ConversationTurn.Col[str | None] = Text(
+    origin: sqlite.Col[ConversationTurnOrigin] = Text()
+    prompt_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    reply_mode: ConversationTurn.Col[str] = Text(default="text")
-    request_id: ConversationTurn.Col[UUID | None] = Text(
+    reply_mode: sqlite.Col[str] = Text(default="text")
+    request_id: sqlite.Col[UUID | None] = Text(
         default=None,
         nullable=True,
     )
-    scope_brief_snapshot: ConversationTurn.Col[str | None] = Text(
+    scope_brief_snapshot: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    scope_revision_snapshot: ConversationTurn.Col[PositiveInt] = Integer(default=1)
-    scheduled_occurrence_id: ConversationTurn.Col[UUID | None] = Text(
+    scope_revision_snapshot: sqlite.Col[PositiveInt] = Integer(default=1)
+    scheduled_occurrence_id: sqlite.Col[UUID | None] = Text(
         default=None,
         nullable=True,
     )
-    started_at: ConversationTurn.Col[UtcDatetime | None] = Text(
+    started_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )
-    status: ConversationTurn.Col[ConversationTurnStatus] = Text()
-    trace_run_id: ConversationTurn.Col[str | None] = Text(default=None, nullable=True)
-    turn_seq: ConversationTurn.Col[PositiveInt] = Integer()
+    status: sqlite.Col[ConversationTurnStatus] = Text()
+    trace_run_id: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    turn_seq: sqlite.Col[PositiveInt] = Integer()
 
 
 class Message[S = Pending](Model[S, "Message[Fetched]"]):
     """One settled transcript row owned by the host."""
 
-    id: Message.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    conversation_id: Message.Col[UUID7] = Text()
-    seq: Message.Col[PositiveInt] = Integer()
-    role: Message.Col[MessageRole] = Text()
-    content: Message.Col[str] = Text()
-    created_at: Message.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    pi_message_id: Message.Col[str | None] = Text(default=None, nullable=True)
-    tool_args: Message.Col[str | None] = Text(default=None, nullable=True)
-    tool_name: Message.Col[str | None] = Text(default=None, nullable=True)
-    tool_result: Message.Col[str | None] = Text(default=None, nullable=True)
-    turn_id: Message.Col[UUID7 | None] = Text(default=None, nullable=True)
-    turn_message_seq: Message.Col[PositiveInt | None] = Integer(
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    conversation_id: sqlite.Col[UUID7] = Text()
+    seq: sqlite.Col[PositiveInt] = Integer()
+    role: sqlite.Col[MessageRole] = Text()
+    content: sqlite.Col[str] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    pi_message_id: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    tool_args: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    tool_name: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    tool_result: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    turn_id: sqlite.Col[UUID7 | None] = Text(default=None, nullable=True)
+    turn_message_seq: sqlite.Col[PositiveInt | None] = Integer(
         default=None,
         nullable=True,
     )
 
 
-async def _backfill_historical_turns(database: Database) -> None:
+async def backfill_historical_turns(database: Database) -> None:
     """Group each legacy transcript without inferring Scheduled provenance."""
     async with database.transaction(mode="immediate") as transaction:
         connection = transaction.require_connection()
@@ -241,9 +242,9 @@ async def _backfill_historical_turns(database: Database) -> None:
                     await update_cursor.close()
 
 
-async def create_conversation_schema(database: Database) -> None:
-    """Create or migrate canonical Conversation and Message persistence."""
-    migrations = {
+def conversation_migrations() -> dict[str, str]:
+    """Return the complete ordered Conversation migration chain."""
+    return {
         "003_create_conversation": (
             'CREATE TABLE "conversation" ("id" TEXT PRIMARY KEY NOT NULL, '
             '"created_at" TEXT NOT NULL DEFAULT '
@@ -300,27 +301,16 @@ async def create_conversation_schema(database: Database) -> None:
             'ORDER BY "created_at" ASC, "id" ASC LIMIT 1)'
         ),
         "034_conversation_create_current": (
-            'CREATE TABLE "conversation_current" ('
-            '"id" TEXT PRIMARY KEY NOT NULL, "archived_at" TEXT, '
-            '"created_at" TEXT NOT NULL DEFAULT '
-            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
-            '"display_name" TEXT, "kind" TEXT NOT NULL, '
-            '"last_read_seq" INTEGER NOT NULL, "pi_session_id" TEXT NOT NULL, '
-            '"scope_brief" TEXT, "scope_revision" INTEGER NOT NULL, '
-            '"selected_model" TEXT, "status" TEXT NOT NULL, "title" TEXT) STRICT'
+            'UPDATE "conversation" SET "id" = "id" WHERE 0'
         ),
         "034_conversation_copy_current": (
-            'INSERT INTO "conversation_current" ('
-            '"id", "archived_at", "created_at", "display_name", "kind", '
-            '"last_read_seq", "pi_session_id", "scope_brief", "scope_revision", '
-            '"selected_model", "status", "title") SELECT '
-            '"id", "archived_at", "created_at", "display_name", "kind", '
-            '"last_read_seq", "pi_session_id", "scope_brief", "scope_revision", '
-            '"selected_model", "status", "title" FROM "conversation"'
+            'UPDATE "conversation" SET "id" = "id" WHERE 0'
         ),
-        "034_conversation_drop_legacy": 'DROP TABLE "conversation"',
+        "034_conversation_drop_legacy": (
+            'UPDATE "conversation" SET "id" = "id" WHERE 0'
+        ),
         "034_conversation_rename_current": (
-            'ALTER TABLE "conversation_current" RENAME TO "conversation"'
+            'UPDATE "conversation" SET "id" = "id" WHERE 0'
         ),
         "034_conversation_single_main_insert": (
             'CREATE TRIGGER "conversation_single_main_insert" BEFORE INSERT '
@@ -412,14 +402,86 @@ async def create_conversation_schema(database: Database) -> None:
             'ON "message" ("turn_id") WHERE "turn_id" IS NOT NULL AND '
             "\"role\" IN ('user', 'scheduled')"
         ),
+        "042_canonicalize_conversation_schema": "SELECT 1",
     }
+
+
+async def canonicalize_conversation_schema(database: Database) -> None:
+    """Remove historical literal defaults that are not part of the model schema."""
+    async with database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        cursor = await connection.execute('PRAGMA table_info("conversation")', ())
+        columns = await cursor.fetchall()
+        await cursor.close()
+        application_default_columns = {
+            "kind",
+            "last_read_seq",
+            "runtime_scope_revision",
+            "scope_revision",
+            "status",
+        }
+        defaults = {
+            str(row[1]): row[4]
+            for row in columns
+            if str(row[1]) in application_default_columns
+        }
+        if defaults.keys() == application_default_columns and all(
+            value is None for value in defaults.values()
+        ):
+            return
+
+        statements = (
+            'CREATE TABLE "conversation_canonical" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "archived_at" TEXT, '
+            '"created_at" TEXT NOT NULL DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"display_name" TEXT, "kind" TEXT NOT NULL, '
+            '"last_read_seq" INTEGER NOT NULL, "pi_session_id" TEXT NOT NULL, '
+            '"scope_brief" TEXT, "scope_revision" INTEGER NOT NULL, '
+            '"runtime_scope_revision" INTEGER NOT NULL, "selected_model" TEXT, '
+            '"status" TEXT NOT NULL, "title" TEXT) STRICT',
+            'INSERT INTO "conversation_canonical" ('
+            '"id", "archived_at", "created_at", "display_name", "kind", '
+            '"last_read_seq", "pi_session_id", "scope_brief", "scope_revision", '
+            '"runtime_scope_revision", "selected_model", "status", "title") '
+            'SELECT "id", "archived_at", "created_at", "display_name", "kind", '
+            '"last_read_seq", "pi_session_id", "scope_brief", "scope_revision", '
+            '"runtime_scope_revision", "selected_model", "status", "title" '
+            'FROM "conversation"',
+            'DROP TABLE "conversation"',
+            'ALTER TABLE "conversation_canonical" RENAME TO "conversation"',
+            'CREATE TRIGGER "conversation_single_main_insert" BEFORE INSERT '
+            'ON "conversation" WHEN NEW."kind" = \'main\' AND EXISTS ('
+            'SELECT 1 FROM "conversation" WHERE "kind" = \'main\') '
+            "BEGIN SELECT RAISE(ABORT, 'Main Conversation already exists'); END",
+            'CREATE TRIGGER "conversation_single_main_update" BEFORE UPDATE '
+            'OF "kind" ON "conversation" WHEN NEW."kind" = \'main\' AND EXISTS ('
+            'SELECT 1 FROM "conversation" WHERE "kind" = \'main\' '
+            'AND "id" != NEW."id") '
+            "BEGIN SELECT RAISE(ABORT, 'Main Conversation already exists'); END",
+        )
+        for statement in statements:
+            cursor = await connection.execute(statement, ())
+            await cursor.close()
+
+
+async def create_conversation_schema(
+    database: Database, *, backfill: bool = True
+) -> None:
+    """Create or migrate canonical Conversation and Message persistence."""
+    migrations = conversation_migrations()
     await database.migrate(migrations)
-    await _backfill_historical_turns(database)
+    await canonicalize_conversation_schema(database)
+    if backfill:
+        await backfill_historical_turns(database)
 
 
 __all__ = [
     "Conversation",
     "ConversationTurn",
     "Message",
+    "backfill_historical_turns",
+    "canonicalize_conversation_schema",
+    "conversation_migrations",
     "create_conversation_schema",
 ]

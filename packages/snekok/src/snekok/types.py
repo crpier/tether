@@ -11,11 +11,17 @@ def _is_not_blank(value: str) -> bool:
     return bool(value.strip())
 
 
-NonBlankStr = Annotated[NewType("NonBlankStr", str), Predicate(_is_not_blank)]
-NonEmptySecretStr = Annotated[NewType("NonEmptySecretStr", SecretStr), MinLen(1)]
-NonEmptyStr = Annotated[NewType("NonEmptyStr", str), MinLen(1)]
-NonNegativeInt = Annotated[NewType("NonNegativeInt", int), Ge(0)]
-PositiveInt = Annotated[NewType("PositiveInt", int), Ge(1)]
+_NonBlankStr = NewType("_NonBlankStr", str)
+_NonEmptySecretStr = NewType("_NonEmptySecretStr", SecretStr)
+_NonEmptyStr = NewType("_NonEmptyStr", str)
+_NonNegativeInt = NewType("_NonNegativeInt", int)
+_PositiveInt = NewType("_PositiveInt", int)
+
+NonBlankStr = Annotated[_NonBlankStr, Predicate(_is_not_blank)]
+NonEmptySecretStr = Annotated[_NonEmptySecretStr, MinLen(1)]
+NonEmptyStr = Annotated[_NonEmptyStr, MinLen(1)]
+NonNegativeInt = Annotated[_NonNegativeInt, Ge(0)]
+PositiveInt = Annotated[_PositiveInt, Ge(1)]
 
 type NonEmptyTuple[T] = tuple[T, *tuple[T, ...]]
 

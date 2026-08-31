@@ -63,11 +63,14 @@ def _create_approved_ledger(client: TestClient) -> dict[str, object]:
         purpose="Record repeated observations.",
     )["result"]
     _begin_interactive_turn(client, f"Approve Ledger proposal {proposal['id']}.")
-    return call_tool(
-        client,
-        "approve_ledger_proposal",
-        proposal_id=proposal["id"],
-    )["result"]
+    return cast(
+        "dict[str, object]",
+        call_tool(
+            client,
+            "approve_ledger_proposal",
+            proposal_id=proposal["id"],
+        )["result"],
+    )
 
 
 @test()

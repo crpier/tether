@@ -29,4 +29,4 @@ def require_non_empty_secret(secret: NonEmptySecretStr) -> None:
 
 def plain_secret_is_not_nominal(secret: SecretStr) -> None:
     """Prove an ordinary `SecretStr` cannot cross the nominal boundary."""
-    require_non_empty_secret(secret)  # pyright: ignore[reportArgumentType]
+    require_non_empty_secret(secret)  # ty: ignore[invalid-argument-type]

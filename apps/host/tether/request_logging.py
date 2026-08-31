@@ -84,7 +84,8 @@ class ContextLoggerMiddleware:
         async def send_with_status(message: Message) -> None:
             nonlocal status_code
             if message["type"] == "http.response.start":
-                status_code = message["status"]
+                raw_status = message.get("status")
+                status_code = raw_status if isinstance(raw_status, int) else None
             await send(message)
 
         context_tokens = structlog.contextvars.bind_contextvars(

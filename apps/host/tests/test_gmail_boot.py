@@ -21,17 +21,15 @@ from snektest import assert_true, test
 from tether.agent_trace_recorder import AgentTraceRecorder
 from tether.background_runtime import BackgroundRuntime
 from tether.gmail.client import GmailNetworkFailure, GmailResponse
-from tether.gmail.store import create_gmail_schema
 from tether.host_config import AppConfig
 from tether.host_resources import HostBootstrap
+from tether.host_schema import create_host_schema
 from tether.ingestion_composition import compose_gmail
 from tether.local_dependencies import LocalSttTransport, LocalTtsTransport
 from tether.model_selection import AgentModelCatalog
 from tether.stt import SttClient
-from tether.todo_store import create_todo_schema
 from tether.todos import TodoService
 from tether.tool_runtime import SessionRegistry
-from tether.trigger_store import create_trigger_schema
 from tether.triggers import TriggerService
 from tether.tts import TtsClient
 
@@ -144,9 +142,7 @@ class BootGmailTransport:
 async def _wire(config: AppConfig) -> asyncio.Event:
     """Compose Gmail over bare dependencies for disabled-gate assertions."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_trigger_schema(db)
-    await create_todo_schema(db)
-    await create_gmail_schema(db)
+    await create_host_schema(db)
     logger = structlog.stdlib.get_logger("test.gmail_boot")
     background_runtime = BackgroundRuntime(logger)
     tracer = trace.NoOpTracerProvider().get_tracer("test.gmail_boot")

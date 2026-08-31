@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Never, assert_type
+from typing import TYPE_CHECKING, Literal, Never, assert_type
 
 from snekok.result import Err, Ok
 
@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 def variants_default_the_absent_channel_to_never() -> None:
     """Concrete constructors infer `Never` for their phantom channel."""
-    assert_type(Ok(1), Ok[int, Never])
-    assert_type(Err("invalid"), Err[Never, str])
+    assert_type(Ok(1), Ok[Literal[1], Never])
+    assert_type(Err("invalid"), Err[Never, Literal["invalid"]])
 
 
 def widen_result(

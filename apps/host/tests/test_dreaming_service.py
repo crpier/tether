@@ -35,7 +35,6 @@ from tether.conversation_store import (
     Conversation,
     ConversationTurn,
     Message,
-    create_conversation_schema,
 )
 from tether.conversations import ConversationService
 from tether.dreaming import (
@@ -55,9 +54,8 @@ from tether.dreaming_store import (
     DreamingWorkspaceFile,
     DreamMaintenanceProgress,
     DreamRun,
-    create_dreaming_schema,
 )
-from tether.email_evidence_store import create_email_evidence_schema
+from tether.host_schema import create_host_schema
 from tether.structured_logging import Logger
 from tether.tool_runtime import TOOL_AUTH_HEADER
 
@@ -76,8 +74,7 @@ class _Callback:
 
 def test_logger() -> Logger:
     """Provide a deterministic logger for service calls."""
-    logger: Logger = structlog.get_logger("test.dreaming")
-    return logger
+    return cast("Logger", structlog.get_logger("test.dreaming"))
 
 
 @fixture
@@ -86,9 +83,7 @@ async def conversation_fixture() -> AsyncGenerator[
 ]:
     """Isolated conversation + Dreaming state stack with schema prepared."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(db)
-    await create_dreaming_schema(db)
-    await create_email_evidence_schema(db)
+    await create_host_schema(db)
     conversation_service = ConversationService(db)
     conversation = (await conversation_service.list_conversations())[0]
     yield conversation_service, DreamingService(db), conversation.id
@@ -1545,8 +1540,7 @@ async def maintenance_fixture() -> AsyncGenerator[
 ]:
     """Conversation + Dreaming stack with a scratch memory workspace."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_conversation_schema(db)
-    await create_dreaming_schema(db)
+    await create_host_schema(db)
     conversation_service = ConversationService(db)
     conversation = (await conversation_service.list_conversations())[0]
     scratch = TemporaryDirectory()

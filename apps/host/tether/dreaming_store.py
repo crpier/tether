@@ -6,6 +6,7 @@ from typing import ClassVar, Literal, cast
 from uuid import uuid7
 
 from pydantic import UUID7, PositiveInt
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -40,25 +41,25 @@ DreamingMutationStatus = Literal["executed", "acknowledged", "failed"]
 class DreamingMutation[S = Pending](Model[S, "DreamingMutation[Fetched]"]):
     """One idempotent mutation attempt emitted by Dreaming execution."""
 
-    id: DreamingMutation.GenCol[UUID7] = Text(
+    id: sqlite.GenCol[UUID7] = Text(  # ty: ignore[invalid-assignment]
         primary_key=True,
         default_factory=uuid7,
     )
-    run_id: DreamingMutation.Col[UUID7] = Text()
-    tool_call_id: DreamingMutation.Col[str] = Text()
-    actor: DreamingMutation.Col[DreamingMutationActor] = Text()
-    operation: DreamingMutation.Col[DreamingMutationOperation] = Text()
-    workspace_path: DreamingMutation.Col[str] = Text()
-    payload: DreamingMutation.Col[str | None] = Text(default=None, nullable=True)
-    before_content: DreamingMutation.Col[str | None] = Text(default=None, nullable=True)
-    after_content: DreamingMutation.Col[str | None] = Text(default=None, nullable=True)
-    status: DreamingMutation.Col[DreamingMutationStatus] = Text(
+    run_id: sqlite.Col[UUID7] = Text()
+    tool_call_id: sqlite.Col[str] = Text()
+    actor: sqlite.Col[DreamingMutationActor] = Text()
+    operation: sqlite.Col[DreamingMutationOperation] = Text()
+    workspace_path: sqlite.Col[str] = Text()
+    payload: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    before_content: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    after_content: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    status: sqlite.Col[DreamingMutationStatus] = Text(
         default=cast("DreamingMutationStatus", "executed")
     )
-    attempts: DreamingMutation.Col[int] = Integer(default=1)
-    error: DreamingMutation.Col[str | None] = Text(default=None, nullable=True)
-    created_at: DreamingMutation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: DreamingMutation.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    attempts: sqlite.Col[int] = Integer(default=1)
+    error: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
     __indexes__: ClassVar = [Index(run_id, tool_call_id)]
 
@@ -66,29 +67,25 @@ class DreamingMutation[S = Pending](Model[S, "DreamingMutation[Fetched]"]):
 class DreamingWorkspaceFile[S = Pending](Model[S, "DreamingWorkspaceFile[Fetched]"]):
     """Canonical current row for one workspace path and its latest bytes."""
 
-    path: DreamingWorkspaceFile.GenCol[str] = Text(primary_key=True)
-    content_hash: DreamingWorkspaceFile.Col[str] = Text()
-    content: DreamingWorkspaceFile.Col[str | None] = Text(nullable=True)
-    is_tombstone: DreamingWorkspaceFile.Col[int] = Integer(default=0)
-    version: DreamingWorkspaceFile.Col[PositiveInt] = Integer(default=1)
-    source_run_id: DreamingWorkspaceFile.Col[UUID7 | None] = Text(
+    path: sqlite.GenCol[str] = Text(primary_key=True)
+    content_hash: sqlite.Col[str] = Text()
+    content: sqlite.Col[str | None] = Text(nullable=True)
+    is_tombstone: sqlite.Col[int] = Integer(default=0)
+    version: sqlite.Col[PositiveInt] = Integer(default=1)
+    source_run_id: sqlite.Col[UUID7 | None] = Text(
         default=None,
         nullable=True,
     )
-    source_tool_call_id: DreamingWorkspaceFile.Col[str | None] = Text(
+    source_tool_call_id: sqlite.Col[str | None] = Text(
         default=None,
         nullable=True,
     )
-    actor: DreamingWorkspaceFile.Col[DreamingMutationActor | None] = Text(
+    actor: sqlite.Col[DreamingMutationActor | None] = Text(
         default=None,
         nullable=True,
     )
-    created_at: DreamingWorkspaceFile.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
-    updated_at: DreamingWorkspaceFile.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class DreamConversationCursor[S = Pending](
@@ -96,27 +93,25 @@ class DreamConversationCursor[S = Pending](
 ):
     """Per-conversation high-water mark for assimilated transcript messages."""
 
-    conversation_id: DreamConversationCursor.GenCol[UUID7] = Text(primary_key=True)
-    last_assimilated_seq: DreamConversationCursor.Col[int] = Integer(default=0)
-    updated_at: DreamConversationCursor.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
+    conversation_id: sqlite.GenCol[UUID7] = Text(primary_key=True)
+    last_assimilated_seq: sqlite.Col[int] = Integer(default=0)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class DreamRun[S = Pending](Model[S, "DreamRun[Fetched]"]):
     """One requested Dreaming consolidation run against one conversation."""
 
-    id: DreamRun.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    conversation_id: DreamRun.Col[UUID7] = Text()
-    kind: DreamRun.Col[DreamRunKind] = Text()
-    status: DreamRun.Col[DreamRunStatus] = Text()
-    evidence_start_seq: DreamRun.Col[PositiveInt] = Integer()
-    evidence_end_seq: DreamRun.Col[PositiveInt] = Integer()
-    attempts: DreamRun.Col[PositiveInt] = Integer(default=1)
-    error: DreamRun.Col[str | None] = Text(default=None, nullable=True)
-    completed_at: DreamRun.Col[UtcDatetime | None] = Text(default=None, nullable=True)
-    created_at: DreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: DreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    conversation_id: sqlite.Col[UUID7] = Text()
+    kind: sqlite.Col[DreamRunKind] = Text()
+    status: sqlite.Col[DreamRunStatus] = Text()
+    evidence_start_seq: sqlite.Col[PositiveInt] = Integer()
+    evidence_end_seq: sqlite.Col[PositiveInt] = Integer()
+    attempts: sqlite.Col[PositiveInt] = Integer(default=1)
+    error: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class DreamMaintenanceProgress[S = Pending](
@@ -124,11 +119,9 @@ class DreamMaintenanceProgress[S = Pending](
 ):
     """Last maintenance outcome for one workspace path."""
 
-    path: DreamMaintenanceProgress.GenCol[str] = Text(primary_key=True)
-    content_hash: DreamMaintenanceProgress.Col[str] = Text()
-    maintained_at: DreamMaintenanceProgress.GenCol[UtcDatetime] = Text(
-        default=CurrentTimestamp
-    )
+    path: sqlite.GenCol[str] = Text(primary_key=True)
+    content_hash: sqlite.Col[str] = Text()
+    maintained_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class HealthDreamRun[S = Pending](Model[S, "HealthDreamRun[Fetched]"]):
@@ -138,19 +131,17 @@ class HealthDreamRun[S = Pending](Model[S, "HealthDreamRun[Fetched]"]):
     version ids per session type rather than transcript sequence numbers.
     """
 
-    id: HealthDreamRun.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    status: HealthDreamRun.Col[DreamRunStatus] = Text()
-    exercise_since_version_id: HealthDreamRun.Col[int] = Integer(default=0)
-    exercise_through_version_id: HealthDreamRun.Col[int] = Integer(nullable=False)
-    sleep_since_version_id: HealthDreamRun.Col[int] = Integer(default=0)
-    sleep_through_version_id: HealthDreamRun.Col[int] = Integer(nullable=False)
-    attempts: HealthDreamRun.Col[PositiveInt] = Integer(default=1)
-    error: HealthDreamRun.Col[str | None] = Text(default=None, nullable=True)
-    completed_at: HealthDreamRun.Col[UtcDatetime | None] = Text(
-        default=None, nullable=True
-    )
-    created_at: HealthDreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: HealthDreamRun.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    status: sqlite.Col[DreamRunStatus] = Text()
+    exercise_since_version_id: sqlite.Col[int] = Integer(default=0)
+    exercise_through_version_id: sqlite.Col[int] = Integer(nullable=False)
+    sleep_since_version_id: sqlite.Col[int] = Integer(default=0)
+    sleep_through_version_id: sqlite.Col[int] = Integer(nullable=False)
+    attempts: sqlite.Col[PositiveInt] = Integer(default=1)
+    error: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 _DREAM_MIGRATIONS = {

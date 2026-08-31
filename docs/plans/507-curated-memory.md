@@ -242,4 +242,4 @@ Offline model comparisons may run two isolated temporary workspaces over identic
 
 ## Completion gate
 
-Run the repository's full validation gate from `AGENTS.md`, including host pyright/ruff/snektest, agent and web type/lint/format/tests, codegen drift, and live Playwright smoke. For web work, also verify the affected flows interactively in headed Playwright with a clean console. Dogfood real `Dream now` runs and inspect file/history/context traces before enabling the production scheduler.
+Run the repository's full validation gate from `AGENTS.md`, including host ty/ruff/snektest, agent and web type/lint/format/tests, codegen drift, and live Playwright smoke. For web work, also verify the affected flows interactively in headed Playwright with a clean console. Dogfood real `Dream now` runs and inspect file/history/context traces before enabling the production scheduler.

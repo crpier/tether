@@ -22,7 +22,7 @@ dependencies = [
     "pywebpush>=2.3.0",
     "pyyaml>=6.0.3",
     "snekok",
-    "snekql>=0.5.0",
+    "snekql>=0.6.0",
     "structlog>=26.1.0",
     "uvicorn>=0.49.0",
     # uvicorn needs a WebSocket protocol implementation to upgrade `/ws`;
@@ -35,9 +35,9 @@ dependencies = [
 dev = [
     "google-auth-oauthlib>=1.0.0",
     "httpx>=0.28.1",
-    "pyright>=1.1.410",
     "ruff>=0.15.18",
     "snektest",
+    "ty==0.0.75",
 ]
 # Real YouTube ingestion needs the Google OAuth + Data API clients. They are an
 # optional group (not core deps) so the rest of Tether runs without them; the
@@ -107,122 +107,6 @@ ignore = [
   "TRY003",  # Allow long messages on stand-in exceptions raised inline in test doubles.
 ]
 
-[tool.pyright]
-# We manually manage all settings, because we want most of them enabled/"error", which
-# would usually be done by setting `typeCheckingMode = "strict"`, but if we do that,
-# then we can't disable some of the errors.
-# https://github.com/microsoft/pyright/blob/main/docs/configuration.md#diagnostic-settings-defaults
-
-## This paragraph contains settings that are enabled/set to "error".
-analyzeUnannotatedFunctions = true
-disableBytesTypePromotions = true
-strictParameterNoneValue = true
-enableTypeIgnoreComments = true
-enableReachabilityAnalysis = true
-strictListInference = true
-strictDictionaryInference = true
-strictSetInference = true
-deprecateTypingAliases = true
-enableExperimentalFeatures = true
-reportMissingTypeStubs = "error"
-reportMissingModuleSource = "error"
-reportInvalidTypeForm = "error"
-reportMissingImports = "error"
-reportUndefinedVariable = "error"
-reportAssertAlwaysTrue = "error"
-reportInvalidStringEscapeSequence = "error"
-reportInvalidTypeVarUse = "error"
-reportSelfClsParameterName = "error"
-reportUnsupportedDunderAll = "error"
-reportUnusedExpression = "error"
-reportWildcardImportFromLibrary = "error"
-reportAbstractUsage = "error"
-reportArgumentType = "error"
-reportAssertTypeFailure = "error"
-reportAssignmentType = "error"
-reportAttributeAccessIssue = "error"
-reportCallIssue = "error"
-reportGeneralTypeIssues = "error"
-reportInconsistentOverload = "error"
-reportIndexIssue = "error"
-reportInvalidTypeArguments = "error"
-reportNoOverloadImplementation = "error"
-reportOperatorIssue = "error"
-reportOptionalSubscript = "error"
-reportOptionalMemberAccess = "error"
-reportOptionalCall = "error"
-reportOptionalIterable = "error"
-reportOptionalContextManager = "error"
-reportOptionalOperand = "error"
-reportRedeclaration = "error"
-reportReturnType = "error"
-reportTypedDictNotRequiredAccess = "error"
-reportPrivateImportUsage = "error"
-reportUnboundVariable = "error"
-reportUnhashable = "error"
-reportUnusedCoroutine = "error"
-reportUnusedExcept = "error"
-reportFunctionMemberAccess = "error"
-reportIncompatibleMethodOverride = "error"
-reportOverlappingOverload = "error"
-reportPossiblyUnboundVariable = "error"
-reportConstantRedefinition = "error"
-reportDeprecated = "error"
-reportDuplicateImport = "error"
-reportIncompleteStub = "error"
-reportInconsistentConstructor = "error"
-reportInvalidStubStatement = "error"
-reportMatchNotExhaustive = "error"
-reportMissingParameterType = "error"
-reportMissingTypeArgument = "error"
-reportPrivateUsage = "error"
-reportTypeCommentUsage = "error"
-reportUnknownArgumentType = "error"
-reportUnknownLambdaType = "error"
-reportUnknownMemberType = "error"
-reportUnknownParameterType = "error"
-reportUnknownVariableType = "error"
-reportUnnecessaryCast = "error"
-reportUnnecessaryComparison = "error"
-reportUnnecessaryContains = "error"
-reportUnnecessaryIsInstance = "error"
-reportUnusedClass = "error"
-reportUnusedImport = "error"
-reportUnusedFunction = "error"
-reportUnusedVariable = "error"
-reportUntypedBaseClass = "error"
-reportUntypedClassDecorator = "error"
-reportUntypedFunctionDecorator = "error"
-reportUntypedNamedTuple = "error"
-reportCallInDefaultInitializer = "error"
-reportImplicitStringConcatenation = "error"
-reportImportCycles = "error"
-reportPropertyTypeMismatch = "error"
-reportUninitializedInstanceVariable = "error"
-reportUnnecessaryTypeIgnoreComment = "error"
-reportUnusedCallResult = "error"
-
-## This paragraph contains settings that are disabled/set to "off".
-# We almost always want subclasses to override parents with "incompatible" methods.
-# E.g. when subclassing stlib classes like `Thread`.
-reportIncompatibleVariableOverride = false
-# Most of the time, we don't want to call the parent's method, we want to 
-# change its behavior instead.
-reportMissingSuperCall = false
-# This is a bit too noisy, since it complains when overriding something like
-# ___str__ on a base class, which is not a problem in practice.
-reportImplicitOverride = false
-
-# Tests exercise patterns that the strict production rules flag as false positives:
-# route handlers declared inside test bodies (never referenced by name), calls kept
-# for their side effects, and deliberate private-member access. Relax only these
-# rules under `tests/`; everything else stays strict so production code keeps full
-# coverage.
-[[tool.pyright.executionEnvironments]]
-root = "tests"
-# Keep the package root importable so first-party `tether.*` modules resolve as
-# local source rather than an unstubbed third-party library.
-extraPaths = ["."]
-reportUnusedFunction = false
-reportUnusedCallResult = false
-reportPrivateUsage = false
+[tool.ty.rules]
+all = "error"
+missing-override-decorator = "ignore"

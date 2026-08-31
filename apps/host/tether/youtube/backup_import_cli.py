@@ -17,18 +17,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from snekql.sqlite import Config, Database
 
+from tether.host_schema import create_host_schema
 from tether.structured_logging import Logger
 from tether.youtube.backup_import import (
     ImportReport,
     SqliteLikesBackupReader,
     import_backup,
 )
-from tether.youtube.store import create_youtube_schema
 
 
 class ImportSettings(BaseSettings):
@@ -45,7 +46,7 @@ async def _run(
     async with await Database.initialize(
         backend=Config(database=database_path)
     ) as database:
-        await create_youtube_schema(database)
+        await create_host_schema(database)
         reader = SqliteLikesBackupReader(backup_path)
         return await import_backup(database, reader, dry_run=dry_run, logger=logger)
 
@@ -71,8 +72,8 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run the backup import from CLI arguments and environment settings."""
     args = _parse_args()
-    backup_path: Path = args.backup_path
-    dry_run: bool = args.dry_run
+    backup_path = cast("Path", args.backup_path)
+    dry_run = cast("bool", args.dry_run)
     if not backup_path.exists():
         print(f"Backup database not found: {backup_path}")
         raise SystemExit(1)

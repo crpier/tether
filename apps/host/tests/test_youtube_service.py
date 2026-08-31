@@ -46,6 +46,7 @@ from tether.youtube.store import (
     TranscriptPersistedStatus,
     TranscriptRetrying,
     YouTubeTranscript,
+    _youtube_migrations,
     create_youtube_schema,
     derive_ingest_state,
     fetch_transcript_state,
@@ -1216,29 +1217,25 @@ async def sync_status_is_empty_before_any_sync() -> None:
 async def schema_ignores_legacy_transcript_states_without_saved_videos() -> None:
     """Legacy failure rows without a saved-video parent remain orphaned."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await db.migrate(
-        {
-            "008_create_you_tube_transcript_state": (
-                'CREATE TABLE "you_tube_transcript_state" ('
-                '"video_id" TEXT PRIMARY KEY NOT NULL, '
-                '"status" TEXT NOT NULL, "attempts" INTEGER, '
-                '"next_attempt_at" TEXT, "last_error" TEXT, "updated_at" TEXT'
-                ") STRICT"
-            ),
-            "test_seed_done": (
+    legacy_migrations: dict[str, str] = {}
+    for name, statement in _youtube_migrations().items():
+        legacy_migrations[name] = statement
+        if name == "008_create_you_tube_transcript_state":
+            break
+    await db.migrate(legacy_migrations)
+    async with db.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        for video_id, status in (
+            ("with-transcript", "done"),
+            ("try-later", "retry"),
+            ("give-up", "terminal"),
+        ):
+            cursor = await connection.execute(
                 'INSERT INTO "you_tube_transcript_state" ("video_id", "status") '
-                "VALUES ('with-transcript', 'done')"
-            ),
-            "test_seed_retry": (
-                'INSERT INTO "you_tube_transcript_state" ("video_id", "status") '
-                "VALUES ('try-later', 'retry')"
-            ),
-            "test_seed_terminal": (
-                'INSERT INTO "you_tube_transcript_state" ("video_id", "status") '
-                "VALUES ('give-up', 'terminal')"
-            ),
-        }
-    )
+                "VALUES (?, ?)",
+                (video_id, status),
+            )
+            await cursor.close()
 
     await create_youtube_schema(db)
 

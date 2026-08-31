@@ -51,11 +51,11 @@ from tether.bucket_item_index import (
     BucketItemIndex,
 )
 from tether.bucket_item_reconciler import BucketItemReconciler
-from tether.bucket_item_store import BucketItem, create_bucket_item_schema
+from tether.bucket_item_store import BucketItem
+from tether.host_schema import create_host_schema
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, Vector
 from tether.search_projection.metadata import (
     SearchMetaService,
-    create_search_meta_schema,
 )
 from tether.structured_logging import Logger
 
@@ -140,8 +140,7 @@ class Harness:
 
 async def _build_db() -> Database:
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_bucket_item_schema(db)
-    await create_search_meta_schema(db)
+    await create_host_schema(db)
     return db
 
 

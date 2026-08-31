@@ -1083,7 +1083,7 @@ def websocket_prompt_with_spoken_mode_sends_guidance_and_keeps_history_clean() -
             while True:
                 frame = websocket.receive_json()
                 if frame.get("event") == "agent_end":
-                    agent_end = frame
+                    agent_end = cast("dict[str, object]", frame)
                     break
 
         response = client.get(f"/api/conversations/{conversation_id}/messages")
@@ -1139,7 +1139,7 @@ def websocket_prompt_defaults_reply_mode_to_text() -> None:
             while True:
                 frame = websocket.receive_json()
                 if frame.get("event") == "agent_end":
-                    agent_end = frame
+                    agent_end = cast("dict[str, object]", frame)
                     break
 
     prompt_fields = [
@@ -1680,7 +1680,7 @@ def websocket_queues_overlapping_prompts_in_fifo_order() -> None:
             portal.call(fake_runtime.events.put, AgentEnded())
             frame = websocket.receive_json()
             while frame.get("event") != "user_message":
-                frame = websocket.receive_json()
+                frame = cast("dict[str, object]", websocket.receive_json())
             portal.call(fake_runtime.events.put, AgentEnded())
             while websocket.receive_json().get("event") != "agent_end":
                 pass
@@ -2095,7 +2095,7 @@ def websocket_flags_tool_only_agent_end_frames() -> None:
             )
             frame: dict[str, object] = {}
             while frame.get("event") != "agent_end":
-                frame = websocket.receive_json()
+                frame = cast("dict[str, object]", websocket.receive_json())
 
     assert_eq(frame["tool_only"], True)
 

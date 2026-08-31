@@ -9,6 +9,7 @@ from uuid import UUID, uuid7
 
 import structlog
 from pydantic import UUID7
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -54,29 +55,27 @@ HealthMomentPushStatus = Literal["pending", "delivered"]
 class HealthMoment[S = Pending](Model[S, "HealthMoment[Fetched]"]):
     """One stable reason to run a context-aware Health briefing."""
 
-    id: HealthMoment.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    answer_message_id: HealthMoment.Col[UUID | None] = Text(default=None, nullable=True)
-    completed_at: HealthMoment.Col[UtcDatetime | None] = Text(
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    answer_message_id: sqlite.Col[UUID | None] = Text(default=None, nullable=True)
+    completed_at: sqlite.Col[UtcDatetime | None] = Text(default=None, nullable=True)
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    evidence_uri: sqlite.Col[str] = Text(nullable=False)
+    failure_summary: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    kind: sqlite.Col[HealthMomentKind] = Text(nullable=False)
+    observation: sqlite.Col[str] = Text(nullable=False)
+    observed_at: sqlite.Col[UtcDatetime] = Text(nullable=False)
+    source_record_uid: sqlite.Col[str] = Text(nullable=False)
+    push_delivered_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None, nullable=True
     )
-    created_at: HealthMoment.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    evidence_uri: HealthMoment.Col[str] = Text(nullable=False)
-    failure_summary: HealthMoment.Col[str | None] = Text(default=None, nullable=True)
-    kind: HealthMoment.Col[HealthMomentKind] = Text(nullable=False)
-    observation: HealthMoment.Col[str] = Text(nullable=False)
-    observed_at: HealthMoment.Col[UtcDatetime] = Text(nullable=False)
-    source_record_uid: HealthMoment.Col[str] = Text(nullable=False)
-    push_delivered_at: HealthMoment.Col[UtcDatetime | None] = Text(
-        default=None, nullable=True
-    )
-    push_status: HealthMoment.Col[HealthMomentPushStatus] = Text(
+    push_status: sqlite.Col[HealthMomentPushStatus] = Text(
         default=cast("HealthMomentPushStatus", "pending")
     )
-    source_version_id: HealthMoment.Col[int] = Integer(nullable=False)
-    status: HealthMoment.Col[HealthMomentStatus] = Text(
+    source_version_id: sqlite.Col[int] = Integer(nullable=False)
+    status: sqlite.Col[HealthMomentStatus] = Text(
         default=cast("HealthMomentStatus", "pending")
     )
-    turn_id: HealthMoment.Col[UUID | None] = Text(default=None, nullable=True)
+    turn_id: sqlite.Col[UUID | None] = Text(default=None, nullable=True)
 
 
 @dataclass(frozen=True, slots=True)

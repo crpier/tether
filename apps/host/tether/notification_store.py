@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import UUID, uuid7
 
 from pydantic import UUID7
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -27,13 +28,13 @@ from tether.notification_model import NotificationDraft
 class Notification[S = Pending](Model[S, "Notification[Fetched]"]):
     """One durable delivered notification, optionally tied to a trigger."""
 
-    id: Notification.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)
-    trigger_id: Notification.Col[str | None] = Text(default=None, nullable=True)
-    action_kind: Notification.Col[str | None] = Text(default=None, nullable=True)
-    source_label: Notification.Col[str | None] = Text(default=None, nullable=True)
-    body: Notification.Col[str] = Text()
-    created_at: Notification.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    dismissed_at: Notification.Col[UtcDatetime | None] = Text(
+    id: sqlite.GenCol[UUID7] = Text(primary_key=True, default_factory=uuid7)  # ty: ignore[invalid-assignment]
+    trigger_id: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    action_kind: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    source_label: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    body: sqlite.Col[str] = Text()
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    dismissed_at: sqlite.Col[UtcDatetime | None] = Text(
         default=None,
         nullable=True,
     )

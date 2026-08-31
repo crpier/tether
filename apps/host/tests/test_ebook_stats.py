@@ -39,9 +39,9 @@ from tether.ebook_stats_store import (
     EbookStatBook,
     EbookStatPageEvent,
     EbookStatsStore,
-    create_ebook_stats_schema,
 )
-from tether.kosync_store import EbookDocument, create_kosync_schema
+from tether.host_schema import create_host_schema
+from tether.kosync_store import EbookDocument
 from tether.structured_logging import Logger
 
 
@@ -167,8 +167,7 @@ class EbookStatsEnv:
 async def ebook_stats_env() -> AsyncGenerator[EbookStatsEnv]:
     """A fresh in-memory database with the ebook-stats + kosync schema."""
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_ebook_stats_schema(database)
-    await create_kosync_schema(database)
+    await create_host_schema(database)
     async with TemporaryDirectory() as tmp_dir:
         yield EbookStatsEnv(
             database=database,

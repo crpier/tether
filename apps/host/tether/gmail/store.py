@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
+from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
@@ -31,22 +32,22 @@ type GmailMessageStatus = Literal["prefiltered", "noise", "ingested", "pending"]
 class GmailMessageRecord[S = Pending](Model[S, "GmailMessageRecord[Fetched]"]):
     """Idempotency and audit state for one Gmail message."""
 
-    message_id: GmailMessageRecord.Col[str] = Text(primary_key=True)
-    status: GmailMessageRecord.Col[GmailMessageStatus] = Text()
-    trigger_id: GmailMessageRecord.Col[str | None] = Text(default=None, nullable=True)
-    internal_date: GmailMessageRecord.Col[str] = Text()
-    from_header: GmailMessageRecord.Col[str] = Text(default="")
-    subject: GmailMessageRecord.Col[str] = Text(default="")
-    body_text: GmailMessageRecord.Col[str] = Text(default="")
-    verdict_reason: GmailMessageRecord.Col[str] = Text(default="")
-    created_at: GmailMessageRecord.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+    message_id: sqlite.Col[str] = Text(primary_key=True)
+    status: sqlite.Col[GmailMessageStatus] = Text()
+    trigger_id: sqlite.Col[str | None] = Text(default=None, nullable=True)
+    internal_date: sqlite.Col[str] = Text()
+    from_header: sqlite.Col[str] = Text(default="")
+    subject: sqlite.Col[str] = Text(default="")
+    body_text: sqlite.Col[str] = Text(default="")
+    verdict_reason: sqlite.Col[str] = Text(default="")
+    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
 
 
 class GmailSyncState[S = Pending](Model[S, "GmailSyncState[Fetched]"]):
     """Durable key/value synchronization state."""
 
-    key: GmailSyncState.Col[str] = Text(primary_key=True)
-    value: GmailSyncState.Col[str] = Text(nullable=False)
+    key: sqlite.Col[str] = Text(primary_key=True)
+    value: sqlite.Col[str] = Text(nullable=False)
 
 
 def _parse_datetime(raw: str) -> datetime:
@@ -94,7 +95,6 @@ _GMAIL_MIGRATIONS: dict[str, str] = {
         'CREATE TABLE "gmail_message_record" ('
         '"message_id" TEXT PRIMARY KEY NOT NULL, '
         '"status" TEXT NOT NULL, '
-        '"memory_id" TEXT, '
         '"trigger_id" TEXT, '
         '"internal_date" TEXT NOT NULL, '
         "\"created_at\" TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
@@ -125,7 +125,7 @@ _GMAIL_MIGRATIONS: dict[str, str] = {
         "TEXT NOT NULL DEFAULT ''"
     ),
     "025_gmail_drop_memory_id": (
-        'ALTER TABLE "gmail_message_record" DROP COLUMN "memory_id"'
+        'UPDATE "gmail_message_record" SET "message_id" = "message_id" WHERE 0'
     ),
 }
 

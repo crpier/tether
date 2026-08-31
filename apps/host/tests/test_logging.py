@@ -113,7 +113,7 @@ def _raise_boom() -> None:
 
 def first_json_log(stream: CapturedStdout) -> dict[str, object]:
     """Parse the first structured log line from a captured stream."""
-    return json.loads(stream.getvalue().splitlines()[0])
+    return cast("dict[str, object]", json.loads(stream.getvalue().splitlines()[0]))
 
 
 def json_log_for_event(stream: CapturedStdout, event: str) -> dict[str, object]:
@@ -124,7 +124,7 @@ def json_log_for_event(stream: CapturedStdout, event: str) -> dict[str, object]:
     select it rather than assuming it is first.
     """
     return next(
-        parsed
+        cast("dict[str, object]", parsed)
         for line in stream.getvalue().splitlines()
         if (parsed := json.loads(line))["event"] == event
     )

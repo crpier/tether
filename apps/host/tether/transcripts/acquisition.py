@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import cast
 
 from snekok.result import Err, Ok
 from snekql.sqlite import Database, Fetched, select
@@ -198,7 +199,10 @@ class TranscriptAcquisitionService:
 
     def _next_attempt_at(self, now: datetime, attempts: int) -> datetime:
         exponent = max(0, attempts - 1)
-        delay = min(self.config.backoff_base * (2**exponent), self.config.backoff_cap)
+        delay = cast(
+            "timedelta",
+            min(self.config.backoff_base * (2**exponent), self.config.backoff_cap),
+        )
         return now + delay
 
     async def _clear_reachable_streaks(

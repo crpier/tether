@@ -89,7 +89,7 @@ class TranscriptSource(Protocol):
 
 
 def _empty_source_set() -> frozenset[str]:
-    return frozenset()
+    return frozenset[str]()
 
 
 def _empty_limits() -> dict[str, int]:

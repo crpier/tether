@@ -18,6 +18,7 @@ from tether.health_connect.contracts import (
     ExerciseRecord,
     HealthConnectBatchRequest,
     HealthConnectRecords,
+    HealthRecordType,
     RecordMetadata,
 )
 from tether.health_connect.episodes import HealthEpisodeSummarizer
@@ -101,7 +102,7 @@ async def _seed_raw_exercise(
 ) -> None:
     """Ingest one settled exercise session without materializing a summary."""
     ingestion = ingestion or HealthConnectIngestion(telemetry)
-    record_types = ("exercise",)
+    record_types: tuple[HealthRecordType, ...] = ("exercise",)
     await ingestion.start_baseline(
         installation_id="pixel-installation",
         record_types=record_types,
