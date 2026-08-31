@@ -28,7 +28,9 @@ from tether.youtube.search import VideoMatch
 from tether.youtube.store import (
     IngestedVideo,
     create_youtube_schema,
+    write_transcript_available,
 )
+from tether.youtube.types import VideoId
 
 
 def _logger() -> Logger:
@@ -76,16 +78,16 @@ async def _add_video(db: Database, video_id: str, *, ignored: bool = False) -> N
         created = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id=video_id,
+                    video_id=VideoId(video_id),
                     source="liked",
                     title=f"title {video_id}",
                     channel="chan",
                     topic="topic",
                     description="desc",
-                    transcript="body",
                 )
             ).returning()
         )
+        await write_transcript_available(tx, created.id, text="body", segments=())
         if ignored:
             _ = await tx.execute(
                 update(IngestedVideo)

@@ -8,14 +8,20 @@ from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from snekok.result import Err, Ok, Result
+from snekok.types import (
+    NonBlankStr,
+    NonNegativeInt,
+    StrictFrozenModel,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class FetchedTranscript:
-    """Usable transcript text with its producing source."""
+    """Usable transcript text, exact timed segments, and producing source."""
 
     source: str
     text: str
+    segments: tuple[TranscriptSegment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,3 +265,16 @@ class TranscriptAcquisitionPort(Protocol):
     ) -> TranscriptAcquisitionOutcome:
         """Fetch and persist one transcript according to explicit pass policy."""
         ...
+
+
+class TranscriptSegment(StrictFrozenModel):
+    """One exact provider-reported timed transcript segment."""
+
+    text: NonBlankStr
+    start_ms: NonNegativeInt
+    duration_ms: NonNegativeInt
+
+    @property
+    def end_ms(self) -> int:
+        """Return the exclusive segment end in integer milliseconds."""
+        return self.start_ms + self.duration_ms

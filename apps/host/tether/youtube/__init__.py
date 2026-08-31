@@ -39,12 +39,25 @@ from tether.youtube.service import (
 )
 from tether.youtube.store import (
     IngestedVideo,
+    TranscriptAvailable,
     TranscriptPersistedStatus,
-    YouTubeTranscriptState,
+    TranscriptRetrying,
+    TranscriptReviewNeeded,
+    TranscriptState,
+    TranscriptStatus,
+    TranscriptUnavailable,
+    YouTubeTranscript,
     create_youtube_schema,
+    fetch_transcript_state,
+    fetch_transcript_states,
+    write_transcript_available,
+    write_transcript_retrying,
+    write_transcript_review_needed,
+    write_transcript_unavailable,
 )
 from tether.youtube.sync import YouTubeSyncConfig, YouTubeSyncService
 from tether.youtube.tools import YOUTUBE_TOOL_SPECS, internal_youtube_tool_routes
+from tether.youtube.types import VideoId
 
 __all__ = [
     "YOUTUBE_READONLY_SCOPE",
@@ -58,7 +71,14 @@ __all__ = [
     "QuotaMeta",
     "ReauthorizableYouTubeApi",
     "SystemClock",
+    "TranscriptAvailable",
     "TranscriptPersistedStatus",
+    "TranscriptRetrying",
+    "TranscriptReviewNeeded",
+    "TranscriptState",
+    "TranscriptStatus",
+    "TranscriptUnavailable",
+    "VideoId",
     "YouTubeApi",
     "YouTubeApiClient",
     "YouTubeApiGate",
@@ -74,12 +94,18 @@ __all__ = [
     "YouTubeSyncConfig",
     "YouTubeSyncService",
     "YouTubeSyncState",
-    "YouTubeTranscriptState",
+    "YouTubeTranscript",
     "YouTubeVideoNotFoundError",
     "auth_routes_router",
     "create_youtube_schema",
+    "fetch_transcript_state",
+    "fetch_transcript_states",
     "internal_youtube_tool_routes",
     "routes_router",
     "state_get",
     "state_set",
+    "write_transcript_available",
+    "write_transcript_retrying",
+    "write_transcript_review_needed",
+    "write_transcript_unavailable",
 ]

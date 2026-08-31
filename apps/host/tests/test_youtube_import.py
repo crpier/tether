@@ -35,8 +35,12 @@ from tether.youtube.backup_import import (
 )
 from tether.youtube.store import (
     IngestedVideo,
+    TranscriptAvailable,
     create_youtube_schema,
+    fetch_transcript_state,
+    write_transcript_available,
 )
+from tether.youtube.types import VideoId
 
 
 def test_logger() -> Logger:
@@ -56,8 +60,20 @@ async def make_db() -> AsyncGenerator[Database]:
 async def _video(db: Database, video_id: str) -> IngestedVideo[Fetched] | None:
     async with db.transaction() as tx:
         return await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
         )
+
+
+async def _transcript(db: Database, video_id: str) -> str | None:
+    """Return canonical transcript text for one imported video."""
+    async with db.transaction() as tx:
+        video = await tx.fetch_one_or_none(
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
+        )
+        if video is None:
+            return None
+        state = await fetch_transcript_state(tx, video.id)
+    return state.text if isinstance(state, TranscriptAvailable) else None
 
 
 def _liked(video_id: str, **overrides: object) -> BackupLikedVideo:
@@ -156,9 +172,7 @@ async def transcript_attaches_to_its_liked_video() -> None:
     report = await import_backup(db, reader, logger=test_logger())
 
     assert_eq(report.transcripts_imported, 1)
-    video = await _video(db, "v1")
-    assert video is not None
-    assert_eq(video.transcript, "hello world")
+    assert_eq(await _transcript(db, "v1"), "hello world")
 
 
 # --- An orphan transcript creates a sparse video ---
@@ -181,7 +195,7 @@ async def orphan_transcript_creates_sparse_video() -> None:
     video = await _video(db, "orphan")
     assert video is not None
     assert_eq(video.title, "Lonely Talk")
-    assert_eq(video.transcript, "text")
+    assert_eq(await _transcript(db, "orphan"), "text")
     assert_eq(video.source, "liked")
 
 
@@ -202,7 +216,7 @@ async def re_running_updates_rather_than_duplicating() -> None:
     assert_eq(report.videos_inserted, 0)
     async with db.transaction() as tx:
         rows = await tx.fetch_all(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq("v1"))
+            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId("v1")))
         )
     assert_eq(len(rows), 1)
     assert_eq(rows[0].title, "New Title")
@@ -222,7 +236,7 @@ async def existing_ignored_video_stays_ignored() -> None:
         _ = await tx.execute(
             update(IngestedVideo)
             .set(IngestedVideo.ignored_at.to(datetime(2024, 1, 1, tzinfo=UTC)))
-            .where(IngestedVideo.video_id.eq("v1"))
+            .where(IngestedVideo.video_id.eq(VideoId("v1")))
         )
 
     _ = await import_backup(
@@ -245,18 +259,20 @@ async def existing_transcript_not_overwritten_by_empty() -> None:
     """A stored transcript wins over a blank backup transcript for the same id."""
     db = await load_fixture(make_db())
     async with db.transaction() as tx:
-        _ = await tx.execute(
+        video = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id="v1",
+                    video_id=VideoId("v1"),
                     source="liked",
                     title="T",
                     channel="C",
                     topic="python",
                     description="",
-                    transcript="rich existing transcript",
                 )
-            )
+            ).returning()
+        )
+        await write_transcript_available(
+            tx, video.id, text="rich existing transcript", segments=()
         )
 
     reader = InMemoryLikesBackupReader(
@@ -267,9 +283,7 @@ async def existing_transcript_not_overwritten_by_empty() -> None:
 
     # The blank transcript is skipped (malformed) and the rich one is preserved.
     assert_eq(report.transcripts_imported, 0)
-    video = await _video(db, "v1")
-    assert video is not None
-    assert_eq(video.transcript, "rich existing transcript")
+    assert_eq(await _transcript(db, "v1"), "rich existing transcript")
 
 
 @test()
@@ -277,18 +291,20 @@ async def existing_transcript_not_overwritten_by_present_backup() -> None:
     """An already-stored transcript is not clobbered by a different backup one."""
     db = await load_fixture(make_db())
     async with db.transaction() as tx:
-        _ = await tx.execute(
+        video = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id="v1",
+                    video_id=VideoId("v1"),
                     source="liked",
                     title="T",
                     channel="C",
                     topic="python",
                     description="",
-                    transcript="local transcript",
                 )
-            )
+            ).returning()
+        )
+        await write_transcript_available(
+            tx, video.id, text="local transcript", segments=()
         )
 
     reader = InMemoryLikesBackupReader(
@@ -297,9 +313,7 @@ async def existing_transcript_not_overwritten_by_present_backup() -> None:
     report = await import_backup(db, reader, logger=test_logger())
 
     assert_eq(report.transcripts_imported, 0)
-    video = await _video(db, "v1")
-    assert video is not None
-    assert_eq(video.transcript, "local transcript")
+    assert_eq(await _transcript(db, "v1"), "local transcript")
 
 
 # --- Malformed rows are skipped and counted ---
@@ -441,4 +455,4 @@ async def sqlite_reader_parses_a_fixture_backup() -> None:
     assert_eq(video.liked_at, datetime(2023, 5, 1, 12, 0, tzinfo=UTC))
     assert_eq(video.caption_available, 1)
     assert_eq(video.topic, "python (programming language)")
-    assert_eq(video.transcript, "hello world")
+    assert_eq(await _transcript(db, "v1"), "hello world")

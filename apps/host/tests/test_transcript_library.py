@@ -54,11 +54,11 @@ def _raising_fetcher(error: Exception) -> Callable[[str], list[dict[str, object]
 
 @test()
 async def source_joins_usable_snippet_text() -> None:
-    """Legacy mapping snippets become normalized transcript text."""
+    """Legacy mapping snippets preserve exact text and timing."""
     provider = YouTubeTranscriptApiSource(
         lambda _video_id: [
-            {"text": " hello ", "start": 0.0},
-            {"text": "world", "start": 1.0},
+            {"text": " hello ", "start": 0.0, "duration": 0.75},
+            {"text": "world", "start": 1.0, "duration": 1.25},
             {"text": " ", "start": 2.0},
         ]
     )
@@ -67,6 +67,10 @@ async def source_joins_usable_snippet_text() -> None:
 
     assert_eq(transcript.text, "hello world")
     assert_eq(transcript.source, "youtube_transcript_api")
+    assert_eq(
+        [(segment.start_ms, segment.duration_ms) for segment in transcript.segments],
+        [(0, 750), (1000, 1250)],
+    )
 
 
 @test()

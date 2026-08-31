@@ -24,10 +24,15 @@ def validate_python[T](
         return Err(error)
 
 
+def validate_python_unsafe[T](annotation: TypeForm[T], value: object) -> T:
+    """Validate a trusted Python boundary, raising `ValidationError` on defects."""
+    return _type_adapter(annotation).validate_python(value)
+
+
 def validate_json[T](
     annotation: TypeForm[T], value: str | bytes | bytearray
 ) -> Result[T, ValidationError]:
-    """Validate a Python value without raising expected validation failures."""
+    """Validate JSON input without raising expected validation failures."""
     try:
         return Ok(_type_adapter(annotation).validate_json(value))
     except ValidationError as error:

@@ -37,19 +37,18 @@ from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 from urllib.parse import unquote
 
-from snekql.sqlite import (
-    CurrentTimestamp,
-    Database,
-    Fetched,
-    Transaction,
-    insert,
-    select,
-    update,
-)
+from snekql.sqlite import Database, Fetched, Transaction, insert, select
 
 from tether.structured_logging import Logger
 from tether.youtube.quota import RawYouTubeVideo
-from tether.youtube.store import IngestedVideo, upsert_ingested_video
+from tether.youtube.store import (
+    IngestedVideo,
+    TranscriptAvailable,
+    fetch_transcript_state,
+    upsert_ingested_video,
+    write_transcript_available,
+)
+from tether.youtube.types import VideoId
 
 _DEFAULT_TOPIC = "youtube"
 """Topic assigned when a backup liked video carries no topic signal at all."""
@@ -202,7 +201,7 @@ def _derive_topic(record: BackupLikedVideo) -> str:
 def _as_raw(record: BackupLikedVideo) -> RawYouTubeVideo:
     """Map a backup liked record onto the raw upstream shape the upsert consumes."""
     return RawYouTubeVideo(
-        video_id=record.video_id,
+        video_id=VideoId(record.video_id),
         title=record.title,
         channel=record.channel_title,
         topic=_derive_topic(record),
@@ -279,7 +278,9 @@ async def _import_transcripts(
             if not dry_run:
                 await _insert_orphan_video(tx, transcript)
             continue
-        if existing is not None and existing.transcript and existing.transcript.strip():
+        if existing is not None and isinstance(
+            await fetch_transcript_state(tx, existing.id), TranscriptAvailable
+        ):
             # A richer existing transcript must not be clobbered; the import
             # is additive, so an already-stored transcript wins.
             continue
@@ -363,33 +364,35 @@ async def _video_exists(tx: Transaction, video_id: str) -> bool:
 
 async def _fetch_video(tx: Transaction, video_id: str) -> IngestedVideo[Fetched] | None:
     return await tx.fetch_one_or_none(
-        select(IngestedVideo).where(IngestedVideo.video_id.eq(video_id))
+        select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
     )
 
 
 async def _insert_orphan_video(tx: Transaction, transcript: BackupTranscript) -> None:
     """Mint a sparse ingested video for a transcript with no liked-list row."""
-    _ = await tx.execute(
+    video = await tx.execute(
         insert(
             IngestedVideo(
-                video_id=transcript.video_id,
+                video_id=VideoId(transcript.video_id),
                 source="liked",
                 title=transcript.title or transcript.video_id,
                 channel="",
                 topic=_DEFAULT_TOPIC,
                 description="",
-                transcript=transcript.transcript,
             )
-        )
+        ).returning()
+    )
+    await write_transcript_available(
+        tx, video.id, text=transcript.transcript, segments=()
     )
 
 
 async def _attach_transcript(tx: Transaction, transcript: BackupTranscript) -> None:
-    _ = await tx.execute(
-        update(IngestedVideo)
-        .set(IngestedVideo.transcript.to(transcript.transcript))
-        .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-        .where(IngestedVideo.video_id.eq(transcript.video_id))
+    video = await _fetch_video(tx, transcript.video_id)
+    if video is None:
+        return
+    await write_transcript_available(
+        tx, video.id, text=transcript.transcript, segments=()
     )
 
 

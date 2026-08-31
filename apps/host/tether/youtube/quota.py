@@ -33,6 +33,7 @@ from snekql.sqlite import (
 
 from tether.capability_contracts import QuotaMeta
 from tether.escalating_pause import PauseKeys, PersistentEscalatingPause
+from tether.youtube.types import VideoId
 
 
 class Clock(Protocol):
@@ -70,7 +71,7 @@ class RawYouTubeVideo(BaseModel):
     'python'
     """
 
-    video_id: str
+    video_id: VideoId
     title: str
     channel: str
     topic: str

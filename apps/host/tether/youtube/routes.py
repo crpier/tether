@@ -100,6 +100,7 @@ class YouTubeVideoListResponse(BaseModel):
                 YouTubeVideoRead.from_video(
                     video,
                     transcript_status=result.transcript_statuses[video.video_id],
+                    transcript=result.transcripts.get(video.video_id),
                 )
                 for video in result.videos
             ],
@@ -121,7 +122,9 @@ class YouTubeTranscriptResponse(BaseModel):
         """Render a transcript result as its HTTP representation."""
         return cls(
             video=YouTubeVideoRead.from_video(
-                result.video, transcript_status="available"
+                result.video,
+                transcript_status="available",
+                transcript=result.transcript,
             ),
             transcript=result.transcript,
             quota=result.quota,

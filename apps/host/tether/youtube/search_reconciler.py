@@ -28,7 +28,11 @@ from snekql.sqlite import select
 
 from tether.youtube.search_chunks import chunk_youtube_text
 from tether.youtube.search_index import ChunkDocument, chunk_id
-from tether.youtube.store import IngestedVideo
+from tether.youtube.store import (
+    IngestedVideo,
+    TranscriptAvailable,
+    fetch_transcript_states,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -134,11 +138,17 @@ class YouTubeSearchReconciler:
             videos = await tx.fetch_all(
                 select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
             )
+            states = await fetch_transcript_states(tx, videos)
         specs: list[_ChunkSpec] = []
         for video in videos:
+            state = states.get(video.id)
             source = "\n".join(
                 part
-                for part in (video.title, video.description, video.transcript)
+                for part in (
+                    video.title,
+                    video.description,
+                    state.text if isinstance(state, TranscriptAvailable) else None,
+                )
                 if part
             )
             chunks = chunk_youtube_text(

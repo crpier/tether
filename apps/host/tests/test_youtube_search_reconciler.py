@@ -25,7 +25,9 @@ from tether.youtube.search_reconciler import YouTubeSearchReconciler
 from tether.youtube.store import (
     IngestedVideo,
     create_youtube_schema,
+    write_transcript_available,
 )
+from tether.youtube.types import VideoId
 
 _DIM = 16
 
@@ -115,16 +117,19 @@ async def _add_video(
         created = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id=video_id,
+                    video_id=VideoId(video_id),
                     source="liked",
                     title=title,
                     channel="chan",
                     topic="topic",
                     description="desc",
-                    transcript=transcript,
                 )
             ).returning()
         )
+        if transcript is not None:
+            await write_transcript_available(
+                tx, created.id, text=transcript, segments=()
+            )
         if ignored:
             _ = await tx.execute(
                 update(IngestedVideo)
@@ -182,13 +187,12 @@ async def a_video_with_no_searchable_text_is_skipped() -> None:
         _ = await tx.execute(
             insert(
                 IngestedVideo(
-                    video_id="vid1",
+                    video_id=VideoId("vid1"),
                     source="liked",
                     title="",
                     channel="chan",
                     topic="topic",
                     description="",
-                    transcript=None,
                 )
             ).returning()
         )
@@ -226,7 +230,7 @@ async def ignoring_a_video_drops_its_chunks_as_orphans() -> None:
         _ = await tx.execute(
             update(IngestedVideo)
             .set(IngestedVideo.ignored_at.to(CurrentTimestamp))
-            .where(IngestedVideo.video_id.eq("vid1"))
+            .where(IngestedVideo.video_id.eq(VideoId("vid1")))
         )
     report = await h.reconciler.reconcile(logger=_logger())
 

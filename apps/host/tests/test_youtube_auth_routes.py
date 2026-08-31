@@ -21,6 +21,7 @@ from tether.youtube.auth_service import (
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.oauth import REQUIRED_SCOPES, OAuthConfig
 from tether.youtube.quota import LikedPage, RawYouTubeVideo
+from tether.youtube.types import VideoId
 
 
 class FakeGoogleCredentials:
@@ -175,7 +176,7 @@ def successful_youtube_callback_immediately_syncs_likes() -> None:
     youtube_api = AuthorizationGuardedYouTubeApi(
         liked=[
             RawYouTubeVideo(
-                video_id="fresh-video",
+                video_id=VideoId("fresh-video"),
                 title="Freshly liked",
                 channel="Channel",
                 topic="youtube",

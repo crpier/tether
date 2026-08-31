@@ -184,13 +184,16 @@ class AnswerOutcomeRead(BaseModel):
 async def start_recall(request: Request, video_id: str) -> CapabilityOutcome:
     """Start Recall from an ingested educational video's transcript."""
     video = await app_runtime(request.app).youtube_service.get_video(video_id)
-    if video.transcript is None:
+    transcript = await app_runtime(request.app).youtube_service.stored_transcript(
+        video_id
+    )
+    if transcript is None:
         message = f"video {video_id} has no fetched transcript to distil"
         raise TranscriptNotReadyError(message)
     study_item = await app_runtime(request.app).recall_service.start_recall(
         source_video_id=video.video_id,
         source_title=video.title,
-        transcript=video.transcript,
+        transcript=transcript,
         now=datetime.now(UTC),
         logger=get_request_logger(request),
     )

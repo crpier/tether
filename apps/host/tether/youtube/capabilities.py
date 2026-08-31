@@ -177,6 +177,7 @@ class YouTubeVideoRead(BaseModel):
         video: IngestedVideo[Fetched],
         *,
         transcript_status: TranscriptStatus,
+        transcript: str | None = None,
     ) -> YouTubeVideoRead:
         """Render a stored video with its normalized transcript status."""
         return cls(
@@ -188,7 +189,7 @@ class YouTubeVideoRead(BaseModel):
             channel=video.channel,
             topic=video.topic,
             description=video.description,
-            transcript=video.transcript,
+            transcript=transcript,
             transcript_status=transcript_status,
             created_at=video.created_at,
             updated_at=video.updated_at,
@@ -203,9 +204,12 @@ async def _single(request: Request, video: IngestedVideo[Fetched]) -> Capability
     transcript_status = await _runtime(request).youtube_service.transcript_status(
         video.video_id
     )
+    transcript = await _runtime(request).youtube_service.stored_transcript(
+        video.video_id
+    )
     return CapabilityOutcome(
         result=YouTubeVideoRead.from_video(
-            video, transcript_status=transcript_status
+            video, transcript_status=transcript_status, transcript=transcript
         ).model_dump(mode="json")
     )
 

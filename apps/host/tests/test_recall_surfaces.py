@@ -27,6 +27,7 @@ from tether.recall_generation import (
 from tether.recall_grading import AnswerGradingUnavailable, EssayGradeProposal
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import RawYouTubeVideo
+from tether.youtube.types import VideoId
 
 
 class FakeGenerator:
@@ -107,7 +108,7 @@ def seeded_api() -> InMemoryYouTubeApi:
     return InMemoryYouTubeApi(
         liked=[
             RawYouTubeVideo(
-                video_id="v1",
+                video_id=VideoId("v1"),
                 title="Async IO Explained",
                 channel="PyConf",
                 topic="python",

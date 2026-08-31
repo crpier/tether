@@ -24,6 +24,7 @@ from tether.transcripts.contracts import (
 )
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import RawYouTubeVideo
+from tether.youtube.types import VideoId
 
 
 def video(
@@ -36,7 +37,7 @@ def video(
 ) -> RawYouTubeVideo:
     """Build a raw upstream video with sensible defaults."""
     return RawYouTubeVideo(
-        video_id=video_id,
+        video_id=VideoId(video_id),
         title=title,
         channel=channel,
         topic=topic,
@@ -332,7 +333,7 @@ def unavailable_transcript_appears_in_the_decision_queue() -> None:
                 "channel": "PyConf",
                 "transcript_status": "needs_review",
                 "last_error": "v1",
-                "attempts": 0,
+                "attempts": 1,
             }
         ],
     )

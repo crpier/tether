@@ -506,7 +506,7 @@ async def malformed_success_payload_is_transient() -> None:
 
 @test()
 async def direct_hit_with_timed_cues_returns_joined_text() -> None:
-    """Validated timed cues yield joined text without unused timing storage."""
+    """Validated timed cues retain exact millisecond offsets and durations."""
     transport = FakeSupadataTransport(
         submit=[
             SupadataTranscript(
@@ -514,10 +514,12 @@ async def direct_hit_with_timed_cues_returns_joined_text() -> None:
                     SupadataCue(
                         text=validate_python(NonBlankStr, "hello").unwrap(),
                         offset=validate_python(NonNegativeInt, 0).unwrap(),
+                        duration=validate_python(NonNegativeInt, 1200).unwrap(),
                     ),
                     SupadataCue(
                         text=validate_python(NonBlankStr, "world").unwrap(),
                         offset=validate_python(NonNegativeInt, 1500).unwrap(),
+                        duration=validate_python(NonNegativeInt, 900).unwrap(),
                     ),
                 )
             )
@@ -528,6 +530,10 @@ async def direct_hit_with_timed_cues_returns_joined_text() -> None:
 
     assert_eq(result.text, "hello world")
     assert_eq(result.source, "supadata")
+    assert_eq(
+        [(segment.start_ms, segment.duration_ms) for segment in result.segments],
+        [(0, 1200), (1500, 900)],
+    )
     assert_eq(transport.poll_calls, 0)
 
 

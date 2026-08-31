@@ -1508,6 +1508,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "google-auth-oauthlib" },
     { name = "httpx" },
     { name = "pyright" },
     { name = "ruff" },
@@ -1546,6 +1547,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "google-auth-oauthlib", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyright", specifier = ">=1.1.410" },
     { name = "ruff", specifier = ">=0.15.18" },

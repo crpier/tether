@@ -27,6 +27,7 @@ from tether.transcripts.contracts import (
     TranscriptBlockedFailure,
     TranscriptFailure,
     TranscriptFetchResult,
+    TranscriptSegment,
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
@@ -60,7 +61,7 @@ class SupadataCue(_SupadataPayload):
 
     text: NonBlankStr
     offset: NonNegativeInt
-    duration: NonNegativeInt | None = None
+    duration: NonNegativeInt
     lang: str | None = None
 
 
@@ -236,20 +237,24 @@ def _extract_transcript(
     transcript: SupadataTranscript | SupadataJobCompleted,
     *,
     video_id: str,
-) -> Result[str, TranscriptUnavailableFailure]:
-    """Extract usable text or identify a response with no usable transcript."""
+) -> Result[FetchedTranscript, TranscriptUnavailableFailure]:
+    """Preserve usable text and exact provider-reported timing."""
     if isinstance(transcript.content, str):
         cleaned = transcript.content.strip()
+        segments: tuple[TranscriptSegment, ...] = ()
     else:
         cleaned = " ".join(cue.text.strip() for cue in transcript.content)
+        segments = tuple(
+            TranscriptSegment(
+                text=cue.text,
+                start_ms=cue.offset,
+                duration_ms=cue.duration,
+            )
+            for cue in transcript.content
+        )
     if not cleaned:
         return Err(TranscriptUnavailableFailure(video_id=video_id))
-    return Ok(cleaned)
-
-
-def _as_fetched_transcript(text: str) -> FetchedTranscript:
-    """Stamp extracted Supadata text with its trusted provenance."""
-    return FetchedTranscript(text=text, source=_SOURCE)
+    return Ok(FetchedTranscript(text=cleaned, source=_SOURCE, segments=segments))
 
 
 def _unfinished_failure(
@@ -388,9 +393,7 @@ class SupadataTranscriptSource:
         """Resolve an immediate transcript or continue an accepted async job."""
         if isinstance(response, SupadataJobAccepted):
             return await self._poll_to_completion(video_id, response.job_id)
-        return _extract_transcript(response, video_id=video_id).map(
-            _as_fetched_transcript
-        )
+        return _extract_transcript(response, video_id=video_id)
 
     async def _poll_to_completion(
         self, video_id: str, job_id: str
@@ -432,9 +435,7 @@ class SupadataTranscriptSource:
         if isinstance(response, SupadataJobFailed):
             return Err(_classify_job_failure(video_id, response))
         if isinstance(response, SupadataJobCompleted):
-            return _extract_transcript(response, video_id=video_id).map(
-                _as_fetched_transcript
-            )
+            return _extract_transcript(response, video_id=video_id)
         return Ok(None)
 
     def _finish_polling(

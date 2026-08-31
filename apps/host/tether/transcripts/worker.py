@@ -18,7 +18,7 @@ from tether.transcripts.contracts import (
     TranscriptStored,
 )
 from tether.transcripts.provider_health import load_all_provider_pauses
-from tether.youtube import Clock, IngestedVideo, YouTubeTranscriptState
+from tether.youtube import Clock, IngestedVideo, YouTubeTranscript
 
 _LIBRARY_SOURCE = "youtube_transcript_api"
 
@@ -154,18 +154,17 @@ class TranscriptSyncService:
 
     def _eligible_query(self, now: datetime):  # noqa: ANN202 (snekql query type is internal)
         """Select active videos eligible for automatic transcript acquisition."""
-        blocked = select(YouTubeTranscriptState.video_id).where(
-            YouTubeTranscriptState.status.in_("needs_review", "unavailable")
+        blocked = select(YouTubeTranscript.ingested_video_id).where(
+            YouTubeTranscript.status.in_("needs_review", "available", "unavailable")
             | (
-                YouTubeTranscriptState.status.eq("retrying")
-                & YouTubeTranscriptState.next_attempt_at.gt(now)
+                YouTubeTranscript.status.eq("retrying")
+                & YouTubeTranscript.next_attempt_at.gt(now)
             )
         )
         return (
             select(IngestedVideo)
-            .where(IngestedVideo.transcript.is_null())
             .where(IngestedVideo.ignored_at.is_null())
-            .where(IngestedVideo.video_id.not_in_subquery(blocked))
+            .where(IngestedVideo.id.not_in_subquery(blocked))
         )
 
     async def _eligible(self, now: datetime) -> list[IngestedVideo[Fetched]]:

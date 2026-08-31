@@ -36,6 +36,7 @@ from tether.youtube.quota import (
     RawYouTubeVideo,
     YouTubeQuotaExceededError,
 )
+from tether.youtube.types import VideoId
 
 YOUTUBE_READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 """Read access to the user's account, including the liked-videos playlist."""
@@ -324,7 +325,7 @@ class OAuthYouTubeApi:
         content = _section(item, "contentDetails")
         resource_id = _section(snippet, "resourceId")
         return RawYouTubeVideo(
-            video_id=_str_or_none(resource_id.get("videoId")) or "",
+            video_id=VideoId(_str_or_none(resource_id.get("videoId")) or ""),
             title=_str_or_none(snippet.get("title")) or "",
             channel=_str_or_none(snippet.get("videoOwnerChannelTitle")) or "",
             channel_id=_str_or_none(snippet.get("videoOwnerChannelId")),
@@ -345,7 +346,7 @@ class OAuthYouTubeApi:
         status = _section(item, "status")
         topic_details = _section(item, "topicDetails")
         return RawYouTubeVideo(
-            video_id=_str_or_none(item.get("id")) or "",
+            video_id=VideoId(_str_or_none(item.get("id")) or ""),
             title=_str_or_none(snippet.get("title")) or "",
             channel=_str_or_none(snippet.get("channelTitle")) or "",
             channel_id=_str_or_none(snippet.get("channelId")),
