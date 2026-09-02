@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from snekok.result import Err, Ok, Result
-from snekql.sqlite import Database, Transaction, insert, select, update
+from snekql.sqlite import Database, DoUpdate, Transaction, insert, select
 
 from tether.capability_contracts import QuotaMeta
 from tether.web_search import SearchBudgetExhaustedFailure
@@ -75,17 +75,17 @@ class PersistentSearchSpendGuard:
             used = int(row.value) if row is not None else 0
             if used + credit_cost > self._max_uses:
                 return SearchBudgetExhaustedFailure(limit=self._max_uses, used=used)
-            next_used = str(used + credit_cost)
-            if row is None:
-                _ = await transaction.execute(
-                    insert(YouTubeSyncState(key=month_key, value=next_used))
+            _ = await transaction.execute(
+                insert(
+                    YouTubeSyncState(
+                        key=month_key,
+                        value=str(used + credit_cost),
+                    )
+                ).on_conflict(
+                    YouTubeSyncState.key,
+                    action=DoUpdate(YouTubeSyncState.value.to_inserted()),
                 )
-            else:
-                _ = await transaction.execute(
-                    update(YouTubeSyncState)
-                    .set(YouTubeSyncState.value.to(next_used))
-                    .where(YouTubeSyncState.key.eq(month_key))
-                )
+            )
             return None
 
         async with self._database.transaction(mode="immediate") as transaction:

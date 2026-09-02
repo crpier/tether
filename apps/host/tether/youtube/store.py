@@ -21,6 +21,7 @@ from snekql.sqlite import (
     PENDING_GENERATION,
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     ForeignKey,
     Index,
@@ -33,7 +34,6 @@ from snekql.sqlite import (
     delete,
     insert,
     select,
-    update,
 )
 
 from tether.transcripts.contracts import TranscriptSegment
@@ -160,56 +160,50 @@ async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
     existing = await tx.fetch_one_or_none(
         select(IngestedVideo).where(IngestedVideo.video_id.eq(raw.video_id))
     )
-    # TODO: after snekql adds upsert, use that instead of this.
-    if existing is None:
-        _ = await tx.execute(insert(_new_ingested_video(raw)))
-        return
     _ = await tx.execute(
-        update(IngestedVideo)
-        .set(IngestedVideo.source.to("liked"))
-        .set(IngestedVideo.title.to(raw.title))
-        .set(IngestedVideo.channel.to(raw.channel))
-        .set(IngestedVideo.topic.to(raw.topic))
-        .set(IngestedVideo.description.to(raw.description))
-        .set(IngestedVideo.channel_id.to(raw.channel_id))
-        # A raw without liked_at (e.g. a detail-only record) must not clear a
-        # timestamp an earlier liked-page pass already recorded.
-        .set(
-            IngestedVideo.liked_at.to(
-                raw.liked_at if raw.liked_at is not None else existing.liked_at
-            )
+        insert(_new_ingested_video(raw)).on_conflict(
+            IngestedVideo.video_id,
+            action=DoUpdate(
+                IngestedVideo.source.to_inserted(),
+                IngestedVideo.title.to_inserted(),
+                IngestedVideo.channel.to_inserted(),
+                IngestedVideo.topic.to_inserted(),
+                IngestedVideo.description.to_inserted(),
+                IngestedVideo.channel_id.to_inserted(),
+                # A detail-only row must not clear an earlier liked timestamp.
+                *(
+                    (IngestedVideo.liked_at.to_inserted(),)
+                    if raw.liked_at is not None
+                    else ()
+                ),
+                IngestedVideo.video_published_at.to_inserted(),
+                IngestedVideo.duration_seconds.to_inserted(),
+                IngestedVideo.category_id.to_inserted(),
+                IngestedVideo.default_language.to_inserted(),
+                IngestedVideo.default_audio_language.to_inserted(),
+                IngestedVideo.caption_available.to_inserted(),
+                IngestedVideo.privacy_status.to_inserted(),
+                IngestedVideo.licensed_content.to_inserted(),
+                IngestedVideo.made_for_kids.to_inserted(),
+                IngestedVideo.live_broadcast_content.to_inserted(),
+                IngestedVideo.definition.to_inserted(),
+                IngestedVideo.dimension.to_inserted(),
+                IngestedVideo.statistics_view_count.to_inserted(),
+                IngestedVideo.statistics_like_count.to_inserted(),
+                IngestedVideo.statistics_comment_count.to_inserted(),
+                IngestedVideo.statistics_fetched_at.to_inserted(),
+                IngestedVideo.topic_categories_json.to_inserted(),
+                IngestedVideo.tags_json.to_inserted(),
+                IngestedVideo.thumbnails_json.to_inserted(),
+                IngestedVideo.updated_at.to(CurrentTimestamp),
+            ),
         )
-        .set(IngestedVideo.video_published_at.to(raw.video_published_at))
-        .set(IngestedVideo.duration_seconds.to(raw.duration_seconds))
-        .set(IngestedVideo.category_id.to(raw.category_id))
-        .set(IngestedVideo.default_language.to(raw.default_language))
-        .set(IngestedVideo.default_audio_language.to(raw.default_audio_language))
-        .set(
-            IngestedVideo.caption_available.to(
-                _bool_to_int(value=raw.caption_available)
-            )
-        )
-        .set(IngestedVideo.privacy_status.to(raw.privacy_status))
-        .set(
-            IngestedVideo.licensed_content.to(_bool_to_int(value=raw.licensed_content))
-        )
-        .set(IngestedVideo.made_for_kids.to(_bool_to_int(value=raw.made_for_kids)))
-        .set(IngestedVideo.live_broadcast_content.to(raw.live_broadcast_content))
-        .set(IngestedVideo.definition.to(raw.definition))
-        .set(IngestedVideo.dimension.to(raw.dimension))
-        .set(IngestedVideo.statistics_view_count.to(raw.statistics_view_count))
-        .set(IngestedVideo.statistics_like_count.to(raw.statistics_like_count))
-        .set(IngestedVideo.statistics_comment_count.to(raw.statistics_comment_count))
-        .set(IngestedVideo.statistics_fetched_at.to(raw.statistics_fetched_at))
-        .set(
-            IngestedVideo.topic_categories_json.to(_json_or_none(raw.topic_categories))
-        )
-        .set(IngestedVideo.tags_json.to(_json_or_none(raw.tags)))
-        .set(IngestedVideo.thumbnails_json.to(_json_or_none(raw.thumbnails)))
-        .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-        .where(IngestedVideo.video_id.eq(raw.video_id))
     )
-    if existing.caption_available == 0 and raw.caption_available is True:
+    if (
+        existing is not None
+        and existing.caption_available == 0
+        and raw.caption_available is True
+    ):
         state = await fetch_transcript_state(tx, existing.id)
         if isinstance(state, TranscriptReviewNeeded | TranscriptUnavailable):
             _ = await tx.execute(
@@ -545,31 +539,28 @@ async def write_transcript_retrying(
             "next_attempt_at": next_attempt_at,
         },
     )
-    existing = await fetch_transcript_state(tx, fields.ingested_video_id)
-    if existing is None:
-        _ = await tx.execute(
-            insert(
-                YouTubeTranscript(
-                    ingested_video_id=fields.ingested_video_id,
-                    status="retrying",
-                    failed_attempts=fields.failed_attempts,
-                    last_error=fields.last_error,
-                    next_attempt_at=fields.next_attempt_at,
-                )
-            )
-        )
-        return
     _ = await tx.execute(
-        update(YouTubeTranscript)
-        .set(YouTubeTranscript.status.to("retrying"))
-        .set(YouTubeTranscript.failed_attempts.to(fields.failed_attempts))
-        .set(YouTubeTranscript.last_error.to(fields.last_error))
-        .set(YouTubeTranscript.next_attempt_at.to(fields.next_attempt_at))
-        .set(YouTubeTranscript.source.to(None))
-        .set(YouTubeTranscript.text.to(None))
-        .set(YouTubeTranscript.segments.to(None))
-        .set(YouTubeTranscript.updated_at.to(CurrentTimestamp))
-        .where(YouTubeTranscript.ingested_video_id.eq(fields.ingested_video_id))
+        insert(
+            YouTubeTranscript(
+                ingested_video_id=fields.ingested_video_id,
+                status="retrying",
+                failed_attempts=fields.failed_attempts,
+                last_error=fields.last_error,
+                next_attempt_at=fields.next_attempt_at,
+            )
+        ).on_conflict(
+            YouTubeTranscript.ingested_video_id,
+            action=DoUpdate(
+                YouTubeTranscript.status.to_inserted(),
+                YouTubeTranscript.failed_attempts.to_inserted(),
+                YouTubeTranscript.last_error.to_inserted(),
+                YouTubeTranscript.next_attempt_at.to_inserted(),
+                YouTubeTranscript.source.to(None),
+                YouTubeTranscript.text.to(None),
+                YouTubeTranscript.segments.to(None),
+                YouTubeTranscript.updated_at.to(CurrentTimestamp),
+            ),
+        )
     )
 
 
@@ -591,35 +582,28 @@ async def write_transcript_available(
             "segments": segments,
         },
     )
-    existing = await fetch_transcript_state(tx, fields.ingested_video_id)
-    if existing is None:
-        _ = await tx.execute(
-            insert(
-                YouTubeTranscript(
-                    ingested_video_id=fields.ingested_video_id,
-                    status="available",
-                    source=fields.source,
-                    text=fields.text,
-                    segments=fields.segments,
-                )
-            )
-        )
-        return
     _ = await tx.execute(
-        update(YouTubeTranscript)
-        .set(YouTubeTranscript.status.to("available"))
-        .set(
-            YouTubeTranscript.failed_attempts.to(
-                validate_python_unsafe(NonNegativeInt, 0)
+        insert(
+            YouTubeTranscript(
+                ingested_video_id=fields.ingested_video_id,
+                status="available",
+                source=fields.source,
+                text=fields.text,
+                segments=fields.segments,
             )
+        ).on_conflict(
+            YouTubeTranscript.ingested_video_id,
+            action=DoUpdate(
+                YouTubeTranscript.status.to_inserted(),
+                YouTubeTranscript.failed_attempts.to(_ZERO_FAILED_ATTEMPTS),
+                YouTubeTranscript.last_error.to(None),
+                YouTubeTranscript.next_attempt_at.to(None),
+                YouTubeTranscript.source.to_inserted(),
+                YouTubeTranscript.text.to_inserted(),
+                YouTubeTranscript.segments.to_inserted(),
+                YouTubeTranscript.updated_at.to(CurrentTimestamp),
+            ),
         )
-        .set(YouTubeTranscript.last_error.to(None))
-        .set(YouTubeTranscript.next_attempt_at.to(None))
-        .set(YouTubeTranscript.source.to(fields.source))
-        .set(YouTubeTranscript.text.to(fields.text))
-        .set(YouTubeTranscript.segments.to(fields.segments))
-        .set(YouTubeTranscript.updated_at.to(CurrentTimestamp))
-        .where(YouTubeTranscript.ingested_video_id.eq(fields.ingested_video_id))
     )
 
 
@@ -639,30 +623,27 @@ async def write_transcript_review_needed(
             "last_error": last_error,
         },
     )
-    existing = await fetch_transcript_state(tx, fields.ingested_video_id)
-    if existing is None:
-        _ = await tx.execute(
-            insert(
-                YouTubeTranscript(
-                    ingested_video_id=fields.ingested_video_id,
-                    status="needs_review",
-                    failed_attempts=fields.failed_attempts,
-                    last_error=fields.last_error,
-                )
-            )
-        )
-        return
     _ = await tx.execute(
-        update(YouTubeTranscript)
-        .set(YouTubeTranscript.status.to("needs_review"))
-        .set(YouTubeTranscript.failed_attempts.to(fields.failed_attempts))
-        .set(YouTubeTranscript.last_error.to(fields.last_error))
-        .set(YouTubeTranscript.next_attempt_at.to(None))
-        .set(YouTubeTranscript.source.to(None))
-        .set(YouTubeTranscript.text.to(None))
-        .set(YouTubeTranscript.segments.to(None))
-        .set(YouTubeTranscript.updated_at.to(CurrentTimestamp))
-        .where(YouTubeTranscript.ingested_video_id.eq(fields.ingested_video_id))
+        insert(
+            YouTubeTranscript(
+                ingested_video_id=fields.ingested_video_id,
+                status="needs_review",
+                failed_attempts=fields.failed_attempts,
+                last_error=fields.last_error,
+            )
+        ).on_conflict(
+            YouTubeTranscript.ingested_video_id,
+            action=DoUpdate(
+                YouTubeTranscript.status.to_inserted(),
+                YouTubeTranscript.failed_attempts.to_inserted(),
+                YouTubeTranscript.last_error.to_inserted(),
+                YouTubeTranscript.next_attempt_at.to(None),
+                YouTubeTranscript.source.to(None),
+                YouTubeTranscript.text.to(None),
+                YouTubeTranscript.segments.to(None),
+                YouTubeTranscript.updated_at.to(CurrentTimestamp),
+            ),
+        )
     )
 
 
@@ -682,28 +663,25 @@ async def write_transcript_unavailable(
             "last_error": last_error,
         },
     )
-    existing = await fetch_transcript_state(tx, fields.ingested_video_id)
-    if existing is None:
-        _ = await tx.execute(
-            insert(
-                YouTubeTranscript(
-                    ingested_video_id=fields.ingested_video_id,
-                    status="unavailable",
-                    failed_attempts=fields.failed_attempts,
-                    last_error=fields.last_error,
-                )
-            )
-        )
-        return
     _ = await tx.execute(
-        update(YouTubeTranscript)
-        .set(YouTubeTranscript.status.to("unavailable"))
-        .set(YouTubeTranscript.failed_attempts.to(fields.failed_attempts))
-        .set(YouTubeTranscript.last_error.to(fields.last_error))
-        .set(YouTubeTranscript.next_attempt_at.to(None))
-        .set(YouTubeTranscript.source.to(None))
-        .set(YouTubeTranscript.text.to(None))
-        .set(YouTubeTranscript.segments.to(None))
-        .set(YouTubeTranscript.updated_at.to(CurrentTimestamp))
-        .where(YouTubeTranscript.ingested_video_id.eq(fields.ingested_video_id))
+        insert(
+            YouTubeTranscript(
+                ingested_video_id=fields.ingested_video_id,
+                status="unavailable",
+                failed_attempts=fields.failed_attempts,
+                last_error=fields.last_error,
+            )
+        ).on_conflict(
+            YouTubeTranscript.ingested_video_id,
+            action=DoUpdate(
+                YouTubeTranscript.status.to_inserted(),
+                YouTubeTranscript.failed_attempts.to_inserted(),
+                YouTubeTranscript.last_error.to_inserted(),
+                YouTubeTranscript.next_attempt_at.to(None),
+                YouTubeTranscript.source.to(None),
+                YouTubeTranscript.text.to(None),
+                YouTubeTranscript.segments.to(None),
+                YouTubeTranscript.updated_at.to(CurrentTimestamp),
+            ),
+        )
     )

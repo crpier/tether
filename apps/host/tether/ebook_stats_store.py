@@ -10,6 +10,7 @@ from snekql.sqlite import (
     PENDING_GENERATION,
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Index,
     Integer,
@@ -19,7 +20,6 @@ from snekql.sqlite import (
     UtcDatetime,
     insert,
     select,
-    update,
 )
 
 from tether.ebook_stats_model import ParsedBook, ParsedPageEvent
@@ -121,20 +121,13 @@ class EbookStatsStore:
     async def write_watermark(self, watermark: str) -> None:
         """Upsert the watermark after all books and events have persisted."""
         async with self.database.transaction(mode="immediate") as transaction:
-            existing = await transaction.fetch_one_or_none(
-                select(EbookStatSyncState).where(
-                    EbookStatSyncState.key.eq(_WATERMARK_KEY)
-                )
-            )
-            if existing is None:
-                _ = await transaction.execute(
-                    insert(EbookStatSyncState(key=_WATERMARK_KEY, value=watermark))
-                )
-                return
             _ = await transaction.execute(
-                update(EbookStatSyncState)
-                .set(EbookStatSyncState.value.to(watermark))
-                .where(EbookStatSyncState.key.eq(_WATERMARK_KEY))
+                insert(
+                    EbookStatSyncState(key=_WATERMARK_KEY, value=watermark)
+                ).on_conflict(
+                    EbookStatSyncState.key,
+                    action=DoUpdate(EbookStatSyncState.value.to_inserted()),
+                )
             )
 
     async def _upsert_book(self, parsed_book: ParsedBook) -> EbookStatBook[Fetched]:
@@ -154,45 +147,39 @@ class EbookStatsStore:
                 )
                 if matched_document is not None:
                     document_hash = matched_document.document_hash
-            if existing is None:
-                return await transaction.execute(
-                    insert(
-                        EbookStatBook(
-                            source_book_id=parsed_book.source_book_id,
-                            title=parsed_book.title,
-                            authors=parsed_book.authors,
-                            pages=parsed_book.pages,
-                            md5=parsed_book.md5,
-                            total_read_time=parsed_book.total_read_time,
-                            total_read_pages=parsed_book.total_read_pages,
-                            highlights=parsed_book.highlights,
-                            notes=parsed_book.notes,
-                            last_open=parsed_book.last_open,
-                            document_hash=document_hash,
-                        )
-                    ).returning()
+            return await transaction.execute(
+                insert(
+                    EbookStatBook(
+                        source_book_id=parsed_book.source_book_id,
+                        title=parsed_book.title,
+                        authors=parsed_book.authors,
+                        pages=parsed_book.pages,
+                        md5=parsed_book.md5,
+                        total_read_time=parsed_book.total_read_time,
+                        total_read_pages=parsed_book.total_read_pages,
+                        highlights=parsed_book.highlights,
+                        notes=parsed_book.notes,
+                        last_open=parsed_book.last_open,
+                        document_hash=document_hash,
+                    )
                 )
-            _ = await transaction.execute(
-                update(EbookStatBook)
-                .set(
-                    EbookStatBook.title.to(parsed_book.title),
-                    EbookStatBook.authors.to(parsed_book.authors),
-                    EbookStatBook.pages.to(parsed_book.pages),
-                    EbookStatBook.md5.to(parsed_book.md5),
-                    EbookStatBook.total_read_time.to(parsed_book.total_read_time),
-                    EbookStatBook.total_read_pages.to(parsed_book.total_read_pages),
-                    EbookStatBook.highlights.to(parsed_book.highlights),
-                    EbookStatBook.notes.to(parsed_book.notes),
-                    EbookStatBook.last_open.to(parsed_book.last_open),
-                    EbookStatBook.document_hash.to(document_hash),
-                    EbookStatBook.updated_at.to(CurrentTimestamp),
+                .on_conflict(
+                    EbookStatBook.source_book_id,
+                    action=DoUpdate(
+                        EbookStatBook.title.to_inserted(),
+                        EbookStatBook.authors.to_inserted(),
+                        EbookStatBook.pages.to_inserted(),
+                        EbookStatBook.md5.to_inserted(),
+                        EbookStatBook.total_read_time.to_inserted(),
+                        EbookStatBook.total_read_pages.to_inserted(),
+                        EbookStatBook.highlights.to_inserted(),
+                        EbookStatBook.notes.to_inserted(),
+                        EbookStatBook.last_open.to_inserted(),
+                        EbookStatBook.document_hash.to_inserted(),
+                        EbookStatBook.updated_at.to(CurrentTimestamp),
+                    ),
                 )
-                .where(EbookStatBook.source_book_id.eq(parsed_book.source_book_id))
-            )
-            return await transaction.fetch_one(
-                select(EbookStatBook).where(
-                    EbookStatBook.source_book_id.eq(parsed_book.source_book_id)
-                )
+                .returning()
             )
 
     async def _insert_book_events(

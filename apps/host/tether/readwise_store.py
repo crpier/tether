@@ -9,15 +9,14 @@ from pydantic import Json
 from snekql import sqlite
 from snekql.sqlite import (
     Database,
+    DoUpdate,
     Fetched,
     Integer,
     Model,
     Pending,
     Text,
-    Transaction,
     insert,
     select,
-    update,
 )
 
 HIGHLIGHTS_WATERMARK_KEY = "highlights_export_watermark"
@@ -70,23 +69,13 @@ async def write_sync_watermark(
 ) -> None:
     """Upsert one successful-pass cursor."""
 
-    async def _write(transaction: Transaction) -> None:
-        existing = await transaction.fetch_one_or_none(
-            select(ReadwiseSyncState).where(ReadwiseSyncState.key.eq(key))
-        )
-        if existing is None:
-            _ = await transaction.execute(
-                insert(ReadwiseSyncState(key=key, value=watermark.isoformat()))
-            )
-            return
-        _ = await transaction.execute(
-            update(ReadwiseSyncState)
-            .set(ReadwiseSyncState.value.to(watermark.isoformat()))
-            .where(ReadwiseSyncState.key.eq(key))
-        )
-
     async with database.transaction(mode="immediate") as transaction:
-        await _write(transaction)
+        _ = await transaction.execute(
+            insert(ReadwiseSyncState(key=key, value=watermark.isoformat())).on_conflict(
+                ReadwiseSyncState.key,
+                action=DoUpdate(ReadwiseSyncState.value.to_inserted()),
+            )
+        )
 
 
 _READWISE_MIGRATIONS: dict[str, str] = {

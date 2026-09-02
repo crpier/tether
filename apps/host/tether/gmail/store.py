@@ -9,15 +9,14 @@ from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Model,
     Pending,
     Text,
-    Transaction,
     UtcDatetime,
     insert,
     select,
-    update,
 )
 
 GMAIL_WATERMARK_KEY = "gmail_message_watermark"
@@ -70,23 +69,13 @@ async def write_sync_watermark(
 ) -> None:
     """Insert or replace one synchronization cursor."""
 
-    async def _write(transaction: Transaction) -> None:
-        stored = await transaction.fetch_one_or_none(
-            select(GmailSyncState).where(GmailSyncState.key.eq(key))
-        )
-        if stored is None:
-            _ = await transaction.execute(
-                insert(GmailSyncState(key=key, value=watermark.isoformat()))
-            )
-            return
-        _ = await transaction.execute(
-            update(GmailSyncState)
-            .set(GmailSyncState.value.to(watermark.isoformat()))
-            .where(GmailSyncState.key.eq(key))
-        )
-
     async with database.transaction(mode="immediate") as transaction:
-        await _write(transaction)
+        _ = await transaction.execute(
+            insert(GmailSyncState(key=key, value=watermark.isoformat())).on_conflict(
+                GmailSyncState.key,
+                action=DoUpdate(GmailSyncState.value.to_inserted()),
+            )
+        )
 
 
 _GMAIL_MIGRATIONS: dict[str, str] = {

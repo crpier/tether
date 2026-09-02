@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from snekok.result import Err, Ok, Result
-from snekql.sqlite import Database, Fetched, insert, select, update
+from snekql.sqlite import Database, DoUpdate, Fetched, insert, select
 
 from tether.readwise_http import (
     ReadwiseAuthenticationFailure,
@@ -367,51 +367,27 @@ class ReadwiseSyncService:
         if not content.strip():
             return "skipped"
         facets = _highlight_facets(book, highlight)
-        if mapping is None:
-            await self._create_highlight(highlight, content, facets)
-            return "created"
-        if not self._is_newer(highlight, mapping):
+        if mapping is not None and not self._is_newer(highlight, mapping):
             return "skipped"
-        await self._edit_highlight(mapping, highlight, content, facets)
-        return "updated"
-
-    async def _create_highlight(
-        self,
-        highlight: ReadwiseHighlightRecord,
-        content: str,
-        metadata: dict[str, str],
-    ) -> None:
         async with self.database.transaction(mode="immediate") as transaction:
             _ = await transaction.execute(
                 insert(
                     ReadwiseHighlight(
                         highlight_id=highlight.highlight_id,
                         content=content,
-                        metadata=metadata,
+                        metadata=facets,
                         updated_at=_isoformat_or_empty(highlight.updated_at),
                     )
-                )
-            )
-
-    async def _edit_highlight(
-        self,
-        mapping: ReadwiseHighlight[Fetched],
-        highlight: ReadwiseHighlightRecord,
-        content: str,
-        metadata: dict[str, str],
-    ) -> None:
-        async with self.database.transaction(mode="immediate") as transaction:
-            _ = await transaction.execute(
-                update(ReadwiseHighlight)
-                .set(
-                    ReadwiseHighlight.content.to(content),
-                    ReadwiseHighlight.metadata.to(metadata),
-                    ReadwiseHighlight.updated_at.to(
-                        _isoformat_or_empty(highlight.updated_at)
+                ).on_conflict(
+                    ReadwiseHighlight.highlight_id,
+                    action=DoUpdate(
+                        ReadwiseHighlight.content.to_inserted(),
+                        ReadwiseHighlight.metadata.to_inserted(),
+                        ReadwiseHighlight.updated_at.to_inserted(),
                     ),
                 )
-                .where(ReadwiseHighlight.highlight_id.eq(mapping.highlight_id))
             )
+        return "created" if mapping is None else "updated"
 
     async def _delete_highlight(
         self, mapping: ReadwiseHighlight[Fetched], *, logger: Logger

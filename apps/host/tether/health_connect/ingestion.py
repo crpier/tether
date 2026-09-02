@@ -11,6 +11,7 @@ from typing import Any, Protocol, cast
 from snekok.result import Err, Ok, Result
 from snekql.sqlite import (
     Database,
+    DoUpdate,
     Fetched,
     Transaction,
     delete,
@@ -198,37 +199,33 @@ class HealthConnectIngestion:
             _ = await transaction.execute(
                 delete(HcBaselineSeen).where(HcBaselineSeen.state_key.eq(key))
             )
-            if stored is None:
-                _ = await transaction.execute(
-                    insert(
-                        HealthConnectSyncState(
-                            baseline_generation=1,
-                            baseline_request_id=request_id,
-                            completion_deleted_json=None,
-                            completion_request_id=None,
-                            current_token=starting_token,
-                            installation_id=installation_id,
-                            record_type_set=",".join(record_types),
-                            state_key=key,
-                            status="baseline",
-                        )
-                    )
-                )
-            else:
-                _ = await transaction.execute(
-                    update(HealthConnectSyncState)
-                    .set(
-                        HealthConnectSyncState.baseline_generation.to(
-                            stored.baseline_generation + 1
+            _ = await transaction.execute(
+                insert(
+                    HealthConnectSyncState(
+                        baseline_generation=(
+                            1 if stored is None else stored.baseline_generation + 1
                         ),
-                        HealthConnectSyncState.baseline_request_id.to(request_id),
-                        HealthConnectSyncState.completion_deleted_json.to(None),
-                        HealthConnectSyncState.completion_request_id.to(None),
-                        HealthConnectSyncState.current_token.to(starting_token),
-                        HealthConnectSyncState.status.to("baseline"),
+                        baseline_request_id=request_id,
+                        completion_deleted_json=None,
+                        completion_request_id=None,
+                        current_token=starting_token,
+                        installation_id=installation_id,
+                        record_type_set=",".join(record_types),
+                        state_key=key,
+                        status="baseline",
                     )
-                    .where(HealthConnectSyncState.state_key.eq(key))
+                ).on_conflict(
+                    HealthConnectSyncState.state_key,
+                    action=DoUpdate(
+                        HealthConnectSyncState.baseline_generation.to_inserted(),
+                        HealthConnectSyncState.baseline_request_id.to_inserted(),
+                        HealthConnectSyncState.completion_deleted_json.to_inserted(),
+                        HealthConnectSyncState.completion_request_id.to_inserted(),
+                        HealthConnectSyncState.current_token.to_inserted(),
+                        HealthConnectSyncState.status.to_inserted(),
+                    ),
                 )
+            )
             persisted = await transaction.fetch_one(
                 select(HealthConnectSyncState).where(
                     HealthConnectSyncState.state_key.eq(key)

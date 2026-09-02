@@ -9,6 +9,7 @@ from snekql.sqlite import (
     PENDING_GENERATION,
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Index,
     Integer,
@@ -58,21 +59,16 @@ class KosyncStore:
     async def touch_document(self, document_hash: str) -> EbookDocument[Fetched]:
         """Create an unseen document or touch it, returning its prior guard state."""
         async with self.database.transaction(mode="immediate") as transaction:
-            existing = await transaction.fetch_one_or_none(
-                select(EbookDocument).where(
-                    EbookDocument.document_hash.eq(document_hash)
+            return await transaction.execute(
+                insert(EbookDocument(document_hash=document_hash))
+                .on_conflict(
+                    EbookDocument.document_hash,
+                    action=DoUpdate(
+                        EbookDocument.updated_at.to(CurrentTimestamp),
+                    ),
                 )
+                .returning()
             )
-            if existing is None:
-                return await transaction.execute(
-                    insert(EbookDocument(document_hash=document_hash)).returning()
-                )
-            _ = await transaction.execute(
-                update(EbookDocument)
-                .set(EbookDocument.updated_at.to(CurrentTimestamp))
-                .where(EbookDocument.document_hash.eq(document_hash))
-            )
-            return existing
 
     async def append_event(
         self, progress_update: ProgressUpdate, server_timestamp: int
@@ -109,29 +105,16 @@ class KosyncStore:
     ) -> EbookDocument[Fetched]:
         """Attach a title, creating the document identity when unseen."""
         async with self.database.transaction(mode="immediate") as transaction:
-            existing = await transaction.fetch_one_or_none(
-                select(EbookDocument).where(
-                    EbookDocument.document_hash.eq(document_hash)
+            return await transaction.execute(
+                insert(EbookDocument(document_hash=document_hash, title=title))
+                .on_conflict(
+                    EbookDocument.document_hash,
+                    action=DoUpdate(
+                        EbookDocument.title.to_inserted(),
+                        EbookDocument.updated_at.to(CurrentTimestamp),
+                    ),
                 )
-            )
-            if existing is None:
-                return await transaction.execute(
-                    insert(
-                        EbookDocument(document_hash=document_hash, title=title)
-                    ).returning()
-                )
-            _ = await transaction.execute(
-                update(EbookDocument)
-                .set(
-                    EbookDocument.title.to(title),
-                    EbookDocument.updated_at.to(CurrentTimestamp),
-                )
-                .where(EbookDocument.document_hash.eq(document_hash))
-            )
-            return await transaction.fetch_one(
-                select(EbookDocument).where(
-                    EbookDocument.document_hash.eq(document_hash)
-                )
+                .returning()
             )
 
     async def list_unlabeled(self) -> list[EbookDocument[Fetched]]:
