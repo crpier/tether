@@ -9,6 +9,7 @@ from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Model,
     Pending,
@@ -53,28 +54,19 @@ class PushStore:
     ) -> PushSubscription[Fetched]:
         """Insert, refresh, or revive the one row for an endpoint."""
         async with self.database.transaction(mode="immediate") as transaction:
-            existing = await transaction.fetch_one_or_none(
-                select(PushSubscription).where(PushSubscription.endpoint.eq(endpoint))
-            )
-            if existing is None:
-                return await transaction.execute(
-                    insert(
-                        PushSubscription(endpoint=endpoint, p256dh=p256dh, auth=auth)
-                    ).returning()
+            return await transaction.execute(
+                insert(PushSubscription(endpoint=endpoint, p256dh=p256dh, auth=auth))
+                .on_conflict(
+                    PushSubscription.endpoint,
+                    action=DoUpdate(
+                        PushSubscription.p256dh.to_inserted(),
+                        PushSubscription.auth.to_inserted(),
+                        PushSubscription.deleted_at.to(None),
+                        PushSubscription.updated_at.to(CurrentTimestamp),
+                    ),
                 )
-            _ = await transaction.execute(
-                update(PushSubscription)
-                .set(PushSubscription.p256dh.to(p256dh))
-                .set(PushSubscription.auth.to(auth))
-                .set(PushSubscription.deleted_at.to(None))
-                .set(PushSubscription.updated_at.to(CurrentTimestamp))
-                .where(PushSubscription.endpoint.eq(endpoint))
+                .returning()
             )
-            refreshed = await transaction.fetch_one_or_none(
-                select(PushSubscription).where(PushSubscription.endpoint.eq(endpoint))
-            )
-            assert refreshed is not None
-            return refreshed
 
     async def unsubscribe(self, endpoint: str) -> bool:
         """Convergently soft-delete an endpoint and report whether it changed."""

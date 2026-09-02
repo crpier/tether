@@ -14,6 +14,7 @@ from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Index,
     Integer,
@@ -576,42 +577,36 @@ class HealthPlanOccurrenceReconciler:
                     )
                 )
             )
-            if occurrence is None:
-                return await transaction.execute(
-                    insert(
-                        PlannedExerciseOccurrence(
-                            grace_ended_at=candidate.grace_ended_at,
-                            local_date=candidate.local_date.isoformat(),
-                            matched_evidence_uri=matched_evidence_uri,
-                            plan_id=candidate.plan.id,
-                            plan_version=candidate.plan.version,
-                            source_record_uid=candidate.source_record_uid,
-                            status=("missed" if candidate.match is None else "matched"),
-                            timezone=candidate.plan.timezone,
-                            title=candidate.plan.title,
-                            window_ended_at=candidate.window_ended_at,
-                            window_started_at=candidate.window_started_at,
-                        )
-                    ).returning()
+            if occurrence is not None and not (
+                occurrence.status == "missed" and matched_evidence_uri is not None
+            ):
+                return occurrence
+            return await transaction.execute(
+                insert(
+                    PlannedExerciseOccurrence(
+                        grace_ended_at=candidate.grace_ended_at,
+                        local_date=candidate.local_date.isoformat(),
+                        matched_evidence_uri=matched_evidence_uri,
+                        plan_id=candidate.plan.id,
+                        plan_version=candidate.plan.version,
+                        source_record_uid=candidate.source_record_uid,
+                        status=("missed" if candidate.match is None else "matched"),
+                        timezone=candidate.plan.timezone,
+                        title=candidate.plan.title,
+                        window_ended_at=candidate.window_ended_at,
+                        window_started_at=candidate.window_started_at,
+                    )
                 )
-            if occurrence.status == "missed" and matched_evidence_uri is not None:
-                _ = await transaction.execute(
-                    update(PlannedExerciseOccurrence)
-                    .set(
-                        PlannedExerciseOccurrence.matched_evidence_uri.to(
-                            matched_evidence_uri
-                        ),
-                        PlannedExerciseOccurrence.status.to("matched"),
+                .on_conflict(
+                    PlannedExerciseOccurrence.source_record_uid,
+                    action=DoUpdate(
+                        PlannedExerciseOccurrence.matched_evidence_uri.to_inserted(),
+                        PlannedExerciseOccurrence.status.to_inserted(),
                         PlannedExerciseOccurrence.updated_at.to(CurrentTimestamp),
-                    )
-                    .where(PlannedExerciseOccurrence.id.eq(occurrence.id))
+                    ),
                 )
-                return await transaction.fetch_one(
-                    select(PlannedExerciseOccurrence).where(
-                        PlannedExerciseOccurrence.id.eq(occurrence.id)
-                    )
-                )
-            return occurrence
+                .returning()
+            )
 
     @staticmethod
     def _match(

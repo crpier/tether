@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from snekql import sqlite
 from snekql.sqlite import (
     Database,
+    DoUpdate,
     Fetched,
     Integer,
     Model,
@@ -29,7 +30,6 @@ from snekql.sqlite import (
     Transaction,
     insert,
     select,
-    update,
 )
 
 from tether.capability_contracts import QuotaMeta
@@ -166,21 +166,13 @@ async def state_get(database: Database, key: str) -> str | None:
 
 
 async def state_set(database: Database, key: str, value: str) -> None:
-    async def _set(tx: Transaction) -> None:
-        existing = await tx.fetch_one_or_none(
-            select(YouTubeSyncState).where(YouTubeSyncState.key.eq(key))
-        )
-        if existing is None:
-            _ = await tx.execute(insert(YouTubeSyncState(key=key, value=value)))
-        else:
-            _ = await tx.execute(
-                update(YouTubeSyncState)
-                .set(YouTubeSyncState.value.to(value))
-                .where(YouTubeSyncState.key.eq(key))
-            )
-
     async with database.transaction(mode="immediate") as tx:
-        await _set(tx)
+        _ = await tx.execute(
+            insert(YouTubeSyncState(key=key, value=value)).on_conflict(
+                YouTubeSyncState.key,
+                action=DoUpdate(YouTubeSyncState.value.to_inserted()),
+            )
+        )
 
 
 # The shared, global Data API backoff gate, persisted so a live quota block
@@ -232,14 +224,12 @@ class DailyQuota:
                     f"units remain, {units} requested"
                 )
                 raise YouTubeQuotaExceededError(message)
-            if row is None:
-                _ = await tx.execute(insert(YouTubeQuotaDaily(day=day, used=units)))
-            else:
-                _ = await tx.execute(
-                    update(YouTubeQuotaDaily)
-                    .set(YouTubeQuotaDaily.used.to(used + units))
-                    .where(YouTubeQuotaDaily.day.eq(day))
+            _ = await tx.execute(
+                insert(YouTubeQuotaDaily(day=day, used=used + units)).on_conflict(
+                    YouTubeQuotaDaily.day,
+                    action=DoUpdate(YouTubeQuotaDaily.used.to_inserted()),
                 )
+            )
 
         async with self.database.transaction(mode="immediate") as tx:
             await _spend(tx)

@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import cast
 
 from opentelemetry.trace import Tracer
-from snekql.sqlite import Database, Transaction, insert, select, update
+from snekql.sqlite import Database, DoUpdate, Transaction, insert, select
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
@@ -390,16 +390,14 @@ class YouTubeSyncService:
         if updated == current:
             return
         value = json.dumps(sorted(updated))
-        if row is None:
-            _ = await tx.execute(
-                insert(YouTubeSyncState(key=_KNOWN_SKIPPED_IDS_KEY, value=value))
+        _ = await tx.execute(
+            insert(
+                YouTubeSyncState(key=_KNOWN_SKIPPED_IDS_KEY, value=value)
+            ).on_conflict(
+                YouTubeSyncState.key,
+                action=DoUpdate(YouTubeSyncState.value.to_inserted()),
             )
-        else:
-            _ = await tx.execute(
-                update(YouTubeSyncState)
-                .set(YouTubeSyncState.value.to(value))
-                .where(YouTubeSyncState.key.eq(_KNOWN_SKIPPED_IDS_KEY))
-            )
+        )
 
     async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> None:
         await upsert_ingested_video(tx, raw)

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from pydantic import UUID7
 from snekok.result import Err, Ok, Result
-from snekql.sqlite import Database, Fetched, Transaction, insert, select, update
+from snekql.sqlite import Database, DoUpdate, Fetched, insert, select
 
 from tether.chat_prompt import local_timezone_name
 from tether.gmail.client import GmailClient, GmailFailure, GmailMessage
@@ -330,43 +330,31 @@ class GmailSyncService:
     ) -> None:
         """Insert or update one message's idempotency state."""
 
-        async def _upsert(transaction: Transaction) -> None:
-            stored = await transaction.fetch_one_or_none(
-                select(GmailMessageRecord).where(
-                    GmailMessageRecord.message_id.eq(message.message_id)
-                )
-            )
-            if stored is None:
-                _ = await transaction.execute(
-                    insert(
-                        GmailMessageRecord(
-                            internal_date=message.internal_date.isoformat(),
-                            from_header=message.from_header,
-                            subject=message.subject,
-                            body_text=message.body_text,
-                            message_id=message.message_id,
-                            status=status,
-                            trigger_id=trigger_id,
-                            verdict_reason=verdict_reason,
-                        )
-                    )
-                )
-                return
-            _ = await transaction.execute(
-                update(GmailMessageRecord)
-                .set(
-                    GmailMessageRecord.from_header.to(message.from_header),
-                    GmailMessageRecord.subject.to(message.subject),
-                    GmailMessageRecord.body_text.to(message.body_text),
-                    GmailMessageRecord.status.to(status),
-                    GmailMessageRecord.trigger_id.to(trigger_id),
-                    GmailMessageRecord.verdict_reason.to(verdict_reason),
-                )
-                .where(GmailMessageRecord.message_id.eq(message.message_id))
-            )
-
         async with self.database.transaction(mode="immediate") as transaction:
-            await _upsert(transaction)
+            _ = await transaction.execute(
+                insert(
+                    GmailMessageRecord(
+                        internal_date=message.internal_date.isoformat(),
+                        from_header=message.from_header,
+                        subject=message.subject,
+                        body_text=message.body_text,
+                        message_id=message.message_id,
+                        status=status,
+                        trigger_id=trigger_id,
+                        verdict_reason=verdict_reason,
+                    )
+                ).on_conflict(
+                    GmailMessageRecord.message_id,
+                    action=DoUpdate(
+                        GmailMessageRecord.from_header.to_inserted(),
+                        GmailMessageRecord.subject.to_inserted(),
+                        GmailMessageRecord.body_text.to_inserted(),
+                        GmailMessageRecord.status.to_inserted(),
+                        GmailMessageRecord.trigger_id.to_inserted(),
+                        GmailMessageRecord.verdict_reason.to_inserted(),
+                    ),
+                )
+            )
 
 
 __all__ = ["DEFAULT_TRIAGE_BATCH_SIZE", "GmailSyncReport", "GmailSyncService"]

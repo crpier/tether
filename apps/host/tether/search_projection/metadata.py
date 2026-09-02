@@ -20,31 +20,22 @@ from snekql import sqlite
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Integer,
     Model,
     Pending,
     Text,
-    Transaction,
     UtcDatetime,
     insert,
     scaffold,
     select,
-    update,
 )
 
 from tether.structured_logging import Logger
 
 _SINGLETON_ID = 1
 """The only valid primary key: search_meta holds exactly one row."""
-
-
-class SearchMetaInvariantError(Exception):
-    """Raised when the search_meta singleton is in an impossible state.
-
-    The table is replaced in place under a transaction, so a row read back
-    immediately after its own update must exist; if it does not, the store has
-    been corrupted out from under us rather than merely emptied."""
 
 
 class SearchMeta[S = Pending](Model[S, "SearchMeta[Fetched]"]):
@@ -87,37 +78,25 @@ class SearchMetaService:
             vector_dim=vector_dim,
         )
 
-        async def _set(tx: Transaction) -> SearchMeta[Fetched]:
-            existing = await tx.fetch_one_or_none(
-                select(SearchMeta).where(SearchMeta.id.eq(_SINGLETON_ID))
-            )
-            if existing is None:
-                return await tx.execute(
-                    insert(
-                        SearchMeta(
-                            id=_SINGLETON_ID,
-                            embedding_model=model,
-                            vector_dim=vector_dim,
-                        )
-                    ).returning()
-                )
-            _ = await tx.execute(
-                update(SearchMeta)
-                .set(SearchMeta.embedding_model.to(model))
-                .set(SearchMeta.vector_dim.to(vector_dim))
-                .set(SearchMeta.updated_at.to(CurrentTimestamp))
-                .where(SearchMeta.id.eq(_SINGLETON_ID))
-            )
-            fetched = await tx.fetch_one_or_none(
-                select(SearchMeta).where(SearchMeta.id.eq(_SINGLETON_ID))
-            )
-            if fetched is None:  # pragma: no cover - just-updated row must exist
-                message = "search_meta singleton vanished after update"
-                raise SearchMetaInvariantError(message)
-            return fetched
-
         async with self.database.transaction(mode="immediate") as tx:
-            return await _set(tx)
+            return await tx.execute(
+                insert(
+                    SearchMeta(
+                        id=_SINGLETON_ID,
+                        embedding_model=model,
+                        vector_dim=vector_dim,
+                    )
+                )
+                .on_conflict(
+                    SearchMeta.id,
+                    action=DoUpdate(
+                        SearchMeta.embedding_model.to_inserted(),
+                        SearchMeta.vector_dim.to_inserted(),
+                        SearchMeta.updated_at.to(CurrentTimestamp),
+                    ),
+                )
+                .returning()
+            )
 
 
 async def create_search_meta_schema(database: Database) -> None:

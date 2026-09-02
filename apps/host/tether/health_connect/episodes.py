@@ -16,12 +16,12 @@ from typing import Literal
 
 from snekql.sqlite import (
     Database,
+    DoUpdate,
     Fetched,
     Transaction,
     delete,
     insert,
     select,
-    update,
 )
 
 from tether.health_connect.persistence import (
@@ -91,23 +91,17 @@ async def _write_cursor(
     *,
     last_version_id: int,
 ) -> None:
-    existing = await transaction.fetch_one_or_none(
-        select(HcEpisodeCursor).where(HcEpisodeCursor.record_type.eq(record_type))
-    )
-    if existing is None:
-        _ = await transaction.execute(
-            insert(
-                HcEpisodeCursor(
-                    record_type=record_type, last_version_id=last_version_id
-                )
+    _ = await transaction.execute(
+        insert(
+            HcEpisodeCursor(
+                record_type=record_type,
+                last_version_id=last_version_id,
             )
+        ).on_conflict(
+            HcEpisodeCursor.record_type,
+            action=DoUpdate(HcEpisodeCursor.last_version_id.to_inserted()),
         )
-    else:
-        _ = await transaction.execute(
-            update(HcEpisodeCursor)
-            .set(HcEpisodeCursor.last_version_id.to(last_version_id))
-            .where(HcEpisodeCursor.record_type.eq(record_type))
-        )
+    )
 
 
 async def _advance_cursor_past_resolved(
@@ -235,37 +229,25 @@ class HealthEpisodeSummarizer:
                 ),
                 processor_version=_PROCESSOR_VERSION,
             )
-            if existing is None:
-                _ = await transaction.execute(insert(summary))
-            else:
-                _ = await transaction.execute(
-                    update(HcExerciseEpisodeSummary)
-                    .set(
-                        HcExerciseEpisodeSummary.version_id.to(summary.version_id),
-                        HcExerciseEpisodeSummary.payload_hash.to(summary.payload_hash),
-                        HcExerciseEpisodeSummary.origin_id.to(summary.origin_id),
-                        HcExerciseEpisodeSummary.exercise_type.to(
-                            summary.exercise_type
-                        ),
-                        HcExerciseEpisodeSummary.title.to(summary.title),
-                        HcExerciseEpisodeSummary.start_time.to(summary.start_time),
-                        HcExerciseEpisodeSummary.end_time.to(summary.end_time),
-                        HcExerciseEpisodeSummary.duration_minutes.to(
-                            summary.duration_minutes
-                        ),
-                        HcExerciseEpisodeSummary.segment_count.to(
-                            summary.segment_count
-                        ),
-                        HcExerciseEpisodeSummary.lap_count.to(summary.lap_count),
-                        HcExerciseEpisodeSummary.total_lap_meters.to(
-                            summary.total_lap_meters
-                        ),
-                        HcExerciseEpisodeSummary.processor_version.to(
-                            summary.processor_version
-                        ),
-                    )
-                    .where(HcExerciseEpisodeSummary.record_uid.eq(source.record_uid))
+            _ = await transaction.execute(
+                insert(summary).on_conflict(
+                    HcExerciseEpisodeSummary.record_uid,
+                    action=DoUpdate(
+                        HcExerciseEpisodeSummary.version_id.to_inserted(),
+                        HcExerciseEpisodeSummary.payload_hash.to_inserted(),
+                        HcExerciseEpisodeSummary.origin_id.to_inserted(),
+                        HcExerciseEpisodeSummary.exercise_type.to_inserted(),
+                        HcExerciseEpisodeSummary.title.to_inserted(),
+                        HcExerciseEpisodeSummary.start_time.to_inserted(),
+                        HcExerciseEpisodeSummary.end_time.to_inserted(),
+                        HcExerciseEpisodeSummary.duration_minutes.to_inserted(),
+                        HcExerciseEpisodeSummary.segment_count.to_inserted(),
+                        HcExerciseEpisodeSummary.lap_count.to_inserted(),
+                        HcExerciseEpisodeSummary.total_lap_meters.to_inserted(),
+                        HcExerciseEpisodeSummary.processor_version.to_inserted(),
+                    ),
                 )
+            )
             upserts += 1
         resolved_through = (
             blocked - 1
@@ -359,41 +341,29 @@ class HealthEpisodeSummarizer:
                 minutes_other=minutes["minutes_other"],
                 processor_version=_PROCESSOR_VERSION,
             )
-            if existing is None:
-                _ = await transaction.execute(insert(summary))
-            else:
-                _ = await transaction.execute(
-                    update(HcSleepEpisodeSummary)
-                    .set(
-                        HcSleepEpisodeSummary.version_id.to(summary.version_id),
-                        HcSleepEpisodeSummary.payload_hash.to(summary.payload_hash),
-                        HcSleepEpisodeSummary.origin_id.to(summary.origin_id),
-                        HcSleepEpisodeSummary.title.to(summary.title),
-                        HcSleepEpisodeSummary.start_time.to(summary.start_time),
-                        HcSleepEpisodeSummary.end_time.to(summary.end_time),
-                        HcSleepEpisodeSummary.duration_minutes.to(
-                            summary.duration_minutes
-                        ),
-                        HcSleepEpisodeSummary.minutes_awake.to(summary.minutes_awake),
-                        HcSleepEpisodeSummary.minutes_sleeping.to(
-                            summary.minutes_sleeping
-                        ),
-                        HcSleepEpisodeSummary.minutes_out_of_bed.to(
-                            summary.minutes_out_of_bed
-                        ),
-                        HcSleepEpisodeSummary.minutes_light.to(summary.minutes_light),
-                        HcSleepEpisodeSummary.minutes_deep.to(summary.minutes_deep),
-                        HcSleepEpisodeSummary.minutes_rem.to(summary.minutes_rem),
-                        HcSleepEpisodeSummary.minutes_awake_in_bed.to(
-                            summary.minutes_awake_in_bed
-                        ),
-                        HcSleepEpisodeSummary.minutes_other.to(summary.minutes_other),
-                        HcSleepEpisodeSummary.processor_version.to(
-                            summary.processor_version
-                        ),
-                    )
-                    .where(HcSleepEpisodeSummary.record_uid.eq(source.record_uid))
+            _ = await transaction.execute(
+                insert(summary).on_conflict(
+                    HcSleepEpisodeSummary.record_uid,
+                    action=DoUpdate(
+                        HcSleepEpisodeSummary.version_id.to_inserted(),
+                        HcSleepEpisodeSummary.payload_hash.to_inserted(),
+                        HcSleepEpisodeSummary.origin_id.to_inserted(),
+                        HcSleepEpisodeSummary.title.to_inserted(),
+                        HcSleepEpisodeSummary.start_time.to_inserted(),
+                        HcSleepEpisodeSummary.end_time.to_inserted(),
+                        HcSleepEpisodeSummary.duration_minutes.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_awake.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_sleeping.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_out_of_bed.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_light.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_deep.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_rem.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_awake_in_bed.to_inserted(),
+                        HcSleepEpisodeSummary.minutes_other.to_inserted(),
+                        HcSleepEpisodeSummary.processor_version.to_inserted(),
+                    ),
                 )
+            )
             upserts += 1
         resolved_through = (
             blocked - 1

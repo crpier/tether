@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5, uuid7
 
 import httpx2
 from anyio import NamedTemporaryFile
@@ -21,6 +21,7 @@ from pydantic import UUID7, PositiveInt
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
     Transaction,
     delete,
@@ -207,23 +208,10 @@ class DreamingMutationCoordinator:
                 .where(DreamingMutation.run_id.eq(run_id))
                 .where(DreamingMutation.tool_call_id.eq(tool_call_id))
             )
-            if existing is not None:
-                _ = await tx.execute(
-                    update(DreamingMutation)
-                    .set(DreamingMutation.actor.to(actor))
-                    .set(DreamingMutation.operation.to(operation))
-                    .set(DreamingMutation.workspace_path.to(relative_path))
-                    .set(DreamingMutation.payload.to(payload))
-                    .set(DreamingMutation.after_content.to(after_content))
-                    .set(DreamingMutation.status.to("executed"))
-                    .set(DreamingMutation.attempts.to(existing.attempts + 1))
-                    .set(DreamingMutation.error.to(None))
-                    .where(DreamingMutation.id.eq(existing.id))
-                )
-                return existing
-            _ = await tx.execute(
+            return await tx.execute(
                 insert(
                     DreamingMutation(
+                        id=uuid7() if existing is None else existing.id,
                         run_id=run_id,
                         tool_call_id=tool_call_id,
                         actor=actor,
@@ -233,13 +221,23 @@ class DreamingMutationCoordinator:
                         before_content=before_content,
                         after_content=after_content,
                         status="executed",
+                        attempts=1 if existing is None else existing.attempts + 1,
                     )
                 )
-            )
-            return await tx.fetch_one_or_none(
-                select(DreamingMutation)
-                .where(DreamingMutation.run_id.eq(run_id))
-                .where(DreamingMutation.tool_call_id.eq(tool_call_id))
+                .on_conflict(
+                    DreamingMutation.id,
+                    action=DoUpdate(
+                        DreamingMutation.actor.to_inserted(),
+                        DreamingMutation.operation.to_inserted(),
+                        DreamingMutation.workspace_path.to_inserted(),
+                        DreamingMutation.payload.to_inserted(),
+                        DreamingMutation.after_content.to_inserted(),
+                        DreamingMutation.status.to_inserted(),
+                        DreamingMutation.attempts.to_inserted(),
+                        DreamingMutation.error.to(None),
+                    ),
+                )
+                .returning()
             )
 
     async def acknowledge_mutation(
@@ -558,46 +556,41 @@ class DreamingMutationCoordinator:
             )
         )
         next_version = 1 if current is None else current.version + 1
-        if current is None:
-            _ = await tx.execute(
-                insert(
-                    DreamingWorkspaceFile(
-                        path=workspace_path,
-                        content_hash=content_hash,
-                        content=content,
-                        is_tombstone=1 if is_tombstone else 0,
-                        version=next_version,
-                        source_run_id=source_run_id,
-                        source_tool_call_id=source_tool_call_id,
-                        actor=mutation_actor,
-                    )
-                )
-            )
-            return
-
-        if (
-            current.content_hash == content_hash
+        unchanged = (
+            current is not None
+            and current.content_hash == content_hash
             and current.is_tombstone == (1 if is_tombstone else 0)
             and current.content == content
-        ):
-            _ = await tx.execute(
-                update(DreamingWorkspaceFile)
-                .set(DreamingWorkspaceFile.updated_at.to(CurrentTimestamp))
-                .where(DreamingWorkspaceFile.path.eq(workspace_path))
-            )
-            return
-
+        )
         _ = await tx.execute(
-            update(DreamingWorkspaceFile)
-            .set(DreamingWorkspaceFile.content_hash.to(content_hash))
-            .set(DreamingWorkspaceFile.content.to(content))
-            .set(DreamingWorkspaceFile.is_tombstone.to(1 if is_tombstone else 0))
-            .set(DreamingWorkspaceFile.version.to(next_version))
-            .set(DreamingWorkspaceFile.source_run_id.to(source_run_id))
-            .set(DreamingWorkspaceFile.source_tool_call_id.to(source_tool_call_id))
-            .set(DreamingWorkspaceFile.actor.to(mutation_actor))
-            .set(DreamingWorkspaceFile.updated_at.to(CurrentTimestamp))
-            .where(DreamingWorkspaceFile.path.eq(workspace_path))
+            insert(
+                DreamingWorkspaceFile(
+                    path=workspace_path,
+                    content_hash=content_hash,
+                    content=content,
+                    is_tombstone=1 if is_tombstone else 0,
+                    version=next_version,
+                    source_run_id=source_run_id,
+                    source_tool_call_id=source_tool_call_id,
+                    actor=mutation_actor,
+                )
+            ).on_conflict(
+                DreamingWorkspaceFile.path,
+                action=(
+                    DoUpdate(DreamingWorkspaceFile.updated_at.to(CurrentTimestamp))
+                    if unchanged
+                    else DoUpdate(
+                        DreamingWorkspaceFile.content_hash.to_inserted(),
+                        DreamingWorkspaceFile.content.to_inserted(),
+                        DreamingWorkspaceFile.is_tombstone.to_inserted(),
+                        DreamingWorkspaceFile.version.to_inserted(),
+                        DreamingWorkspaceFile.source_run_id.to_inserted(),
+                        DreamingWorkspaceFile.source_tool_call_id.to_inserted(),
+                        DreamingWorkspaceFile.actor.to_inserted(),
+                        DreamingWorkspaceFile.updated_at.to(CurrentTimestamp),
+                    )
+                ),
+            )
         )
 
 
@@ -2024,30 +2017,20 @@ Age or disuse alone never justifies retirement. Otherwise return one concise rej
         """Persist maintained paths and drop tombstoned ones."""
         async with self.database.transaction(mode="immediate") as tx:
             for relative, document in written:
-                existing = await tx.fetch_one_or_none(
-                    select(DreamMaintenanceProgress).where(
-                        DreamMaintenanceProgress.path.eq(relative)
+                _ = await tx.execute(
+                    insert(
+                        DreamMaintenanceProgress(
+                            path=relative,
+                            content_hash=hashlib.sha256(document.encode()).hexdigest(),
+                        )
+                    ).on_conflict(
+                        DreamMaintenanceProgress.path,
+                        action=DoUpdate(
+                            DreamMaintenanceProgress.content_hash.to_inserted(),
+                            DreamMaintenanceProgress.maintained_at.to(CurrentTimestamp),
+                        ),
                     )
                 )
-                content_hash = hashlib.sha256(document.encode()).hexdigest()
-                if existing is None:
-                    _ = await tx.execute(
-                        insert(
-                            DreamMaintenanceProgress(
-                                path=relative,
-                                content_hash=content_hash,
-                            )
-                        )
-                    )
-                else:
-                    _ = await tx.execute(
-                        update(DreamMaintenanceProgress)
-                        .set(DreamMaintenanceProgress.content_hash.to(content_hash))
-                        .set(
-                            DreamMaintenanceProgress.maintained_at.to(CurrentTimestamp)
-                        )
-                        .where(DreamMaintenanceProgress.path.eq(relative))
-                    )
             for relative in deleted:
                 _ = await tx.execute(
                     delete(DreamMaintenanceProgress).where(
@@ -2824,22 +2807,21 @@ class DreamingService:
                 DreamConversationCursor.conversation_id.eq(conversation_id)
             )
         )
-        if cursor is None:
-            _ = await tx.execute(
-                insert(
-                    DreamConversationCursor(
-                        conversation_id=conversation_id,
-                        last_assimilated_seq=through_seq,
-                    )
-                )
-            )
-            return
-        if cursor.last_assimilated_seq >= through_seq:
+        if cursor is not None and cursor.last_assimilated_seq >= through_seq:
             return
         _ = await tx.execute(
-            update(DreamConversationCursor)
-            .set(DreamConversationCursor.last_assimilated_seq.to(through_seq))
-            .where(DreamConversationCursor.conversation_id.eq(conversation_id))
+            insert(
+                DreamConversationCursor(
+                    conversation_id=conversation_id,
+                    last_assimilated_seq=through_seq,
+                )
+            ).on_conflict(
+                DreamConversationCursor.conversation_id,
+                action=DoUpdate(
+                    DreamConversationCursor.last_assimilated_seq.to_inserted(),
+                    DreamConversationCursor.updated_at.to(CurrentTimestamp),
+                ),
+            )
         )
 
 

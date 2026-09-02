@@ -12,8 +12,8 @@ from snekok.result import Err, Ok, Result
 from snekql.sqlite import (
     CurrentTimestamp,
     Database,
+    DoUpdate,
     Fetched,
-    Transaction,
     insert,
     select,
     update,
@@ -274,28 +274,18 @@ class ReaderSyncService:
         )
 
     async def _upsert_document(self, key: str, title: str) -> EbookDocument[Fetched]:
-        async def _upsert(transaction: Transaction) -> EbookDocument[Fetched]:
-            existing = await transaction.fetch_one_or_none(
-                select(EbookDocument).where(EbookDocument.document_hash.eq(key))
-            )
-            if existing is None:
-                return await transaction.execute(
-                    insert(
-                        EbookDocument(document_hash=key, title=title or None)
-                    ).returning()
-                )
-            _ = await transaction.execute(
-                update(EbookDocument)
-                .set(
-                    EbookDocument.title.to(title or None),
-                    EbookDocument.updated_at.to(CurrentTimestamp),
-                )
-                .where(EbookDocument.document_hash.eq(key))
-            )
-            return existing
-
         async with self.database.transaction(mode="immediate") as transaction:
-            return await _upsert(transaction)
+            return await transaction.execute(
+                insert(EbookDocument(document_hash=key, title=title or None))
+                .on_conflict(
+                    EbookDocument.document_hash,
+                    action=DoUpdate(
+                        EbookDocument.title.to_inserted(),
+                        EbookDocument.updated_at.to(CurrentTimestamp),
+                    ),
+                )
+                .returning()
+            )
 
     async def _append_if_changed(self, key: str, document: ReaderDocument) -> bool:
         latest = await self._latest_event(key)
