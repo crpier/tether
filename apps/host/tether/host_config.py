@@ -21,12 +21,14 @@ from tether.recall_generation import StudyItemGenerator
 from tether.recall_grading import AnswerGrader
 from tether.stt import SttClient
 from tether.telemetry_model import TelemetryExporter, TelemetrySettings
-from tether.transcripts.acquisition import TranscriptAcquisitionConfig
-from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
-from tether.transcripts.worker import TranscriptSyncConfig
+from tether.transcripts import (
+    TranscriptAcquisitionConfig,
+    TranscriptProviderChain,
+    TranscriptSource,
+)
 from tether.tts import TtsClient
 from tether.web_search import SearchProvider
-from tether.youtube import YouTubeApi, YouTubeAuthBackend
+from tether.youtube import TranscriptSyncConfig, YouTubeApi, YouTubeAuthBackend
 
 
 @dataclass(frozen=True, slots=True)

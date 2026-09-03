@@ -2,7 +2,7 @@
 
 from snektest import assert_eq, assert_is_none, test
 
-from tether.transcripts.source_composition import (
+from tether.youtube.transcript_sources import (
     SupadataSourceConfig,
     TranscriptLibrarySourceConfig,
     TranscriptProviderConfig,

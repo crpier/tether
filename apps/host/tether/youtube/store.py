@@ -4,26 +4,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from datetime import datetime
-from typing import Annotated, ClassVar, Literal
+from typing import ClassVar, Literal
 from uuid import uuid7
 
-from pydantic import UUID7, BaseModel, ConfigDict, Field, Json
-from snekok.types import (
-    NonBlankStr,
-    NonEmptyStr,
-    NonNegativeInt,
-    PositiveInt,
-)
-from snekok.validation import validate_python_unsafe
+from pydantic import UUID7
 from snekql import sqlite
 from snekql.sqlite import (
-    PENDING_GENERATION,
     CurrentTimestamp,
     Database,
     DoUpdate,
     Fetched,
-    ForeignKey,
     Index,
     Integer,
     Model,
@@ -31,12 +21,10 @@ from snekql.sqlite import (
     Text,
     Transaction,
     UtcDatetime,
-    delete,
     insert,
     select,
 )
 
-from tether.transcripts.contracts import TranscriptSegment
 from tether.youtube.quota import RawYouTubeVideo
 from tether.youtube.types import VideoId
 
@@ -148,19 +136,20 @@ def _new_ingested_video(raw: RawYouTubeVideo) -> IngestedVideo[Pending]:
     )
 
 
-async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
+async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> bool:
     """Insert or refresh an ingested video from a raw liked video by `video_id`.
 
     A new id is inserted fresh; an existing one has its metadata overwritten in
-    place. The local-only `ignored_at` column is left untouched, and transcript
-    state lives in its own table, so synchronization never resurrects a purged
-    video or clobbers transcript acquisition. Shared by the background sync and
-    backup importer so both mirror likes the same way.
+    place. The local-only `ignored_at` column is left untouched, and Transcription
+    state lives outside the YouTube schema, so synchronization never resurrects
+    a purged video or clobbers acquisition. Shared by the background sync and
+    backup importer so both mirror likes the same way. Returns whether captions
+    became available, allowing the caller to restart related Transcription work.
     """
     existing = await tx.fetch_one_or_none(
         select(IngestedVideo).where(IngestedVideo.video_id.eq(raw.video_id))
     )
-    _ = await tx.execute(
+    await tx.execute(
         insert(_new_ingested_video(raw)).on_conflict(
             IngestedVideo.video_id,
             action=DoUpdate(
@@ -199,26 +188,19 @@ async def upsert_ingested_video(tx: Transaction, raw: RawYouTubeVideo) -> None:
             ),
         )
     )
-    if (
+    return (
         existing is not None
         and existing.caption_available == 0
         and raw.caption_available is True
-    ):
-        state = await fetch_transcript_state(tx, existing.id)
-        if isinstance(state, TranscriptReviewNeeded | TranscriptUnavailable):
-            _ = await tx.execute(
-                delete(YouTubeTranscript).where(
-                    YouTubeTranscript.ingested_video_id.eq(existing.id)
-                )
-            )
+    )
 
 
 # snekql replays a frozen, hand-authored migration chain and records each step by
 # *name*, never re-running an applied one. The original `ingested_video` table +
 # indexes are frozen verbatim under their first-shipped keys so existing
 # databases skip them; enriched columns and the new bookkeeping tables arrive as
-# their own forward migrations. Replaying the whole chain on a fresh database
-# yields the current schema.
+# their own forward migrations. Host composition later migrates and removes the
+# historical transcript storage after the source-independent tables exist.
 _INGESTED_VIDEO_COLUMNS: tuple[tuple[str, str], ...] = (
     ("channel_id", "TEXT"),
     ("liked_at", "TEXT"),
@@ -283,7 +265,7 @@ def _youtube_migrations() -> dict[str, str]:
         '"key" TEXT PRIMARY KEY NOT NULL, "value" TEXT NOT NULL'
         ") STRICT"
     )
-    # Per-video transcript state machine for the background transcript worker.
+    # Historical YouTube-owned transcript state, retained for migration replay.
     migrations["008_create_you_tube_transcript_state"] = (
         'CREATE TABLE "you_tube_transcript_state" ('
         '"video_id" TEXT PRIMARY KEY NOT NULL, '
@@ -377,9 +359,9 @@ def _youtube_migrations() -> dict[str, str]:
 async def create_youtube_schema(database: Database) -> None:
     """Bring the YouTube ingestion schema to current on an initialized database.
 
-    Applies the frozen migration chain: the original ingested-video table and
-    indexes (skipped on databases that already have them), the enriched-metadata
-    columns, and the persisted daily-budget + sync-state tables.
+    Applies the frozen YouTube migration chain. Host schema composition then
+    migrates and removes its historical transcript columns and tables after the
+    source-independent Transcript schema exists.
 
     >>> from snekql.sqlite import Config
     >>> database = await Database.initialize(backend=Config(database=":memory:"))
@@ -388,300 +370,114 @@ async def create_youtube_schema(database: Database) -> None:
     await database.migrate(_youtube_migrations())
 
 
-type TranscriptPersistedStatus = Literal[
-    "retrying", "needs_review", "available", "unavailable"
-]
-type TranscriptStatus = Literal[
-    "pending", "retrying", "needs_review", "available", "unavailable"
-]
-
-_ZERO_FAILED_ATTEMPTS = validate_python_unsafe(NonNegativeInt, 0)
-
-
-class YouTubeTranscript[S = Pending](Model[S, "YouTubeTranscript[Fetched]"]):
-    """Canonical transcript content and acquisition state for one saved video."""
-
-    id: sqlite.GenCol[PositiveInt] = Integer(
-        primary_key=True, auto_increment=True, default=PENDING_GENERATION
-    )
-    ingested_video_id: sqlite.FKCol[IngestedVideo, UUID7] = ForeignKey(
-        IngestedVideo.id, nullable=False, unique=True, on_delete="CASCADE"
-    )
-    status: sqlite.Col[TranscriptPersistedStatus] = Text(nullable=False)
-    failed_attempts: sqlite.Col[NonNegativeInt] = Integer(default=_ZERO_FAILED_ATTEMPTS)
-    last_error: sqlite.Col[NonEmptyStr | None] = Text(default=None, nullable=True)
-    next_attempt_at: sqlite.Col[UtcDatetime | None] = Text(nullable=True, default=None)
-    source: sqlite.Col[NonEmptyStr | None] = Text(nullable=True, default=None)
-    text: sqlite.Col[NonBlankStr | None] = Text(nullable=True, default=None)
-    segments: sqlite.Col[Json[tuple[TranscriptSegment, ...] | None]] = Text(
-        nullable=True, default=None
-    )
-    created_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
-    updated_at: sqlite.GenCol[UtcDatetime] = Text(default=CurrentTimestamp)
+_COPY_INGESTED_VIDEO_WITHOUT_TRANSCRIPTS_SQL = (
+    'INSERT INTO "ingested_video_without_transcripts" ('
+    '"id", "video_id", "source", "title", "channel", "topic", '
+    '"description", "ignored_at", "channel_id", "liked_at", '
+    '"video_published_at", "duration_seconds", "category_id", '
+    '"default_language", "default_audio_language", "caption_available", '
+    '"privacy_status", "licensed_content", "made_for_kids", '
+    '"live_broadcast_content", "definition", "dimension", '
+    '"statistics_view_count", "statistics_like_count", '
+    '"statistics_comment_count", "statistics_fetched_at", '
+    '"topic_categories_json", "tags_json", "thumbnails_json", '
+    '"created_at", "updated_at") SELECT '
+    '"id", "video_id", "source", "title", "channel", "topic", '
+    '"description", "ignored_at", "channel_id", "liked_at", '
+    '"video_published_at", "duration_seconds", "category_id", '
+    '"default_language", "default_audio_language", "caption_available", '
+    '"privacy_status", "licensed_content", "made_for_kids", '
+    '"live_broadcast_content", "definition", "dimension", '
+    '"statistics_view_count", "statistics_like_count", '
+    '"statistics_comment_count", "statistics_fetched_at", '
+    '"topic_categories_json", "tags_json", "thumbnails_json", '
+    '"created_at", "updated_at" FROM "ingested_video"'
+)
 
 
-class _TranscriptStateBase(BaseModel):
-    """Shared immutable identity and timestamps for materialized transcript states."""
-
-    ingested_video_id: UUID7
-    created_at: UtcDatetime
-    updated_at: UtcDatetime
-
-    model_config = ConfigDict(frozen=True, from_attributes=True, extra="ignore")
-
-
-class TranscriptRetrying(_TranscriptStateBase):
-    status: Literal["retrying"]
-    failed_attempts: PositiveInt
-    last_error: NonEmptyStr
-    next_attempt_at: UtcDatetime
-
-
-class TranscriptReviewNeeded(_TranscriptStateBase):
-    status: Literal["needs_review"]
-    failed_attempts: PositiveInt
-    last_error: NonEmptyStr
-
-
-class TranscriptAvailable(_TranscriptStateBase):
-    status: Literal["available"]
-    source: NonEmptyStr | None
-    text: NonBlankStr
-    segments: tuple[TranscriptSegment, ...]
-
-
-class TranscriptUnavailable(_TranscriptStateBase):
-    status: Literal["unavailable"]
-    failed_attempts: PositiveInt
-    last_error: NonEmptyStr
-
-
-type TranscriptState = Annotated[
-    TranscriptRetrying
-    | TranscriptReviewNeeded
-    | TranscriptAvailable
-    | TranscriptUnavailable,
-    Field(discriminator="status"),
-]
+def legacy_youtube_transcript_migrations() -> dict[str, str]:
+    """Return the one-time migration from YouTube rows to Transcriptions."""
+    return {
+        "017_migrate_youtube_transcriptions": (
+            'INSERT INTO "transcription" ('
+            '"id", "key", "status", "failed_attempts", "last_error", '
+            '"next_attempt_at", "created_at", "updated_at") '
+            'SELECT legacy."id", \'youtube:\' || video."video_id", '
+            'legacy."status", legacy."failed_attempts", '
+            'legacy."last_error", legacy."next_attempt_at", '
+            'legacy."created_at", legacy."updated_at" '
+            'FROM "you_tube_transcript" AS legacy '
+            'JOIN "ingested_video" AS video '
+            'ON video."id" = legacy."ingested_video_id"'
+        ),
+        "017_migrate_youtube_transcript_content": (
+            'INSERT INTO "transcript" ('
+            '"id", "transcription_id", "source", "text", "segments", '
+            '"created_at", "updated_at") '
+            'SELECT legacy."id", legacy."id", legacy."source", '
+            'legacy."text", COALESCE(legacy."segments", \'[]\'), '
+            'legacy."created_at", legacy."updated_at" '
+            'FROM "you_tube_transcript" AS legacy '
+            "WHERE legacy.\"status\" = 'available'"
+        ),
+        "017_migrate_youtube_transcript_provider_settings": (
+            'INSERT INTO "transcription_setting" ("key", "value") '
+            'SELECT "key", "value" FROM "you_tube_sync_state" '
+            "WHERE \"key\" LIKE 'transcript_provider_paused_until:%' "
+            "OR \"key\" LIKE 'transcript_provider_block_streak:%'"
+        ),
+        "018_drop_you_tube_transcript": 'DROP TABLE "you_tube_transcript"',
+        "018_drop_you_tube_transcript_state": (
+            'DROP TABLE "you_tube_transcript_state"'
+        ),
+        "018_remove_legacy_youtube_transcript_storage": "SELECT 1",
+    }
 
 
-class _TranscriptFailureWrite(BaseModel):
-    """Validated fields shared by failed acquisition transitions."""
-
-    ingested_video_id: UUID7
-    failed_attempts: NonNegativeInt = Field(gt=0)
-    last_error: NonEmptyStr
-
-    model_config = ConfigDict(frozen=True)
+async def migrate_legacy_youtube_transcripts(database: Database) -> None:
+    """Declare the migration from old YouTube rows into Transcript storage."""
+    await database.migrate(legacy_youtube_transcript_migrations())
 
 
-class _TranscriptRetryingWrite(_TranscriptFailureWrite):
-    """Validated fields that make the `retrying` storage shape valid."""
-
-    next_attempt_at: UtcDatetime
-
-
-class _TranscriptAvailableWrite(BaseModel):
-    """Validated fields that make the `available` storage shape valid."""
-
-    ingested_video_id: UUID7
-    source: NonEmptyStr | None
-    text: NonBlankStr
-    segments: tuple[TranscriptSegment, ...]
-
-    model_config = ConfigDict(frozen=True)
-
-
-async def fetch_transcript_state(
-    tx: Transaction, ingested_video_id: UUID7
-) -> TranscriptState | None:
-    """Fetch one persisted transcript state, or `None` before acquisition."""
-    row = await tx.fetch_one_or_none(
-        select(YouTubeTranscript).where(
-            YouTubeTranscript.ingested_video_id.eq(ingested_video_id)
+async def remove_legacy_youtube_transcript_storage(database: Database) -> None:
+    """Atomically remove migrated transcript state from the YouTube schema."""
+    async with database.transaction(mode="immediate") as transaction:
+        connection = transaction.require_connection()
+        cursor = await connection.execute('PRAGMA table_info("ingested_video")', ())
+        columns = {str(row[1]) for row in await cursor.fetchall()}
+        await cursor.close()
+        if "transcript" not in columns:
+            return
+        statements = (
+            'DROP TABLE IF EXISTS "you_tube_transcript"',
+            'DROP TABLE IF EXISTS "you_tube_transcript_state"',
+            'CREATE TABLE "ingested_video_without_transcripts" ('
+            '"id" TEXT PRIMARY KEY NOT NULL, "video_id" TEXT NOT NULL, '
+            '"source" TEXT, "title" TEXT, "channel" TEXT, "topic" TEXT, '
+            '"description" TEXT, "ignored_at" TEXT, "channel_id" TEXT, '
+            '"liked_at" TEXT, "video_published_at" TEXT, '
+            '"duration_seconds" INTEGER, "category_id" TEXT, '
+            '"default_language" TEXT, "default_audio_language" TEXT, '
+            '"caption_available" INTEGER, "privacy_status" TEXT, '
+            '"licensed_content" INTEGER, "made_for_kids" INTEGER, '
+            '"live_broadcast_content" TEXT, "definition" TEXT, "dimension" TEXT, '
+            '"statistics_view_count" INTEGER, "statistics_like_count" INTEGER, '
+            '"statistics_comment_count" INTEGER, "statistics_fetched_at" TEXT, '
+            '"topic_categories_json" TEXT, "tags_json" TEXT, '
+            '"thumbnails_json" TEXT, '
+            '"created_at" TEXT DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), "
+            '"updated_at" TEXT DEFAULT '
+            "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            ") STRICT",
+            _COPY_INGESTED_VIDEO_WITHOUT_TRANSCRIPTS_SQL,
+            'DROP TABLE "ingested_video"',
+            'ALTER TABLE "ingested_video_without_transcripts" '
+            'RENAME TO "ingested_video"',
+            'CREATE UNIQUE INDEX "ux_ingested_video_video_id" '
+            'ON "ingested_video" ("video_id")',
+            'CREATE INDEX "ix_ingested_video_topic" ON "ingested_video" ("topic")',
         )
-    )
-    if row is None:
-        return None
-    return validate_python_unsafe(TranscriptState, row)
-
-
-async def fetch_transcript_states(
-    tx: Transaction, videos: Sequence[IngestedVideo[Fetched]]
-) -> dict[UUID7, TranscriptState]:
-    """Fetch transcript states for saved videos, keyed by their internal IDs."""
-    if not videos:
-        return {}
-    rows = await tx.fetch_all(
-        select(YouTubeTranscript).where(
-            YouTubeTranscript.ingested_video_id.in_(*(video.id for video in videos))
-        )
-    )
-    states = (validate_python_unsafe(TranscriptState, row) for row in rows)
-    return {state.ingested_video_id: state for state in states}
-
-
-async def write_transcript_retrying(
-    tx: Transaction,
-    ingested_video_id: UUID7,
-    *,
-    failed_attempts: int,
-    last_error: str,
-    next_attempt_at: datetime,
-) -> None:
-    """Persist a transient failure and the time its next attempt becomes due."""
-    fields = validate_python_unsafe(
-        _TranscriptRetryingWrite,
-        {
-            "ingested_video_id": ingested_video_id,
-            "failed_attempts": failed_attempts,
-            "last_error": last_error,
-            "next_attempt_at": next_attempt_at,
-        },
-    )
-    _ = await tx.execute(
-        insert(
-            YouTubeTranscript(
-                ingested_video_id=fields.ingested_video_id,
-                status="retrying",
-                failed_attempts=fields.failed_attempts,
-                last_error=fields.last_error,
-                next_attempt_at=fields.next_attempt_at,
-            )
-        ).on_conflict(
-            YouTubeTranscript.ingested_video_id,
-            action=DoUpdate(
-                YouTubeTranscript.status.to_inserted(),
-                YouTubeTranscript.failed_attempts.to_inserted(),
-                YouTubeTranscript.last_error.to_inserted(),
-                YouTubeTranscript.next_attempt_at.to_inserted(),
-                YouTubeTranscript.source.to(None),
-                YouTubeTranscript.text.to(None),
-                YouTubeTranscript.segments.to(None),
-                YouTubeTranscript.updated_at.to(CurrentTimestamp),
-            ),
-        )
-    )
-
-
-async def write_transcript_available(
-    tx: Transaction,
-    ingested_video_id: UUID7,
-    *,
-    text: str,
-    segments: tuple[TranscriptSegment, ...],
-    source: str | None = None,
-) -> None:
-    """Persist fetched transcript content and clear acquisition failures."""
-    fields = validate_python_unsafe(
-        _TranscriptAvailableWrite,
-        {
-            "ingested_video_id": ingested_video_id,
-            "source": source,
-            "text": text,
-            "segments": segments,
-        },
-    )
-    _ = await tx.execute(
-        insert(
-            YouTubeTranscript(
-                ingested_video_id=fields.ingested_video_id,
-                status="available",
-                source=fields.source,
-                text=fields.text,
-                segments=fields.segments,
-            )
-        ).on_conflict(
-            YouTubeTranscript.ingested_video_id,
-            action=DoUpdate(
-                YouTubeTranscript.status.to_inserted(),
-                YouTubeTranscript.failed_attempts.to(_ZERO_FAILED_ATTEMPTS),
-                YouTubeTranscript.last_error.to(None),
-                YouTubeTranscript.next_attempt_at.to(None),
-                YouTubeTranscript.source.to_inserted(),
-                YouTubeTranscript.text.to_inserted(),
-                YouTubeTranscript.segments.to_inserted(),
-                YouTubeTranscript.updated_at.to(CurrentTimestamp),
-            ),
-        )
-    )
-
-
-async def write_transcript_review_needed(
-    tx: Transaction,
-    ingested_video_id: UUID7,
-    *,
-    failed_attempts: int,
-    last_error: str,
-) -> None:
-    """Persist provider exhaustion while awaiting a human decision."""
-    fields = validate_python_unsafe(
-        _TranscriptFailureWrite,
-        {
-            "ingested_video_id": ingested_video_id,
-            "failed_attempts": failed_attempts,
-            "last_error": last_error,
-        },
-    )
-    _ = await tx.execute(
-        insert(
-            YouTubeTranscript(
-                ingested_video_id=fields.ingested_video_id,
-                status="needs_review",
-                failed_attempts=fields.failed_attempts,
-                last_error=fields.last_error,
-            )
-        ).on_conflict(
-            YouTubeTranscript.ingested_video_id,
-            action=DoUpdate(
-                YouTubeTranscript.status.to_inserted(),
-                YouTubeTranscript.failed_attempts.to_inserted(),
-                YouTubeTranscript.last_error.to_inserted(),
-                YouTubeTranscript.next_attempt_at.to(None),
-                YouTubeTranscript.source.to(None),
-                YouTubeTranscript.text.to(None),
-                YouTubeTranscript.segments.to(None),
-                YouTubeTranscript.updated_at.to(CurrentTimestamp),
-            ),
-        )
-    )
-
-
-async def write_transcript_unavailable(
-    tx: Transaction,
-    ingested_video_id: UUID7,
-    *,
-    failed_attempts: int,
-    last_error: str,
-) -> None:
-    """Persist a permanent failure and clear its retry schedule and content."""
-    fields = validate_python_unsafe(
-        _TranscriptFailureWrite,
-        {
-            "ingested_video_id": ingested_video_id,
-            "failed_attempts": failed_attempts,
-            "last_error": last_error,
-        },
-    )
-    _ = await tx.execute(
-        insert(
-            YouTubeTranscript(
-                ingested_video_id=fields.ingested_video_id,
-                status="unavailable",
-                failed_attempts=fields.failed_attempts,
-                last_error=fields.last_error,
-            )
-        ).on_conflict(
-            YouTubeTranscript.ingested_video_id,
-            action=DoUpdate(
-                YouTubeTranscript.status.to_inserted(),
-                YouTubeTranscript.failed_attempts.to_inserted(),
-                YouTubeTranscript.last_error.to_inserted(),
-                YouTubeTranscript.next_attempt_at.to(None),
-                YouTubeTranscript.source.to(None),
-                YouTubeTranscript.text.to(None),
-                YouTubeTranscript.segments.to(None),
-                YouTubeTranscript.updated_at.to(CurrentTimestamp),
-            ),
-        )
-    )
+        for statement in statements:
+            cursor = await connection.execute(statement, ())
+            await cursor.close()

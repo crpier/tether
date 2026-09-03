@@ -16,11 +16,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 from snekok.result import Err, Ok
 from snekok.validation import validate_python_unsafe
 
-from tether.transcripts.contracts import (
+from tether.transcripts import (
     FetchedTranscript,
     TranscriptBlockedFailure,
     TranscriptFailure,
@@ -153,10 +154,25 @@ def _classify_library_error(video_id: str, error: Exception) -> TranscriptFailur
         )
     names = _mro_names(error)
     if names & _UNAVAILABLE_NAMES:
-        return TranscriptUnavailableFailure(video_id=video_id)
+        return TranscriptUnavailableFailure(locator=video_id)
     return TranscriptTransientFailure(
         f"youtube-transcript-api fetch for {video_id} failed: {error}"
     )
+
+
+def _youtube_video_id(locator: str) -> str:
+    """Resolve a YouTube provider ID from a generic media locator."""
+    parsed = urlsplit(locator)
+    if not parsed.scheme:
+        return locator
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host == "youtu.be":
+        return parsed.path.lstrip("/").split("/", maxsplit=1)[0]
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        candidates = parse_qs(parsed.query).get("v", ())
+        if candidates:
+            return candidates[0]
+    return locator
 
 
 def _parse_snippets(raw: Iterable[Any]) -> tuple[str, tuple[TranscriptSegment, ...]]:
@@ -282,8 +298,9 @@ class YouTubeTranscriptApiSource:
                 await self._sleep(wait)
         self._last_request_at = self._monotonic()
 
-    async def fetch(self, video_id: str) -> TranscriptFetchResult:
+    async def fetch(self, locator: str) -> TranscriptFetchResult:
         """Fetch a transcript via the blocking library boundary."""
+        video_id = _youtube_video_id(locator)
         fetcher = self._ensure_fetcher()
         await self._throttle()
         try:
@@ -292,5 +309,5 @@ class YouTubeTranscriptApiSource:
             return Err(_classify_library_error(video_id, e))
         text, segments = _parse_snippets(raw)
         if not text:
-            return Err(TranscriptUnavailableFailure(video_id=video_id))
+            return Err(TranscriptUnavailableFailure(locator=video_id))
         return Ok(FetchedTranscript(text=text, source=_SOURCE, segments=segments))

@@ -1,4 +1,4 @@
-"""Background acquisition of missing transcripts from the saved-video corpus."""
+"""Acquire Transcripts for eligible videos in the saved YouTube collection."""
 
 from __future__ import annotations
 
@@ -8,24 +8,32 @@ from datetime import datetime
 from snekql.sqlite import Database, Fetched, select
 
 from tether.structured_logging import Logger
-from tether.transcripts.acquisition import TranscriptAcquisitionService
-from tether.transcripts.contracts import (
+from tether.transcripts import (
     TranscriptAcquisitionDeferred,
+    TranscriptAcquisitionService,
     TranscriptFetchPolicy,
+    TranscriptionAvailable,
+    TranscriptionRetrying,
+    TranscriptionReviewNeeded,
+    TranscriptionState,
+    TranscriptionStore,
+    TranscriptionUnavailable,
     TranscriptNeedsReview,
     TranscriptProviderBlocked,
     TranscriptRetryScheduled,
     TranscriptStored,
+    load_all_provider_pauses,
 )
-from tether.transcripts.provider_health import load_all_provider_pauses
-from tether.youtube import Clock, IngestedVideo, YouTubeTranscript
+from tether.youtube.quota import Clock
+from tether.youtube.store import IngestedVideo
+from tether.youtube.transcription import youtube_transcription_target
 
 _LIBRARY_SOURCE = "youtube_transcript_api"
 
 
 @dataclass(frozen=True, slots=True)
 class TranscriptSyncConfig:
-    """Bounded work and failure-storm policy for one background pass."""
+    """Work and failure-storm limits for one YouTube transcription pass."""
 
     library_requests_per_pass: int = 5
     recent_window: int = 50
@@ -34,7 +42,7 @@ class TranscriptSyncConfig:
 
 @dataclass(frozen=True, slots=True)
 class TranscriptSyncReport:
-    """Outcome counts and stop conditions from one background pass."""
+    """Outcome counts and stop conditions from one YouTube transcription pass."""
 
     blocked: int
     deferred: bool
@@ -59,7 +67,7 @@ class _TranscriptPassState:
 
 
 class TranscriptSyncService:
-    """Walk eligible videos and acquire transcripts through the shared service."""
+    """Select YouTube videos and send generic targets to Transcription."""
 
     def __init__(
         self,
@@ -73,9 +81,10 @@ class TranscriptSyncService:
         self.clock: Clock = clock
         self.config: TranscriptSyncConfig = config or TranscriptSyncConfig()
         self.database: Database = database
+        self.transcriptions: TranscriptionStore = TranscriptionStore(database)
 
     async def sync(self, *, logger: Logger) -> TranscriptSyncReport:
-        """Run one bounded pass over the newest eligible videos."""
+        """Run one pass over the newest eligible YouTube videos."""
         logger.debug("Transcript sync starting")
         state = _TranscriptPassState()
         policy = TranscriptFetchPolicy(
@@ -83,7 +92,7 @@ class TranscriptSyncService:
         )
         for video in await self._eligible(self.clock.now()):
             outcome = await self.acquisition.acquire(
-                video.video_id,
+                youtube_transcription_target(video.video_id),
                 now=self.clock.now(),
                 policy=policy,
             )
@@ -152,30 +161,54 @@ class TranscriptSyncService:
             transient_storm=state.transient_storm,
         )
 
-    def _eligible_query(self, now: datetime):  # noqa: ANN202 (snekql query type is internal)
-        """Select active videos eligible for automatic transcript acquisition."""
-        blocked = select(YouTubeTranscript.ingested_video_id).where(
-            YouTubeTranscript.status.in_("needs_review", "available", "unavailable")
-            | (
-                YouTubeTranscript.status.eq("retrying")
-                & YouTubeTranscript.next_attempt_at.gt(now)
-            )
-        )
-        return (
-            select(IngestedVideo)
-            .where(IngestedVideo.ignored_at.is_null())
-            .where(IngestedVideo.id.not_in_subquery(blocked))
-        )
-
     async def _eligible(self, now: datetime) -> list[IngestedVideo[Fetched]]:
-        query = (
-            self._eligible_query(now)
-            .order_by(IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc())
-            .limit(self.config.recent_window)
+        videos = await self._active_videos()
+        states = await self.transcriptions.read_many(
+            [youtube_transcription_target(video.video_id).key for video in videos]
         )
-        async with self.database.transaction() as tx:
-            return await tx.fetch_all(query)
+        eligible = [
+            video
+            for video in videos
+            if self._is_eligible(
+                states.get(youtube_transcription_target(video.video_id).key), now
+            )
+        ]
+        return eligible[: self.config.recent_window]
 
     async def _pending_count(self, now: datetime) -> int:
-        async with self.database.transaction() as tx:
-            return len(await tx.fetch_all(self._eligible_query(now)))
+        videos = await self._active_videos()
+        states = await self.transcriptions.read_many(
+            [youtube_transcription_target(video.video_id).key for video in videos]
+        )
+        return sum(
+            self._is_eligible(
+                states.get(youtube_transcription_target(video.video_id).key), now
+            )
+            for video in videos
+        )
+
+    async def _active_videos(self) -> list[IngestedVideo[Fetched]]:
+        query = (
+            select(IngestedVideo)
+            .where(IngestedVideo.ignored_at.is_null())
+            .order_by(IngestedVideo.liked_at.desc(), IngestedVideo.created_at.desc())
+        )
+        async with self.database.transaction() as transaction:
+            return await transaction.fetch_all(query)
+
+    @staticmethod
+    def _is_eligible(state: TranscriptionState | None, now: datetime) -> bool:
+        if state is None:
+            return True
+        if isinstance(
+            state,
+            TranscriptionAvailable
+            | TranscriptionReviewNeeded
+            | TranscriptionUnavailable,
+        ):
+            return False
+        return (
+            state.next_attempt_at <= now
+            if isinstance(state, TranscriptionRetrying)
+            else False
+        )

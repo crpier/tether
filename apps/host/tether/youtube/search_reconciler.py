@@ -26,13 +26,11 @@ from typing import TYPE_CHECKING, Protocol
 
 from snekql.sqlite import select
 
+from tether.transcripts import TranscriptionAvailable, TranscriptionStore
 from tether.youtube.search_chunks import chunk_youtube_text
 from tether.youtube.search_index import ChunkDocument, chunk_id
-from tether.youtube.store import (
-    IngestedVideo,
-    TranscriptAvailable,
-    fetch_transcript_states,
-)
+from tether.youtube.store import IngestedVideo
+from tether.youtube.transcription import youtube_transcription_target
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -93,6 +91,7 @@ class YouTubeSearchReconciler:
         self.database: Database = database
         self.index: YouTubeSearchIndexPort = index
         self.embedder: Embedder = embedder
+        self.transcriptions: TranscriptionStore = TranscriptionStore(database)
         self.chunk_max_chars: int = chunk_max_chars
         self.chunk_overlap_chars: int = chunk_overlap_chars
         # Embed batch size is a fixed module constant rather than a constructor
@@ -138,16 +137,22 @@ class YouTubeSearchReconciler:
             videos = await tx.fetch_all(
                 select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
             )
-            states = await fetch_transcript_states(tx, videos)
+        states = await self.transcriptions.read_many(
+            [youtube_transcription_target(video.video_id).key for video in videos]
+        )
         specs: list[_ChunkSpec] = []
         for video in videos:
-            state = states.get(video.id)
+            state = states.get(youtube_transcription_target(video.video_id).key)
             source = "\n".join(
                 part
                 for part in (
                     video.title,
                     video.description,
-                    state.text if isinstance(state, TranscriptAvailable) else None,
+                    (
+                        state.transcript.text
+                        if isinstance(state, TranscriptionAvailable)
+                        else None
+                    ),
                 )
                 if part
             )

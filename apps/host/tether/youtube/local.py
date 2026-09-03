@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from urllib.parse import parse_qs, urlsplit
 
 from snekok.result import Err, Ok
 
-from tether.transcripts.contracts import (
+from tether.transcripts import (
     FetchedTranscript,
     TranscriptFetchResult,
     TranscriptUnavailableFailure,
@@ -75,10 +76,12 @@ class InMemoryYouTubeApi(YouTubeApi):
             if video_id in self._by_id
         }
 
-    async def fetch(self, video_id: str) -> TranscriptFetchResult:
+    async def fetch(self, locator: str) -> TranscriptFetchResult:
         """Return a seeded transcript or typed unavailability."""
         self.transcript_calls += 1
+        parsed = urlsplit(locator)
+        video_id = parse_qs(parsed.query).get("v", [locator])[0]
         text = self._transcripts.get(video_id)
         if text is None:
-            return Err(TranscriptUnavailableFailure(video_id=video_id))
+            return Err(TranscriptUnavailableFailure(locator=locator))
         return Ok(FetchedTranscript(text=text, source="in_memory"))

@@ -27,7 +27,7 @@ async def host_migration_chain_is_byte_and_order_stable() -> None:
 
     assert_eq(
         hashlib.sha256(encoded).hexdigest(),
-        "029d81738e786bde2c45031d92383999f08be7feda9841a71f1a778b14dfd403",
+        "9263dcaad90004792f9fb20bbde83be681802c8e506fa53d6756468a8a6825ed",
     )
 
 
@@ -62,6 +62,32 @@ async def fresh_schema_contains_dreaming_memory_without_legacy_lifecycles() -> N
     assert_not_in("proposal", tables)
     assert_not_in("proposal_action", tables)
     assert_not_in("todo_memory", tables)
+
+
+@test()
+async def fresh_schema_contains_source_independent_transcript_storage() -> None:
+    """Host composition installs Transcriptions outside the YouTube schema."""
+    database = await Database.initialize(backend=Config(database=":memory:"))
+    try:
+        await create_host_schema(database)
+        await create_host_schema(database)
+        tables = await table_names(database)
+        async with database.transaction() as transaction:
+            connection = transaction.require_connection()
+            cursor = await connection.execute('PRAGMA table_info("ingested_video")', ())
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+            await cursor.close()
+    finally:
+        await database.close()
+
+    assert_in("transcript", tables)
+    assert_in("transcription", tables)
+    assert_in("transcription_setting", tables)
+    assert_not_in("you_tube_transcript", tables)
+    assert_not_in("you_tube_transcript_state", tables)
+    assert_not_in("transcript", columns)
+    assert_not_in("transcript_segments_json", columns)
+    assert_not_in("transcript_source", columns)
 
 
 @test()

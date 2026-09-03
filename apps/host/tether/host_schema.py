@@ -28,8 +28,13 @@ from tether.readwise_store import create_readwise_schema
 from tether.recall_store import create_recall_schema
 from tether.search_projection.metadata import create_search_meta_schema
 from tether.todo_store import create_todo_schema
+from tether.transcripts import create_transcript_schema
 from tether.trigger_store import create_trigger_schema
-from tether.youtube import create_youtube_schema
+from tether.youtube import (
+    create_youtube_schema,
+    migrate_legacy_youtube_transcripts,
+    remove_legacy_youtube_transcript_storage,
+)
 
 _DEPLOYED_LEGACY_MIGRATION_NAMES = (
     # Oldest observed history. Every later deployed history contains this set.
@@ -252,6 +257,8 @@ async def host_migrations() -> dict[str, str]:
     await create_health_moment_schema(target)
     await create_health_plan_schema(target)
     await create_youtube_schema(target)
+    await create_transcript_schema(target)
+    await migrate_legacy_youtube_transcripts(target)
     await create_trigger_schema(target)
     await create_push_schema(target)
     await create_recall_schema(target)
@@ -289,5 +296,6 @@ async def host_migrations() -> dict[str, str]:
 async def create_host_schema(database: Database) -> None:
     """Apply the main database's one complete ordered migration chain."""
     await database.migrate(await host_migrations(), adopt_legacy=True)
+    await remove_legacy_youtube_transcript_storage(database)
     await canonicalize_conversation_schema(database)
     await backfill_historical_turns(database)

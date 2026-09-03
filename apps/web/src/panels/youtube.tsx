@@ -132,19 +132,19 @@ export function YouTubeSyncPanel(props: { api: YouTubeHost }) {
                 <span class="text-muted-foreground text-xs">Transcripts</span>
                 <div class="flex flex-wrap gap-1">
                   <Badge variant="secondary">
-                    {`${String(status().transcripts_done)} done`}
+                    {`${String(status().transcriptions.done)} done`}
                   </Badge>
                   <Badge variant="outline">
-                    {`${String(status().transcripts_pending)} pending`}
+                    {`${String(status().transcriptions.pending)} pending`}
                   </Badge>
-                  <Show when={status().transcripts_needs_review > 0}>
+                  <Show when={status().transcriptions.needs_review > 0}>
                     <Badge variant="outline">
-                      {`${String(status().transcripts_needs_review)} needs review`}
+                      {`${String(status().transcriptions.needs_review)} needs review`}
                     </Badge>
                   </Show>
-                  <Show when={status().transcripts_unavailable > 0}>
+                  <Show when={status().transcriptions.unavailable > 0}>
                     <Badge variant="outline">
-                      {`${String(status().transcripts_unavailable)} unavailable`}
+                      {`${String(status().transcriptions.unavailable)} unavailable`}
                     </Badge>
                   </Show>
                 </div>
@@ -172,7 +172,7 @@ export function YouTubeSyncPanel(props: { api: YouTubeHost }) {
                   </p>
                 )}
               </Show>
-              <For each={status().transcript_providers_paused}>
+              <For each={status().transcriptions.providers_paused}>
                 {(pause) => (
                   <p class="text-destructive text-xs" role="status">
                     {`${pause.source} paused until ${formatUntil(pause.paused_until)}`}

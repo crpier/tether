@@ -40,14 +40,16 @@ from tether.readwise_http import (
 from tether.scheduler import EphemeralPiPromptRunner
 from tether.structured_logging import Logger
 from tether.todos import TodoService
-from tether.transcripts.acquisition import TranscriptAcquisitionService
-from tether.transcripts.contracts import TranscriptProviderChain
-from tether.transcripts.provider_health import load_all_provider_pauses
-from tether.transcripts.worker import TranscriptSyncService
+from tether.transcripts import (
+    TranscriptAcquisitionService,
+    TranscriptProviderChain,
+    load_all_provider_pauses,
+)
 from tether.triggers import TriggerService
 from tether.youtube import (
     DailyQuota,
     InMemoryYouTubeApi,
+    TranscriptSyncService,
     YouTubeApi,
     YouTubeApiClient,
     YouTubeApiGate,
@@ -57,6 +59,7 @@ from tether.youtube import (
     YouTubeService,
     YouTubeSyncConfig,
     YouTubeSyncService,
+    YouTubeTranscriptionService,
 )
 from tether.youtube import SystemClock as YouTubeSystemClock
 
@@ -68,6 +71,7 @@ class YouTubeComponent:
     auth_service: YouTubeAuthService
     likes_ready: asyncio.Event
     service: YouTubeService
+    transcription_service: YouTubeTranscriptionService
     transcripts_ready: asyncio.Event
 
 
@@ -136,13 +140,19 @@ async def compose_youtube(  # noqa: PLR0913 - composition requires each dependen
         if provider is not None
         else None
     )
-    youtube_service = YouTubeService(
+    transcription_service = YouTubeTranscriptionService(
         acquisition=acquisition,
+        clock=client,
         database=database,
-        client=client,
         event_publisher=event_publisher,
         provider_pauses=load_all_provider_pauses,
         tracer=tracer,
+    )
+    youtube_service = YouTubeService(
+        database=database,
+        client=client,
+        tracer=tracer,
+        transcriptions=transcription_service,
         youtube_search=youtube_search,
     )
     sync = YouTubeSyncService(
@@ -200,6 +210,7 @@ async def compose_youtube(  # noqa: PLR0913 - composition requires each dependen
         auth_service=auth_service,
         likes_ready=_activate_youtube_likes(worker_dependencies),
         service=youtube_service,
+        transcription_service=transcription_service,
         transcripts_ready=_activate_youtube_transcripts(worker_dependencies),
     )
 

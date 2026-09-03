@@ -9,6 +9,7 @@ we can assert browse/search stay local and the sync stays within budget.
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
+from typing import Literal
 
 import structlog
 from opentelemetry import trace
@@ -28,10 +29,16 @@ from snektest import (
     test,
 )
 
+from tests.youtube_fixtures import create_youtube_transcript_test_schema
 from tether.structured_logging import Logger
+from tether.transcripts import TranscriptionRetrying, TranscriptionStore
 from tether.transcripts.acquisition import TranscriptAcquisitionService
 from tether.transcripts.contracts import TranscriptNeedsReview, TranscriptProviderChain
-from tether.youtube import YouTubeService, YouTubeVideoNotFoundError
+from tether.youtube import (
+    YouTubeService,
+    YouTubeTranscriptionService,
+    YouTubeVideoNotFoundError,
+)
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import (
     DailyQuota,
@@ -43,23 +50,15 @@ from tether.youtube.quota import (
 from tether.youtube.service import EmptyYouTubeSearchQueryError
 from tether.youtube.store import (
     IngestedVideo,
-    TranscriptPersistedStatus,
-    TranscriptRetrying,
-    YouTubeTranscript,
     _youtube_migrations,
     create_youtube_schema,
-    derive_ingest_state,
-    fetch_transcript_state,
     upsert_ingested_video,
-    write_transcript_available,
-    write_transcript_retrying,
-    write_transcript_review_needed,
-    write_transcript_unavailable,
 )
 from tether.youtube.sync import (
     YouTubeSyncConfig,
     YouTubeSyncService,
 )
+from tether.youtube.transcription import youtube_transcription_target
 from tether.youtube.types import VideoId
 
 
@@ -110,6 +109,7 @@ class Env:
     """The wired ingestion surfaces sharing one database and one client."""
 
     service: YouTubeService
+    transcriptions: YouTubeTranscriptionService
     sync: YouTubeSyncService
     db: Database
     quota: DailyQuota
@@ -127,22 +127,36 @@ async def make_env(
 ) -> AsyncGenerator[Env]:
     """A fresh DB plus the service + sync wired over a shared budgeted client."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
+    await create_youtube_transcript_test_schema(db)
     quota = DailyQuota(db, limit=daily_limit)
     client = YouTubeApiClient(api, quota, clock=clock)
-    service = YouTubeService(
+    transcriptions = YouTubeTranscriptionService(
         acquisition=TranscriptAcquisitionService(
             database=db,
             provider=TranscriptProviderChain([api]),
         ),
+        clock=client,
+        database=db,
+        tracer=noop_tracer(),
+    )
+    service = YouTubeService(
         database=db,
         client=client,
         tracer=noop_tracer(),
+        transcriptions=transcriptions,
     )
     sync = YouTubeSyncService(
         database=db, client=client, tracer=noop_tracer(), config=config
     )
-    yield Env(service=service, sync=sync, db=db, quota=quota, client=client, api=api)
+    yield Env(
+        service=service,
+        transcriptions=transcriptions,
+        sync=sync,
+        db=db,
+        quota=quota,
+        client=client,
+        api=api,
+    )
     await db.close()
 
 
@@ -598,12 +612,12 @@ async def _seed_transcript_state(
     db: Database,
     video_id: str,
     *,
-    status: TranscriptPersistedStatus,
+    status: Literal["retrying", "needs_review", "available", "unavailable"],
     caption_available: int,
 ) -> None:
-    """Insert a video with a given caption flag and a transcript-state row."""
-    async with db.transaction() as tx:
-        video = await tx.execute(
+    """Insert a video and independently persist its associated Transcription."""
+    async with db.transaction() as transaction:
+        await transaction.execute(
             insert(
                 IngestedVideo(
                     video_id=VideoId(video_id),
@@ -614,70 +628,59 @@ async def _seed_transcript_state(
                     description="",
                     caption_available=caption_available,
                 )
-            ).returning()
+            )
         )
-        if status == "retrying":
-            await write_transcript_retrying(
-                tx,
-                video.id,
-                failed_attempts=1,
-                last_error="temporary",
-                next_attempt_at=datetime(2026, 6, 1, tzinfo=UTC),
-            )
-        elif status == "needs_review":
-            await write_transcript_review_needed(
-                tx, video.id, failed_attempts=1, last_error="missing"
-            )
-        elif status == "available":
-            await write_transcript_available(
-                tx, video.id, text="transcript", segments=()
-            )
-        else:
-            await write_transcript_unavailable(
-                tx, video.id, failed_attempts=1, last_error="given up"
-            )
+    store = TranscriptionStore(db)
+    key = youtube_transcription_target(VideoId(video_id)).key
+    if status == "retrying":
+        await store.save_retrying(
+            key,
+            failed_attempts=1,
+            last_error="temporary",
+            next_attempt_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+    elif status == "needs_review":
+        await store.save_review_needed(key, failed_attempts=1, last_error="missing")
+    elif status == "available":
+        await store.save_available(key, source=None, text="transcript", segments=())
+    else:
+        await store.save_unavailable(key, failed_attempts=1, last_error="given up")
 
 
 @test()
 async def captions_appearing_reopens_an_unavailable_video() -> None:
     """A false->true caption flip clears unavailability so acquisition retries."""
-    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+    api = InMemoryYouTubeApi(
+        liked=[video("v1").model_copy(update={"caption_available": True})]
+    )
+    env = await load_fixture(make_env(api))
     await _seed_transcript_state(
         env.db, "v1", status="unavailable", caption_available=0
     )
 
-    async with env.db.transaction() as tx:
-        await upsert_ingested_video(
-            tx, video("v1").model_copy(update={"caption_available": True})
-        )
+    _ = await env.sync.sync(logger=test_logger())
 
-    async with env.db.transaction() as tx:
-        video_row = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId("v1")))
-        )
-        assert video_row is not None
-        state = await fetch_transcript_state(tx, video_row.id)
+    state = await TranscriptionStore(env.db).read(
+        youtube_transcription_target(VideoId("v1")).key
+    )
     assert_is_none(state)
 
 
 @test()
 async def captions_appearing_leaves_a_retrying_video_untouched() -> None:
     """A caption flip does not discard an active retry schedule."""
-    env = await load_fixture(make_env(InMemoryYouTubeApi()))
+    api = InMemoryYouTubeApi(
+        liked=[video("v1").model_copy(update={"caption_available": True})]
+    )
+    env = await load_fixture(make_env(api))
     await _seed_transcript_state(env.db, "v1", status="retrying", caption_available=0)
 
-    async with env.db.transaction() as tx:
-        await upsert_ingested_video(
-            tx, video("v1").model_copy(update={"caption_available": True})
-        )
+    _ = await env.sync.sync(logger=test_logger())
 
-    async with env.db.transaction() as tx:
-        video_row = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId("v1")))
-        )
-        assert video_row is not None
-        state = await fetch_transcript_state(tx, video_row.id)
-    _ = assert_isinstance(state, TranscriptRetrying)
+    state = await TranscriptionStore(env.db).read(
+        youtube_transcription_target(VideoId("v1")).key
+    )
+    _ = assert_isinstance(state, TranscriptionRetrying)
 
 
 @test()
@@ -904,65 +907,22 @@ async def resync_without_liked_at_keeps_the_existing_timestamp() -> None:
     assert_eq(stored.liked_at, liked_at)
 
 
-# --- Ignore / retry survive re-sync ---
-
-
-@test()
-async def ignored_video_drops_out_of_browse_and_stays_ignored() -> None:
-    """Purging removes a video from browse; a later sync keeps it ignored."""
-    api = InMemoryYouTubeApi(liked=[video("v1"), video("v2")])
-    env = await load_fixture(make_env(api))
-    _ = await env.sync.sync(logger=test_logger())
-
-    _ = await env.service.ignore("v1", logger=test_logger())
-    _ = await env.sync.sync(logger=test_logger())
-    result = await env.service.browse(logger=test_logger())
-
-    assert_not_in("v1", {row.video_id for row in result.videos})
-    assert_in("v2", {row.video_id for row in result.videos})
-
-
-@test()
-async def retry_returns_an_ignored_video_to_ingestion() -> None:
-    """Retry un-ignores a purged video so browse surfaces it again."""
-    api = InMemoryYouTubeApi(liked=[video("v1")])
-    env = await load_fixture(make_env(api))
-    _ = await env.sync.sync(logger=test_logger())
-    _ = await env.service.ignore("v1", logger=test_logger())
-
-    retried = await env.service.retry("v1", logger=test_logger())
-    result = await env.service.browse(logger=test_logger())
-
-    assert_eq(derive_ingest_state(retried), "active")
-    assert_is_none(retried.ignored_at)
-    assert_in("v1", {row.video_id for row in result.videos})
-
-
-@test()
-async def ignoring_an_unknown_video_raises() -> None:
-    """Purging a video that was never ingested is a not-found error."""
-    env = await load_fixture(make_env(InMemoryYouTubeApi()))
-
-    with assert_raises(YouTubeVideoNotFoundError):
-        _ = await env.service.ignore("nope", logger=test_logger())
-
-
 # --- Transcript fetch (still upstream, budget-guarded) ---
 
 
 @test()
 async def fetch_transcript_returns_and_persists_the_text() -> None:
-    """Fetching a transcript returns the text and stores it on the row."""
+    """Fetching through a YouTube association stores an independent Transcript."""
     api = InMemoryYouTubeApi(
         liked=[video("v1")], transcripts={"v1": "the transcript body"}
     )
     env = await load_fixture(make_env(api))
     _ = await env.sync.sync(logger=test_logger())
 
-    result = (await env.service.fetch_transcript("v1", logger=test_logger())).unwrap()
+    result = (await env.transcriptions.fetch("v1", logger=test_logger())).unwrap()
 
     assert_eq(result.transcript, "the transcript body")
-    assert_eq(await env.service.stored_transcript("v1"), "the transcript body")
+    assert_eq(await env.transcriptions.stored_text("v1"), "the transcript body")
 
 
 @test()
@@ -972,8 +932,8 @@ async def fetch_transcript_is_served_from_the_row_on_repeat() -> None:
     env = await load_fixture(make_env(api))
     _ = await env.sync.sync(logger=test_logger())
 
-    first = (await env.service.fetch_transcript("v1", logger=test_logger())).unwrap()
-    second = (await env.service.fetch_transcript("v1", logger=test_logger())).unwrap()
+    first = (await env.transcriptions.fetch("v1", logger=test_logger())).unwrap()
+    second = (await env.transcriptions.fetch("v1", logger=test_logger())).unwrap()
 
     assert_eq(first.cache.hit, False)
     assert_eq(second.cache.hit, True)
@@ -986,10 +946,10 @@ async def transcript_survives_a_re_sync() -> None:
     api = InMemoryYouTubeApi(liked=[video("v1")], transcripts={"v1": "body"})
     env = await load_fixture(make_env(api))
     _ = await env.sync.sync(logger=test_logger())
-    _ = await env.service.fetch_transcript("v1", logger=test_logger())
+    _ = await env.transcriptions.fetch("v1", logger=test_logger())
 
     _ = await env.sync.sync(logger=test_logger())
-    assert_eq(await env.service.stored_transcript("v1"), "body")
+    assert_eq(await env.transcriptions.stored_text("v1"), "body")
 
 
 @test()
@@ -998,7 +958,7 @@ async def fetch_transcript_for_unknown_video_raises() -> None:
     env = await load_fixture(make_env(InMemoryYouTubeApi(transcripts={"v1": "body"})))
 
     with assert_raises(YouTubeVideoNotFoundError):
-        _ = await env.service.fetch_transcript("v1", logger=test_logger())
+        _ = await env.transcriptions.fetch("v1", logger=test_logger())
 
 
 @test()
@@ -1008,7 +968,7 @@ async def fetch_transcript_unavailable_returns_review_failure() -> None:
     env = await load_fixture(make_env(api))
     _ = await env.sync.sync(logger=test_logger())
 
-    outcome = await env.service.fetch_transcript("v1", logger=test_logger())
+    outcome = await env.transcriptions.fetch("v1", logger=test_logger())
 
     assert isinstance(outcome, Err)
     _ = assert_isinstance(outcome.error, TranscriptNeedsReview)
@@ -1038,7 +998,7 @@ async def search_matches_fetched_transcript_text() -> None:
     )
     env = await load_fixture(make_env(api))
     _ = await env.sync.sync(logger=test_logger())
-    _ = await env.service.fetch_transcript("v1", logger=test_logger())
+    _ = await env.transcriptions.fetch("v1", logger=test_logger())
 
     result = await env.service.search("coroutines", logger=test_logger())
 
@@ -1076,19 +1036,6 @@ async def search_ands_terms_together() -> None:
     found = {row.video_id for row in result.videos}
     assert_in("v1", found)
     assert_not_in("v2", found)
-
-
-@test()
-async def search_excludes_ignored_videos() -> None:
-    """A purged video drops out of Search."""
-    api = InMemoryYouTubeApi(liked=[video("v1", title="needle one")])
-    env = await load_fixture(make_env(api))
-    _ = await env.sync.sync(logger=test_logger())
-    _ = await env.service.ignore("v1", logger=test_logger())
-
-    result = await env.service.search("needle", logger=test_logger())
-
-    assert_not_in("v1", {row.video_id for row in result.videos})
 
 
 @test()
@@ -1140,30 +1087,38 @@ def _ingested(
 async def sync_status_partitions_the_corpus_by_transcript_state() -> None:
     """Status partitions active videos across the normalized transcript lifecycle."""
     env = await load_fixture(make_env(InMemoryYouTubeApi(), daily_limit=50))
-    async with env.db.transaction() as tx:
-        available = await tx.execute(insert(_ingested("available")).returning())
-        _ = await tx.execute(insert(_ingested("pending")))
-        review = await tx.execute(insert(_ingested("needs-review")).returning())
-        unavailable = await tx.execute(insert(_ingested("unavailable")).returning())
+    async with env.db.transaction() as transaction:
+        for video_id in ("available", "pending", "needs-review", "unavailable"):
+            await transaction.execute(insert(_ingested(video_id)))
         # An ignored video is out of the corpus and not counted at all.
-        _ = await tx.execute(
+        await transaction.execute(
             insert(_ingested("ignored", ignored_at=datetime(2026, 1, 1, tzinfo=UTC)))
         )
-        await write_transcript_available(tx, available.id, text="hello", segments=())
-        await write_transcript_review_needed(
-            tx, review.id, failed_attempts=1, last_error="missing"
-        )
-        await write_transcript_unavailable(
-            tx, unavailable.id, failed_attempts=1, last_error="given up"
-        )
+    transcriptions = TranscriptionStore(env.db)
+    await transcriptions.save_available(
+        youtube_transcription_target(VideoId("available")).key,
+        source=None,
+        text="hello",
+        segments=(),
+    )
+    await transcriptions.save_review_needed(
+        youtube_transcription_target(VideoId("needs-review")).key,
+        failed_attempts=1,
+        last_error="missing",
+    )
+    await transcriptions.save_unavailable(
+        youtube_transcription_target(VideoId("unavailable")).key,
+        failed_attempts=1,
+        last_error="given up",
+    )
 
     status = await env.service.sync_status(logger=test_logger())
 
     assert_eq(status.videos_total, 4)
-    assert_eq(status.transcripts_done, 1)
-    assert_eq(status.transcripts_pending, 1)
-    assert_eq(status.transcripts_needs_review, 1)
-    assert_eq(status.transcripts_unavailable, 1)
+    assert_eq(status.transcriptions.done, 1)
+    assert_eq(status.transcriptions.pending, 1)
+    assert_eq(status.transcriptions.needs_review, 1)
+    assert_eq(status.transcriptions.unavailable, 1)
 
 
 @test()
@@ -1180,7 +1135,7 @@ async def sync_status_reports_last_run_quota_and_no_pauses_by_default() -> None:
     # One hot page: one list unit + one metadata unit.
     assert_eq(status.quota.used, 2)
     assert_is_none(status.api_paused_until)
-    assert_eq(status.transcript_providers_paused, [])
+    assert_eq(status.transcriptions.providers_paused, [])
 
 
 @test()
@@ -1209,7 +1164,7 @@ async def sync_status_is_empty_before_any_sync() -> None:
     status = await env.service.sync_status(logger=test_logger())
 
     assert_eq(status.videos_total, 0)
-    assert_eq(status.transcripts_pending, 0)
+    assert_eq(status.transcriptions.pending, 0)
     assert_is_none(status.last_synced_at)
 
 
@@ -1239,9 +1194,15 @@ async def schema_ignores_legacy_transcript_states_without_saved_videos() -> None
 
     await create_youtube_schema(db)
 
-    async with db.transaction() as tx:
-        rows = await tx.fetch_all(select(YouTubeTranscript).all())
-    assert_eq(rows, [])
+    async with db.transaction() as transaction:
+        connection = transaction.require_connection()
+        cursor = await connection.execute(
+            'SELECT count(*) FROM "you_tube_transcript"', ()
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    assert row is not None
+    assert_eq(row[0], 0)
     await db.close()
 
 

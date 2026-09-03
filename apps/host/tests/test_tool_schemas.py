@@ -59,8 +59,6 @@ def tool_schema_document_describes_the_internal_tools() -> None:
             "search_youtube",
             "summarize_youtube_activity",
             "fetch_youtube_transcript",
-            "ignore_youtube_video",
-            "retry_youtube_video",
             "web_search",
             "archive_gmail_message",
             "search_gmail",

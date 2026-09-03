@@ -68,16 +68,7 @@ from tether.todo_tools import internal_todo_tool_routes
 from tether.tool_runtime import SessionRegistry
 from tether.tools import internal_tool_routes
 from tether.trace_routes import trace_routes
-from tether.transcripts.acquisition import (
-    TranscriptAcquisitionConfig,
-)
-from tether.transcripts.source_composition import (
-    SupadataSourceConfig,
-    TranscriptLibrarySourceConfig,
-    TranscriptProviderConfig,
-    build_configured_transcript_provider,
-)
-from tether.transcripts.worker import TranscriptSyncConfig
+from tether.transcripts import TranscriptAcquisitionConfig
 from tether.triage_tools import internal_triage_tool_routes
 from tether.trigger_tools import internal_trigger_tool_routes
 from tether.tts import TtsClient
@@ -87,8 +78,13 @@ from tether.youtube import (
     YOUTUBE_READONLY_SCOPE,
     GoogleYouTubeAuthBackend,
     ReauthorizableYouTubeApi,
+    SupadataSourceConfig,
+    TranscriptLibrarySourceConfig,
+    TranscriptProviderConfig,
+    TranscriptSyncConfig,
     YouTubeApi,
     YouTubeAuthBackend,
+    build_configured_transcript_provider,
     internal_youtube_tool_routes,
 )
 

@@ -33,30 +33,34 @@ from tether.youtube.routes import router as routes_router
 from tether.youtube.search import YouTubeSearchService
 from tether.youtube.search_index import YouTubeSearchIndex
 from tether.youtube.search_reconciler import YouTubeSearchReconciler
-from tether.youtube.service import (
-    YouTubeService,
-    YouTubeVideoNotFoundError,
-)
+from tether.youtube.service import YouTubeService
 from tether.youtube.store import (
     IngestedVideo,
-    TranscriptAvailable,
-    TranscriptPersistedStatus,
-    TranscriptRetrying,
-    TranscriptReviewNeeded,
-    TranscriptState,
-    TranscriptStatus,
-    TranscriptUnavailable,
-    YouTubeTranscript,
     create_youtube_schema,
-    fetch_transcript_state,
-    fetch_transcript_states,
-    write_transcript_available,
-    write_transcript_retrying,
-    write_transcript_review_needed,
-    write_transcript_unavailable,
+    migrate_legacy_youtube_transcripts,
+    remove_legacy_youtube_transcript_storage,
 )
 from tether.youtube.sync import YouTubeSyncConfig, YouTubeSyncService
 from tether.youtube.tools import YOUTUBE_TOOL_SPECS, internal_youtube_tool_routes
+from tether.youtube.transcript_sources import (
+    SupadataSourceConfig,
+    TranscriptLibrarySourceConfig,
+    TranscriptProviderConfig,
+    build_configured_transcript_provider,
+)
+from tether.youtube.transcript_sync import TranscriptSyncConfig, TranscriptSyncService
+from tether.youtube.transcription_service import (
+    TranscriptBlockedError,
+    TranscriptDecision,
+    TranscriptDecisionOutcome,
+    TranscriptNeedsReviewError,
+    TranscriptRequestResult,
+    TranscriptResult,
+    TranscriptTransientError,
+    TranscriptUnavailableError,
+    YouTubeTranscriptionService,
+    YouTubeVideoNotFoundError,
+)
 from tether.youtube.types import VideoId
 
 __all__ = [
@@ -70,14 +74,20 @@ __all__ = [
     "IngestedVideo",
     "QuotaMeta",
     "ReauthorizableYouTubeApi",
+    "SupadataSourceConfig",
     "SystemClock",
-    "TranscriptAvailable",
-    "TranscriptPersistedStatus",
-    "TranscriptRetrying",
-    "TranscriptReviewNeeded",
-    "TranscriptState",
-    "TranscriptStatus",
-    "TranscriptUnavailable",
+    "TranscriptBlockedError",
+    "TranscriptDecision",
+    "TranscriptDecisionOutcome",
+    "TranscriptLibrarySourceConfig",
+    "TranscriptNeedsReviewError",
+    "TranscriptProviderConfig",
+    "TranscriptRequestResult",
+    "TranscriptResult",
+    "TranscriptSyncConfig",
+    "TranscriptSyncService",
+    "TranscriptTransientError",
+    "TranscriptUnavailableError",
     "VideoId",
     "YouTubeApi",
     "YouTubeApiClient",
@@ -94,18 +104,15 @@ __all__ = [
     "YouTubeSyncConfig",
     "YouTubeSyncService",
     "YouTubeSyncState",
-    "YouTubeTranscript",
+    "YouTubeTranscriptionService",
     "YouTubeVideoNotFoundError",
     "auth_routes_router",
+    "build_configured_transcript_provider",
     "create_youtube_schema",
-    "fetch_transcript_state",
-    "fetch_transcript_states",
     "internal_youtube_tool_routes",
+    "migrate_legacy_youtube_transcripts",
+    "remove_legacy_youtube_transcript_storage",
     "routes_router",
     "state_get",
     "state_set",
-    "write_transcript_available",
-    "write_transcript_retrying",
-    "write_transcript_review_needed",
-    "write_transcript_unavailable",
 ]

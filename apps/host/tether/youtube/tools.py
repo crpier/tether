@@ -28,13 +28,7 @@ from tether.capabilities import bind_params
 from tether.capability_contracts import CapabilityOutcome
 from tether.structured_logging import get_request_logger
 from tether.tool_runtime import ToolSpec
-from tether.youtube.capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
-from tether.youtube.capabilities import (
-    ignore as _capabilities_ignore,
-)
-from tether.youtube.capabilities import (
-    retry as _capabilities_retry,
-)
+from tether.youtube.capabilities import YOUTUBE_ERRORS
 from tether.youtube.capabilities import (
     unwrap_transcript_request as _unwrap_transcript_request,
 )
@@ -44,12 +38,8 @@ from tether.youtube.service import (
     YouTubeActivitySummary,
     YouTubeService,
 )
-from tether.youtube.store import (
-    IngestedVideo,
-    TranscriptStatus,
-    YouTubeSource,
-    derive_ingest_state,
-)
+from tether.youtube.store import IngestedVideo, YouTubeSource, derive_ingest_state
+from tether.youtube.transcription_service import YouTubeTranscriptionService
 
 
 class _YouTubeToolsRuntime(Protocol):
@@ -61,6 +51,7 @@ class _YouTubeToolsRuntime(Protocol):
     """
 
     youtube_service: YouTubeService
+    youtube_transcription_service: YouTubeTranscriptionService
 
 
 def _runtime(request: Request) -> _YouTubeToolsRuntime:
@@ -156,7 +147,6 @@ def _description_preview(description: str) -> str | None:
 def _compact_video(
     video: IngestedVideo[Fetched],
     *,
-    transcript_status: TranscriptStatus,
     snippet: str | None = None,
 ) -> dict[str, object]:
     """A transcript-free list row for the model.
@@ -175,7 +165,6 @@ def _compact_video(
         "topic": video.topic,
         "source": video.source,
         "state": derive_ingest_state(video),
-        "transcript_status": transcript_status,
         "liked_at": video.liked_at,
         "duration_seconds": video.duration_seconds,
     }
@@ -192,11 +181,7 @@ def _compact_videos(result: BrowseResult | SearchResult) -> CapabilityOutcome:
     snippets = result.snippets if isinstance(result, SearchResult) else {}
     return CapabilityOutcome(
         result=[
-            _compact_video(
-                video,
-                transcript_status=result.transcript_statuses[video.video_id],
-                snippet=snippets.get(video.video_id),
-            )
+            _compact_video(video, snippet=snippets.get(video.video_id))
             for video in result.videos
         ],
         quota=result.quota,
@@ -261,20 +246,12 @@ async def _summarize_activity(
 
 async def _fetch_transcript(request: Request, video_id: str) -> CapabilityOutcome:
     """Fetch and persist a transcript for an ingested video."""
-    outcome = await _runtime(request).youtube_service.fetch_transcript(
+    outcome = await _runtime(request).youtube_transcription_service.fetch(
         video_id, logger=get_request_logger(request)
     )
     result = _unwrap_transcript_request(outcome)
     return CapabilityOutcome(
-        result={
-            "video": YouTubeVideoRead.from_video(
-                result.video,
-                transcript_status="available",
-                transcript=result.transcript,
-            ).model_dump(mode="json"),
-            "transcript": result.transcript,
-        },
-        quota=result.quota,
+        result={"transcript": result.transcript},
         cache=result.cache,
     )
 
@@ -296,18 +273,6 @@ YOUTUBE_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "fetch_youtube_transcript",
         FetchYouTubeTranscriptParams,
         bind_params(_fetch_transcript),
-        YOUTUBE_ERRORS,
-    ),
-    ToolSpec(
-        "ignore_youtube_video",
-        IgnoreYouTubeVideoParams,
-        bind_params(_capabilities_ignore),
-        YOUTUBE_ERRORS,
-    ),
-    ToolSpec(
-        "retry_youtube_video",
-        RetryYouTubeVideoParams,
-        bind_params(_capabilities_retry),
         YOUTUBE_ERRORS,
     ),
 )

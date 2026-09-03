@@ -18,15 +18,14 @@ import structlog
 from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, assert_true, fixture, load_fixture, test
 
+from tests.youtube_fixtures import create_youtube_transcript_test_schema
 from tether.search_projection.embeddings import Embedder, FakeEmbedder, Vector
 from tether.structured_logging import Logger
+from tether.transcripts import TranscriptionStore
 from tether.youtube.search_index import ChunkDocument
 from tether.youtube.search_reconciler import YouTubeSearchReconciler
-from tether.youtube.store import (
-    IngestedVideo,
-    create_youtube_schema,
-    write_transcript_available,
-)
+from tether.youtube.store import IngestedVideo
+from tether.youtube.transcription import youtube_transcription_target
 from tether.youtube.types import VideoId
 
 _DIM = 16
@@ -95,7 +94,7 @@ class Harness:
 @fixture
 async def harness() -> AsyncGenerator[Harness]:
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
+    await create_youtube_transcript_test_schema(db)
     embedder = CountingEmbedder(FakeEmbedder(vector_dim=_DIM, model_name="fake-a"))
     index = FakeYouTubeSearchIndex()
     reconciler = YouTubeSearchReconciler(
@@ -126,16 +125,19 @@ async def _add_video(
                 )
             ).returning()
         )
-        if transcript is not None:
-            await write_transcript_available(
-                tx, created.id, text=transcript, segments=()
-            )
         if ignored:
             _ = await tx.execute(
                 update(IngestedVideo)
                 .set(IngestedVideo.ignored_at.to(CurrentTimestamp))
                 .where(IngestedVideo.id.eq(created.id))
             )
+    if transcript is not None:
+        await TranscriptionStore(db).save_available(
+            youtube_transcription_target(VideoId(video_id)).key,
+            source=None,
+            text=transcript,
+            segments=(),
+        )
 
 
 @test()

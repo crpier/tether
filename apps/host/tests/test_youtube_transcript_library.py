@@ -11,7 +11,7 @@ from tether.transcripts.contracts import (
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
-from tether.transcripts.library import (
+from tether.youtube.transcript_library import (
     TranscriptLibraryConfig,
     YouTubeTranscriptApiSource,
 )
@@ -71,6 +71,22 @@ async def source_joins_usable_snippet_text() -> None:
         [(segment.start_ms, segment.duration_ms) for segment in transcript.segments],
         [(0, 750), (1000, 1250)],
     )
+
+
+@test()
+async def youtube_source_resolves_its_id_from_a_media_locator() -> None:
+    """The YouTube-specific adapter interprets the generic target locator."""
+    fetched: list[str] = []
+
+    def fetch(video_id: str) -> list[dict[str, object]]:
+        fetched.append(video_id)
+        return [{"text": "hello", "start": 0.0, "duration": 1.0}]
+
+    provider = YouTubeTranscriptApiSource(fetch)
+
+    _ = await provider.fetch("https://www.youtube.com/watch?v=video")
+
+    assert_eq(fetched, ["video"])
 
 
 @test()

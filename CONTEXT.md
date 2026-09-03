@@ -138,9 +138,21 @@ _Avoid_: connector, provider wrapper, adapter package
 A bounded YouTube viewing proxy derived from when videos entered the user's Liked playlist. Its duration is the sum of those videos' full lengths with explicit missing-data coverage; it is not measured playback time or proof that every second was watched.
 _Avoid_: watch time, watch history, screen time
 
-**Transcript status**:
-The acquisition state of a saved video's transcript: pending, retrying, needs review, available, or unavailable. _Needs review_ means every configured provider has failed permanently and acquisition is paused for a human decision; it is not yet a claim that no transcript should be kept. _Unavailable_ means the human chose to give up, making transcript absence an explicit settled fact. Choosing to keep trying returns the status to pending.
-_Avoid_: terminal, caption state, transcript error
+**Transcript**:
+A durable text representation of source media, with optional provider-reported timing. It has its own identity and may be associated with any kind of source, not only a YouTube video.
+_Avoid_: video field, caption cache, Transcription
+
+**Transcription**:
+The durable process of obtaining a Transcript for a source reference. It owns acquisition state and may make several provider attempts, but it is not the source media or the resulting Transcript.
+_Avoid_: Transcript, video transcript state
+
+**Transcription target**:
+A source reference presented for Transcription, with a stable Tether key and the locator understood by a transcript provider. Its identity does not depend on a YouTube database row.
+_Avoid_: video row, transcript owner
+
+**Transcription status**:
+The acquisition state of a Transcription: pending, retrying, needs review, available, or unavailable. _Needs review_ means every configured provider has failed permanently and acquisition is paused for a human decision; _unavailable_ means the human chose to give up. Choosing to keep trying returns it to pending.
+_Avoid_: Transcript status, terminal, caption state, transcript error
 
 **Transcript segment**:
 One provider-reported timed cue stored with integer millisecond start and duration. Duration is exact upstream data, never inferred from the next cue. A text-only Transcript has no Transcript segments.
