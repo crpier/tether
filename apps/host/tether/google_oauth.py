@@ -1,34 +1,22 @@
 """Shared Google OAuth mechanics for the YouTube and Gmail Integrations.
 
 Infrastructure plumbing, deliberately outside both Integrations (ADR-0025):
-installed-app OAuth flow, cached-token load/refresh with scope validation, and
-the lazily-imported Google client shims. It owns no domain types — each
-Integration passes its own scopes and builds its own API adapters on top.
-
-The Google client libraries are imported lazily so the rest of Tether runs
-without them installed; the import path raises a clear
-`GoogleClientUnavailableError` when they are missing.
+installed-app OAuth flow and cached-token load/refresh with scope validation. It
+owns no domain types; each Integration passes its scopes and builds its API
+adapter on top.
 """
 
 from __future__ import annotations
 
-import importlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 from typing import Protocol, cast, runtime_checkable
 
-_GOOGLE_INSTALL_HINT = (
-    "Google client libraries are not installed. Install them with "
-    "`uv pip install google-api-python-client google-auth-oauthlib` "
-    "(or add them to the host dependencies) and re-run."
-)
-
-
-class GoogleClientUnavailableError(Exception):
-    """Raised when the lazily-imported Google client libraries are missing."""
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 
 class GoogleAuthError(Exception):
@@ -97,24 +85,12 @@ class OAuthConfig:
     no_browser: bool = False
 
 
-def import_google_module(name: str) -> ModuleType:
-    """Import a Google client module lazily, mapping absence to a clear error."""
-    try:
-        return importlib.import_module(name)
-    except ImportError as error:
-        raise GoogleClientUnavailableError(_GOOGLE_INSTALL_HINT) from error
-
-
-# The Google client libraries ship no type stubs, so their attributes type as
-# `Any`; each cast below pins one to the call signature the adapter relies on.
 def _default_credentials_from_info() -> CredentialsFromInfo:
-    module = import_google_module("google.oauth2.credentials")
-    return cast("CredentialsFromInfo", module.Credentials.from_authorized_user_info)
+    return Credentials.from_authorized_user_info
 
 
 def _default_request_factory() -> RequestFactory:
-    module = import_google_module("google.auth.transport.requests")
-    return cast("RequestFactory", module.Request)
+    return Request
 
 
 def _require_scopes(credentials: GoogleCredentials, required: Sequence[str]) -> None:
@@ -180,30 +156,6 @@ def load_credentials(
     return credentials
 
 
-class _InstalledAppFlow(Protocol):
-    """The subset of `InstalledAppFlow` the bootstrap drives."""
-
-    def run_local_server(self, *, port: int, open_browser: bool) -> GoogleCredentials:
-        """Run the local-server consent flow and return the granted credentials."""
-        ...
-
-
-class _InstalledAppFlowFactory(Protocol):
-    """The `InstalledAppFlow` class, entered via its client-secrets constructor."""
-
-    def from_client_secrets_file(
-        self, client_secrets_file: str, scopes: Sequence[str], /
-    ) -> _InstalledAppFlow:
-        """Build a flow from a downloaded Desktop-app client-secret JSON."""
-        ...
-
-
-def _default_installed_app_flow() -> _InstalledAppFlowFactory:
-    module = import_google_module("google_auth_oauthlib.flow")
-    # The Google libraries ship no type stubs, so the class types as `Any`.
-    return cast("_InstalledAppFlowFactory", module.InstalledAppFlow)
-
-
 def run_auth_flow(config: OAuthConfig) -> GoogleCredentials:
     """Run the installed-app OAuth flow once and cache the token to disk.
 
@@ -218,8 +170,7 @@ def run_auth_flow(config: OAuthConfig) -> GoogleCredentials:
             f"place it there."
         )
         raise GoogleAuthError(message)
-    flow_cls = _default_installed_app_flow()
-    flow = flow_cls.from_client_secrets_file(
+    flow = InstalledAppFlow.from_client_secrets_file(
         str(config.client_secret_path), list(config.scopes)
     )
     credentials = flow.run_local_server(port=0, open_browser=not config.no_browser)

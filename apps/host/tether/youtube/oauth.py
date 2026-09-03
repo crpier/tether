@@ -25,9 +25,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast
 
+from googleapiclient.discovery import build
+
 from tether.google_oauth import (
     OAuthConfig,
-    import_google_module,
     load_credentials,
     run_auth_flow,
 )
@@ -84,17 +85,6 @@ class _YouTubeResource(Protocol):
     def videos(self) -> _ResourceCollection:
         """The `videos` collection."""
         ...
-
-
-type DiscoveryBuild = Callable[..., _YouTubeResource]
-"""Builds the Data API discovery resource from authorized credentials."""
-
-
-# The Google client libraries ship no type stubs, so their attributes type as
-# `Any`; each cast below pins one to the call signature the adapter relies on.
-def _default_discovery_build() -> DiscoveryBuild:
-    module = import_google_module("googleapiclient.discovery")
-    return cast("DiscoveryBuild", module.build)
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -207,11 +197,12 @@ class OAuthYouTubeApi:
     def from_config(cls, config: OAuthConfig) -> OAuthYouTubeApi:
         """Build the production adapter: load credentials, build the client."""
         credentials = load_credentials(config)
-        build = _default_discovery_build()
         resource = build(
             "youtube", "v3", credentials=credentials, cache_discovery=False
         )
-        return cls(resource)
+        # The generated response TypedDicts are read-only at this adapter seam,
+        # while its fake-friendly protocol uses mutable dicts.
+        return cls(cast("_YouTubeResource", resource))
 
     async def list_liked_page(
         self, *, page_token: str | None, page_size: int

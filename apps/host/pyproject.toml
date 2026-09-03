@@ -25,30 +25,24 @@ dependencies = [
     "snekql>=0.6.0",
     "structlog>=26.1.0",
     "uvicorn>=0.49.0",
+    # TODO: can we improve?
     # uvicorn needs a WebSocket protocol implementation to upgrade `/ws`;
     # without it the running app 404s on the browser chat socket (the bare
     # `uvicorn` package does not pull one in).
     "websockets>=14.0",
-]
-
-[dependency-groups]
-dev = [
-    "google-auth-oauthlib>=1.0.0",
-    "httpx>=0.28.1",
-    "ruff>=0.15.18",
-    "snektest",
-    "ty==0.0.75",
-]
-# Real YouTube ingestion needs the Google OAuth + Data API clients. They are an
-# optional group (not core deps) so the rest of Tether runs without them; the
-# OAuth adapter imports them lazily and raises a clear error if they are absent.
-# Install with `uv sync --group youtube` before running `just youtube-auth`.
-youtube = [
     "google-api-python-client>=2.0.0",
     "google-auth-oauthlib>=1.0.0",
     "youtube-transcript-api>=1.2.0",
 ]
 
+[dependency-groups]
+dev = [
+    "google-api-python-client-stubs>=1.39.0",
+    "httpx>=0.28.1",
+    "ruff>=0.15.18",
+    "snektest",
+    "ty==0.0.75",
+]
 [tool.uv.sources]
 snektest = { url = "https://github.com/crpier/snektest/archive/b6ff08544eade05804a2fdfd894c2c854145e537.tar.gz" }
 snekok = { path = "../../packages/snekok", editable = true }
@@ -106,6 +100,11 @@ ignore = [
   "T100",    # Allow breakpoints in tests (we have some tests that really check breakopints).
   "TRY003",  # Allow long messages on stand-in exceptions raised inline in test doubles.
 ]
+
+# The API client stub package covers `googleapiclient`, not the unannotated
+# `google-auth` and `google-auth-oauthlib` constructors used by our OAuth flows.
+[tool.ty.environment]
+extra-paths = ["./stubs"]
 
 [tool.ty.rules]
 all = "error"
